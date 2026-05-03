@@ -151,6 +151,27 @@ body::before {
   box-shadow: 0 2px 10px rgba(37,99,235,0.3);
 }
 
+/* ── Nav HOT badge & My Trade link ──────────────────────────────────────── */
+.nav-hot-link { position: relative; }
+.nav-hot-badge {
+  display: inline-block;
+  background: linear-gradient(135deg, #ef4444, #f97316);
+  color: #fff;
+  font-size: 9px;
+  font-weight: 800;
+  padding: 1px 5px;
+  border-radius: 20px;
+  letter-spacing: 0.5px;
+  vertical-align: middle;
+  margin-left: 3px;
+  text-transform: uppercase;
+  animation: hotPulse 2s ease-in-out infinite;
+}
+@keyframes hotPulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(239,68,68,0.5); }
+  50%       { box-shadow: 0 0 0 5px rgba(239,68,68,0); }
+}
+
 /* ── "More" dropdown ──────────────────────────────────────────────────────── */
 .nav-more { position: relative; }
 .nav-more-btn {

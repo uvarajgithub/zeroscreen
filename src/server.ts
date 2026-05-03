@@ -343,7 +343,6 @@ function nav(active: string, req?: Request): string {
     ["signals",          "/signals",          "📡 Live Bot Signals"],
     ["dashboard",        "/dashboard",        "📊 Bot Performance"],
     ["strategy-builder", "/strategy-builder", "🔨 Strategy Builder"],
-    ["my-paper-trade",   "/my-paper-trade",   "📋 My Paper Trade"],
   ];
 
   // 🔴 INVESTORS (advanced) — do your own research
@@ -430,6 +429,7 @@ function nav(active: string, req?: Request): string {
       <a href="/" class="${active === "home" ? "active" : ""}">🔍 Screener</a>
       <a href="/today" class="${active === "today" ? "active" : ""}">🔥 Picks</a>
       <a href="/signals" class="${active === "signals" ? "active" : ""}">📡 Signals</a>
+      <a href="/my-paper-trade" class="nav-hot-link${active === "my-paper-trade" ? " active" : ""}">📋 My Trade <span class="nav-hot-badge">HOT</span></a>
       ${exploreDropHtml}
       ${adminDropHtml}
     </div>
@@ -490,31 +490,127 @@ app.get("/signup", (req: Request, res: Response) => {
        </a>
        <div class="auth-divider"><span>or create with email</span></div>`
     : "";
-  res.send(authLayout("Create Account", `
-    <h2>Create your account</h2>
-    <p class="auth-sub">Free forever. Watchlists, alerts &amp; more.</p>
-    ${error ? `<div class="auth-error">${esc(error)}</div>` : ""}
-    ${googleBtn}
-    <form class="auth-form" method="POST" action="/signup">
-      <div class="form-group">
-        <label>Full Name</label>
-        <input type="text" name="name" placeholder="Rahul Sharma" required autocomplete="name">
+  res.send(`<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Create Account — ZeroScreen</title>
+  <link rel="stylesheet" href="/public/css/style.css">
+  <style>
+    .signup-hero-cards { display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-top:28px; }
+    .shc { border-radius:12px; padding:14px 16px; position:relative; overflow:hidden; }
+    .shc::before { content:""; position:absolute; inset:0; opacity:0.12; }
+    .shc-paper  { background:linear-gradient(135deg,#064e3b,#065f46); border:1px solid #059669; }
+    .shc-signals{ background:linear-gradient(135deg,#1e1b4b,#312e81); border:1px solid #6366f1; }
+    .shc-screen { background:linear-gradient(135deg,#1e3a5f,#1e40af); border:1px solid #3b82f6; }
+    .shc-watch  { background:linear-gradient(135deg,#451a03,#78350f); border:1px solid #f59e0b; }
+    .shc-icon   { font-size:1.6rem; display:block; margin-bottom:6px; }
+    .shc-title  { font-size:0.82rem; font-weight:700; color:#fff; margin-bottom:3px; }
+    .shc-desc   { font-size:0.73rem; color:rgba(255,255,255,0.7); line-height:1.4; }
+    .shc-badge  { display:inline-block; font-size:0.62rem; font-weight:700; padding:2px 7px; border-radius:20px; margin-bottom:6px; letter-spacing:0.5px; }
+    .badge-free { background:#10b981; color:#fff; }
+    .badge-live { background:#ef4444; color:#fff; }
+    .badge-hot  { background:#f59e0b; color:#000; }
+    .badge-new  { background:#8b5cf6; color:#fff; }
+    .signup-stats { display:flex; gap:0; margin-top:22px; border:1px solid rgba(255,255,255,0.1); border-radius:12px; overflow:hidden; }
+    .ss-stat { flex:1; padding:14px 10px; text-align:center; border-right:1px solid rgba(255,255,255,0.1); }
+    .ss-stat:last-child { border-right:none; }
+    .ss-stat strong { display:block; font-size:1.15rem; font-weight:800; color:#fff; }
+    .ss-stat span { font-size:0.7rem; color:rgba(255,255,255,0.6); }
+    .signup-trust { display:flex; align-items:center; gap:8px; margin-top:20px; font-size:0.75rem; color:rgba(255,255,255,0.5); }
+    .signup-trust span { font-size:1rem; }
+    @media(max-width:900px){ .signup-hero-cards{grid-template-columns:1fr 1fr;} }
+    @media(max-width:600px){ .signup-hero-cards{grid-template-columns:1fr;} .signup-stats{flex-wrap:wrap;} }
+  </style>
+</head>
+<body class="auth-body landing-page">
+  <div class="landing-split">
+
+    <!-- LEFT: Feature showcase -->
+    <div class="landing-hero">
+      <div class="landing-hero-inner">
+        <a href="/" class="landing-logo">Zero<span>Screen</span></a>
+        <div class="landing-badge">🇮🇳 Built for Indian Markets · Free Forever</div>
+        <h1 class="landing-headline">Everything you need<br>to trade smarter.<br><span>All in one place.</span></h1>
+        <p class="landing-desc">Join thousands of Indian investors who screen stocks, track a live bot, and paper trade — for free.</p>
+
+        <div class="signup-hero-cards">
+          <div class="shc shc-paper">
+            <span class="shc-badge badge-hot">🔥 HOT</span>
+            <span class="shc-icon">📋</span>
+            <div class="shc-title">Personal Paper Trade</div>
+            <div class="shc-desc">₹1,00,000 virtual money. Trade any NSE stock. Track P&amp;L like a real portfolio.</div>
+          </div>
+          <div class="shc shc-signals">
+            <span class="shc-badge badge-live">🔴 LIVE</span>
+            <span class="shc-icon">📡</span>
+            <div class="shc-title">Live Bot Signals</div>
+            <div class="shc-desc">Real BANKNIFTY options trades. Auto-refreshes every 8 seconds. CE/PE with PnL.</div>
+          </div>
+          <div class="shc shc-screen">
+            <span class="shc-badge badge-free">FREE</span>
+            <span class="shc-icon">🔍</span>
+            <div class="shc-title">NSE Stock Screener</div>
+            <div class="shc-desc">1,700+ stocks. ROCE, ROE, D/E, P/E filters. 14 strategy presets. No login needed.</div>
+          </div>
+          <div class="shc shc-watch">
+            <span class="shc-badge badge-new">⭐ YOURS</span>
+            <span class="shc-icon">🔔</span>
+            <div class="shc-title">Watchlists &amp; Alerts</div>
+            <div class="shc-desc">Save stocks to watchlists. Daily email digest when your filter criteria match.</div>
+          </div>
+        </div>
+
+        <div class="signup-stats">
+          <div class="ss-stat"><strong>1,700+</strong><span>NSE Stocks</span></div>
+          <div class="ss-stat"><strong>14</strong><span>Strategies</span></div>
+          <div class="ss-stat"><strong>5-Year</strong><span>Backtest</span></div>
+          <div class="ss-stat"><strong>Free</strong><span>Forever</span></div>
+        </div>
+
+        <div class="signup-trust">
+          <span>🔒</span> No credit card · No broker account needed · Cancel anytime
+        </div>
       </div>
-      <div class="form-group">
-        <label>Email address</label>
-        <input type="email" name="email" placeholder="you@example.com" required autocomplete="email">
+    </div>
+
+    <!-- RIGHT: Sign up form -->
+    <div class="landing-auth">
+      <div class="auth-card">
+        <h2>Create your free account</h2>
+        <p class="auth-sub">Takes 30 seconds. No credit card needed.</p>
+        ${error ? `<div class="auth-error">${esc(error)}</div>` : ""}
+        <a href="/?guest=1" class="btn-guest">👀 Browse as Guest — No sign up needed</a>
+        <div class="auth-divider"><span>or create a free account</span></div>
+        ${googleBtn}
+        <form class="auth-form" method="POST" action="/signup">
+          <div class="form-group">
+            <label>Full Name</label>
+            <input type="text" name="name" placeholder="Rahul Sharma" required autocomplete="name">
+          </div>
+          <div class="form-group">
+            <label>Email address</label>
+            <input type="email" name="email" placeholder="you@example.com" required autocomplete="email">
+          </div>
+          <div class="form-group">
+            <label>Password <span class="hint">(min 8 chars)</span></label>
+            <input type="password" name="password" placeholder="••••••••" minlength="8" required autocomplete="new-password">
+          </div>
+          <button type="submit" class="btn-auth">Create Free Account →</button>
+        </form>
+        <div style="margin-top:18px;padding:14px 16px;background:linear-gradient(135deg,rgba(16,185,129,0.08),rgba(59,130,246,0.08));border:1px solid rgba(16,185,129,0.2);border-radius:10px;font-size:0.8rem;color:var(--text-muted);line-height:1.6">
+          ✅ <strong style="color:var(--text)">What you unlock instantly:</strong><br>
+          📋 ₹1L personal paper trade portfolio &nbsp;·&nbsp; ⭐ Unlimited watchlists<br>
+          🔔 Email alerts on your custom filters &nbsp;·&nbsp; 📊 Full bot analytics
+        </div>
+        <p class="auth-switch" style="margin-top:16px">Already have an account? <a href="/login">Sign in</a></p>
       </div>
-      <div class="form-group">
-        <label>Password <span class="hint">(min 8 chars)</span></label>
-        <input type="password" name="password" placeholder="••••••••" minlength="8" required autocomplete="new-password">
-      </div>
-      <button type="submit" class="btn-auth">Create Account →</button>
-    </form>
-    <p class="auth-switch">Already have an account? <a href="/login">Sign in</a></p>
-    <p class="auth-switch" style="margin-top:12px;padding-top:12px;border-top:1px solid var(--border)">
-      <a href="/" style="color:var(--text-muted);font-size:13px">Continue as guest →</a>
-    </p>
-  `));
+    </div>
+
+  </div>
+</body>
+</html>`);
 });
 
 // POST /signup
