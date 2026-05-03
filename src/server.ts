@@ -1,50 +1,284 @@
 /**
  * server.ts — ZeroScreen Express app
- *
- * Routes:
- *   GET  /                      → screener (filter page)
- *   GET  /stock/:symbol         → stock detail page
- *   GET  /watchlists            → all watchlists
- *   GET  /watchlists/:id        → single watchlist
- *   POST /watchlists            → create watchlist
- *   POST /watchlists/:id/add    → add stock
- *   POST /watchlists/:id/remove → remove stock
- *   DELETE /watchlists/:id      → delete watchlist
- *
- *   API (JSON):
- *   GET  /api/screen            → filtered stocks JSON
- *   GET  /api/stock/:symbol     → single stock JSON
- *   GET  /api/stats             → DB stats
- *   POST /api/refresh/prices    → trigger price refresh
- *   POST /api/refresh/stock/:symbol → re-scrape one stock
  */
 
 import dotenv from "dotenv";
 dotenv.config();
 
 import express, { Request, Response, NextFunction } from "express";
+import session from "express-session";
 import path from "path";
-import fs from "fs";
+import bcrypt from "bcrypt";
 import {
   screenStocks, getStock, getWatchlists, getWatchlist, createWatchlist,
   addToWatchlist, removeFromWatchlist, deleteWatchlist, getDbStats,
   getSectors, ScreenerFilter, initDb, upsertStock,
+  createUser, getUserByEmail, getUserById, countUsers, UserRow, getAllUsers, dbRun, dbAll,
+  getAlerts, createAlert, deleteAlert, getAllActiveAlerts,
+  createResetToken, getResetToken, markResetTokenUsed, updateUserPassword,
+  updateUserName, searchStocks,
+  getActivePicks, getAllPicks, createPick, updatePickStatus, deletePick, PickRow,
+  getSetting, setSetting, getAllSettings,
+  createOrder, activateSubscription, getActiveSubscription, expireOldSubscriptions, getAllSubscriptions,
+  getPaperPortfolio, getPaperPositions, getPaperTrades, paperBuy, paperSell, paperReset,
+  PaperPosition, PaperTrade,
+  storePhoneOtp, verifyPhoneOtp, setUserMobile, countPaperTrades,
+  getPaperTradeConfig, savePaperTradeConfig, PaperTradeConfig,
 } from "./db";
 import { refreshPrices, refreshFundamentals, startScheduler } from "./scheduler";
 import { fetchFundamentals } from "./scraper";
+import { sendWelcomeEmail, sendContactNotification, sendAlertEmail, sendPasswordResetEmail } from "./mailer";
+import crypto from "crypto";
+import https from "https";
+import fs from "fs";
+
+// ── Telegram notify helper ─────────────────────────────────────────────────────
+const TG_BOT   = process.env.TELEGRAM_BOT_TOKEN || "";
+const TG_CHAT  = process.env.TELEGRAM_CHAT_ID   || "";
+function notifyTelegram(text: string): void {
+  if (!TG_BOT || !TG_CHAT) return;
+  const encoded = encodeURIComponent(text);
+  const url = `https://api.telegram.org/bot${TG_BOT}/sendMessage?chat_id=${TG_CHAT}&text=${encoded}`;
+  https.get(url, (r) => { r.resume(); }).on("error", () => {});
+}
 
 const app  = express();
 const PORT = parseInt(process.env.PORT || "4000", 10);
+const SESSION_SECRET = process.env.SESSION_SECRET || "zeroscreen-dev-secret-change-in-prod";
+
+// ── Google OAuth config ────────────────────────────────────────────────────────
+const GOOGLE_CLIENT_ID     = process.env.GOOGLE_CLIENT_ID     || "";
+const GOOGLE_CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET || "";
+const GOOGLE_CALLBACK_URL  = process.env.GOOGLE_CALLBACK_URL  || "http://139.59.18.52:4000/auth/google/callback";
+
+// ── Strategy Presets ───────────────────────────────────────────────────────────
+interface Strategy {
+  id: string; label: string; icon: string; desc: string;
+  params: Record<string, string>;
+}
+const STRATEGIES: Strategy[] = [
+  { id: "quality",    icon: "🏆", label: "Quality Blue Chips",
+    desc: "High ROCE, low debt, strong promoter holding",
+    params: { minRoce: "20", maxDe: "0.5", minPromoter: "50", allProfit: "1", sortBy: "roce" } },
+  { id: "debtfree",   icon: "💎", label: "Debt-Free Champions",
+    desc: "Zero-debt companies with consistent profits",
+    params: { maxDe: "0", minRoce: "15", allProfit: "1", sortBy: "roce" } },
+  { id: "growth",     icon: "🚀", label: "Growth Compounders",
+    desc: "Rising profits every year, strong ROCE",
+    params: { uptrend: "1", allProfit: "1", minRoce: "15", sortBy: "roce" } },
+  { id: "value",      icon: "💰", label: "Value Picks",
+    desc: "Undervalued stocks with decent fundamentals",
+    params: { maxPe: "15", minRoce: "10", maxDe: "1", sortBy: "pe" } },
+  { id: "highroce",   icon: "⚡", label: "High ROCE Machines",
+    desc: "Capital allocation champions — ROCE above 30%",
+    params: { minRoce: "30", allProfit: "1", sortBy: "roce" } },
+  { id: "dividend",   icon: "💵", label: "Dividend Earners",
+    desc: "Consistent dividend-paying stocks",
+    params: { minDivYield: "1.5", minRoce: "10", allProfit: "1", sortBy: "dividend" } },
+  { id: "promoter",   icon: "👑", label: "Promoter Backed",
+    desc: "High insider ownership — skin in the game",
+    params: { minPromoter: "65", minRoce: "15", sortBy: "promoter" } },
+  { id: "smallcap",   icon: "🌱", label: "Small Cap Gems",
+    desc: "High-quality small caps under ₹5,000 Cr",
+    params: { maxMc: "5000", minRoce: "20", allProfit: "1", sortBy: "roce" } },
+
+  // ── Trading-style presets ─────────────────────────────────────────────────
+  { id: "penny",      icon: "🪙", label: "Penny Stocks",
+    desc: "Low-price stocks under ₹50 with decent volume — high risk, high reward",
+    params: { maxPrice: "50", minVolume: "100000", sortBy: "volume" } },
+  { id: "highvalue",  icon: "🏛️", label: "High Value Blue Chips",
+    desc: "Large-cap leaders above ₹1,000 with strong fundamentals",
+    params: { minPrice: "1000", minMc: "50000", minRoce: "15", allProfit: "1", sortBy: "market_cap" } },
+  { id: "longterm",   icon: "📅", label: "Long Term Compounders",
+    desc: "Consistent profits, low debt, high ROCE — hold for 3-5 years",
+    params: { minRoce: "18", maxDe: "0.5", minPromoter: "50", allProfit: "1", uptrend: "1", sortBy: "roce" } },
+  { id: "shortterm",  icon: "⚡", label: "Short Term Momentum",
+    desc: "High volume gainers with upward profit trend — 1 to 4 weeks",
+    params: { minVolume: "500000", uptrend: "1", minRoce: "10", sortBy: "volume" } },
+  { id: "swing",      icon: "🎯", label: "Swing Trading Picks",
+    desc: "Positive day momentum + high volume + strong fundamentals — 3 to 10 day moves",
+    params: { minChangePct: "0.3", uptrend: "1", minVolume: "200000", minRoce: "10", sortBy: "change_pct" } },
+  { id: "options",    icon: "📊", label: "Options-Ready Stocks",
+    desc: "Highly liquid NSE stocks suitable for F&O — high volume, good fundamentals",
+    params: { minVolume: "1000000", minMc: "10000", minRoce: "10", sortBy: "volume" } },
+];
+
+function strategyParams(s: Strategy): string {
+  return new URLSearchParams(s.params).toString();
+}
+
+// ── News cache ─────────────────────────────────────────────────────────────────
+interface NewsItem { title: string; link: string; pubDate: string; source: string; }
+let _newsCache: NewsItem[] = [];
+let _newsCacheAt = 0;
+const NEWS_TTL = 5 * 60 * 1000; // 5 min
+
+async function fetchMarketNews(): Promise<NewsItem[]> {
+  if (Date.now() - _newsCacheAt < NEWS_TTL && _newsCache.length) return _newsCache;
+  const feeds = [
+    { url: "https://www.livemint.com/rss/markets",               source: "Mint" },
+    { url: "https://feeds.feedburner.com/ndtvprofit-latest",     source: "NDTV Profit" },
+  ];
+  const UA = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
+  const results: NewsItem[] = [];
+
+  const fetchXml = (url: string): Promise<string> => new Promise((resolve, reject) => {
+    const req = https.get(url, { timeout: 8000, headers: { "User-Agent": UA } }, res => {
+      if (res.statusCode && res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+        https.get(res.headers.location, { timeout: 8000, headers: { "User-Agent": UA } }, res2 => {
+          let d = ""; res2.on("data", c => d += c); res2.on("end", () => resolve(d));
+        }).on("error", reject);
+        return;
+      }
+      let d = ""; res.on("data", c => d += c); res.on("end", () => resolve(d));
+    });
+    req.on("error", reject); req.on("timeout", () => { req.destroy(); reject(new Error("timeout")); });
+  });
+
+  for (const feed of feeds) {
+    try {
+      const xml = await fetchXml(feed.url);
+      const items = xml.match(/<item>([\s\S]*?)<\/item>/g) || [];
+      for (const item of items.slice(0, 10)) {
+        const title   = (item.match(/<title><!\[CDATA\[(.*?)\]\]><\/title>/) ||
+                         item.match(/<title>(.*?)<\/title>/) || [])[1]?.trim() || "";
+        const link    = (item.match(/<link>(.*?)<\/link>/) ||
+                         item.match(/<guid[^>]*>(.*?)<\/guid>/) ||
+                         item.match(/<link\s[^>]*href="([^"]+)"/) || [])[1]?.trim() || "";
+        const pubDate = (item.match(/<pubDate>(.*?)<\/pubDate>/) || [])[1]?.trim() || "";
+        if (title && title.length > 10 && link) results.push({ title, link, pubDate, source: feed.source });
+      }
+    } catch (_) { /* skip failing feed */ }
+  }
+  if (results.length) { _newsCache = results.slice(0, 15); _newsCacheAt = Date.now(); }
+  return _newsCache;
+}
+
+// ── Session ────────────────────────────────────────────────────────────────────
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+const SQLiteStore = require("connect-sqlite3")(session);
+app.use(session({
+  store: new SQLiteStore({ db: "sessions.db", dir: path.join(__dirname, "..") }),
+  secret: SESSION_SECRET,
+  resave: false,
+  saveUninitialized: false,
+  cookie: { httpOnly: true, sameSite: "lax", maxAge: 7 * 24 * 60 * 60 * 1000 },
+}));
+
+declare module "express-session" {
+  interface SessionData { userId: number; userName: string; userRole: string; oauthState: string; guestMode: boolean; mobileVerified: boolean; }
+}
 
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use("/public", express.static(path.join(__dirname, "..", "public")));
 
-// ── Template helper ────────────────────────────────────────────────────────────
-function readView(name: string): string {
-  return fs.readFileSync(path.join(__dirname, "..", "views", name), "utf8");
+// Bypass ngrok browser warning for all responses
+app.use((_req: Request, res: Response, next: NextFunction) => {
+  res.setHeader("ngrok-skip-browser-warning", "true");
+  next();
+});
+
+// ── Analytics middleware ───────────────────────────────────────────────────────
+app.use((req: Request, _res: Response, next: NextFunction) => {
+  if (req.method === "GET" &&
+      !req.path.startsWith("/api/") &&
+      !req.path.startsWith("/public/") &&
+      !req.path.startsWith("/auth/")) {
+    const ip = (req.headers["x-forwarded-for"] as string || req.socket.remoteAddress || "").split(",")[0].trim();
+    const ipHash = crypto.createHash("sha256").update(ip + "zs2026").digest("hex").slice(0, 16);
+    const ua  = (req.headers["user-agent"] || "").slice(0, 150);
+    const ref = (req.headers["referer"]    || "").slice(0, 200);
+    dbRun(
+      `INSERT INTO page_views (path, ip_hash, user_agent, referrer, is_logged_in, created_at)
+       VALUES (?,?,?,?,?,datetime('now','localtime'))`,
+      [req.path, ipHash, ua, ref, req.session?.userId ? 1 : 0]
+    ).catch(() => {});
+  }
+  next();
+});
+
+// ── Security helpers ───────────────────────────────────────────────────────────
+
+/** HTML-escape user-controlled strings before rendering into HTML to prevent XSS */
+function esc(str: string | undefined | null): string {
+  if (!str) return "";
+  return str
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#x27;");
 }
 
+/** Simple in-memory rate limiter — max attempts per window per IP */
+const _rateLimits = new Map<string, { count: number; resetAt: number }>();
+function checkRateLimit(key: string, maxAttempts: number, windowMs: number): boolean {
+  const now = Date.now();
+  const entry = _rateLimits.get(key);
+  if (!entry || now > entry.resetAt) {
+    _rateLimits.set(key, { count: 1, resetAt: now + windowMs });
+    return true; // allowed
+  }
+  entry.count++;
+  if (entry.count > maxAttempts) return false; // blocked
+  return true;
+}
+// Clean up stale entries every 10 minutes
+setInterval(() => {
+  const now = Date.now();
+  for (const [k, v] of _rateLimits) { if (now > v.resetAt) _rateLimits.delete(k); }
+}, 10 * 60 * 1000);
+
+function requireAuth(req: Request, res: Response, next: NextFunction) {
+  if (!req.session.userId) {
+    res.redirect("/login?next=" + encodeURIComponent(req.path));
+    return;
+  }
+  next();
+}
+
+function requireAdmin(req: Request, res: Response, next: NextFunction) {
+  if (!req.session.userId) { res.redirect("/login?next=" + encodeURIComponent(req.path)); return; }
+  if (req.session.userRole !== "admin") { res.status(403).send(`<!DOCTYPE html><html><head><title>Access Denied</title><link rel="stylesheet" href="/public/css/style.css"></head><body>${nav("", req)}<div class="container"><div class="admin-denied"><h2>🔒 Admin Only</h2><p>You don't have permission to view this page.</p><a href="/" class="btn-primary">Back to Screener</a></div></div></body></html>`); return; }
+  next();
+}
+
+function userIsPremium(req: Request): boolean {
+  const role = req.session?.userRole;
+  return role === "premium" || role === "admin";
+}
+
+/** Returns true if current IST time is within NSE market hours (Mon–Fri 9:15–15:30) */
+function isMarketHours(): boolean {
+  const ist  = new Date(Date.now() + 5.5 * 60 * 60 * 1000);
+  const day  = ist.getUTCDay(); // 0=Sun, 6=Sat
+  if (day === 0 || day === 6) return false;
+  const mins = ist.getUTCHours() * 60 + ist.getUTCMinutes();
+  return mins >= 555 && mins <= 930; // 9:15=555, 15:30=930
+}
+
+/** Send OTP via Fast2SMS. Falls back to console log when FAST2SMS_API_KEY is unset. */
+async function sendSmsOtp(mobile: string, otp: string): Promise<boolean> {
+  const apiKey = process.env.FAST2SMS_API_KEY;
+  if (!apiKey) {
+    console.log(`[OTP-DEV] Mobile: ${mobile} | OTP: ${otp}`);
+    return true;
+  }
+  try {
+    const url = `https://www.fast2sms.com/dev/bulkV2?authorization=${encodeURIComponent(apiKey)}&variables_values=${otp}&route=otp&numbers=${mobile}`;
+    const resp = await fetch(url, { signal: AbortSignal.timeout(5000), headers: { "cache-control": "no-cache" } });
+    const data = await resp.json() as any;
+    return data.return === true;
+  } catch { return false; }
+}
+
+// ── Razorpay ──────────────────────────────────────────────────────────────────
+const RAZORPAY_KEY_ID     = process.env.RAZORPAY_KEY_ID     || "";
+const RAZORPAY_KEY_SECRET = process.env.RAZORPAY_KEY_SECRET || "";
+const PREMIUM_PRICE_PAISE = 49900; // ₹499
+
+// ── Template helper ────────────────────────────────────────────────────────────
 function fmt(n: number | null | undefined, decimals = 2): string {
   if (n == null) return "—";
   return n.toFixed(decimals);
@@ -87,67 +321,823 @@ function changeColor(c: number | null): string {
 }
 
 // ── Nav HTML ──────────────────────────────────────────────────────────────────
-function nav(active: string): string {
-  const links = [
-    ["screener", "/", "🔍 Screener"],
-    ["watchlists", "/watchlists", "⭐ Watchlists"],
+function nav(active: string, req?: Request): string {
+  const isLoggedIn = !!(req?.session?.userId);
+  const userName   = req?.session?.userName || "";
+  const userRole   = req?.session?.userRole || "guest";
+  const isAdmin    = userRole === "admin";
+  const isPremium  = userRole === "premium" || isAdmin;
+
+  // ── Tier-based dropdowns ───────────────────────────────────────────────────
+
+  // 🟢 BEGINNERS — learn by watching, no real money
+  const beginnerLinks: [string, string, string][] = [
+    ["paper-trade",  "/paper-trade",  "📋 Paper Trade"],
+    ["strategies",   "/strategies",   "🎓 How Strategies Work"],
+    ["about",        "/about",        "ℹ️ About ZeroScreen"],
   ];
+
+  // 🟡 TRADERS (mid-level) — curated ideas + tools
+  const traderLinks: [string, string, string][] = [
+    ["today",            "/today",            "🔥 Today's Picks"],
+    ["signals",          "/signals",          "📡 Live Bot Signals"],
+    ["dashboard",        "/dashboard",        "📊 Bot Performance"],
+    ["strategy-builder", "/strategy-builder", "🔨 Strategy Builder"],
+    ["my-paper-trade",   "/my-paper-trade",   "📋 My Paper Trade"],
+  ];
+
+  // 🔴 INVESTORS (advanced) — do your own research
+  const investorLinks: [string, string, string][] = [
+    ["home",    "/",        "🔍 Stock Screener"],
+    ["compare", "/compare", "⚖️ Compare Stocks"],
+    ...(isLoggedIn
+      ? [["watchlists", "/watchlists", "⭐ Watchlists"] as [string,string,string],
+         ["alerts",     "/alerts",     "🔔 Alerts"] as [string,string,string]]
+      : []),
+  ];
+
+  // Admin dropdown — admin only
+  const adminLinks: [string, string, string][] = isAdmin ? [
+    ["admin",           "/admin",           "🧠 Overview"],
+    ["admin-picks",     "/admin/picks",     "🛠 Picks Manager"],
+    ["admin-users",     "/admin/users",     "👥 Users"],
+    ["admin-analytics", "/admin/analytics", "📊 Analytics"],
+    ["admin-content",   "/admin/content",   "📢 Content"],
+    ["admin-signals",   "/admin/signals",   "🤖 Signal Control"],
+    ["admin-subs",      "/admin/subs",      "💳 Subscriptions"],
+  ] : [];
+
+  const allTiered = [...beginnerLinks, ...traderLinks, ...investorLinks];
+  const beginnerActive = beginnerLinks.some(([k]) => k === active);
+  const traderActive   = traderLinks.some(([k]) => k === active);
+  const investorActive = investorLinks.some(([k]) => k === active);
+  const adminActive    = adminLinks.some(([k]) => k === active);
+
+  function dropMenu(id: string, btnLabel: string, isActive: boolean, sections: {label: string, color: string, links: [string,string,string][]}[]): string {
+    return `<div class="nav-more" id="nav-drop-${id}">
+      <button class="nav-more-btn${isActive ? " active" : ""}" id="nav-drop-btn-${id}" aria-haspopup="true" aria-expanded="false">
+        ${btnLabel} <span class="nav-more-chevron">▾</span>
+      </button>
+      <div class="nav-more-drop nav-tier-drop" id="nav-drop-menu-${id}" role="menu">
+        ${sections.map(sec => `
+          <div class="nav-tier-section">
+            <div class="nav-tier-label" style="border-left:3px solid ${sec.color}">${sec.label}</div>
+            ${sec.links.map(([key, href, label]) =>
+              `<a href="${href}" class="${active === key ? "active" : ""}" role="menuitem">${label}</a>`
+            ).join("")}
+          </div>`).join("")}
+      </div>
+    </div>`;
+  }
+
+  const exploreDropHtml = dropMenu("explore", "🧭 Explore", beginnerActive || traderActive || investorActive, [
+    { label: "🟢 Beginners — Learn First", color: "#10b981", links: beginnerLinks },
+    { label: "🟡 Traders — Ideas & Tools",  color: "#f59e0b", links: traderLinks },
+    { label: "🔴 Investors — Research",     color: "#ef4444", links: investorLinks },
+  ]);
+
+  const adminDropHtml = isAdmin
+    ? `<div class="nav-more" id="nav-drop-admin">
+        <button class="nav-more-btn${adminActive ? " active" : ""}" id="nav-drop-btn-admin" aria-haspopup="true" aria-expanded="false">
+          🛡️ Admin <span class="nav-more-chevron">▾</span>
+        </button>
+        <div class="nav-more-drop" id="nav-drop-menu-admin" role="menu">
+          ${adminLinks.map(([key, href, label]) =>
+            `<a href="${href}" class="${active === key ? "active" : ""}" role="menuitem">${label}</a>`
+          ).join("")}
+        </div>
+      </div>`
+    : "";
+
+  const authLinks = isLoggedIn
+    ? `<div class="nav-user">
+         ${isPremium && !isAdmin ? `<span class="nav-premium-badge" title="Premium member">💎</span>` : ""}
+         <a href="/profile" class="nav-avatar" title="My Profile">${userName.charAt(0).toUpperCase()}</a>
+         <span class="nav-name">${userName.split(" ")[0]}</span>
+         <a href="/logout" class="btn-nav-logout">Sign Out</a>
+       </div>`
+    : `<div class="nav-auth">
+         <a href="/premium" class="btn-nav-premium${active === "premium" ? " active" : ""}">⚡ Premium</a>
+         <a href="/login" class="btn-nav-login">Sign In</a>
+       </div>`;
+
   return `<nav class="topnav">
-    <span class="brand">ZeroScreen</span>
-    ${links.map(([key, href, label]) =>
-      `<a href="${href}" class="${active === key ? "active" : ""}">${label}</a>`
-    ).join("")}
-    <span class="db-stats" id="db-stats">Loading...</span>
-  </nav>`;
+    <a href="/" class="brand">Zero<span>Screen</span></a>
+    <button class="hamburger" id="hamburger" aria-label="Toggle menu" aria-expanded="false">
+      <span></span><span></span><span></span>
+    </button>
+    <div class="nav-links" id="nav-links">
+      <a href="/" class="${active === "home" ? "active" : ""}">🔍 Screener</a>
+      <a href="/today" class="${active === "today" ? "active" : ""}">🔥 Picks</a>
+      <a href="/signals" class="${active === "signals" ? "active" : ""}">📡 Signals</a>
+      ${exploreDropHtml}
+      ${adminDropHtml}
+    </div>
+    <div class="nav-search" id="nav-search-wrap">
+      <input type="text" id="nav-search" class="nav-search-input" placeholder="🔎 Search stocks…" autocomplete="off" aria-label="Search stocks">
+      <div class="nav-search-results" id="nav-search-results"></div>
+    </div>
+    <button class="btn-dark-toggle" id="dark-toggle" title="Toggle dark mode" aria-label="Toggle dark mode" onclick="toggleDarkMode()">🌙</button>
+    ${authLinks}
+  </nav>
+  <div class="ticker-wrap" id="ticker-wrap" aria-label="Market news ticker">
+    <span class="ticker-label">📰 MARKET</span>
+    <div class="ticker-viewport">
+      <div class="ticker-track" id="ticker-track">Loading news…</div>
+    </div>
+  </div>`;
 }
+
+// ── Auth pages ─────────────────────────────────────────────────────────────────
+
+function authLayout(title: string, content: string): string {
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>${title} — ZeroScreen</title>
+  <link rel="stylesheet" href="/public/css/style.css">
+</head>
+<body class="auth-body">
+  <div class="auth-wrapper">
+    <div class="auth-brand">
+      <a href="/" class="auth-logo">Zero<span>Screen</span></a>
+      <p class="auth-tagline">India's sharpest NSE stock screener</p>
+    </div>
+    <div class="auth-card">
+      ${content}
+    </div>
+    <p class="auth-footer">© 2026 ZeroScreen · <a href="/">Back to app</a></p>
+  </div>
+</body>
+</html>`;
+}
+
+// GET /signup
+app.get("/signup", (req: Request, res: Response) => {
+  if (req.session.userId) { res.redirect("/"); return; }
+  const error = req.query.error as string | undefined;
+  const googleBtn = GOOGLE_CLIENT_ID
+    ? `<a href="/auth/google" class="btn-google">
+         <svg width="18" height="18" viewBox="0 0 18 18" xmlns="http://www.w3.org/2000/svg" style="flex-shrink:0">
+           <path fill="#4285F4" d="M17.64 9.2c0-.637-.057-1.251-.164-1.84H9v3.481h4.844c-.209 1.125-.843 2.078-1.796 2.717v2.258h2.908c1.702-1.567 2.684-3.875 2.684-6.615z"/>
+           <path fill="#34A853" d="M9 18c2.43 0 4.467-.806 5.956-2.18l-2.908-2.259c-.806.54-1.837.86-3.048.86-2.344 0-4.328-1.584-5.036-3.711H.957v2.332A8.997 8.997 0 0 0 9 18z"/>
+           <path fill="#FBBC05" d="M3.964 10.71A5.41 5.41 0 0 1 3.682 9c0-.593.102-1.17.282-1.71V4.958H.957A8.996 8.996 0 0 0 0 9c0 1.452.348 2.827.957 4.042l3.007-2.332z"/>
+           <path fill="#EA4335" d="M9 3.58c1.321 0 2.508.454 3.44 1.345l2.582-2.58C13.463.891 11.426 0 9 0A8.997 8.997 0 0 0 .957 4.958L3.964 7.29C4.672 5.163 6.656 3.58 9 3.58z"/>
+         </svg>
+         Sign up with Google
+       </a>
+       <div class="auth-divider"><span>or create with email</span></div>`
+    : "";
+  res.send(authLayout("Create Account", `
+    <h2>Create your account</h2>
+    <p class="auth-sub">Free forever. Watchlists, alerts &amp; more.</p>
+    ${error ? `<div class="auth-error">${esc(error)}</div>` : ""}
+    ${googleBtn}
+    <form class="auth-form" method="POST" action="/signup">
+      <div class="form-group">
+        <label>Full Name</label>
+        <input type="text" name="name" placeholder="Rahul Sharma" required autocomplete="name">
+      </div>
+      <div class="form-group">
+        <label>Email address</label>
+        <input type="email" name="email" placeholder="you@example.com" required autocomplete="email">
+      </div>
+      <div class="form-group">
+        <label>Password <span class="hint">(min 8 chars)</span></label>
+        <input type="password" name="password" placeholder="••••••••" minlength="8" required autocomplete="new-password">
+      </div>
+      <button type="submit" class="btn-auth">Create Account →</button>
+    </form>
+    <p class="auth-switch">Already have an account? <a href="/login">Sign in</a></p>
+    <p class="auth-switch" style="margin-top:12px;padding-top:12px;border-top:1px solid var(--border)">
+      <a href="/" style="color:var(--text-muted);font-size:13px">Continue as guest →</a>
+    </p>
+  `));
+});
+
+// POST /signup
+app.post("/signup", async (req: Request, res: Response) => {
+  const ip = (req.headers["x-forwarded-for"] as string || req.socket.remoteAddress || "unknown").split(",")[0].trim();
+  if (!checkRateLimit(`signup:${ip}`, 5, 60 * 60 * 1000)) {
+    res.redirect("/signup?error=Too+many+signups+from+this+IP.+Please+try+later."); return;
+  }
+  const { name, email, password } = req.body;
+  if (!name || !email || !password) {
+    res.redirect("/signup?error=All+fields+are+required"); return;
+  }
+  if (password.length < 8) {
+    res.redirect("/signup?error=Password+must+be+at+least+8+characters"); return;
+  }
+  const existing = await getUserByEmail(email);
+  if (existing) {
+    res.redirect("/signup?error=An+account+with+that+email+already+exists"); return;
+  }
+  const hash = await bcrypt.hash(password, 12);
+  // First ever user OR the configured ADMIN_EMAIL gets admin role
+  const userCount = await countUsers();
+  const id = await createUser(name.trim(), email.trim(), hash);
+  const isAdminEmail = ADMIN_EMAIL && email.trim().toLowerCase() === ADMIN_EMAIL;
+  const role = (userCount === 0 || isAdminEmail) ? "admin" : "user";
+  if (role === "admin") {
+    await dbRun("UPDATE users SET role = 'admin' WHERE id = ?", [id]);
+  }
+  req.session.userId = id;
+  req.session.userName = name.trim();
+  req.session.userRole = role;
+  // Send welcome email (non-blocking)
+  sendWelcomeEmail(name.trim(), email.trim()).catch(() => {});
+  // Notify admin on Telegram
+  notifyTelegram(`🆕 New ZeroScreen signup!\nName: ${name.trim()}\nEmail: ${email.trim()}\nRole: ${role}\nTime: ${new Date().toLocaleString("en-IN", { timeZone: "Asia/Kolkata" })} IST`);
+  res.redirect("/");
+});
+
+// GET /login
+app.get("/login", (req: Request, res: Response) => {
+  if (req.session.userId) { res.redirect("/"); return; }
+  const error = req.query.error as string | undefined;
+  const next  = req.query.next as string | undefined;
+  const googleBtn = GOOGLE_CLIENT_ID
+    ? `<a href="/auth/google" class="btn-google">
+         <svg width="18" height="18" viewBox="0 0 18 18" xmlns="http://www.w3.org/2000/svg" style="flex-shrink:0">
+           <path fill="#4285F4" d="M17.64 9.2c0-.637-.057-1.251-.164-1.84H9v3.481h4.844c-.209 1.125-.843 2.078-1.796 2.717v2.258h2.908c1.702-1.567 2.684-3.875 2.684-6.615z"/>
+           <path fill="#34A853" d="M9 18c2.43 0 4.467-.806 5.956-2.18l-2.908-2.259c-.806.54-1.837.86-3.048.86-2.344 0-4.328-1.584-5.036-3.711H.957v2.332A8.997 8.997 0 0 0 9 18z"/>
+           <path fill="#FBBC05" d="M3.964 10.71A5.41 5.41 0 0 1 3.682 9c0-.593.102-1.17.282-1.71V4.958H.957A8.996 8.996 0 0 0 0 9c0 1.452.348 2.827.957 4.042l3.007-2.332z"/>
+           <path fill="#EA4335" d="M9 3.58c1.321 0 2.508.454 3.44 1.345l2.582-2.58C13.463.891 11.426 0 9 0A8.997 8.997 0 0 0 .957 4.958L3.964 7.29C4.672 5.163 6.656 3.58 9 3.58z"/>
+         </svg>
+         Continue with Google
+       </a>
+       <div class="auth-divider"><span>or sign in with email</span></div>`
+    : "";
+  res.send(`<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Sign In — ZeroScreen</title>
+  <link rel="stylesheet" href="/public/css/style.css">
+</head>
+<body class="auth-body landing-page">
+  <div class="landing-split">
+
+    <!-- LEFT: Hero panel -->
+    <div class="landing-hero">
+      <div class="landing-hero-inner">
+        <a href="/" class="landing-logo">Zero<span>Screen</span></a>
+        <div class="landing-badge">🇮🇳 Built for Indian Markets</div>
+        <h1 class="landing-headline">Screen 1,700+ NSE Stocks.<br>Track a Live Trading Bot.<br><span>100% Free.</span></h1>
+        <p class="landing-desc">India's sharpest stock screener with fundamental filters, strategy presets, and a live BANKNIFTY options bot — all in one place.</p>
+        <div class="landing-features">
+          <div class="lf-item">
+            <span class="lf-icon">🔍</span>
+            <div>
+              <strong>Smart Screener</strong>
+              <span>ROCE, D/E, P/E, promoter %, 14 strategy presets</span>
+            </div>
+          </div>
+          <div class="lf-item">
+            <span class="lf-icon">📡</span>
+            <div>
+              <strong>Live Trading Bot</strong>
+              <span>BANKNIFTY options · real trades · 8s auto-refresh</span>
+            </div>
+          </div>
+          <div class="lf-item">
+            <span class="lf-icon">📊</span>
+            <div>
+              <strong>5-Year Backtest</strong>
+              <span>Monthly P&amp;L breakdown · equity curve · win rates</span>
+            </div>
+          </div>
+          <div class="lf-item">
+            <span class="lf-icon">⭐</span>
+            <div>
+              <strong>Watchlists &amp; Alerts</strong>
+              <span>Save stocks · daily email digest when filters match</span>
+            </div>
+          </div>
+        </div>
+        <div class="landing-stats">
+          <div class="ls-stat"><strong>1,700+</strong><span>NSE Stocks</span></div>
+          <div class="ls-stat"><strong>14</strong><span>Strategies</span></div>
+          <div class="ls-stat"><strong>Free</strong><span>Always</span></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- RIGHT: Auth form -->
+    <div class="landing-auth">
+      <div class="auth-card">
+        <h2>Welcome back</h2>
+        <p class="auth-sub">Sign in to your account or browse as guest</p>
+        ${error ? `<div class="auth-error">${esc(error)}</div>` : ""}
+        <a href="/?guest=1" class="btn-guest">👀 Continue as Guest — Browse freely</a>
+        <div class="auth-divider"><span>or sign in for full access</span></div>
+        ${googleBtn}
+        <form class="auth-form" method="POST" action="/login">
+          <input type="hidden" name="next" value="${esc(next) || "/"}">
+          <div class="form-group">
+            <label>Email address</label>
+            <input type="email" name="email" placeholder="you@example.com" required autocomplete="email">
+          </div>
+          <div class="form-group">
+            <label>Password</label>
+            <input type="password" name="password" placeholder="••••••••" required autocomplete="current-password">
+          </div>
+          <button type="submit" class="btn-auth">Sign In →</button>
+        </form>
+        <p class="auth-switch"><a href="/forgot-password">Forgot password?</a></p>
+        <p class="auth-switch">New here? <a href="/signup">Create a free account</a></p>
+      </div>
+    </div>
+
+  </div>
+</body>
+</html>`);
+});
+
+// POST /login
+app.post("/login", async (req: Request, res: Response) => {
+  const ip = (req.headers["x-forwarded-for"] as string || req.socket.remoteAddress || "unknown").split(",")[0].trim();
+  if (!checkRateLimit(`login:${ip}`, 10, 15 * 60 * 1000)) {
+    res.redirect("/login?error=Too+many+attempts.+Please+wait+15+minutes."); return;
+  }
+  const { email, password, next } = req.body;
+  if (!email || !password) {
+    res.redirect("/login?error=Email+and+password+are+required"); return;
+  }
+  const user = await getUserByEmail(email);
+  if (!user) {
+    res.redirect("/login?error=Invalid+email+or+password"); return;
+  }
+  const match = await bcrypt.compare(password, user.password);
+  if (!match) {
+    res.redirect("/login?error=Invalid+email+or+password"); return;
+  }
+  req.session.userId = user.id;
+  req.session.userName = user.name;
+  req.session.userRole = user.role;
+  const redirectTo = (next && next.startsWith("/") && !next.startsWith("//")) ? next : "/";
+  res.redirect(redirectTo);
+});
+
+// GET /logout
+app.get("/logout", (req: Request, res: Response) => {
+  req.session.destroy(err => {
+    res.clearCookie("connect.sid", { path: "/" });
+    res.redirect("/login");
+  });
+});
+
+// ── Google OAuth ───────────────────────────────────────────────────────────────
+app.get("/auth/google", (req: Request, res: Response) => {
+  if (!GOOGLE_CLIENT_ID) {
+    res.redirect("/login?error=Google+Sign-In+is+not+configured+yet"); return;
+  }
+  const state = crypto.randomBytes(16).toString("hex");
+  req.session.oauthState = state;
+  const url = new URL("https://accounts.google.com/o/oauth2/v2/auth");
+  url.searchParams.set("client_id",     GOOGLE_CLIENT_ID);
+  url.searchParams.set("redirect_uri",  GOOGLE_CALLBACK_URL);
+  url.searchParams.set("response_type", "code");
+  url.searchParams.set("scope",         "openid email profile");
+  url.searchParams.set("state",         state);
+  url.searchParams.set("prompt",        "select_account");
+  res.redirect(url.toString());
+});
+
+app.get("/auth/google/callback", async (req: Request, res: Response) => {
+  if (!GOOGLE_CLIENT_ID || !GOOGLE_CLIENT_SECRET) {
+    res.redirect("/login?error=Google+Sign-In+not+configured"); return;
+  }
+  const { code, state, error: oauthErr } = req.query;
+  if (oauthErr)                            { res.redirect("/login?error=Google+sign-in+cancelled"); return; }
+  if (!code || state !== req.session.oauthState) { res.redirect("/login?error=OAuth+state+mismatch"); return; }
+  try {
+    // Exchange code for access token
+    const tokenRes = await fetch("https://oauth2.googleapis.com/token", {
+      method:  "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body:    new URLSearchParams({
+        code:          code as string,
+        client_id:     GOOGLE_CLIENT_ID,
+        client_secret: GOOGLE_CLIENT_SECRET,
+        redirect_uri:  GOOGLE_CALLBACK_URL,
+        grant_type:    "authorization_code",
+      }),
+    });
+    const tokenData = await tokenRes.json() as { access_token?: string };
+    if (!tokenData.access_token) throw new Error("No access token from Google");
+
+    // Get Google user info
+    const infoRes  = await fetch("https://www.googleapis.com/oauth2/v2/userinfo", {
+      headers: { Authorization: `Bearer ${tokenData.access_token}` },
+    });
+    const gUser = await infoRes.json() as { id: string; email: string; name: string; picture?: string };
+
+    // Find or create local user
+    let user = await getUserByEmail(gUser.email);
+    if (!user) {
+      const userCount = await countUsers();
+      const id = await createUser(gUser.name || gUser.email.split("@")[0], gUser.email, "");
+      const isAdminEmail = ADMIN_EMAIL && gUser.email.toLowerCase() === ADMIN_EMAIL;
+      const role = (userCount === 0 || isAdminEmail) ? "admin" : "user";
+      await dbRun("UPDATE users SET google_id=?, avatar_url=?, role=? WHERE id=?", [gUser.id, gUser.picture || "", role, id]);
+      user = await getUserById(id);
+      notifyTelegram(`🆕 New ZeroScreen signup via Google!\nName: ${gUser.name}\nEmail: ${gUser.email}`);
+    } else {
+      // Update google_id if not set
+      await dbRun("UPDATE users SET google_id=COALESCE(google_id,?), avatar_url=COALESCE(avatar_url,?) WHERE id=?",
+        [gUser.id, gUser.picture || "", user.id]);
+    }
+    if (!user) throw new Error("User not found after create");
+    req.session.userId   = user.id;
+    req.session.userName = user.name;
+    req.session.userRole = user.role;
+    res.redirect("/");
+  } catch {
+    res.redirect("/login?error=Google+sign-in+failed.+Please+try+again");
+  }
+});
+
+// ── Forgot / Reset password ────────────────────────────────────────────────────
+app.get("/forgot-password", (req: Request, res: Response) => {
+  if (req.session.userId) { res.redirect("/"); return; }
+  const sent = req.query.sent === "1";
+  const error = req.query.error as string | undefined;
+  res.send(authLayout("Forgot Password", `
+    <h2>Reset your password</h2>
+    <p class="auth-sub">Enter your email and we'll send a reset link.</p>
+    ${sent ? '<div class="auth-success">✅ If that email exists, a reset link has been sent.</div>' : ""}
+    ${error ? `<div class="auth-error">${esc(error)}</div>` : ""}
+    <form class="auth-form" method="POST" action="/forgot-password">
+      <div class="form-group">
+        <label>Email address</label>
+        <input type="email" name="email" placeholder="you@example.com" required autocomplete="email">
+      </div>
+      <button type="submit" class="btn-auth">Send Reset Link →</button>
+    </form>
+    <p class="auth-switch"><a href="/login">← Back to Sign In</a></p>
+  `));
+});
+
+app.post("/forgot-password", async (req: Request, res: Response) => {
+  const ip = (req.headers["x-forwarded-for"] as string || req.socket.remoteAddress || "unknown").split(",")[0].trim();
+  if (!checkRateLimit(`forgot:${ip}`, 5, 60 * 60 * 1000)) {
+    res.redirect("/forgot-password?sent=1"); return; // silently swallow — don't reveal rate limit
+  }
+  const { email } = req.body;
+  if (!email) { res.redirect("/forgot-password?error=Email+is+required"); return; }
+  const user = await getUserByEmail(email.trim().toLowerCase());
+  if (user) {
+    const token = crypto.randomBytes(32).toString("hex");
+    await createResetToken(user.id, token);
+    const APP_URL = (process.env.APP_URL || `http://localhost:${PORT}`).replace(/\/$/, "");
+    const resetUrl = `${APP_URL}/reset-password/${token}`;
+    sendPasswordResetEmail(user.email, user.name, resetUrl).catch(() => {});
+  }
+  // Always show same message to prevent email enumeration
+  res.redirect("/forgot-password?sent=1");
+});
+
+app.get("/reset-password/:token", async (req: Request, res: Response) => {
+  if (req.session.userId) { res.redirect("/"); return; }
+  const record = await getResetToken(req.params.token);
+  const expired = !record || record.used === 1 || new Date(record.expires_at) < new Date();
+  if (expired) {
+    res.send(authLayout("Link Expired", `
+      <h2>Link expired or invalid</h2>
+      <p class="auth-sub">This reset link has already been used or expired.</p>
+      <a href="/forgot-password" class="btn-auth" style="text-align:center;display:block">Request a new link →</a>
+    `));
+    return;
+  }
+  const error = req.query.error as string | undefined;
+  res.send(authLayout("Set New Password", `
+    <h2>Set a new password</h2>
+    <p class="auth-sub">Choose a strong password for your account.</p>
+    ${error ? `<div class="auth-error">${esc(error)}</div>` : ""}
+    <form class="auth-form" method="POST" action="/reset-password/${req.params.token}">
+      <div class="form-group">
+        <label>New Password <span class="hint">(min 8 chars)</span></label>
+        <input type="password" name="password" placeholder="••••••••" minlength="8" required autocomplete="new-password">
+      </div>
+      <div class="form-group">
+        <label>Confirm Password</label>
+        <input type="password" name="confirm" placeholder="••••••••" minlength="8" required autocomplete="new-password">
+      </div>
+      <button type="submit" class="btn-auth">Set Password →</button>
+    </form>
+  `));
+});
+
+app.post("/reset-password/:token", async (req: Request, res: Response) => {
+  const { password, confirm } = req.body;
+  const record = await getResetToken(req.params.token);
+  const expired = !record || record.used === 1 || new Date(record.expires_at) < new Date();
+  if (expired) { res.redirect("/forgot-password?error=Link+expired+please+request+again"); return; }
+  if (!password || password.length < 8) {
+    res.redirect(`/reset-password/${req.params.token}?error=Password+must+be+at+least+8+characters`); return;
+  }
+  if (password !== confirm) {
+    res.redirect(`/reset-password/${req.params.token}?error=Passwords+do+not+match`); return;
+  }
+  const hash = await bcrypt.hash(password, 12);
+  await updateUserPassword(record.user_id, hash);
+  await markResetTokenUsed(req.params.token);
+  res.redirect("/login?success=Password+updated+successfully+please+sign+in");
+});
+
+// ── Profile page ───────────────────────────────────────────────────────────────
+app.get("/profile", requireAuth, async (req: Request, res: Response) => {
+  const user = await getUserById(req.session.userId!);
+  if (!user) { res.redirect("/login"); return; }
+  const success = req.query.success as string | undefined;
+  const error   = req.query.error   as string | undefined;
+  res.send(`<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Profile — ZeroScreen</title>
+  <link rel="stylesheet" href="/public/css/style.css">
+</head>
+<body>
+  ${nav("profile", req)}
+  <div class="container" style="max-width:620px">
+    <div class="page-header">
+      <h1>👤 My Profile</h1>
+    </div>
+    ${success ? `<div class="auth-success" style="margin-bottom:18px">✅ ${esc(success)}</div>` : ""}
+    ${error   ? `<div class="auth-error"   style="margin-bottom:18px">⚠️ ${esc(error)}</div>` : ""}
+
+    <!-- Change name -->
+    <div class="profile-card">
+      <h2>Display Name</h2>
+      <form method="POST" action="/profile/name" class="auth-form">
+        <div class="form-group">
+          <label>Full Name</label>
+          <input type="text" name="name" value="${user.name.replace(/"/g, "&quot;")}" required minlength="2" maxlength="80" autocomplete="name">
+        </div>
+        <button type="submit" class="btn-primary">Update Name</button>
+      </form>
+    </div>
+
+    <!-- Change password -->
+    <div class="profile-card">
+      <h2>Change Password</h2>
+      <form method="POST" action="/profile/password" class="auth-form">
+        <div class="form-group">
+          <label>Current Password</label>
+          <input type="password" name="current" placeholder="••••••••" required autocomplete="current-password">
+        </div>
+        <div class="form-group">
+          <label>New Password <span class="hint">(min 8 chars)</span></label>
+          <input type="password" name="password" placeholder="••••••••" minlength="8" required autocomplete="new-password">
+        </div>
+        <div class="form-group">
+          <label>Confirm New Password</label>
+          <input type="password" name="confirm" placeholder="••••••••" minlength="8" required autocomplete="new-password">
+        </div>
+        <button type="submit" class="btn-primary">Change Password</button>
+      </form>
+    </div>
+
+    <!-- Account info -->
+    <div class="profile-card profile-info">
+      <div class="profile-info-row"><span>Email</span><strong>${user.email}</strong></div>
+      <div class="profile-info-row"><span>Role</span><span class="role-badge role-${user.role}">${user.role}</span></div>
+      <div class="profile-info-row"><span>Member since</span><strong>${new Date(user.created_at).toLocaleDateString("en-IN", { day: "2-digit", month: "long", year: "numeric" })}</strong></div>
+    </div>
+  </div>
+  <script src="/public/js/app.js"></script>
+</body>
+</html>`);
+});
+
+app.post("/profile/name", requireAuth, async (req: Request, res: Response) => {
+  const { name } = req.body;
+  if (!name || name.trim().length < 2) {
+    res.redirect("/profile?error=Name+must+be+at+least+2+characters"); return;
+  }
+  await updateUserName(req.session.userId!, name.trim().substring(0, 80));
+  req.session.userName = name.trim();
+  res.redirect("/profile?success=Name+updated+successfully");
+});
+
+app.post("/profile/password", requireAuth, async (req: Request, res: Response) => {
+  const { current, password, confirm } = req.body;
+  const user = await getUserById(req.session.userId!);
+  if (!user) { res.redirect("/login"); return; }
+  const match = await bcrypt.compare(current, user.password);
+  if (!match) { res.redirect("/profile?error=Current+password+is+incorrect"); return; }
+  if (!password || password.length < 8) { res.redirect("/profile?error=New+password+must+be+at+least+8+characters"); return; }
+  if (password !== confirm) { res.redirect("/profile?error=Passwords+do+not+match"); return; }
+  const hash = await bcrypt.hash(password, 12);
+  await updateUserPassword(req.session.userId!, hash);
+  res.redirect("/profile?success=Password+changed+successfully");
+});
+
+// ── GET /verify-mobile ─────────────────────────────────────────────────────────
+app.get("/verify-mobile", requireAuth, (req: Request, res: Response) => {
+  const mobile = esc(req.query.mobile as string || "");
+  const sent   = req.query.sent === "1";
+  const err    = esc(req.query.err as string || "");
+  const next   = esc(req.query.next as string || "/my-paper-trade");
+  res.send(`<!DOCTYPE html><html lang="en"><head>
+  <meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Verify Mobile — ZeroScreen</title>
+  <link rel="stylesheet" href="/public/css/style.css">
+  <style>
+    .vm-card{max-width:420px;margin:60px auto;background:var(--card-bg);border:1px solid var(--border);border-radius:16px;padding:32px 36px}
+    .vm-title{font-size:1.4rem;font-weight:800;margin-bottom:6px}
+    .vm-sub{color:var(--text-muted);font-size:0.88rem;margin-bottom:24px}
+    .vm-label{font-size:0.78rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:.06em;display:block;margin-bottom:5px}
+    .vm-input{width:100%;padding:10px 14px;background:var(--input-bg);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:1rem;box-sizing:border-box}
+    .vm-btn{width:100%;padding:11px;background:var(--accent);color:#fff;border:none;border-radius:8px;font-size:0.95rem;font-weight:700;cursor:pointer;margin-top:12px}
+    .vm-btn:hover{opacity:.88}
+    .vm-err{background:#ef444422;color:#ef4444;border:1px solid #ef444455;border-radius:8px;padding:10px 14px;margin-bottom:16px;font-size:0.88rem}
+    .vm-ok{background:#10b98122;color:#10b981;border:1px solid #10b98155;border-radius:8px;padding:10px 14px;margin-bottom:16px;font-size:0.88rem}
+    .vm-note{font-size:0.78rem;color:var(--text-muted);margin-top:14px;text-align:center}
+  </style>
+</head><body>${nav("", req)}
+<div class="container">
+  <div class="vm-card">
+    <div class="vm-title">📱 Verify Mobile Number</div>
+    <div class="vm-sub">Required once before you can paper trade. We'll send a 6-digit OTP.</div>
+    ${err ? `<div class="vm-err">❌ ${err}</div>` : ""}
+    ${sent ? `<div class="vm-ok">✅ OTP sent to +91 ${mobile}. Enter it below.</div>` : ""}
+    ${!sent ? `
+    <form method="POST" action="/verify-mobile/send">
+      <input type="hidden" name="next" value="${next}">
+      <label class="vm-label">Mobile Number (India)</label>
+      <input class="vm-input" type="tel" name="mobile" placeholder="10-digit mobile number" maxlength="10" pattern="[0-9]{10}" required>
+      <button class="vm-btn">Send OTP →</button>
+    </form>` : `
+    <form method="POST" action="/verify-mobile/confirm">
+      <input type="hidden" name="mobile" value="${mobile}">
+      <input type="hidden" name="next" value="${next}">
+      <label class="vm-label">Enter 6-digit OTP</label>
+      <input class="vm-input" type="text" name="otp" placeholder="123456" maxlength="6" pattern="[0-9]{6}" required autocomplete="one-time-code">
+      <button class="vm-btn">Verify & Continue →</button>
+    </form>
+    <div class="vm-note"><a href="/verify-mobile">Resend OTP</a></div>`}
+  </div>
+</div>
+<script src="/public/js/app.js"></script></body></html>`);
+});
+
+// POST /verify-mobile/send — generate & send OTP
+app.post("/verify-mobile/send", requireAuth, async (req: Request, res: Response) => {
+  const raw    = ((req.body.mobile as string) || "").replace(/\D/g, "");
+  const mobile = raw.slice(-10);
+  const next   = ((req.body.next as string) || "/my-paper-trade").replace(/[^a-zA-Z0-9/?=&_\-]/g, "");
+  if (mobile.length !== 10) {
+    res.redirect(`/verify-mobile?err=${encodeURIComponent("Please enter a valid 10-digit mobile number")}&next=${encodeURIComponent(next)}`); return;
+  }
+  const ip = (req.headers["x-forwarded-for"] as string || req.socket.remoteAddress || "x").split(",")[0].trim();
+  if (!checkRateLimit(`otp:${ip}:${mobile}`, 3, 60 * 60 * 1000)) {
+    res.redirect(`/verify-mobile?err=${encodeURIComponent("Too many OTP requests. Please wait an hour.")}&next=${encodeURIComponent(next)}`); return;
+  }
+  const otp = Math.floor(100000 + Math.random() * 900000).toString();
+  await storePhoneOtp(mobile, otp);
+  const sent = await sendSmsOtp(mobile, otp);
+  if (!sent) {
+    res.redirect(`/verify-mobile?err=${encodeURIComponent("Failed to send OTP. Please try again.")}&next=${encodeURIComponent(next)}`); return;
+  }
+  res.redirect(`/verify-mobile?mobile=${mobile}&sent=1&next=${encodeURIComponent(next)}`);
+});
+
+// POST /verify-mobile/confirm — verify OTP
+app.post("/verify-mobile/confirm", requireAuth, async (req: Request, res: Response) => {
+  const mobile = ((req.body.mobile as string) || "").replace(/\D/g, "").slice(-10);
+  const otp    = ((req.body.otp as string) || "").trim();
+  const next   = ((req.body.next as string) || "/my-paper-trade").replace(/[^a-zA-Z0-9/?=&_\-]/g, "");
+  if (mobile.length !== 10 || !/^\d{6}$/.test(otp)) {
+    res.redirect(`/verify-mobile?mobile=${mobile}&sent=1&err=${encodeURIComponent("Invalid input")}&next=${encodeURIComponent(next)}`); return;
+  }
+  const ok = await verifyPhoneOtp(mobile, otp);
+  if (!ok) {
+    res.redirect(`/verify-mobile?mobile=${mobile}&sent=1&err=${encodeURIComponent("Invalid or expired OTP. Please try again.")}&next=${encodeURIComponent(next)}`); return;
+  }
+  await setUserMobile(req.session.userId!, mobile);
+  req.session.mobileVerified = true;
+  res.redirect(next + (next.includes("?") ? "&" : "?") + "msg=" + encodeURIComponent("Mobile verified! You can now paper trade."));
+});
 
 // ── GET / — Screener ───────────────────────────────────────────────────────────
 app.get("/", async (req: Request, res: Response) => {
+  // Redirect unauthenticated non-guest users to login
+  if (!req.session?.userId) {
+    if (req.query.guest === "1") {
+      req.session.guestMode = true; // persist guest choice
+    } else if (!req.session?.guestMode) {
+      res.redirect("/login"); return;
+    }
+  }
+  const PAGE_SIZE = 50;
+  const page = Math.max(1, parseInt((req.query.page as string) || "1", 10));
+  const offset = (page - 1) * PAGE_SIZE;
+
   const f: ScreenerFilter = {
-    minRoce:     req.query.minRoce     ? parseFloat(req.query.minRoce as string)     : undefined,
-    maxRoce:     req.query.maxRoce     ? parseFloat(req.query.maxRoce as string)     : undefined,
-    maxDe:       req.query.maxDe       ? parseFloat(req.query.maxDe as string)       : undefined,
-    minPromoter: req.query.minPromoter ? parseFloat(req.query.minPromoter as string) : undefined,
-    maxPe:       req.query.maxPe       ? parseFloat(req.query.maxPe as string)       : undefined,
-    minPe:       req.query.minPe       ? parseFloat(req.query.minPe as string)       : undefined,
-    minPrice:    req.query.minPrice    ? parseFloat(req.query.minPrice as string)    : undefined,
-    maxPrice:    req.query.maxPrice    ? parseFloat(req.query.maxPrice as string)    : undefined,
-    minVolume:   req.query.minVolume   ? parseInt(req.query.minVolume as string, 10) : undefined,
-    minMarketCap:req.query.minMc       ? parseFloat(req.query.minMc as string)       : undefined,
-    allProfitable: req.query.allProfit === "1",
-    profitUptrend: req.query.uptrend  === "1",
-    sector:      req.query.sector      ? req.query.sector as string                  : undefined,
-    sortBy:      (req.query.sortBy as string) || "roce",
-    sortDir:     (req.query.sortDir as "asc" | "desc") || "desc",
-    limit:       100,
+    minRoce:          req.query.minRoce     ? parseFloat(req.query.minRoce as string)     : undefined,
+    maxRoce:          req.query.maxRoce     ? parseFloat(req.query.maxRoce as string)     : undefined,
+    maxDe:            req.query.maxDe       ? parseFloat(req.query.maxDe as string)       : undefined,
+    minPromoter:      req.query.minPromoter ? parseFloat(req.query.minPromoter as string) : undefined,
+    maxPe:            req.query.maxPe       ? parseFloat(req.query.maxPe as string)       : undefined,
+    minPe:            req.query.minPe       ? parseFloat(req.query.minPe as string)       : undefined,
+    minPrice:         req.query.minPrice    ? parseFloat(req.query.minPrice as string)    : undefined,
+    maxPrice:         req.query.maxPrice    ? parseFloat(req.query.maxPrice as string)    : undefined,
+    minVolume:        req.query.minVolume   ? parseInt(req.query.minVolume as string, 10) : undefined,
+    minMarketCap:     req.query.minMc       ? parseFloat(req.query.minMc as string)       : undefined,
+    maxMarketCap:     req.query.maxMc       ? parseFloat(req.query.maxMc as string)       : undefined,
+    minDividendYield: req.query.minDivYield ? parseFloat(req.query.minDivYield as string) : undefined,
+    // Indicator filters
+    minRoe:          req.query.minRoe         ? parseFloat(req.query.minRoe as string)         : undefined,
+    minEps:          req.query.minEps         ? parseFloat(req.query.minEps as string)         : undefined,
+    minCurrentRatio: req.query.minCr          ? parseFloat(req.query.minCr as string)          : undefined,
+    maxPbRatio:      req.query.maxPb          ? parseFloat(req.query.maxPb as string)          : undefined,
+    minChangePct:    req.query.minChg         ? parseFloat(req.query.minChg as string)         : undefined,
+    maxChangePct:    req.query.maxChg         ? parseFloat(req.query.maxChg as string)         : undefined,
+    near52High:      req.query.near52H        ? parseFloat(req.query.near52H as string)        : undefined,
+    near52Low:       req.query.near52L        ? parseFloat(req.query.near52L as string)        : undefined,
+    allProfitable:    req.query.allProfit === "1",
+    profitUptrend:    req.query.uptrend  === "1",
+    sector:           req.query.sector      ? req.query.sector as string                  : undefined,
+    sortBy:           (req.query.sortBy as string) || "roce",
+    sortDir:          (req.query.sortDir as "asc" | "desc") || "desc",
+    limit:            PAGE_SIZE + 1,
+    offset,
   };
 
-  const hasFilters = Object.values(req.query).some(v => v !== "");
-  const stocks = await (hasFilters ? screenStocks(f) : screenStocks({ sortBy: "roce", sortDir: "desc", limit: 50 }));
+  const FILTER_KEYS = ['minRoce','maxRoce','maxDe','minPromoter','maxPromoter','minPe','maxPe','minPrice','maxPrice','minVolume','minMc','maxMc','minDivYield','allProfit','uptrend','sector','strategy','minRoe','minEps','minCr','maxPb','minChg','maxChg','near52H','near52L'];
+  const hasFilters = FILTER_KEYS.some(k => req.query[k] && req.query[k] !== '');
+  // Only expand the filter panel when the user has MANUALLY set filters (not from a strategy click)
+  const openFilters = !req.query.strategy && FILTER_KEYS.filter(k => k !== 'strategy').some(k => req.query[k] && req.query[k] !== '');
+  const filterCount = FILTER_KEYS.filter(k => k !== 'strategy' && req.query[k] && req.query[k] !== '').length;
+  const rawStocks = await screenStocks(f);
+  const hasNextPage = rawStocks.length > PAGE_SIZE;
+  const stocks = hasNextPage ? rawStocks.slice(0, PAGE_SIZE) : rawStocks;
   const sectors = await getSectors();
+  const todayPicks = await getActivePicks();
+  const activeStrategy = req.query.strategy as string | undefined;
 
-  const rows = stocks.map(s => `
+  // Build pagination query string (preserve all filters, change page)
+  const paginationQ = new URLSearchParams(req.query as any);
+  const prevPageQ = new URLSearchParams(paginationQ); prevPageQ.set("page", String(page - 1));
+  const nextPageQ = new URLSearchParams(paginationQ); nextPageQ.set("page", String(page + 1));
+
+  const rows = stocks.map(s => {
+    const chgPill = s.change_pct != null
+      ? `<span class="${s.change_pct >= 0 ? "pill-up" : "pill-dn"}">${s.change_pct >= 0 ? "+" : ""}${fmt(s.change_pct, 2)}%</span>`
+      : "—";
+    const roceClass = s.roce >= 20 ? "roce-hi" : s.roce >= 10 ? "roce-md" : "roce-lo";
+    const deStr = s.de_ratio === 0
+      ? `<span class="badge-debtfree">💎 Debt-free</span>`
+      : `<span style="color:${deColor(s.de_ratio)}">${fmt(s.de_ratio)}</span>`;
+    const cleanSector = (s.sector && s.sector.length >= 3 && !/^\[?\d+\]?$/.test(s.sector) && !/edit|about/i.test(s.sector))
+      ? s.sector : null;
+    const sectorStr = cleanSector ? `<span class="sector-tag">${cleanSector}</span>` : "—";
+    return `
     <tr>
+      <td class="cmp-check-cell"><input type="checkbox" class="cmp-check" value="${s.symbol}" onchange="updateCompare()"></td>
       <td><a href="/stock/${s.symbol}" class="sym-link">${s.symbol}</a></td>
-      <td class="company-name">${s.company_name || "—"}</td>
-      <td>${s.sector || "—"}</td>
-      <td>₹${fmt(s.price, 2)}</td>
-      <td style="color:${changeColor(s.change_pct)}">${s.change_pct != null ? (s.change_pct >= 0 ? "+" : "") + fmt(s.change_pct, 2) + "%" : "—"}</td>
+      <td class="company-name" title="${(s.company_name || "").replace(/"/g, "&quot;")}">${s.company_name || "—"}</td>
+      <td>${sectorStr}</td>
+      <td class="td-price">₹${fmt(s.price, 2)}</td>
+      <td>${chgPill}</td>
       <td>${fmtVol(s.volume)}</td>
-      <td style="color:${roceColor(s.roce)}">${fmt(s.roce)}%</td>
+      <td class="${roceClass}">${fmt(s.roce)}%</td>
       <td>${fmt(s.roe)}%</td>
-      <td style="color:${deColor(s.de_ratio)}">${s.de_ratio === 0 ? "Debt-free 💎" : fmt(s.de_ratio)}</td>
+      <td>${deStr}</td>
       <td>${fmt(s.promoter_pct)}%</td>
       <td>${fmt(s.pe_ratio, 1)}</td>
       <td>${fmtCr(s.market_cap)}</td>
       <td>${s.all_profitable ? "✅" : "❌"} ${s.profit_uptrend ? "↑" : "↓"}</td>
-    </tr>`).join("");
+    </tr>`;
+  }).join("");
 
   const sectorOptions = sectors.map(s =>
     `<option value="${s}" ${f.sector === s ? "selected" : ""}>${s}</option>`
   ).join("");
 
+  const sortOptions = [
+    ["roce","ROCE %"], ["roe","ROE %"], ["de","D/E Ratio"], ["promoter","Promoter %"],
+    ["pe","P/E Ratio"], ["price","Price"], ["volume","Volume"],
+    ["market_cap","Market Cap"], ["change_pct","Change %"], ["dividend","Dividend Yield"],
+    ["eps","EPS"], ["book_value","Book Value"], ["current_ratio","Current Ratio"],
+  ];
+
   const q = req.query;
+
+  const strategyCards = STRATEGIES.map(s => `
+    <a href="/?strategy=${s.id}&${strategyParams(s)}" class="strategy-card s-${s.id} ${activeStrategy === s.id ? "active" : ""}">
+      <span class="strategy-icon">${s.icon}</span>
+      <div class="strategy-info">
+        <span class="strategy-label">${s.label}</span>
+        <span class="strategy-desc">${s.desc}</span>
+      </div>
+    </a>`).join("");
 
   res.send(`<!DOCTYPE html>
 <html lang="en">
@@ -158,84 +1148,662 @@ app.get("/", async (req: Request, res: Response) => {
   <link rel="stylesheet" href="/public/css/style.css">
 </head>
 <body>
-  ${nav("screener")}
-  <div class="container">
-    <h1>NSE Stock Screener</h1>
-    <form class="filter-form" method="GET" action="/">
-      <div class="filter-grid">
-        <div class="filter-group">
-          <label>ROCE % ≥</label>
-          <input type="number" name="minRoce" value="${q.minRoce || ""}" placeholder="e.g. 15" step="0.1">
-        </div>
-        <div class="filter-group">
-          <label>D/E ≤</label>
-          <input type="number" name="maxDe" value="${q.maxDe || ""}" placeholder="e.g. 1.0" step="0.1">
-        </div>
-        <div class="filter-group">
-          <label>Promoter % ≥</label>
-          <input type="number" name="minPromoter" value="${q.minPromoter || ""}" placeholder="e.g. 40" step="1">
-        </div>
-        <div class="filter-group">
-          <label>P/E ≤</label>
-          <input type="number" name="maxPe" value="${q.maxPe || ""}" placeholder="e.g. 30" step="0.5">
-        </div>
-        <div class="filter-group">
-          <label>Price ≥ ₹</label>
-          <input type="number" name="minPrice" value="${q.minPrice || ""}" placeholder="e.g. 50">
-        </div>
-        <div class="filter-group">
-          <label>Price ≤ ₹</label>
-          <input type="number" name="maxPrice" value="${q.maxPrice || ""}" placeholder="e.g. 5000">
-        </div>
-        <div class="filter-group">
-          <label>Volume ≥</label>
-          <input type="number" name="minVolume" value="${q.minVolume || ""}" placeholder="e.g. 100000">
-        </div>
-        <div class="filter-group">
-          <label>Sector</label>
-          <select name="sector">
-            <option value="">All Sectors</option>
-            ${sectorOptions}
-          </select>
-        </div>
-        <div class="filter-group">
-          <label>Sort By</label>
-          <select name="sortBy">
-            ${["roce","roe","de","promoter","pe","price","volume","market_cap","change_pct"].map(k =>
-              `<option value="${k}" ${(q.sortBy || "roce") === k ? "selected" : ""}>${k}</option>`
-            ).join("")}
-          </select>
-        </div>
-        <div class="filter-group checkbox-group">
-          <label><input type="checkbox" name="allProfit" value="1" ${q.allProfit === "1" ? "checked" : ""}> 3yr All Profitable</label>
-          <label><input type="checkbox" name="uptrend" value="1" ${q.uptrend === "1" ? "checked" : ""}> Profit Uptrend</label>
-        </div>
-      </div>
-      <div class="filter-actions">
-        <button type="submit" class="btn-primary">🔍 Screen</button>
-        <a href="/" class="btn-secondary">✕ Clear</a>
-      </div>
-    </form>
+  ${nav("home", req)}
 
-    <div class="results-header">
-      <span>${stocks.length} stocks found</span>
-      <a href="/api/screen?${new URLSearchParams(req.query as any).toString()}" class="btn-ghost" target="_blank">JSON</a>
+  <!-- ── Live Market Strip (full-width ticker) ── -->
+  <div class="market-strip-outer">
+    <div class="market-strip" id="market-strip">
+      <div class="mkt-track" id="mkt-track">
+        <!-- set A -->
+        <span class="mkt-region-label">🇮🇳 India</span>
+        <div class="mkt-tile" id="mkt-NSEI">
+          <span class="mkt-label">NIFTY 50</span>
+          <span class="mkt-price">—</span>
+          <span class="mkt-chg">—</span>
+        </div>
+        <div class="mkt-tile" id="mkt-NSEBANK">
+          <span class="mkt-label">BANK NIFTY</span>
+          <span class="mkt-price">—</span>
+          <span class="mkt-chg">—</span>
+        </div>
+        <div class="mkt-tile" id="mkt-FINNIFTY">
+          <span class="mkt-label">FIN NIFTY</span>
+          <span class="mkt-price">—</span>
+          <span class="mkt-chg">—</span>
+        </div>
+        <div class="mkt-tile" id="mkt-NIFTYIT">
+          <span class="mkt-label">NIFTY IT</span>
+          <span class="mkt-price">—</span>
+          <span class="mkt-chg">—</span>
+        </div>
+        <div class="mkt-tile" id="mkt-INDIAVIX">
+          <span class="mkt-label">INDIA VIX</span>
+          <span class="mkt-price">—</span>
+          <span class="mkt-chg">—</span>
+        </div>
+        <div class="mkt-tile" id="mkt-MIDCAP">
+          <span class="mkt-label">MIDCAP 100</span>
+          <span class="mkt-price">—</span>
+          <span class="mkt-chg">—</span>
+        </div>
+        <div class="mkt-divider" aria-hidden="true"></div>
+        <span class="mkt-region-label">🌍 Global</span>
+        <div class="mkt-tile" id="mkt-DJI">
+          <span class="mkt-label">DOW JONES</span>
+          <span class="mkt-price">—</span>
+          <span class="mkt-chg">—</span>
+        </div>
+        <div class="mkt-tile" id="mkt-IXIC">
+          <span class="mkt-label">NASDAQ</span>
+          <span class="mkt-price">—</span>
+          <span class="mkt-chg">—</span>
+        </div>
+        <div class="mkt-tile" id="mkt-GSPC">
+          <span class="mkt-label">S&amp;P 500</span>
+          <span class="mkt-price">—</span>
+          <span class="mkt-chg">—</span>
+        </div>
+        <div class="mkt-tile" id="mkt-N225">
+          <span class="mkt-label">NIKKEI 225</span>
+          <span class="mkt-price">—</span>
+          <span class="mkt-chg">—</span>
+        </div>
+        <div class="mkt-tile" id="mkt-HSI">
+          <span class="mkt-label">HANG SENG</span>
+          <span class="mkt-price">—</span>
+          <span class="mkt-chg">—</span>
+        </div>
+        <!-- set B (duplicate for seamless loop) -->
+        <span class="mkt-region-label" aria-hidden="true">🇮🇳 India</span>
+        <div class="mkt-tile mkt-clone" data-src="mkt-NSEI">
+          <span class="mkt-label">NIFTY 50</span>
+          <span class="mkt-price">—</span>
+          <span class="mkt-chg">—</span>
+        </div>
+        <div class="mkt-tile mkt-clone" data-src="mkt-NSEBANK">
+          <span class="mkt-label">BANK NIFTY</span>
+          <span class="mkt-price">—</span>
+          <span class="mkt-chg">—</span>
+        </div>
+        <div class="mkt-tile mkt-clone" data-src="mkt-FINNIFTY">
+          <span class="mkt-label">FIN NIFTY</span>
+          <span class="mkt-price">—</span>
+          <span class="mkt-chg">—</span>
+        </div>
+        <div class="mkt-tile mkt-clone" data-src="mkt-NIFTYIT">
+          <span class="mkt-label">NIFTY IT</span>
+          <span class="mkt-price">—</span>
+          <span class="mkt-chg">—</span>
+        </div>
+        <div class="mkt-tile mkt-clone" data-src="mkt-INDIAVIX">
+          <span class="mkt-label">INDIA VIX</span>
+          <span class="mkt-price">—</span>
+          <span class="mkt-chg">—</span>
+        </div>
+        <div class="mkt-tile mkt-clone" data-src="mkt-MIDCAP">
+          <span class="mkt-label">MIDCAP 100</span>
+          <span class="mkt-price">—</span>
+          <span class="mkt-chg">—</span>
+        </div>
+        <div class="mkt-divider" aria-hidden="true"></div>
+        <span class="mkt-region-label" aria-hidden="true">🌍 Global</span>
+        <div class="mkt-tile mkt-clone" data-src="mkt-DJI">
+          <span class="mkt-label">DOW JONES</span>
+          <span class="mkt-price">—</span>
+          <span class="mkt-chg">—</span>
+        </div>
+        <div class="mkt-tile mkt-clone" data-src="mkt-IXIC">
+          <span class="mkt-label">NASDAQ</span>
+          <span class="mkt-price">—</span>
+          <span class="mkt-chg">—</span>
+        </div>
+        <div class="mkt-tile mkt-clone" data-src="mkt-GSPC">
+          <span class="mkt-label">S&amp;P 500</span>
+          <span class="mkt-price">—</span>
+          <span class="mkt-chg">—</span>
+        </div>
+        <div class="mkt-tile mkt-clone" data-src="mkt-N225">
+          <span class="mkt-label">NIKKEI 225</span>
+          <span class="mkt-price">—</span>
+          <span class="mkt-chg">—</span>
+        </div>
+        <div class="mkt-tile mkt-clone" data-src="mkt-HSI">
+          <span class="mkt-label">HANG SENG</span>
+          <span class="mkt-price">—</span>
+          <span class="mkt-chg">—</span>
+        </div>
+      </div>
+    </div>
+    <span class="mkt-strip-time" id="mkt-updated">Updating…</span>
+  </div>
+
+  <div class="container screener-layout">
+
+    <!-- ── Main content column ── -->
+    <div class="screener-main">
+      <div class="screener-hero">
+        <div class="screener-hero-text">
+          <h1>NSE Stock Screener</h1>
+          <p class="screener-hero-sub">Filter 1,700+ stocks by ROCE, D/E, P/E, promoter % and more — free forever</p>
+        </div>
+        <div class="screener-hero-stats">
+          <div class="sh-stat"><strong>1,700+</strong><span>NSE Stocks</span></div>
+          <div class="sh-stat"><strong>14</strong><span>Strategies</span></div>
+          <div class="sh-stat"><strong>15+</strong><span>Filters</span></div>
+          <div class="sh-stat"><strong>Free</strong><span>Always</span></div>
+        </div>
+      </div>
+
+      ${todayPicks.length > 0 ? `
+      <!-- ── Today's Picks ── -->
+      <section class="today-section">
+        <div class="today-section-header">
+          <div class="today-title-group">
+            <span class="today-live-pulse"></span>
+            <span class="today-section-title">🔥 Today's Picks</span>
+            <span class="today-section-badge">${todayPicks.length} stocks</span>
+            <span class="tier-pill tier-mid">🟡 Traders</span>
+          </div>
+          <a href="/today" class="today-view-all">View all ${todayPicks.length} →</a>
+        </div>
+        <div class="today-picks-grid">
+          ${todayPicks.slice(0, 6).map(p => `
+          <a href="/today" class="today-pick-card today-pick-card-${p.direction.toLowerCase()}">
+            <div class="today-pick-header">
+              <span class="today-pick-dir today-dir-${p.direction.toLowerCase()}">${p.direction === "LONG" ? "▲ LONG" : "▼ SHORT"}</span>
+              ${p.pick_type ? `<span class="today-pick-type">${p.pick_type}</span>` : ""}
+            </div>
+            <div class="today-pick-sym">${esc(p.stock_symbol)}</div>
+            ${p.company_name ? `<div class="today-pick-co">${esc(p.company_name.length > 20 ? p.company_name.slice(0,19)+'…' : p.company_name)}</div>` : ""}
+            <div class="today-pick-range">₹${p.entry_low} – ₹${p.entry_high}</div>
+            <div class="today-pick-meta">
+              ${p.target ? `<span class="today-tgt">🎯 ₹${p.target}</span>` : ""}
+              ${p.stop_loss ? `<span class="today-sl">SL ₹${p.stop_loss}</span>` : ""}
+            </div>
+          </a>`).join("")}
+          ${todayPicks.length > 6 ? `<a href="/today" class="today-pick-more-card">+${todayPicks.length - 6} more picks</a>` : ""}
+        </div>
+      </section>` : ""}
+
+      <!-- Strategy Presets -->
+      <section class="strategies-section">
+        <div class="strategies-header">
+          <span class="strategies-title">⚡ Quick Strategies</span>
+          <span class="strategies-sub">One click to load expert filters — no technical knowledge needed</span>
+          <span class="tier-pill tier-mid" style="margin-left:auto">🟡 Traders</span>
+        </div>
+        <div class="strategies-grid">${strategyCards}</div>
+      </section>
+
+      <details class="filter-details" id="filter-details" ${openFilters ? "open" : ""}>
+        <summary class="filter-summary">
+          <span>🔧 Advanced Filters</span>
+          ${filterCount > 0 ? `<span class="filter-badge">${filterCount} active</span>` : ""}
+        </summary>
+        <form class="filter-form" method="GET" action="/">
+          <div class="filter-grid">
+
+            <div class="filter-group">
+              <label>ROCE % ≥</label>
+              <select name="minRoce">
+                <option value="">Any</option>
+                <option value="5"  ${q.minRoce==="5"  ?"selected":""}>≥ 5%</option>
+                <option value="10" ${q.minRoce==="10" ?"selected":""}>≥ 10%</option>
+                <option value="15" ${q.minRoce==="15" ?"selected":""}>≥ 15%</option>
+                <option value="20" ${q.minRoce==="20" ?"selected":""}>≥ 20%</option>
+                <option value="25" ${q.minRoce==="25" ?"selected":""}>≥ 25%</option>
+                <option value="30" ${q.minRoce==="30" ?"selected":""}>≥ 30%</option>
+                <option value="40" ${q.minRoce==="40" ?"selected":""}>≥ 40%</option>
+              </select>
+            </div>
+
+            <div class="filter-group">
+              <label>D/E Ratio ≤</label>
+              <select name="maxDe">
+                <option value="">Any</option>
+                <option value="0"   ${q.maxDe==="0"   ?"selected":""}>0 — Debt-free 💎</option>
+                <option value="0.1" ${q.maxDe==="0.1" ?"selected":""}>≤ 0.1</option>
+                <option value="0.3" ${q.maxDe==="0.3" ?"selected":""}>≤ 0.3</option>
+                <option value="0.5" ${q.maxDe==="0.5" ?"selected":""}>≤ 0.5</option>
+                <option value="1"   ${q.maxDe==="1"   ?"selected":""}>≤ 1.0</option>
+                <option value="2"   ${q.maxDe==="2"   ?"selected":""}>≤ 2.0</option>
+              </select>
+            </div>
+
+            <div class="filter-group">
+              <label>Promoter % ≥</label>
+              <select name="minPromoter">
+                <option value="">Any</option>
+                <option value="30" ${q.minPromoter==="30" ?"selected":""}>≥ 30%</option>
+                <option value="40" ${q.minPromoter==="40" ?"selected":""}>≥ 40%</option>
+                <option value="50" ${q.minPromoter==="50" ?"selected":""}>≥ 50%</option>
+                <option value="60" ${q.minPromoter==="60" ?"selected":""}>≥ 60%</option>
+                <option value="65" ${q.minPromoter==="65" ?"selected":""}>≥ 65%</option>
+                <option value="70" ${q.minPromoter==="70" ?"selected":""}>≥ 70%</option>
+                <option value="75" ${q.minPromoter==="75" ?"selected":""}>≥ 75%</option>
+              </select>
+            </div>
+
+            <div class="filter-group">
+              <label>P/E Ratio ≤</label>
+              <select name="maxPe">
+                <option value="">Any</option>
+                <option value="8"  ${q.maxPe==="8"  ?"selected":""}>≤ 8 (Deep Value)</option>
+                <option value="10" ${q.maxPe==="10" ?"selected":""}>≤ 10</option>
+                <option value="15" ${q.maxPe==="15" ?"selected":""}>≤ 15</option>
+                <option value="20" ${q.maxPe==="20" ?"selected":""}>≤ 20</option>
+                <option value="25" ${q.maxPe==="25" ?"selected":""}>≤ 25</option>
+                <option value="30" ${q.maxPe==="30" ?"selected":""}>≤ 30</option>
+                <option value="40" ${q.maxPe==="40" ?"selected":""}>≤ 40</option>
+                <option value="50" ${q.maxPe==="50" ?"selected":""}>≤ 50</option>
+              </select>
+            </div>
+
+            <div class="filter-group">
+              <label>P/E Ratio ≥</label>
+              <select name="minPe">
+                <option value="">Any</option>
+                <option value="5"  ${q.minPe==="5"  ?"selected":""}>≥ 5</option>
+                <option value="10" ${q.minPe==="10" ?"selected":""}>≥ 10</option>
+                <option value="15" ${q.minPe==="15" ?"selected":""}>≥ 15</option>
+                <option value="20" ${q.minPe==="20" ?"selected":""}>≥ 20</option>
+                <option value="30" ${q.minPe==="30" ?"selected":""}>≥ 30</option>
+              </select>
+            </div>
+
+            <div class="filter-group">
+              <label>Dividend Yield ≥</label>
+              <select name="minDivYield">
+                <option value="">Any</option>
+                <option value="0.5" ${q.minDivYield==="0.5" ?"selected":""}>≥ 0.5%</option>
+                <option value="1"   ${q.minDivYield==="1"   ?"selected":""}>≥ 1%</option>
+                <option value="1.5" ${q.minDivYield==="1.5" ?"selected":""}>≥ 1.5%</option>
+                <option value="2"   ${q.minDivYield==="2"   ?"selected":""}>≥ 2%</option>
+                <option value="3"   ${q.minDivYield==="3"   ?"selected":""}>≥ 3%</option>
+                <option value="5"   ${q.minDivYield==="5"   ?"selected":""}>≥ 5%</option>
+              </select>
+            </div>
+
+            <div class="filter-group">
+              <label>Price Range (₹)</label>
+              <div class="filter-range-row">
+                <select name="minPrice" title="Min Price">
+                  <option value="">₹ Min</option>
+                  <option value="10"   ${q.minPrice==="10"   ?"selected":""}>≥ ₹10</option>
+                  <option value="50"   ${q.minPrice==="50"   ?"selected":""}>≥ ₹50</option>
+                  <option value="100"  ${q.minPrice==="100"  ?"selected":""}>≥ ₹100</option>
+                  <option value="200"  ${q.minPrice==="200"  ?"selected":""}>≥ ₹200</option>
+                  <option value="500"  ${q.minPrice==="500"  ?"selected":""}>≥ ₹500</option>
+                  <option value="1000" ${q.minPrice==="1000" ?"selected":""}>≥ ₹1,000</option>
+                  <option value="5000" ${q.minPrice==="5000" ?"selected":""}>≥ ₹5,000</option>
+                </select>
+                <select name="maxPrice" title="Max Price">
+                  <option value="">₹ Max</option>
+                  <option value="50"    ${q.maxPrice==="50"    ?"selected":""}>≤ ₹50</option>
+                  <option value="100"   ${q.maxPrice==="100"   ?"selected":""}>≤ ₹100</option>
+                  <option value="200"   ${q.maxPrice==="200"   ?"selected":""}>≤ ₹200</option>
+                  <option value="500"   ${q.maxPrice==="500"   ?"selected":""}>≤ ₹500</option>
+                  <option value="1000"  ${q.maxPrice==="1000"  ?"selected":""}>≤ ₹1,000</option>
+                  <option value="5000"  ${q.maxPrice==="5000"  ?"selected":""}>≤ ₹5,000</option>
+                  <option value="10000" ${q.maxPrice==="10000" ?"selected":""}>≤ ₹10,000</option>
+                </select>
+              </div>
+            </div>
+
+            <div class="filter-group">
+              <label>Volume ≥</label>
+              <select name="minVolume">
+                <option value="">Any</option>
+                <option value="10000"   ${q.minVolume==="10000"   ?"selected":""}>≥ 10,000</option>
+                <option value="50000"   ${q.minVolume==="50000"   ?"selected":""}>≥ 50,000</option>
+                <option value="100000"  ${q.minVolume==="100000"  ?"selected":""}>≥ 1 Lakh</option>
+                <option value="500000"  ${q.minVolume==="500000"  ?"selected":""}>≥ 5 Lakh</option>
+                <option value="1000000" ${q.minVolume==="1000000" ?"selected":""}>≥ 10 Lakh</option>
+                <option value="5000000" ${q.minVolume==="5000000" ?"selected":""}>≥ 50 Lakh</option>
+              </select>
+            </div>
+
+            <div class="filter-group">
+              <label>Cap Size</label>
+              <select id="capSizeSelect" onchange="applyCapSize(this.value)">
+                <option value="">All Cap Sizes</option>
+                <option value="large" ${q.minMc==="20000" && !q.maxMc          ?"selected":""}>🏢 Large Cap (≥ ₹20k Cr)</option>
+                <option value="mid"   ${q.minMc==="5000"  && q.maxMc==="20000" ?"selected":""}>🏬 Mid Cap (₹5k–20k Cr)</option>
+                <option value="small" ${!q.minMc           && q.maxMc==="5000"  ?"selected":""}>🌱 Small Cap (≤ ₹5k Cr)</option>
+                <option value="micro" ${!q.minMc           && q.maxMc==="1000"  ?"selected":""}>🔬 Micro Cap (≤ ₹1k Cr)</option>
+              </select>
+              <input type="hidden" id="minMcInput" name="minMc" value="${q.minMc || ""}">
+              <input type="hidden" id="maxMcInput" name="maxMc" value="${q.maxMc || ""}">
+            </div>
+
+            <div class="filter-group">
+              <label>Sector</label>
+              <select name="sector">
+                <option value="">All Sectors</option>
+                ${sectorOptions}
+              </select>
+            </div>
+
+            <div class="filter-group">
+              <label>Sort By</label>
+              <select name="sortBy">
+                ${sortOptions.map(([k, label]) =>
+                  `<option value="${k}" ${(q.sortBy || "roce") === k ? "selected" : ""}>${label}</option>`
+                ).join("")}
+              </select>
+            </div>
+
+            <div class="filter-group">
+              <label>Sort Direction</label>
+              <select name="sortDir">
+                <option value="desc" ${(q.sortDir || "desc") === "desc" ? "selected" : ""}>↓ High → Low</option>
+                <option value="asc"  ${q.sortDir === "asc"  ? "selected" : ""}>↑ Low → High</option>
+              </select>
+            </div>
+
+            <div class="filter-group checkbox-group">
+              <label class="check-label"><input type="checkbox" name="allProfit" value="1" ${q.allProfit === "1" ? "checked" : ""}> ✅ All 3yr Profitable</label>
+              <label class="check-label"><input type="checkbox" name="uptrend"   value="1" ${q.uptrend   === "1" ? "checked" : ""}> 📈 Profit Uptrend ↑</label>
+            </div>
+
+          </div>
+
+          <!-- ── Indicator Filters ── -->
+          <div class="filter-section-title">📉 Technical Indicators &amp; Quality Metrics</div>
+          <div class="filter-grid">
+
+            <div class="filter-group">
+              <label>ROE % ≥</label>
+              <select name="minRoe">
+                <option value="">Any</option>
+                <option value="5"  ${q.minRoe==="5"  ?"selected":""}>≥ 5%</option>
+                <option value="10" ${q.minRoe==="10" ?"selected":""}>≥ 10%</option>
+                <option value="15" ${q.minRoe==="15" ?"selected":""}>≥ 15%</option>
+                <option value="20" ${q.minRoe==="20" ?"selected":""}>≥ 20%</option>
+                <option value="25" ${q.minRoe==="25" ?"selected":""}>≥ 25%</option>
+                <option value="30" ${q.minRoe==="30" ?"selected":""}>≥ 30%</option>
+              </select>
+            </div>
+
+            <div class="filter-group">
+              <label>EPS</label>
+              <select name="minEps">
+                <option value="">Any</option>
+                <option value="0.01" ${q.minEps==="0.01" ?"selected":""}>Positive EPS (&gt; 0)</option>
+                <option value="5"    ${q.minEps==="5"    ?"selected":""}>≥ 5</option>
+                <option value="10"   ${q.minEps==="10"   ?"selected":""}>≥ 10</option>
+                <option value="20"   ${q.minEps==="20"   ?"selected":""}>≥ 20</option>
+                <option value="50"   ${q.minEps==="50"   ?"selected":""}>≥ 50</option>
+                <option value="100"  ${q.minEps==="100"  ?"selected":""}>≥ 100</option>
+              </select>
+            </div>
+
+            <div class="filter-group">
+              <label>Current Ratio ≥</label>
+              <select name="minCr">
+                <option value="">Any</option>
+                <option value="1"   ${q.minCr==="1"   ?"selected":""}>≥ 1.0 (Liquid)</option>
+                <option value="1.5" ${q.minCr==="1.5" ?"selected":""}>≥ 1.5</option>
+                <option value="2"   ${q.minCr==="2"   ?"selected":""}>≥ 2.0 (Strong)</option>
+                <option value="3"   ${q.minCr==="3"   ?"selected":""}>≥ 3.0</option>
+              </select>
+            </div>
+
+            <div class="filter-group">
+              <label>Price/Book (P/B) ≤</label>
+              <select name="maxPb">
+                <option value="">Any</option>
+                <option value="1"   ${q.maxPb==="1"   ?"selected":""}>≤ 1.0 (Below Book)</option>
+                <option value="1.5" ${q.maxPb==="1.5" ?"selected":""}>≤ 1.5</option>
+                <option value="2"   ${q.maxPb==="2"   ?"selected":""}>≤ 2.0</option>
+                <option value="3"   ${q.maxPb==="3"   ?"selected":""}>≤ 3.0</option>
+                <option value="5"   ${q.maxPb==="5"   ?"selected":""}>≤ 5.0</option>
+              </select>
+            </div>
+
+            <div class="filter-group">
+              <label>Day Change %</label>
+              <div class="filter-range-row">
+                <select name="minChg" title="Min Change %">
+                  <option value="">↑ Min</option>
+                  <option value="-10" ${q.minChg==="-10" ?"selected":""}>&lt; -10%</option>
+                  <option value="-5"  ${q.minChg==="-5"  ?"selected":""}>&gt; -5%</option>
+                  <option value="0"   ${q.minChg==="0"   ?"selected":""}>Positive only</option>
+                  <option value="1"   ${q.minChg==="1"   ?"selected":""}>≥ +1%</option>
+                  <option value="2"   ${q.minChg==="2"   ?"selected":""}>≥ +2%</option>
+                  <option value="3"   ${q.minChg==="3"   ?"selected":""}>≥ +3%</option>
+                  <option value="5"   ${q.minChg==="5"   ?"selected":""}>≥ +5%</option>
+                </select>
+                <select name="maxChg" title="Max Change %">
+                  <option value="">↓ Max</option>
+                  <option value="-5"  ${q.maxChg==="-5"  ?"selected":""}>≤ -5% (Big dip)</option>
+                  <option value="-3"  ${q.maxChg==="-3"  ?"selected":""}>≤ -3%</option>
+                  <option value="-1"  ${q.maxChg==="-1"  ?"selected":""}>≤ -1%</option>
+                  <option value="0"   ${q.maxChg==="0"   ?"selected":""}>Negative only</option>
+                  <option value="5"   ${q.maxChg==="5"   ?"selected":""}>≤ +5%</option>
+                  <option value="10"  ${q.maxChg==="10"  ?"selected":""}>≤ +10%</option>
+                </select>
+              </div>
+            </div>
+
+            <div class="filter-group">
+              <label>Near 52W High 🔥</label>
+              <select name="near52H">
+                <option value="">Any</option>
+                <option value="3"  ${q.near52H==="3"  ?"selected":""}>Within 3% (Breakout zone)</option>
+                <option value="5"  ${q.near52H==="5"  ?"selected":""}>Within 5%</option>
+                <option value="10" ${q.near52H==="10" ?"selected":""}>Within 10%</option>
+                <option value="15" ${q.near52H==="15" ?"selected":""}>Within 15%</option>
+                <option value="20" ${q.near52H==="20" ?"selected":""}>Within 20%</option>
+              </select>
+            </div>
+
+            <div class="filter-group">
+              <label>Near 52W Low 💰</label>
+              <select name="near52L">
+                <option value="">Any</option>
+                <option value="10" ${q.near52L==="10" ?"selected":""}>Within 10% (Value zone)</option>
+                <option value="20" ${q.near52L==="20" ?"selected":""}>Within 20%</option>
+                <option value="30" ${q.near52L==="30" ?"selected":""}>Within 30%</option>
+                <option value="50" ${q.near52L==="50" ?"selected":""}>Within 50%</option>
+              </select>
+            </div>
+
+          </div>
+
+          <div class="filter-actions">
+            <button type="submit" class="btn-primary">🔍 Apply Filters</button>
+            <a href="/" class="btn-secondary">✕ Reset All</a>
+          </div>
+        </form>
+      </details>
+
+      <!-- Results -->
+      <div class="results-header">
+        <span>${stocks.length}${hasNextPage ? "+" : ""} stocks${page > 1 ? ` · Page ${page}` : ""}${activeStrategy ? ` · <strong>${STRATEGIES.find(s => s.id === activeStrategy)?.label || ""}</strong>` : ""}</span>
+        <span class="tier-pill tier-expert">🔴 Investors</span>
+        <div class="results-actions">
+          <button class="btn-ghost" id="cmp-btn" style="display:none" onclick="goCompare()">⚖️ Compare (0)</button>
+          <button class="btn-ghost" onclick="document.getElementById('alertModal').style.display='flex'">🔔 Save Alert</button>
+          <a href="/api/screen/csv?${new URLSearchParams(req.query as any).toString()}" class="btn-ghost" download="zeroscreen.csv">⬇ CSV</a>
+          <a href="/api/screen?${new URLSearchParams(req.query as any).toString()}" class="btn-ghost" target="_blank">↗ JSON</a>
+        </div>
+      </div>
+
+      <div class="table-wrap">
+        <table class="stocks-table">
+          <thead>
+            <tr>
+              <th class="cmp-col"></th>
+              <th>Symbol</th><th>Company</th><th>Sector</th>
+              <th>Price</th><th>Chg%</th><th>Volume</th>
+              <th>ROCE%</th><th>ROE%</th><th>D/E</th>
+              <th>Promoter%</th><th>P/E</th><th>Mkt Cap</th><th>Profit</th>
+            </tr>
+          </thead>
+          <tbody>${rows || '<tr><td colspan="14" class="no-data">No results. Try a strategy above or adjust filters.</td></tr>'}</tbody>
+        </table>
+      </div>
+
+      <!-- Pagination -->
+      ${(page > 1 || hasNextPage) ? `
+      <div class="pagination">
+        ${page > 1 ? `<a href="/?${prevPageQ.toString()}" class="btn-secondary page-btn">← Prev</a>` : `<span class="page-btn page-disabled">← Prev</span>`}
+        <span class="page-info">Page ${page}</span>
+        ${hasNextPage ? `<a href="/?${nextPageQ.toString()}" class="btn-secondary page-btn">Next →</a>` : `<span class="page-btn page-disabled">Next →</span>`}
+      </div>` : ""}
     </div>
 
-    <div class="table-wrap">
-      <table class="stocks-table">
-        <thead>
-          <tr>
-            <th>Symbol</th><th>Company</th><th>Sector</th>
-            <th>Price</th><th>Chg%</th><th>Volume</th>
-            <th>ROCE%</th><th>ROE%</th><th>D/E</th>
-            <th>Promoter%</th><th>P/E</th><th>Mkt Cap</th><th>Profit</th>
-          </tr>
-        </thead>
-        <tbody>${rows || '<tr><td colspan="13" class="no-data">No results. Try adjusting filters or run a data refresh first.</td></tr>'}</tbody>
-      </table>
+    <!-- ── News sidebar ── -->
+    <aside class="news-sidebar">
+      <div class="news-card">
+        <div class="news-header">
+          <span class="news-title">📰 Market News</span>
+          <span class="news-live"><span class="live-dot"></span>Live</span>
+        </div>
+        <div id="news-list" class="news-list">
+          <div class="news-loading">Loading news…</div>
+        </div>
+        <div class="news-footer">
+          <a href="https://economictimes.indiatimes.com/markets" target="_blank" rel="noopener">More on ET Markets →</a>
+        </div>
+      </div>
+    </aside>
+
+  </div>
+
+  <script>
+    function applyCapSize(val) {
+      const minEl = document.getElementById('minMcInput');
+      const maxEl = document.getElementById('maxMcInput');
+      if      (val === 'large') { minEl.value = '20000'; maxEl.value = ''; }
+      else if (val === 'mid')   { minEl.value = '5000';  maxEl.value = '20000'; }
+      else if (val === 'small') { minEl.value = '';       maxEl.value = '5000'; }
+      else if (val === 'micro') { minEl.value = '';       maxEl.value = '1000'; }
+      else                      { minEl.value = '';       maxEl.value = ''; }
+    }
+
+    // Scroll to results when a strategy is active
+    (function() {
+      const params = new URLSearchParams(window.location.search);
+      if (params.get('strategy')) {
+        const el = document.querySelector('.results-header');
+        if (el) setTimeout(() => el.scrollIntoView({ behavior: 'smooth', block: 'start' }), 200);
+      }
+    })();
+
+    // ── Live Markets ──────────────────────────────────────────────────────────
+    const MKT_ID_MAP = {
+      'NIFTY 50':'NSEI','NIFTY BANK':'NSEBANK','NIFTY FINANCIAL SERVICES':'FINNIFTY',
+      'NIFTY IT':'NIFTYIT','INDIA VIX':'INDIAVIX','NIFTY MIDCAP 100':'MIDCAP',
+      '^DJI':'DJI','^IXIC':'IXIC','^GSPC':'GSPC','^N225':'N225','^HSI':'HSI'
+    };
+    async function loadMarkets() {
+      try {
+        const r = await fetch('/api/markets');
+        const quotes = await r.json();
+        quotes.forEach((q) => {
+          const id = 'mkt-' + (MKT_ID_MAP[q.symbol] || q.symbol.replace(/[^A-Z0-9]/gi,''));
+          const up = (q.changePct || 0) >= 0;
+          const isGlobal = q.region === 'global';
+          const fmt = (n) => n.toLocaleString(isGlobal ? 'en-US' : 'en-IN', {maximumFractionDigits:2});
+          const newPrice = q.price != null ? fmt(q.price) : '\\u2014';
+          const newChg   = q.changePct != null ? (up?'+':'') + q.changePct.toFixed(2) + '%' : '\\u2014';
+          const tiles = [document.getElementById(id), ...document.querySelectorAll('.mkt-clone[data-src="'+id+'"]')];
+          tiles.forEach(el => {
+            if (!el) return;
+            el.classList.remove('mkt-up','mkt-dn');
+            el.classList.add(up ? 'mkt-up' : 'mkt-dn');
+            const pEl = el.querySelector('.mkt-price');
+            const cEl = el.querySelector('.mkt-chg');
+            if (pEl && pEl.textContent !== newPrice) {
+              pEl.textContent = newPrice;
+              pEl.classList.remove('mkt-flash-up','mkt-flash-dn');
+              void pEl.offsetWidth;
+              pEl.classList.add(up ? 'mkt-flash-up' : 'mkt-flash-dn');
+            }
+            if (cEl) cEl.textContent = newChg;
+          });
+        });
+        const ts = document.getElementById('mkt-updated');
+        if (ts) ts.textContent = 'Updated ' + new Date().toLocaleTimeString('en-IN',{hour:'2-digit',minute:'2-digit'});
+      } catch(_) {}
+    }
+    loadMarkets();
+    setInterval(loadMarkets, 30000);
+
+    async function loadNews() {
+      try {
+        const res = await fetch('/api/news');
+        const items = await res.json();
+        const el = document.getElementById('news-list');
+        if (!items.length) {
+          el.innerHTML = '<p class="news-empty">No news available right now.</p>';
+          return;
+        }
+        el.innerHTML = items.map(n => \`
+          <a class="news-item" href="\${n.link}" target="_blank" rel="noopener">
+            <span class="news-item-title">\${n.title}</span>
+            <span class="news-item-meta">\${n.source} · \${n.pubDate ? (d => isNaN(d.getTime()) ? '' : d.toLocaleTimeString('en-IN',{hour:'2-digit',minute:'2-digit'}))(new Date(n.pubDate)) : ''}</span>
+          </a>\`).join('');
+      } catch(_) {
+        document.getElementById('news-list').innerHTML = '<p class="news-empty">Could not load news.</p>';
+      }
+    }
+    loadNews();
+    setInterval(loadNews, 5 * 60 * 1000);
+
+    // ── Compare ──────────────────────────────────────────────────────────────
+    let _compareList = [];
+    function updateCompare() {
+      _compareList = [...document.querySelectorAll('.cmp-check:checked')].map(c => c.value);
+      const btn = document.getElementById('cmp-btn');
+      if (btn) {
+        btn.style.display = _compareList.length >= 2 ? 'inline-block' : 'none';
+        btn.textContent = '\u2696\ufe0f Compare (' + _compareList.length + ')';
+      }
+    }
+    function goCompare() {
+      if (_compareList.length < 2) return;
+      window.location.href = '/compare?symbols=' + _compareList.join(',');
+    }
+
+    // ── Save Alert ────────────────────────────────────────────────────────────
+    async function saveAlert() {
+      const name = document.getElementById('alertName').value.trim();
+      if (!name) { alert('Please name this alert'); return; }
+      const params = new URLSearchParams(window.location.search);
+      params.delete('strategy');
+      const r = await fetch('/alerts', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, filtersJson: JSON.stringify(Object.fromEntries(params)) })
+      });
+      if (r.ok) {
+        document.getElementById('alertModal').style.display = 'none';
+        document.getElementById('alertName').value = '';
+        alert('\u2705 Alert saved! You\\'ll get a daily email when stocks match your filters.');
+      } else { alert('Error saving alert. Please try again.'); }
+    }
+  </script>
+
+  <!-- Alert Modal -->
+  <div id="alertModal" class="modal" style="display:none">
+    <div class="modal-box">
+      <h2>\ud83d\udd14 Save as Daily Alert</h2>
+      <p style="color:var(--text-muted);font-size:13px;margin-bottom:18px">Get a daily email when stocks match your current filters.</p>
+      <input id="alertName" type="text" class="modal-input" placeholder="e.g. High ROCE Value Picks" maxlength="60">
+      <div class="modal-actions">
+        <button class="btn-primary" onclick="saveAlert()">Save Alert</button>
+        <button class="btn-secondary" onclick="document.getElementById('alertModal').style.display='none'">Cancel</button>
+      </div>
     </div>
   </div>
+
+  <footer class="site-footer">
+    <span>© 2026 ZeroScreen &mdash; For informational purposes only. Not SEBI registered. Not investment advice. Past data does not guarantee future returns. Invest at your own risk.</span>
+  </footer>
+
   <script src="/public/js/app.js"></script>
 </body>
 </html>`);
@@ -249,7 +1817,7 @@ app.get("/stock/:symbol", async (req: Request, res: Response) => {
   if (!s) {
     res.status(404).send(`<!DOCTYPE html><html><head><title>Not Found</title>
     <link rel="stylesheet" href="/public/css/style.css"></head><body>
-    ${nav("")}<div class="container"><h2>Stock "${symbol}" not found in database.</h2>
+    ${nav("", req)}<div class="container"><h2>Stock "${symbol}" not found in database.</h2>
     <p><a href="/">Back to Screener</a></p></div></body></html>`);
     return;
   }
@@ -257,156 +1825,359 @@ app.get("/stock/:symbol", async (req: Request, res: Response) => {
   const screenerData = s.screener_data ? JSON.parse(s.screener_data) : {};
   const netProfits: number[] = screenerData.netProfits || [];
   const revenues:   number[] = screenerData.revenues   || [];
+  const chartYears = netProfits.map((_, i) => `FY${(new Date().getFullYear() - netProfits.length + i + 1).toString().slice(2)}`);
+  const watchlists = (await getWatchlists(req.session.userId)) as any[];
+  const w52High = (s as any).week52_high as number | null;
+  const w52Low  = (s as any).week52_low  as number | null;
+  const pbRatio = (s.price && s.book_value && s.book_value > 0) ? s.price / s.book_value : null;
+  const incorporated = (s as any).incorporated as number | null;
+  const about        = (s as any).about        as string | null;
 
-  const profitChartData = JSON.stringify(netProfits);
-  const revenueChartData = JSON.stringify(revenues);
-  const chartLabels = JSON.stringify(
-    netProfits.map((_, i) => `Year ${i + 1}`)
-  );
+  // 52W range position % for the visual slider
+  const w52Pos = (w52High && w52Low && s.price && w52High > w52Low)
+    ? Math.max(0, Math.min(100, ((s.price - w52Low) / (w52High - w52Low)) * 100))
+    : null;
 
-  const watchlists = (await getWatchlists()) as any[];
+  // Profit margin % (latest year)
+  const latestProfit  = netProfits[netProfits.length - 1] ?? null;
+  const latestRevenue = revenues[revenues.length - 1] ?? null;
+  const profitMargin  = (latestProfit != null && latestRevenue && latestRevenue > 0)
+    ? (latestProfit / latestRevenue) * 100 : null;
 
   res.send(`<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>${symbol} — ZeroScreen</title>
+  <title>${symbol} — ${s.company_name || "Stock"} — ZeroScreen</title>
   <link rel="stylesheet" href="/public/css/style.css">
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.2/dist/chart.umd.min.js"></script>
 </head>
 <body>
-  ${nav("")}
-  <div class="container">
-    <div class="stock-header">
-      <div>
-        <h1>${symbol} <span class="company-subtitle">${s.company_name || ""}</span></h1>
-        <span class="sector-badge">${s.sector || "—"}</span>
+  ${nav("", req)}
+  <div class="container sdp-container">
+    <a href="/" class="back-link">← Back to Screener</a>
+
+    <!-- ── HERO HEADER ── -->
+    <div class="sdp-hero">
+      <div class="sdp-hero-left">
+        <div class="sdp-symbol">${symbol}</div>
+        <div class="sdp-company">${s.company_name || ""}</div>
+        <div class="sdp-badges">
+          ${(s.sector && s.sector.length >= 3 && !/^\[?\d+\]?$/.test(s.sector) && !/edit|about/i.test(s.sector)) ? `<span class="sector-badge">${s.sector}</span>` : ""}
+          ${incorporated ? `<span class="sector-badge">🗓️ Est. ${incorporated}</span>` : ""}
+          ${s.all_profitable ? '<span class="sector-badge sdp-badge-green">✅ 3yr Profitable</span>' : ""}
+          ${s.profit_uptrend  ? '<span class="sector-badge sdp-badge-blue">📈 Profit ↑</span>'       : ""}
+        </div>
       </div>
-      <div class="stock-price-box">
-        <span class="big-price">₹${fmt(s.price, 2)}</span>
-        <span class="change-pct" style="color:${changeColor(s.change_pct)}">${s.change_pct != null ? (s.change_pct >= 0 ? "+" : "") + fmt(s.change_pct, 2) + "%" : ""}</span>
+      <div class="sdp-hero-right">
+        <div class="sdp-price-main">₹${fmt(s.price, 2)}</div>
+        <div class="sdp-change" style="color:${changeColor(s.change_pct)}">${s.change_pct != null ? (s.change_pct >= 0 ? "▲ +" : "▼ ") + fmt(s.change_pct, 2) + "%" : "—"}</div>
+        <div class="sdp-ohlc">
+          <span>O ₹${fmt(s.prev_close,2)}</span>
+          <span>H ₹${fmt(s.day_high,2)}</span>
+          <span>L ₹${fmt(s.day_low,2)}</span>
+          <span>Vol ${fmtVol(s.volume)}</span>
+        </div>
+        ${w52Pos !== null ? `
+        <div class="sdp-52w-wrap">
+          <div class="sdp-52w-labels"><span>₹${fmt(w52Low,0)} 52W L</span><span>52W H ₹${fmt(w52High,0)}</span></div>
+          <div class="sdp-52w-bar"><div class="sdp-52w-fill" style="width:${w52Pos.toFixed(1)}%"></div><div class="sdp-52w-dot" style="left:${w52Pos.toFixed(1)}%"></div></div>
+        </div>` : ""}
       </div>
     </div>
 
-    <div class="metrics-grid">
-      <div class="metric-card">
-        <div class="metric-label">ROCE</div>
-        <div class="metric-value" style="color:${roceColor(s.roce)}">${fmt(s.roce)}%</div>
+    <!-- ── KPI HERO CARDS ── -->
+    <div class="sdp-kpi-grid">
+      <div class="sdp-kpi-card sdp-kpi-accent">
+        <div class="sdp-kpi-label">Market Cap</div>
+        <div class="sdp-kpi-big">${fmtCr(s.market_cap)}</div>
       </div>
-      <div class="metric-card">
-        <div class="metric-label">ROE</div>
-        <div class="metric-value">${fmt(s.roe)}%</div>
+      <div class="sdp-kpi-card">
+        <div class="sdp-kpi-label">ROCE</div>
+        <div class="sdp-kpi-big" style="color:${roceColor(s.roce)}">${fmt(s.roce, 1)}%</div>
       </div>
-      <div class="metric-card">
-        <div class="metric-label">D/E Ratio</div>
-        <div class="metric-value" style="color:${deColor(s.de_ratio)}">${s.de_ratio === 0 ? "Debt-free 💎" : fmt(s.de_ratio)}</div>
+      <div class="sdp-kpi-card">
+        <div class="sdp-kpi-label">ROE</div>
+        <div class="sdp-kpi-big" style="color:${roceColor(s.roe)}">${fmt(s.roe, 1)}%</div>
       </div>
-      <div class="metric-card">
-        <div class="metric-label">Promoter %</div>
-        <div class="metric-value">${fmt(s.promoter_pct)}%</div>
+      <div class="sdp-kpi-card">
+        <div class="sdp-kpi-label">D/E Ratio</div>
+        <div class="sdp-kpi-big" style="color:${deColor(s.de_ratio)}">${s.de_ratio === 0 ? "0 💎" : fmt(s.de_ratio)}</div>
       </div>
-      <div class="metric-card">
-        <div class="metric-label">P/E Ratio</div>
-        <div class="metric-value">${fmt(s.pe_ratio, 1)}</div>
+      <div class="sdp-kpi-card">
+        <div class="sdp-kpi-label">P/E Ratio</div>
+        <div class="sdp-kpi-big">${fmt(s.pe_ratio, 1)}</div>
       </div>
-      <div class="metric-card">
-        <div class="metric-label">EPS</div>
-        <div class="metric-value">₹${fmt(s.eps, 1)}</div>
+      <div class="sdp-kpi-card">
+        <div class="sdp-kpi-label">EPS</div>
+        <div class="sdp-kpi-big">₹${fmt(s.eps, 1)}</div>
       </div>
-      <div class="metric-card">
-        <div class="metric-label">Book Value</div>
-        <div class="metric-value">₹${fmt(s.book_value, 1)}</div>
+      <div class="sdp-kpi-card">
+        <div class="sdp-kpi-label">Book Value</div>
+        <div class="sdp-kpi-big">₹${fmt(s.book_value, 0)}</div>
       </div>
-      <div class="metric-card">
-        <div class="metric-label">Dividend Yield</div>
-        <div class="metric-value">${fmt(s.dividend_yield)}%</div>
-      </div>
-      <div class="metric-card">
-        <div class="metric-label">Current Ratio</div>
-        <div class="metric-value">${fmt(s.current_ratio, 2)}</div>
-      </div>
-      <div class="metric-card">
-        <div class="metric-label">Market Cap</div>
-        <div class="metric-value">${fmtCr(s.market_cap)}</div>
-      </div>
-      <div class="metric-card">
-        <div class="metric-label">Volume</div>
-        <div class="metric-value">${fmtVol(s.volume)}</div>
-      </div>
-      <div class="metric-card">
-        <div class="metric-label">Profit 3yr</div>
-        <div class="metric-value">${s.all_profitable ? "✅ All Positive" : "❌ Has Loss"} ${s.profit_uptrend ? "↑" : "↓"}</div>
+      <div class="sdp-kpi-card">
+        <div class="sdp-kpi-label">Div. Yield</div>
+        <div class="sdp-kpi-big">${fmt(s.dividend_yield)}%</div>
       </div>
     </div>
 
+    <!-- ── TRADINGVIEW LIVE CHART ── -->
+    <div class="sdp-section-title">📊 Live Price Chart</div>
+    <div class="sdp-tv-wrap" id="sdp-tv-outer-${symbol}">
+      <iframe id="tv-iframe-${symbol}"
+        src="https://s.tradingview.com/widgetembed/?frameElementId=tv-iframe-${symbol}&symbol=NSE%3A${symbol}&interval=D&range=1Y&withdateranges=1&hidesidetoolbar=0&symboledit=0&saveimage=0&toolbarbg=f1f3f6&studies=[]&theme=light&style=1&timezone=Asia%2FKolkata&locale=in"
+        style="width:100%;height:550px;border:none;display:block"
+        allowtransparency="true" scrolling="no" allowfullscreen>
+      </iframe>
+    </div>
+    <script>
+    (function(){
+      // Switch to dark theme iframe if dark mode active
+      if (document.documentElement.classList.contains('dark')) {
+        var ifr = document.getElementById('tv-iframe-${symbol}');
+        if (ifr) ifr.src = ifr.src.replace('theme=light','theme=dark');
+      }
+    })();
+    </script>
+
+    <!-- ── CHARTS ROW 1: Profit + Revenue ── -->
     ${netProfits.length >= 2 ? `
-    <div class="charts-row">
-      <div class="chart-card">
-        <h3>Net Profit Trend (₹ Cr)</h3>
-        <canvas id="profitChart"></canvas>
+    <div class="sdp-section-title">📈 Financial Performance</div>
+    <div class="sdp-charts-grid">
+      <div class="sdp-chart-card sdp-chart-wide">
+        <div class="sdp-chart-header">
+          <span class="sdp-chart-title">Net Profit (₹ Cr)</span>
+          ${latestProfit != null ? `<span class="sdp-chart-badge" style="color:${latestProfit>=0?'#059669':'#dc2626'}">${latestProfit>=0?'▲':'▼'} ₹${fmtCr(latestProfit)}</span>` : ""}
+        </div>
+        <div class="sdp-chart-wrap" style="height:220px"><canvas id="profitChart"></canvas></div>
       </div>
       ${revenues.length >= 2 ? `
-      <div class="chart-card">
-        <h3>Revenue Trend (₹ Cr)</h3>
-        <canvas id="revenueChart"></canvas>
+      <div class="sdp-chart-card sdp-chart-wide">
+        <div class="sdp-chart-header">
+          <span class="sdp-chart-title">Revenue / Sales (₹ Cr)</span>
+          ${latestRevenue != null ? `<span class="sdp-chart-badge" style="color:#2563eb">₹${fmtCr(latestRevenue)}</span>` : ""}
+        </div>
+        <div class="sdp-chart-wrap" style="height:220px"><canvas id="revenueChart"></canvas></div>
       </div>` : ""}
     </div>` : ""}
 
-    <div class="stock-actions">
+    <!-- ── CHARTS ROW 2: Profit Margin bar + ROCE/ROE/Promoter doughnuts ── -->
+    <div class="sdp-section-title">🧮 Key Ratios at a Glance</div>
+    <div class="sdp-charts-grid sdp-charts-quad">
+      <div class="sdp-chart-card">
+        <div class="sdp-chart-header"><span class="sdp-chart-title">ROCE vs ROE</span></div>
+        <div class="sdp-chart-wrap" style="height:180px"><canvas id="roceRoeChart"></canvas></div>
+      </div>
+      <div class="sdp-chart-card">
+        <div class="sdp-chart-header"><span class="sdp-chart-title">Promoter Holding</span></div>
+        <div class="sdp-chart-wrap" style="height:180px"><canvas id="promoterChart"></canvas></div>
+        <div class="sdp-chart-center-label">${fmt(s.promoter_pct, 1)}%</div>
+      </div>
+      <div class="sdp-chart-card">
+        <div class="sdp-chart-header"><span class="sdp-chart-title">Valuation (P/E vs P/B)</span></div>
+        <div class="sdp-chart-wrap" style="height:180px"><canvas id="valuationChart"></canvas></div>
+      </div>
+      ${netProfits.length >= 3 ? `
+      <div class="sdp-chart-card">
+        <div class="sdp-chart-header"><span class="sdp-chart-title">Profit Margin %</span></div>
+        <div class="sdp-chart-wrap" style="height:180px"><canvas id="marginChart"></canvas></div>
+      </div>` : ""}
+    </div>
+
+    <!-- ── DETAILED METRICS TABLE ── -->
+    <div class="sdp-section-title">📋 All Metrics</div>
+    <div class="sdp-metrics-table-wrap">
+      <table class="sdp-metrics-table">
+        <tbody>
+          <tr><td>P/E Ratio</td><td>${fmt(s.pe_ratio, 1)}</td><td>Current Ratio</td><td>${fmt(s.current_ratio, 2)}</td></tr>
+          <tr><td>P/B Ratio</td><td>${fmt(pbRatio, 2)}</td><td>Book Value</td><td>₹${fmt(s.book_value, 1)}</td></tr>
+          <tr><td>EPS</td><td>₹${fmt(s.eps, 2)}</td><td>Dividend Yield</td><td>${fmt(s.dividend_yield)}%</td></tr>
+          <tr><td>ROCE</td><td style="color:${roceColor(s.roce)}">${fmt(s.roce)}%</td><td>ROE</td><td style="color:${roceColor(s.roe)}">${fmt(s.roe)}%</td></tr>
+          <tr><td>D/E Ratio</td><td style="color:${deColor(s.de_ratio)}">${s.de_ratio === 0 ? "Debt-free 💎" : fmt(s.de_ratio)}</td><td>Promoter %</td><td>${fmt(s.promoter_pct)}%</td></tr>
+          <tr><td>Market Cap</td><td>${fmtCr(s.market_cap)}</td><td>Volume</td><td>${fmtVol(s.volume)}</td></tr>
+          ${w52High || w52Low ? `<tr><td>52W High</td><td>₹${fmt(w52High, 2)}</td><td>52W Low</td><td>₹${fmt(w52Low, 2)}</td></tr>` : ""}
+          ${profitMargin != null ? `<tr><td>Profit Margin</td><td style="color:${profitMargin>=0?'#059669':'#dc2626'}">${fmt(profitMargin, 1)}%</td><td>3yr Profitable</td><td>${s.all_profitable ? "✅ Yes" : "❌ No"}</td></tr>` : ""}
+        </tbody>
+      </table>
+    </div>
+
+    <!-- ── ACTIONS ── -->
+    <div class="stock-actions" style="margin-top:20px">
       <button class="btn-primary" onclick="refreshStock('${symbol}')">🔄 Refresh Data</button>
-      <a href="https://www.screener.in/company/${symbol}/" target="_blank" class="btn-secondary">View on screener.in ↗</a>
+      <a href="/my-paper-trade?buy=${symbol}" class="btn-primary" style="background:#10b981;border-color:#10b981">📋 Paper Trade</a>
+      <a href="https://www.screener.in/company/${symbol}/" target="_blank" class="btn-secondary">screener.in ↗</a>
+      <a href="https://www.nseindia.com/get-quotes/equity?symbol=${symbol}" target="_blank" class="btn-ghost">NSE ↗</a>
       <div class="watchlist-add">
         <select id="wlSelect">
-          <option value="">Add to watchlist...</option>
+          <option value="">Add to watchlist…</option>
           ${watchlists.map((w: any) => `<option value="${w.id}">${w.name}</option>`).join("")}
         </select>
         <button class="btn-ghost" onclick="addToWatchlist('${symbol}')">+ Add</button>
       </div>
     </div>
 
-    <div class="fetched-info">Data fetched: ${s.fetched_at ? new Date(s.fetched_at).toLocaleString("en-IN") : "Never"}</div>
+    <!-- ── ABOUT ── -->
+    ${about ? `
+    <div class="sdp-section-title">🏢 About the Company</div>
+    <div class="about-card">
+      <div class="about-meta">
+        <span class="about-badge">📍 ${s.sector || "—"}</span>
+        ${incorporated ? `<span class="about-badge">🗓️ Est. ${incorporated}</span>` : ""}
+        <span class="about-badge">📈 NSE: ${symbol}</span>
+        ${s.market_cap ? `<span class="about-badge">💰 MCap ${fmtCr(s.market_cap)}</span>` : ""}
+      </div>
+      <p class="about-text">${esc(about)}</p>
+      <a href="https://www.screener.in/company/${symbol}/" target="_blank" rel="noopener" class="about-link">Read more on screener.in ↗</a>
+    </div>` : ""}
+
+    <!-- ── NEWS ── -->
+    <div class="sdp-section-title">📰 News about ${symbol}</div>
+    <div id="stock-news-wrap" class="stock-news-wrap">
+      <div class="news-loading">Loading news…</div>
+    </div>
+
+    <div class="fetched-info">Fundamentals fetched: ${s.fetched_at ? new Date(s.fetched_at).toLocaleString("en-IN") : "Never"}</div>
   </div>
 
+  <footer class="site-footer">
+    <span>© 2026 ZeroScreen &mdash; For informational purposes only. Not SEBI registered. Not investment advice. Past data does not guarantee future returns. Invest at your own risk.</span>
+  </footer>
+
   <script>
+  (function() {
+    const dark = document.documentElement.classList.contains('dark');
+    const gc = dark ? 'rgba(255,255,255,0.07)' : 'rgba(0,0,0,0.06)';
+    const tc = dark ? '#8899aa' : '#888';
+    const baseOpts = {
+      responsive: true, maintainAspectRatio: false,
+      plugins: { legend: { display: false } },
+      scales: { y: { grid:{color:gc}, ticks:{color:tc,font:{size:11}} }, x: { grid:{display:false}, ticks:{color:tc,font:{size:11}} } }
+    };
+
+    // ── Profit bar ──────────────────────────────────────────────────────────
     ${netProfits.length >= 2 ? `
     new Chart(document.getElementById('profitChart'), {
       type: 'bar',
-      data: {
-        labels: ${chartLabels},
-        datasets: [{ label: 'Net Profit', data: ${profitChartData},
-          backgroundColor: ${profitChartData}.map(v => v >= 0 ? '#2ecc71' : '#e74c3c'),
-          borderRadius: 4 }]
-      },
-      options: { plugins: { legend: { display: false } }, scales: { y: { grid: { color: '#333' }, ticks: { color: '#aaa' } }, x: { ticks: { color: '#aaa' } } } }
+      data: { labels: ${JSON.stringify(chartYears)},
+        datasets: [{ data: ${JSON.stringify(netProfits)},
+          backgroundColor: ${JSON.stringify(netProfits)}.map(v => v>=0 ? 'rgba(5,150,105,0.8)' : 'rgba(220,38,38,0.8)'),
+          borderRadius: 6, borderSkipped: false }] },
+      options: { ...baseOpts }
     });` : ""}
+
+    // ── Revenue line ────────────────────────────────────────────────────────
     ${revenues.length >= 2 ? `
     new Chart(document.getElementById('revenueChart'), {
       type: 'line',
-      data: {
-        labels: ${chartLabels},
-        datasets: [{ label: 'Revenue', data: ${revenueChartData},
-          borderColor: '#3498db', backgroundColor: 'rgba(52,152,219,0.1)', fill: true, tension: 0.3 }]
-      },
-      options: { plugins: { legend: { display: false } }, scales: { y: { grid: { color: '#333' }, ticks: { color: '#aaa' } }, x: { ticks: { color: '#aaa' } } } }
+      data: { labels: ${JSON.stringify(chartYears)},
+        datasets: [{ data: ${JSON.stringify(revenues)},
+          borderColor: '#2563eb', backgroundColor: 'rgba(37,99,235,0.12)',
+          fill: true, tension: 0.4, pointRadius: 5, pointBackgroundColor: '#2563eb',
+          pointBorderColor: '#fff', pointBorderWidth: 2 }] },
+      options: { ...baseOpts }
     });` : ""}
 
-    async function refreshStock(sym) {
-      const btn = event.target;
-      btn.disabled = true; btn.textContent = "Refreshing...";
-      const r = await fetch('/api/refresh/stock/' + sym, { method: 'POST' });
-      if (r.ok) { location.reload(); } else { btn.textContent = "Error"; btn.disabled = false; }
-    }
+    // ── ROCE / ROE grouped bar ───────────────────────────────────────────────
+    ${(s.roce != null || s.roe != null) ? `
+    new Chart(document.getElementById('roceRoeChart'), {
+      type: 'bar',
+      data: { labels: ['ROCE', 'ROE'],
+        datasets: [{ data: [${s.roce ?? null}, ${s.roe ?? null}],
+          backgroundColor: ['rgba(16,185,129,0.8)', 'rgba(99,102,241,0.8)'],
+          borderRadius: 8, borderSkipped: false }] },
+      options: { ...baseOpts, plugins: { legend:{display:false} },
+        scales: { y: { ...baseOpts.scales.y, max: Math.max(${Math.ceil(Math.max(s.roce ?? 0, s.roe ?? 0) * 1.4) + 5}, 30) },
+                  x: baseOpts.scales.x } }
+    });` : ""}
 
+    // ── Promoter doughnut ───────────────────────────────────────────────────
+    ${s.promoter_pct != null ? `
+    new Chart(document.getElementById('promoterChart'), {
+      type: 'doughnut',
+      data: { labels: ['Promoter', 'Public'],
+        datasets: [{ data: [${s.promoter_pct ?? null}, ${s.promoter_pct != null ? +(100 - s.promoter_pct).toFixed(1) : null}],
+          backgroundColor: ['rgba(99,102,241,0.85)','rgba(200,200,220,0.25)'],
+          borderWidth: 0, cutout: '72%' }] },
+      options: { responsive:true, maintainAspectRatio:false,
+        plugins: { legend: { display:true, position:'bottom',
+          labels:{ color:tc, font:{size:11}, boxWidth:12, padding:8 } } } }
+    });` : ""}
+
+    // ── Valuation radar ─────────────────────────────────────────────────────
+    ${(s.pe_ratio != null || pbRatio != null || s.current_ratio != null) ? `
+    new Chart(document.getElementById('valuationChart'), {
+      type: 'bar',
+      data: { labels: ['P/E', 'P/B', 'Curr.Ratio', 'Div.Yld'],
+        datasets: [{ data: [${s.pe_ratio ?? null}, ${pbRatio ?? null}, ${s.current_ratio ?? null}, ${s.dividend_yield ?? null}],
+          backgroundColor: ['rgba(245,158,11,0.8)','rgba(16,185,129,0.8)','rgba(14,165,233,0.8)','rgba(168,85,247,0.8)'],
+          borderRadius: 8, borderSkipped: false }] },
+      options: { ...baseOpts, indexAxis: 'y',
+        scales: { x: { grid:{color:gc}, ticks:{color:tc,font:{size:11}} },
+                  y: { grid:{display:false}, ticks:{color:tc,font:{size:11}} } } }
+    });` : ""}
+
+    // ── Profit margin % line ────────────────────────────────────────────────
+    ${(netProfits.length >= 3 && revenues.length >= 3) ? `
+    (function() {
+      const np = ${JSON.stringify(netProfits)};
+      const rv = ${JSON.stringify(revenues)};
+      const margins = np.map((p,i) => rv[i]>0 ? parseFloat((p/rv[i]*100).toFixed(1)) : 0);
+      new Chart(document.getElementById('marginChart'), {
+        type: 'line',
+        data: { labels: ${JSON.stringify(chartYears)},
+          datasets: [{ data: margins,
+            borderColor: '#f59e0b', backgroundColor: 'rgba(245,158,11,0.1)',
+            fill: true, tension: 0.4, pointRadius: 5, pointBackgroundColor: '#f59e0b',
+            pointBorderColor: '#fff', pointBorderWidth: 2 }] },
+        options: { ...baseOpts,
+          plugins: { legend:{display:false},
+            tooltip: { callbacks: { label: ctx => ctx.raw + '%' } } },
+          scales: { y: { ...baseOpts.scales.y, ticks: { ...baseOpts.scales.y.ticks, callback: v => v+'%' } },
+                    x: baseOpts.scales.x } }
+      });
+    })();` : ""}
+
+    async function refreshStock(sym) {
+      const btn = event.target; btn.disabled=true; btn.textContent='Refreshing…';
+      const r = await fetch('/api/refresh/stock/'+sym, {method:'POST'});
+      if(r.ok){ location.reload(); } else { btn.textContent='Error'; btn.disabled=false; }
+    }
     async function addToWatchlist(sym) {
       const id = document.getElementById('wlSelect').value;
-      if (!id) { alert('Select a watchlist first'); return; }
-      const r = await fetch('/watchlists/' + id + '/add', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ symbol: sym })
-      });
-      if (r.ok) alert('Added to watchlist!'); else alert('Error');
+      if(!id){ alert('Select a watchlist first'); return; }
+      const r = await fetch('/watchlists/'+id+'/add',
+        {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({symbol:sym})});
+      if(r.ok){ alert('Added! ✅'); } else { alert('Error'); }
     }
+
+    async function loadStockNews() {
+      const wrap = document.getElementById('stock-news-wrap');
+      try {
+        const r = await fetch('/api/news/${symbol}');
+        const items = await r.json();
+        if(!items.length){ wrap.innerHTML='<p class="news-empty">No recent news found.</p>'; return; }
+        const order=['Today','Yesterday','Last 7 Days','Older'], groups={};
+        items.forEach(n=>{ if(!groups[n.period]) groups[n.period]=[]; groups[n.period].push(n); });
+        let html='';
+        order.forEach(period=>{
+          if(!groups[period]) return;
+          html+='<div class="snews-period">'+period+'</div>';
+          html+=groups[period].map(n=>{
+            const d=n.pubDate?new Date(n.pubDate):null;
+            const ds=d?d.toLocaleDateString('en-IN',{day:'2-digit',month:'short'})+' '+d.toLocaleTimeString('en-IN',{hour:'2-digit',minute:'2-digit'}):'';
+            return '<a class="snews-item" href="'+n.link+'" target="_blank" rel="noopener">'
+              +'<span class="snews-title">'+n.title+'</span>'
+              +'<span class="snews-meta">'+(n.source||'Google News')+(ds?' &middot; '+ds:'')+'</span>'
+              +'</a>';
+          }).join('');
+        });
+        wrap.innerHTML=html;
+      } catch(_){ wrap.innerHTML='<p class="news-empty">Could not load news.</p>'; }
+    }
+    loadStockNews();
+  })();
   </script>
   <script src="/public/js/app.js"></script>
 </body>
@@ -414,7 +2185,7 @@ app.get("/stock/:symbol", async (req: Request, res: Response) => {
 });
 
 // ── GET /watchlists ────────────────────────────────────────────────────────────
-app.get("/watchlists", async (req: Request, res: Response) => {
+app.get("/watchlists", requireAuth, async (req: Request, res: Response) => {
   const lists = (await getWatchlists()) as any[];
   const cards = lists.map(w => `
     <div class="wl-card">
@@ -435,7 +2206,7 @@ app.get("/watchlists", async (req: Request, res: Response) => {
   <link rel="stylesheet" href="/public/css/style.css">
 </head>
 <body>
-  ${nav("watchlists")}
+  ${nav("watchlists", req)}
   <div class="container">
     <div class="page-header">
       <h1>⭐ Watchlists</h1>
@@ -477,8 +2248,8 @@ app.get("/watchlists", async (req: Request, res: Response) => {
 });
 
 // ── GET /watchlists/:id ────────────────────────────────────────────────────────
-app.get("/watchlists/:id", async (req: Request, res: Response) => {
-  const wl = (await getWatchlist(parseInt(req.params.id, 10))) as any;
+app.get("/watchlists/:id", requireAuth, async (req: Request, res: Response) => {
+  const wl = (await getWatchlist(parseInt(req.params.id, 10), req.session.userId)) as any;
   if (!wl) { res.status(404).send("Watchlist not found"); return; }
 
   const rows = wl.stocks.map((s: any) => `
@@ -502,7 +2273,7 @@ app.get("/watchlists/:id", async (req: Request, res: Response) => {
   <link rel="stylesheet" href="/public/css/style.css">
 </head>
 <body>
-  ${nav("watchlists")}
+  ${nav("watchlists", req)}
   <div class="container">
     <div class="page-header">
       <div>
@@ -536,10 +2307,10 @@ app.get("/watchlists/:id", async (req: Request, res: Response) => {
 });
 
 // ── Watchlist API routes ───────────────────────────────────────────────────────
-app.post("/watchlists", async (req: Request, res: Response) => {
+app.post("/watchlists", requireAuth, async (req: Request, res: Response) => {
   const { name, description } = req.body;
   if (!name) { res.status(400).json({ error: "name required" }); return; }
-  const id = await createWatchlist(name, description || "");
+  const id = await createWatchlist(name, description || "", req.session.userId);
   res.json({ id });
 });
 
@@ -559,6 +2330,588 @@ app.post("/watchlists/:id/remove", async (req: Request, res: Response) => {
 
 app.delete("/watchlists/:id", async (req: Request, res: Response) => {
   await deleteWatchlist(parseInt(req.params.id, 10));
+  res.json({ ok: true });
+});
+
+// ── Admin routes ───────────────────────────────────────────────────────────────
+
+// ── GET /admin ─────────────────────────────────────────────────────────────────
+app.get("/admin", requireAdmin, async (req: Request, res: Response) => {
+  const users = await getAllUsers();
+  const today = new Date().toISOString().slice(0, 10);
+  const todaySignups = users.filter(u => u.created_at?.slice(0, 10) === today).length;
+  const activePicks  = await getActivePicks();
+
+  const [pvToday, pvTotal, uvToday] = await Promise.all([
+    dbAll<{ c: number }>("SELECT COUNT(*) as c FROM page_views WHERE date(viewed_at) = date('now','localtime')"),
+    dbAll<{ c: number }>("SELECT COUNT(*) as c FROM page_views"),
+    dbAll<{ c: number }>("SELECT COUNT(DISTINCT ip_hash) as c FROM page_views WHERE date(viewed_at) = date('now','localtime')"),
+  ]);
+
+  const botStatus = (() => {
+    try { return JSON.parse(require("fs").readFileSync(`${BOT_DIR}/trade-state.json`, "utf-8")); } catch { return {}; }
+  })();
+  const botActive = !!(botStatus.position && botStatus.position !== "FLAT");
+
+  res.send(`<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Admin Overview — ZeroScreen</title>
+  <link rel="stylesheet" href="/public/css/style.css">
+</head>
+<body>
+  ${nav("admin", req)}
+  <div class="container">
+    <div class="admin-header">
+      <div>
+        <h1>🧠 Admin Overview</h1>
+        <p class="page-sub">ZeroScreen platform at a glance</p>
+      </div>
+    </div>
+
+    <div class="admin-stats-row">
+      <div class="admin-stat-card">
+        <div class="admin-stat-num">${users.length}</div>
+        <div class="admin-stat-label">Total Users</div>
+      </div>
+      <div class="admin-stat-card">
+        <div class="admin-stat-num green">${todaySignups}</div>
+        <div class="admin-stat-label">New Today</div>
+      </div>
+      <div class="admin-stat-card">
+        <div class="admin-stat-num">${pvToday[0]?.c ?? 0}</div>
+        <div class="admin-stat-label">Page Views Today</div>
+      </div>
+      <div class="admin-stat-card">
+        <div class="admin-stat-num">${uvToday[0]?.c ?? 0}</div>
+        <div class="admin-stat-label">Unique Visitors Today</div>
+      </div>
+      <div class="admin-stat-card">
+        <div class="admin-stat-num">${pvTotal[0]?.c ?? 0}</div>
+        <div class="admin-stat-label">Total Page Views</div>
+      </div>
+      <div class="admin-stat-card">
+        <div class="admin-stat-num">${activePicks.length}</div>
+        <div class="admin-stat-label">Active Picks</div>
+      </div>
+    </div>
+
+    <div class="admin-quick-grid">
+      <div class="admin-quick-card">
+        <h3>🤖 Bot Status</h3>
+        <p>Position: <strong class="${botActive ? "sig-green" : "text-dim"}">${botActive ? "● " + (botStatus.direction || "ACTIVE") : "💤 FLAT"}</strong></p>
+        <p>Strategy: <strong>${botStatus.strategy || botStatus.type || "—"}</strong></p>
+        <a href="/admin/signals" class="btn-secondary" style="margin-top:8px">⚙️ Signal Control</a>
+      </div>
+      <div class="admin-quick-card">
+        <h3>🔥 Today's Picks</h3>
+        <p>${activePicks.length > 0 ? activePicks.slice(0, 3).map(p => `<span class="pick-badge-${p.direction.toLowerCase()}">${p.direction}</span> ${p.stock_symbol}`).join(" · ") : "No active picks"}</p>
+        <a href="/admin/picks" class="btn-secondary" style="margin-top:8px">🛠 Manage Picks</a>
+      </div>
+      <div class="admin-quick-card">
+        <h3>🔗 Quick Links</h3>
+        <div style="display:flex;flex-direction:column;gap:8px;margin-top:8px">
+          <a href="/admin/users" class="btn-secondary">👥 Users</a>
+          <a href="/admin/analytics" class="btn-secondary">📊 Analytics</a>
+          <a href="/admin/content" class="btn-secondary">📢 Content</a>
+        </div>
+      </div>
+    </div>
+  </div>
+  <script src="/public/js/app.js"></script>
+</body>
+</html>`);
+});
+
+app.get("/admin/users", requireAdmin, async (req: Request, res: Response) => {
+  const users = await getAllUsers();
+  const total = users.length;
+  const admins = users.filter(u => u.role === "admin").length;
+  const today = new Date().toISOString().slice(0, 10);
+  const todayCount = users.filter(u => u.created_at?.slice(0, 10) === today).length;
+
+  const rows = users.map((u, i) => `
+    <tr>
+      <td class="admin-num">${i + 1}</td>
+      <td>
+        <div class="admin-user-cell">
+          <span class="admin-avatar">${u.name.charAt(0).toUpperCase()}</span>
+          <span>${u.name}</span>
+        </div>
+      </td>
+      <td>${u.email}</td>
+      <td><span class="role-badge role-${u.role}">${u.role}</span></td>
+      <td>${new Date(u.created_at).toLocaleString("en-IN", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" })}</td>
+      <td>
+        ${u.role !== "admin"
+          ? `<form method="POST" action="/admin/users/${u.id}/make-admin" style="display:inline">
+               <button class="btn-admin-action" onclick="return confirm('Make ${u.name} an admin?')">Make Admin</button>
+             </form>`
+          : `<span class="text-dim">—</span>`}
+      </td>
+    </tr>`).join("");
+
+  res.send(`<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Users — ZeroScreen Admin</title>
+  <link rel="stylesheet" href="/public/css/style.css">
+</head>
+<body>
+  ${nav("admin-users", req)}
+  <div class="container">
+    <div class="admin-header">
+      <div>
+        <h1>👥 User Management</h1>
+        <p class="page-sub">All registered users on ZeroScreen</p>
+      </div>
+      <div style="display:flex;gap:10px;flex-wrap:wrap">
+        <a href="/admin" class="btn-secondary">🧠 Overview</a>
+        <a href="/admin/analytics" class="btn-secondary">📈 Analytics</a>
+        <a href="/admin/data" class="btn-secondary">📊 Data Control</a>
+      </div>
+    </div>
+
+    <div class="admin-stats-row">
+      <div class="admin-stat-card">
+        <div class="admin-stat-num">${total}</div>
+        <div class="admin-stat-label">Total Users</div>
+      </div>
+      <div class="admin-stat-card">
+        <div class="admin-stat-num">${admins}</div>
+        <div class="admin-stat-label">Admins</div>
+      </div>
+      <div class="admin-stat-card">
+        <div class="admin-stat-num green">${todayCount}</div>
+        <div class="admin-stat-label">Joined Today</div>
+      </div>
+      <div class="admin-stat-card">
+        <div class="admin-stat-num">${total - admins}</div>
+        <div class="admin-stat-label">Regular Users</div>
+      </div>
+    </div>
+
+    <div class="table-wrap" style="margin-top:18px">
+      <table class="stocks-table">
+        <thead>
+          <tr>
+            <th>#</th>
+            <th>Name</th>
+            <th>Email</th>
+            <th>Role</th>
+            <th>Registered</th>
+            <th>Actions</th>
+          </tr>
+        </thead>
+        <tbody>${rows || '<tr><td colspan="6" class="no-data">No users yet.</td></tr>'}</tbody>
+      </table>
+    </div>
+  </div>
+  <script src="/public/js/app.js"></script>
+</body>
+</html>`);
+});
+
+app.post("/admin/users/:id/make-admin", requireAdmin, async (req: Request, res: Response) => {
+  const id = parseInt(req.params.id, 10);
+  if (!Number.isInteger(id) || id <= 0) { res.status(400).send("Invalid id"); return; }
+  await dbRun("UPDATE users SET role = 'admin' WHERE id = ?", [id]);
+  res.redirect("/admin/users");
+});
+
+// ── GET /admin/data ────────────────────────────────────────────────────────────
+app.get("/admin/data", requireAdmin, async (req: Request, res: Response) => {
+  const stats = await getDbStats();
+  const msg = req.query.msg as string | undefined;
+  const err = req.query.err as string | undefined;
+  res.send(`<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Data Control — ZeroScreen Admin</title>
+  <link rel="stylesheet" href="/public/css/style.css">
+</head>
+<body>
+  ${nav("admin-users", req)}
+  <div class="container" style="max-width:700px">
+    <div class="page-header">
+      <div>
+        <a href="/admin" class="back-link">← Admin</a>
+        <h1>📊 Data Control</h1>
+        <p class="page-sub">Manage stock data on the server</p>
+      </div>
+    </div>
+    ${msg ? `<div class="auth-success" style="margin-bottom:18px">✅ ${esc(msg)}</div>` : ""}
+    ${err ? `<div class="auth-error"   style="margin-bottom:18px">⚠️ ${esc(err)}</div>`  : ""}
+
+    <div class="admin-data-grid">
+      <div class="admin-data-card">
+        <div class="admin-data-icon">💰</div>
+        <div class="admin-data-info">
+          <div class="admin-data-title">Refresh Prices</div>
+          <div class="admin-data-desc">Fetch latest NSE bhavcopy (daily prices, volume, change%)</div>
+          <div class="admin-data-stat">${stats.priced} stocks with prices · Last: ${stats.lastPriceUpdate ? new Date(stats.lastPriceUpdate).toLocaleString("en-IN") : "Never"}</div>
+        </div>
+        <button class="btn-primary" onclick="triggerJob('prices', this)">▶ Run Now</button>
+      </div>
+      <div class="admin-data-card">
+        <div class="admin-data-icon">📈</div>
+        <div class="admin-data-info">
+          <div class="admin-data-title">Refresh Fundamentals</div>
+          <div class="admin-data-desc">Fetch ROCE, D/E, PE, promoter% etc. from screener.in (batch of 500)</div>
+          <div class="admin-data-stat">${stats.fetched}/${stats.total} stocks have fundamentals</div>
+        </div>
+        <button class="btn-primary" onclick="triggerJob('fundamentals', this)">▶ Run Now</button>
+      </div>
+    </div>
+
+    <div class="admin-data-progress" id="job-status" style="display:none">
+      <div class="progress-spinner"></div>
+      <span id="job-status-text">Running…</span>
+    </div>
+  </div>
+  <script>
+    async function triggerJob(type, btn) {
+      btn.disabled = true;
+      const statusEl = document.getElementById('job-status');
+      const statusText = document.getElementById('job-status-text');
+      statusEl.style.display = 'flex';
+      statusText.textContent = type === 'prices' ? 'Fetching prices from NSE…' : 'Fetching fundamentals (this takes a few minutes)…';
+      try {
+        const r = await fetch('/api/refresh/' + type, { method: 'POST' });
+        const d = await r.json();
+        if (r.ok) {
+          statusText.textContent = '✅ Done! ' + (d.count ? d.count + ' stocks updated.' : '');
+        } else {
+          statusText.textContent = '⚠️ Error: ' + (d.error || 'Unknown');
+        }
+      } catch(e) {
+        statusText.textContent = '⚠️ Network error';
+      }
+      btn.disabled = false;
+    }
+  </script>
+  <script src="/public/js/app.js"></script>
+</body>
+</html>`);
+});
+
+// ── GET /api/screen/csv ────────────────────────────────────────────────────────
+app.get("/api/screen/csv", requireAuth, async (req: Request, res: Response) => {
+  const f: ScreenerFilter = {
+    minRoce:          req.query.minRoce     ? parseFloat(req.query.minRoce as string)     : undefined,
+    maxRoce:          req.query.maxRoce     ? parseFloat(req.query.maxRoce as string)     : undefined,
+    maxDe:            req.query.maxDe       ? parseFloat(req.query.maxDe as string)       : undefined,
+    minPromoter:      req.query.minPromoter ? parseFloat(req.query.minPromoter as string) : undefined,
+    maxPe:            req.query.maxPe       ? parseFloat(req.query.maxPe as string)       : undefined,
+    minPe:            req.query.minPe       ? parseFloat(req.query.minPe as string)       : undefined,
+    minPrice:         req.query.minPrice    ? parseFloat(req.query.minPrice as string)    : undefined,
+    maxPrice:         req.query.maxPrice    ? parseFloat(req.query.maxPrice as string)    : undefined,
+    minVolume:        req.query.minVolume   ? parseInt(req.query.minVolume as string, 10) : undefined,
+    minMarketCap:     req.query.minMc       ? parseFloat(req.query.minMc as string)       : undefined,
+    maxMarketCap:     req.query.maxMc       ? parseFloat(req.query.maxMc as string)       : undefined,
+    minDividendYield: req.query.minDivYield ? parseFloat(req.query.minDivYield as string) : undefined,
+    allProfitable:    req.query.allProfit === "1",
+    profitUptrend:    req.query.uptrend  === "1",
+    sector:           req.query.sector ? req.query.sector as string : undefined,
+    sortBy:           (req.query.sortBy as string) || "roce",
+    sortDir:          (req.query.sortDir as "asc" | "desc") || "desc",
+    limit:            500,
+  };
+  const stocks = await screenStocks(f);
+  const header = "Symbol,Company,Sector,Price,Change%,Volume,ROCE%,ROE%,D/E,Promoter%,PE,MarketCap_Cr,AllProfitable,ProfitUptrend";
+  const csvRows = stocks.map(s => [
+    s.symbol,
+    `"${(s.company_name || "").replace(/"/g, '""')}"`,
+    `"${(s.sector || "").replace(/"/g, '""')}"`,
+    s.price?.toFixed(2) || "",
+    s.change_pct?.toFixed(2) || "",
+    s.volume || "",
+    s.roce?.toFixed(2) || "",
+    s.roe?.toFixed(2) || "",
+    s.de_ratio?.toFixed(2) || "",
+    s.promoter_pct?.toFixed(2) || "",
+    s.pe_ratio?.toFixed(1) || "",
+    s.market_cap?.toFixed(0) || "",
+    s.all_profitable ? "Yes" : "No",
+    s.profit_uptrend ? "Yes" : "No",
+  ].join(","));
+  const csv = [header, ...csvRows].join("\n");
+  const date = new Date().toISOString().slice(0, 10);
+  res.setHeader("Content-Type", "text/csv; charset=utf-8");
+  res.setHeader("Content-Disposition", `attachment; filename="zeroscreen-${date}.csv"`);
+  res.send("\uFEFF" + csv); // BOM for Excel UTF-8 support
+});
+
+// ── GET /compare ──────────────────────────────────────────────────────────────
+app.get("/compare", async (req: Request, res: Response) => {
+  const symbolsParam = (req.query.symbols as string || "").toUpperCase();
+  const symbols = symbolsParam.split(",").map(s => s.trim()).filter(Boolean).slice(0, 5);
+
+  // No symbols — show search/pick form
+  if (symbols.length < 2) {
+    res.send(`<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Compare Stocks — ZeroScreen</title>
+  <link rel="stylesheet" href="/public/css/style.css">
+</head>
+<body>
+  ${nav("compare", req)}
+  <div class="container">
+    <div class="page-header">
+      <h1>⚖️ Compare Stocks</h1>
+      <p class="page-sub">Enter 2–5 NSE symbols to compare side-by-side</p>
+    </div>
+    <div class="cmp-pick-card">
+      <div class="cmp-pick-inputs" id="cmpInputs">
+        <div class="cmp-ac-wrap"><input class="input cmp-sym-input" placeholder="Symbol 1 e.g. RELIANCE" maxlength="20" autocomplete="off"><div class="cmp-ac-drop"></div></div>
+        <div class="cmp-ac-wrap"><input class="input cmp-sym-input" placeholder="Symbol 2 e.g. TCS" maxlength="20" autocomplete="off"><div class="cmp-ac-drop"></div></div>
+        <div class="cmp-ac-wrap"><input class="input cmp-sym-input" placeholder="Symbol 3 (optional)" maxlength="20" autocomplete="off"><div class="cmp-ac-drop"></div></div>
+        <div class="cmp-ac-wrap"><input class="input cmp-sym-input" placeholder="Symbol 4 (optional)" maxlength="20" autocomplete="off"><div class="cmp-ac-drop"></div></div>
+        <div class="cmp-ac-wrap"><input class="input cmp-sym-input" placeholder="Symbol 5 (optional)" maxlength="20" autocomplete="off"><div class="cmp-ac-drop"></div></div>
+      </div>
+      <div style="margin-top:20px;display:flex;gap:12px;flex-wrap:wrap">
+        <button class="btn-primary" onclick="goCompare()">⚖️ Compare</button>
+        <a href="/" class="btn-secondary">← Back to Screener</a>
+      </div>
+      <p style="margin-top:14px;font-size:12px;color:var(--text-dim)">Tip: you can also tick checkboxes on the screener and use the Compare button there.</p>
+    </div>
+  </div>
+  <script>
+    function goCompare() {
+      const syms = [...document.querySelectorAll('.cmp-sym-input')]
+        .map(i => i.value.trim().toUpperCase().replace(/[^A-Z0-9&]/g,''))
+        .filter(Boolean);
+      if (syms.length < 2) { alert('Enter at least 2 symbols'); return; }
+      window.location.href = '/compare?symbols=' + syms.join(',');
+    }
+
+    // Autocomplete
+    let _acTimer = null;
+    document.querySelectorAll('.cmp-ac-wrap').forEach(function(wrap) {
+      const inp = wrap.querySelector('.cmp-sym-input');
+      const drop = wrap.querySelector('.cmp-ac-drop');
+      inp.addEventListener('input', function() {
+        clearTimeout(_acTimer);
+        const q = inp.value.trim();
+        if (q.length < 1) { drop.innerHTML=''; drop.style.display='none'; return; }
+        _acTimer = setTimeout(async function() {
+          try {
+            const r = await fetch('/api/search?q=' + encodeURIComponent(q));
+            const items = await r.json();
+            if (!items.length) { drop.innerHTML=''; drop.style.display='none'; return; }
+            drop.innerHTML = items.map(function(it) {
+              return '<div class="cmp-ac-item" data-sym="'+it.symbol+'">' +
+                '<span class="cmp-ac-sym">'+it.symbol+'</span>' +
+                '<span class="cmp-ac-name">'+it.company_name+'</span>' +
+                '</div>';
+            }).join('');
+            drop.style.display = 'block';
+          } catch(_) {}
+        }, 180);
+      });
+      drop.addEventListener('mousedown', function(e) {
+        const item = e.target.closest('.cmp-ac-item');
+        if (!item) return;
+        inp.value = item.dataset.sym;
+        drop.innerHTML = ''; drop.style.display = 'none';
+      });
+      inp.addEventListener('keydown', function(e) {
+        if (e.key === 'Enter') { drop.innerHTML=''; drop.style.display='none'; goCompare(); }
+        if (e.key === 'Escape') { drop.innerHTML=''; drop.style.display='none'; }
+        if (e.key === 'ArrowDown') {
+          const first = drop.querySelector('.cmp-ac-item'); if (first) first.focus();
+        }
+      });
+      inp.addEventListener('blur', function() {
+        setTimeout(function(){ drop.innerHTML=''; drop.style.display='none'; }, 200);
+      });
+    });
+  </script>
+  <script src="/public/js/app.js"></script>
+</body>
+</html>`);
+    return;
+  }
+
+  const stocks = (await Promise.all(symbols.map(sym => getStock(sym)))).filter(Boolean) as any[];
+  if (stocks.length < 2) {
+    res.redirect("/?error=stocks_not_found"); return;
+  }
+
+  const metrics: [string, string, (s: any) => string][] = [
+    ["Price",        "₹",  s => s.price != null ? `₹${fmt(s.price, 2)}` : "—"],
+    ["Change %",     "%",  s => s.change_pct != null ? `<span style="color:${changeColor(s.change_pct)}">${s.change_pct >= 0 ? "+" : ""}${fmt(s.change_pct, 2)}%</span>` : "—"],
+    ["ROCE %",       "%",  s => `<span style="color:${roceColor(s.roce)}">${fmt(s.roce)}%</span>`],
+    ["ROE %",        "%",  s => `${fmt(s.roe)}%`],
+    ["D/E Ratio",    "",   s => `<span style="color:${deColor(s.de_ratio)}">${s.de_ratio === 0 ? "Debt-free 💎" : fmt(s.de_ratio)}</span>`],
+    ["Promoter %",   "%",  s => `${fmt(s.promoter_pct)}%`],
+    ["P/E Ratio",    "",   s => fmt(s.pe_ratio, 1)],
+    ["EPS",          "₹",  s => `₹${fmt(s.eps, 1)}`],
+    ["Book Value",   "₹",  s => `₹${fmt(s.book_value, 1)}`],
+    ["Dividend Yld", "%",  s => `${fmt(s.dividend_yield)}%`],
+    ["Current Ratio","",   s => fmt(s.current_ratio, 2)],
+    ["Market Cap",   "",   s => fmtCr(s.market_cap)],
+    ["Volume",       "",   s => fmtVol(s.volume)],
+    ["All Profitable","",  s => s.all_profitable ? "✅ Yes" : "❌ No"],
+    ["Profit Uptrend","",  s => s.profit_uptrend ? "↑ Yes" : "↓ No"],
+    ["Sector",       "",   s => s.sector || "—"],
+  ];
+
+  const headerCols = stocks.map(s => `
+    <th class="cmp-stock-col">
+      <a href="/stock/${s.symbol}" class="sym-link">${s.symbol}</a>
+      <div class="cmp-co-name">${s.company_name || ""}</div>
+    </th>`).join("");
+
+  const bodyRows = metrics.map(([label, , fn]) => `
+    <tr>
+      <td class="cmp-label">${label}</td>
+      ${stocks.map(s => `<td class="cmp-val">${fn(s)}</td>`).join("")}
+    </tr>`).join("");
+
+  const symbolList = stocks.map(s => s.symbol).join(",");
+
+  res.send(`<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Compare: ${symbolList} — ZeroScreen</title>
+  <link rel="stylesheet" href="/public/css/style.css">
+</head>
+<body>
+  ${nav("compare", req)}
+  <div class="container">
+    <div class="page-header">
+      <div>
+        <a href="/" class="back-link">← Back to Screener</a>
+        <h1>⚖️ Stock Comparison</h1>
+      </div>
+      <a href="/" class="btn-secondary">+ Add More Stocks</a>
+    </div>
+    <div class="table-wrap compare-table-wrap">
+      <table class="stocks-table compare-table">
+        <thead>
+          <tr>
+            <th class="cmp-label-col">Metric</th>
+            ${headerCols}
+          </tr>
+        </thead>
+        <tbody>${bodyRows}</tbody>
+      </table>
+    </div>
+    <div style="margin-top:16px;display:flex;gap:12px;flex-wrap:wrap;align-items:center">
+      <button class="btn-primary" id="refreshAllBtn" onclick="refreshAll()">🔄 Refresh All Data</button>
+      <a href="/compare" class="btn-secondary">⚖️ Compare Different Stocks</a>
+      <a href="/" class="btn-ghost">← Back to Screener</a>
+    </div>
+    <p id="refreshNote" style="margin-top:10px;font-size:12px;color:var(--text-dim)">If values show —, click Refresh All Data to fetch fundamentals from screener.in</p>
+  </div>
+  <script>
+    async function refreshAll() {
+      const btn = document.getElementById('refreshAllBtn');
+      const note = document.getElementById('refreshNote');
+      btn.disabled = true; btn.textContent = 'Refreshing…';
+      note.textContent = 'Fetching data for ${symbolList} — this may take 15–30 seconds…';
+      const syms = '${symbolList}'.split(',');
+      for (const sym of syms) {
+        note.textContent = 'Fetching ' + sym + '…';
+        try { await fetch('/api/refresh/stock/' + sym, {method:'POST'}); } catch(_) {}
+      }
+      location.reload();
+    }
+  </script>
+  <script src="/public/js/app.js"></script>
+</body>
+</html>`);
+});
+
+// ── GET /alerts ───────────────────────────────────────────────────────────────
+app.get("/alerts", requireAuth, async (req: Request, res: Response) => {
+  const alerts = await getAlerts(req.session.userId!);
+
+  const cards = alerts.map(a => {
+    let filters: Record<string, string> = {};
+    try { filters = JSON.parse(a.filters_json); } catch (_) {}
+    const qs = new URLSearchParams(filters).toString();
+    const filterPills = Object.entries(filters)
+      .filter(([, v]) => v && v !== "roce" && v !== "desc")
+      .map(([k, v]) => `<span class="filter-pill">${k}: ${v}</span>`)
+      .join("");
+    return `
+      <div class="alert-card">
+        <div class="alert-card-header">
+          <span class="alert-name">🔔 ${a.name}</span>
+          <span class="alert-date">Saved ${new Date(a.created_at).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" })}</span>
+        </div>
+        <div class="alert-pills">${filterPills || '<span class="text-dim">No filters (matches all stocks)</span>'}</div>
+        <div class="alert-actions">
+          <a href="/?${qs}" class="btn-primary">▶ Run Now</a>
+          <span class="alert-sent">${a.last_sent ? `Last emailed: ${new Date(a.last_sent).toLocaleDateString("en-IN")}` : "Email not sent yet"}</span>
+          <button class="btn-danger" onclick="deleteAlert(${a.id})">Delete</button>
+        </div>
+      </div>`;
+  }).join("");
+
+  res.send(`<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Alerts — ZeroScreen</title>
+  <link rel="stylesheet" href="/public/css/style.css">
+</head>
+<body>
+  ${nav("alerts", req)}
+  <div class="container">
+    <div class="page-header">
+      <div>
+        <h1>🔔 My Alerts</h1>
+        <p class="page-sub">Daily email when stocks match your saved filters (sent weekday mornings)</p>
+      </div>
+      <a href="/" class="btn-primary">+ Create Alert from Screener</a>
+    </div>
+    <div class="alerts-grid">
+      ${cards || `
+        <div class="empty-state">
+          <div class="empty-icon">🔔</div>
+          <h2>No alerts yet</h2>
+          <p>Go to the screener, set your filters, and click <strong>🔔 Save Alert</strong> to get daily emails.</p>
+          <a href="/" class="btn-primary">Go to Screener →</a>
+        </div>`}
+    </div>
+  </div>
+  <script>
+    async function deleteAlert(id) {
+      if (!confirm('Delete this alert?')) return;
+      const r = await fetch('/alerts/' + id, { method: 'DELETE' });
+      if (r.ok) location.reload(); else alert('Error deleting alert');
+    }
+  </script>
+  <script src="/public/js/app.js"></script>
+</body>
+</html>`);
+});
+
+// POST /alerts
+app.post("/alerts", requireAuth, async (req: Request, res: Response) => {
+  const { name, filtersJson } = req.body;
+  if (!name || !filtersJson) { res.status(400).json({ error: "name and filtersJson required" }); return; }
+  try { JSON.parse(filtersJson); } catch (_) { res.status(400).json({ error: "invalid filtersJson" }); return; }
+  const id = await createAlert(req.session.userId!, name.trim().substring(0, 60), filtersJson);
+  res.json({ id, ok: true });
+});
+
+// DELETE /alerts/:id
+app.delete("/alerts/:id", requireAuth, async (req: Request, res: Response) => {
+  const id = parseInt(req.params.id, 10);
+  if (!Number.isInteger(id) || id <= 0) { res.status(400).json({ error: "Invalid id" }); return; }
+  await deleteAlert(id, req.session.userId!);
   res.json({ ok: true });
 });
 
@@ -591,10 +2944,169 @@ app.get("/api/stats", async (_req: Request, res: Response) => {
   res.json(await getDbStats());
 });
 
+app.get("/api/search", async (req: Request, res: Response) => {
+  const q = ((req.query.q as string) || "").trim();
+  if (q.length < 1) { res.json([]); return; }
+  const results = await searchStocks(q, 8);
+  res.json(results);
+});
+
+app.get("/api/news", async (_req: Request, res: Response) => {
+  res.json(await fetchMarketNews());
+});
+
+// ── GET /api/markets ─ live index prices from NSE India ──────────────────────
+let _mktCache: any[] = [];
+let _mktCacheAt = 0;
+const NSE_HEADERS = {
+  "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+  "Accept": "application/json, text/plain, */*",
+  "Accept-Language": "en-IN,en;q=0.9",
+  "Referer": "https://www.nseindia.com/",
+};
+
+async function fetchNseMarkets(): Promise<any[]> {
+  if (Date.now() - _mktCacheAt < 60_000 && _mktCache.length) return _mktCache;
+  try {
+    const idxRes = await fetch("https://www.nseindia.com/api/allIndices", {
+      headers: NSE_HEADERS,
+      signal: AbortSignal.timeout(9000)
+    });
+    if (!idxRes.ok) throw new Error(`NSE HTTP ${idxRes.status}`);
+    const data = await idxRes.json() as any;
+    const indices: any[] = data?.data || [];
+
+    const pick = (name: string, label: string) => {
+      const i = indices.find((x: any) => x.indexSymbol === name || x.index === name);
+      if (!i) return null;
+      return { symbol: name, label, price: i.last, change: i.variation, changePct: i.percentChange, region: "india" };
+    };
+
+    const results: any[] = [
+      pick("NIFTY 50",         "NIFTY 50"),
+      pick("NIFTY BANK",       "BANK NIFTY"),
+      pick("NIFTY IT",         "NIFTY IT"),
+      pick("NIFTY MIDCAP 100", "MIDCAP 100"),
+      pick("INDIA VIX",        "INDIA VIX"),
+    ].filter(Boolean) as any[];
+
+    const fin = pick("NIFTY FINANCIAL SERVICES", "FIN NIFTY");
+    if (fin) results.splice(1, 0, fin);
+
+    if (results.length >= 3) { _mktCache = results; _mktCacheAt = Date.now(); }
+    return results;
+  } catch (e: any) {
+    console.warn("[Markets]", e?.message);
+    return _mktCache;
+  }
+}
+
+let _globalCache: any[] = [];
+let _globalCacheAt = 0;
+const GLOBAL_SYMBOLS: [string, string][] = [
+  ["^DJI",   "Dow Jones"],
+  ["^IXIC",  "NASDAQ"],
+  ["^GSPC",  "S&P 500"],
+  ["^N225",  "Nikkei 225"],
+  ["^HSI",   "Hang Seng"],
+];
+
+async function fetchGlobalMarkets(): Promise<any[]> {
+  if (Date.now() - _globalCacheAt < 120_000 && _globalCache.length) return _globalCache;
+  try {
+    const results = await Promise.all(GLOBAL_SYMBOLS.map(async ([sym, label]) => {
+      try {
+        const r = await fetch(
+          `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(sym)}?interval=1d&range=1d`,
+          { headers: { "User-Agent": "Mozilla/5.0" }, signal: AbortSignal.timeout(8000) }
+        );
+        const d = await r.json() as any;
+        const meta = d?.chart?.result?.[0]?.meta;
+        const price: number = meta?.regularMarketPrice;
+        const prev: number = meta?.chartPreviousClose ?? meta?.previousClose;
+        const change = (price && prev) ? +(price - prev).toFixed(2) : 0;
+        const changePct = (price && prev) ? +((price - prev) / prev * 100).toFixed(2) : 0;
+        if (!price) return null;
+        return { symbol: sym, label, price, change, changePct, region: "global" };
+      } catch { return null; }
+    }));
+    const valid = results.filter(Boolean) as any[];
+    if (valid.length >= 2) { _globalCache = valid; _globalCacheAt = Date.now(); }
+    return valid.length ? valid : _globalCache;
+  } catch (e: any) {
+    console.warn("[GlobalMarkets]", e?.message);
+    return _globalCache;
+  }
+}
+
+app.get("/api/markets", async (_req: Request, res: Response) => {
+  const [india, global] = await Promise.all([fetchNseMarkets(), fetchGlobalMarkets()]);
+  res.json([...india, ...global]);
+});
+
+// ── GET /api/news/:symbol ─ stock-specific news from Google News RSS ──────────
+app.get("/api/news/:symbol", async (req: Request, res: Response) => {
+  const symbol = req.params.symbol.toUpperCase().replace(/[^A-Z0-9]/g, "");
+  const s = await getStock(symbol);
+  // Build search query using company name + NSE to get relevant results
+  const co = s?.company_name ? s.company_name.replace(/[^a-zA-Z0-9 ]/g, " ").trim() : symbol;
+  const query = encodeURIComponent(`${co} NSE India stock`);
+  const feedUrl = `https://news.google.com/rss/search?q=${query}&hl=en-IN&gl=IN&ceid=IN:en`;
+  try {
+    const xml = await new Promise<string>((resolve, reject) => {
+      const reqH = https.get(feedUrl, {
+        timeout: 8000,
+        headers: { "User-Agent": "ZeroScreen/1.0 RSS Reader", "Accept": "application/rss+xml,application/xml,*/*" },
+      }, (r) => {
+        if (r.statusCode && r.statusCode >= 300 && r.statusCode < 400 && r.headers.location) {
+          https.get(r.headers.location, { timeout: 8000, headers: { "User-Agent": "ZeroScreen/1.0" } }, (r2) => {
+            let d = ""; r2.on("data", c => d += c); r2.on("end", () => resolve(d));
+          }).on("error", reject);
+          return;
+        }
+        let d = ""; r.on("data", c => d += c); r.on("end", () => resolve(d));
+      });
+      reqH.on("error", reject);
+      reqH.on("timeout", () => { reqH.destroy(); reject(new Error("timeout")); });
+    });
+    const items = xml.match(/<item>([\s\S]*?)<\/item>/g) || [];
+    const now = Date.now();
+    const news = items.slice(0, 20).map(item => {
+      const title   = (item.match(/<title><!\[CDATA\[(.+?)\]\]><\/title>/) || item.match(/<title>([^<]+)<\/title>/) || [])[1]?.trim() || "";
+      const link    = (item.match(/<link>([^<]+)<\/link>/) || [])[1]?.trim() || "";
+      const pubDate = (item.match(/<pubDate>([^<]+)<\/pubDate>/) || [])[1]?.trim() || "";
+      const source  = (item.match(/<source[^>]*>([^<]+)<\/source>/) || item.match(/\.com\/([^/]+)/g) || [])[1]?.trim() || "";
+      const ts = pubDate ? new Date(pubDate).getTime() : 0;
+      const diffMs = now - ts;
+      const diffH  = diffMs / 3600000;
+      let period: string;
+      if (diffH < 24)        period = "Today";
+      else if (diffH < 48)   period = "Yesterday";
+      else if (diffH < 168)  period = "Last 7 Days";
+      else                   period = "Older";
+      return { title, link, pubDate, source, period, ts };
+    }).filter(n => n.title && n.link);
+    res.json(news);
+  } catch {
+    res.json([]);
+  }
+});
+
 app.post("/api/refresh/prices", async (_req: Request, res: Response) => {
   try {
     const count = await refreshPrices();
     res.json({ ok: true, count });
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.post("/api/refresh/fundamentals", requireAdmin, async (_req: Request, res: Response) => {
+  try {
+    // Fire and forget — runs in background
+    refreshFundamentals().catch(e => console.error("[API] fundamentals error:", e.message));
+    const stats = await getDbStats();
+    res.json({ ok: true, message: `Running in background. Currently ${stats.fetched}/${stats.total} stocks fetched.` });
   } catch (e: any) {
     res.status(500).json({ error: e.message });
   }
@@ -619,6 +3131,10 @@ app.post("/api/refresh/stock/:symbol", async (req: Request, res: Response) => {
       revenue_3: f.revenues[f.revenues.length - 1] ?? null,
       all_profitable: f.allProfitable ? 1 : 0,
       profit_uptrend: f.profitUptrend ? 1 : 0,
+      week52_high: f.week52High,
+      week52_low:  f.week52Low,
+      about:       f.about,
+      incorporated: f.incorporated,
       screener_data: JSON.stringify({ netProfits: f.netProfits, revenues: f.revenues }),
       fetch_error: null, fetched_at: new Date().toISOString(),
     });
@@ -628,12 +3144,3521 @@ app.post("/api/refresh/stock/:symbol", async (req: Request, res: Response) => {
   }
 });
 
+// ── GET /contact ──────────────────────────────────────────────────────────────
+app.get("/contact", (req: Request, res: Response) => {
+  const success = req.query.sent === "1";
+  const error   = req.query.error as string | undefined;
+  res.send(`<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Contact Us — ZeroScreen</title>
+  <link rel="stylesheet" href="/public/css/style.css">
+</head>
+<body>
+  ${nav("contact", req)}
+  <div class="container">
+    <div class="contact-wrap">
+      <div class="contact-left">
+        <div class="contact-tag">Get in touch</div>
+        <h1>We'd love to hear from you</h1>
+        <p class="contact-desc">Whether you're interested in acquiring ZeroScreen, want to collaborate, have a feature request, or just want to say hello — drop us a message and we'll get back to you within 24 hours.</p>
+        <div class="contact-cards">
+          <div class="contact-info-card">
+            <span class="cic-icon">💼</span>
+            <div>
+              <div class="cic-title">Business &amp; Acquisition</div>
+              <div class="cic-desc">Interested in buying or partnering? Let's talk.</div>
+            </div>
+          </div>
+          <div class="contact-info-card">
+            <span class="cic-icon">🛠️</span>
+            <div>
+              <div class="cic-title">Feature Requests</div>
+              <div class="cic-desc">Have an idea to make ZeroScreen better?</div>
+            </div>
+          </div>
+          <div class="contact-info-card">
+            <span class="cic-icon">🐛</span>
+            <div>
+              <div class="cic-title">Bug Reports</div>
+              <div class="cic-desc">Found something broken? Tell us.</div>
+            </div>
+          </div>
+          <div class="contact-info-card">
+            <span class="cic-icon">💬</span>
+            <div>
+              <div class="cic-title">General Enquiry</div>
+              <div class="cic-desc">Any other question or feedback.</div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="contact-right">
+        <div class="contact-form-card">
+          <h2>Send us a message</h2>
+          ${success ? '<div class="auth-success">✅ Message sent! We\'ll reply within 24 hours.</div>' : ''}
+          ${error   ? `<div class="auth-error">${esc(error)}</div>` : ''}
+          <form class="auth-form" method="POST" action="/contact">
+            <div class="form-group">
+              <label>Your Name</label>
+              <input type="text" name="name" placeholder="Rahul Sharma" required>
+            </div>
+            <div class="form-group">
+              <label>Email Address</label>
+              <input type="email" name="email" placeholder="you@example.com" required>
+            </div>
+            <div class="form-group">
+              <label>Subject</label>
+              <select name="subject" style="width:100%;background:var(--bg3);border:1.5px solid var(--border);color:var(--text);padding:11px 14px;border-radius:9px;font-size:14px;outline:none;font-family:inherit;">
+                <option value="Acquisition / Purchase Inquiry">💼 Acquisition / Purchase Inquiry</option>
+                <option value="Feature Request">🛠️ Feature Request</option>
+                <option value="Partnership / Collaboration">🤝 Partnership / Collaboration</option>
+                <option value="Bug Report">🐛 Bug Report</option>
+                <option value="General Enquiry">💬 General Enquiry</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label>Message</label>
+              <textarea name="message" placeholder="Tell us more..." required rows="5" style="width:100%;background:var(--bg3);border:1.5px solid var(--border);color:var(--text);padding:11px 14px;border-radius:9px;font-size:14px;outline:none;font-family:inherit;resize:vertical;transition:border-color 0.15s;"></textarea>
+            </div>
+            <button type="submit" class="btn-auth">Send Message →</button>
+          </form>
+        </div>
+      </div>
+    </div>
+  </div>
+  <script src="/public/js/app.js"></script>
+</body>
+</html>`);
+});
+
+// POST /contact
+app.post("/contact", async (req: Request, res: Response) => {
+  const { name, email, subject, message } = req.body;
+  if (!name || !email || !message) {
+    res.redirect("/contact?error=Name%2C+email+and+message+are+required"); return;
+  }
+  sendContactNotification(name, email, subject || "General Enquiry", message).catch(() => {});
+  res.redirect("/contact?sent=1");
+});
+
+// ── GET /about ─────────────────────────────────────────────────────────────────
+app.get("/about", (req: Request, res: Response) => {
+  res.send(`<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>About ZeroScreen — Who We Are</title>
+  <link rel="stylesheet" href="/public/css/style.css">
+</head>
+<body>
+  ${nav("about", req)}
+  <div class="container" style="max-width:900px">
+
+    <!-- Hero -->
+    <div class="about-hero">
+      <div class="about-hero-tag">Who We Are</div>
+      <h1 class="about-hero-title">Built by traders,<br>for every kind of learner</h1>
+      <p class="about-hero-desc">ZeroScreen is a free, open-access stock education &amp; research platform for the Indian market. We are <strong>not</strong> a SEBI-registered advisor. Everything here is built to help you <em>learn, practise, and build conviction</em> — not to tell you what to buy or sell.</p>
+      <div class="about-disclaimer-bar">
+        ⚠️ ZeroScreen is purely educational. It does not provide investment advice. All data is for learning purposes only. Invest at your own risk.
+      </div>
+    </div>
+
+    <!-- Mission -->
+    <div class="about-mission">
+      <div class="about-mission-icon">🎯</div>
+      <div>
+        <h2>Our Mission</h2>
+        <p>Most retail investors lose money not because markets are hard — but because they start trading before they understand the basics. We built ZeroScreen to bridge that gap: give everyone from a complete beginner to a seasoned investor the same professional-grade tools, for free.</p>
+      </div>
+    </div>
+
+    <!-- 3-tier audience cards -->
+    <h2 class="about-section-title">ZeroScreen is built for three kinds of people</h2>
+    <div class="about-tiers">
+
+      <div class="about-tier-card tier-beginner">
+        <div class="tier-badge" style="background:#dcfce7;color:#166534">🟢 Beginners</div>
+        <h3>Start here — no real money needed</h3>
+        <p>You're new to stock markets or trading. You want to understand how it works before risking a single rupee.</p>
+        <ul class="tier-list">
+          <li>📋 <strong>Paper Trade</strong> — simulate trades across 3 strategies with zero real money. Watch how they perform over time.</li>
+          <li>🎓 <strong>Strategy Showcase</strong> — see exactly what "ROCE > 20%" or "Debt-free" means with real stock examples.</li>
+          <li>📡 <strong>Signals</strong> — watch our live BANKNIFTY bot trade in real-time. Learn entry/exit logic by observation.</li>
+          <li>📬 <strong>Regular guidance</strong> — follow Today's Picks to see how analysis-backed ideas play out.</li>
+        </ul>
+        <a href="/my-paper-trade" class="about-tier-cta" style="background:#10b981">Start Paper Trading →</a>
+      </div>
+
+      <div class="about-tier-card tier-trader">
+        <div class="tier-badge" style="background:#fef9c3;color:#713f12">🟡 Mid-Level Traders</div>
+        <h3>Use curated ideas and build your own strategy</h3>
+        <p>You understand markets but want structured ideas and tools to sharpen your edge without spending hours on research.</p>
+        <ul class="tier-list">
+          <li>🔥 <strong>Today's Picks</strong> — daily curated LONG/SHORT ideas with entry range, target and stop loss, backed by analysis.</li>
+          <li>🔨 <strong>Strategy Builder</strong> — type a strategy in plain English (e.g. "Debt-free pharma stocks with ROCE above 25%") and get an instant screener filter set.</li>
+          <li>📊 <strong>Bot Performance Dashboard</strong> — study 5-year backtest data and real live trades to understand what edge looks like.</li>
+          <li>⚖️ <strong>Stock Comparison</strong> — compare up to 5 NSE stocks side-by-side on every fundamental metric.</li>
+        </ul>
+        <a href="/today" class="about-tier-cta" style="background:#f59e0b;color:#1c1917">See Today's Picks →</a>
+      </div>
+
+      <div class="about-tier-card tier-investor">
+        <div class="tier-badge" style="background:#fee2e2;color:#991b1b">🔴 Serious Investors</div>
+        <h3>Deep-screen 1,700+ NSE stocks yourself</h3>
+        <p>You know what you're looking for and want the raw data and tools to do independent fundamental + technical research.</p>
+        <ul class="tier-list">
+          <li>🔍 <strong>Advanced Screener</strong> — 14 filters (ROCE, ROE, D/E, Promoter %, P/E, Market Cap, Sector, Volume, 52-week range, profit growth) across 1,700+ NSE stocks.</li>
+          <li>📈 <strong>Stock Detail Page</strong> — TradingView chart, 8 KPI cards, 6 financial charts, full metrics table, company info and live news.</li>
+          <li>⭐ <strong>Watchlists</strong> — save your research shortlist, track it across sessions.</li>
+          <li>🔔 <strong>Alerts</strong> — save filter combos and get email digests every morning when stocks match your criteria.</li>
+        </ul>
+        <a href="/" class="about-tier-cta" style="background:#ef4444">Open Screener →</a>
+      </div>
+
+    </div>
+
+    <!-- Premium / AI Bot section -->
+    <div class="about-premium-section">
+      <div class="about-premium-left">
+        <div class="tier-badge" style="background:#ede9fe;color:#4c1d95;margin-bottom:12px">⚡ Advanced — AI Bot on Request</div>
+        <h2>Want the bot to trade for you?</h2>
+        <p>Beyond learning and research, we run a live BANKNIFTY intraday trading bot using two proprietary signal models. If you want the bot to execute on your account — that's a separate, request-based service with a subscription or commission arrangement.</p>
+        <p style="margin-top:10px;font-size:13px;color:var(--text-dim)">This is not sold as a guaranteed system. Past backtest results do not guarantee future returns. You invest, you decide.</p>
+        <a href="/premium" class="about-tier-cta" style="background:#7c3aed;margin-top:20px;display:inline-block">Learn About Premium →</a>
+      </div>
+      <div class="about-premium-stats">
+        <div class="ap-stat"><div class="ap-val">5 Yrs</div><div class="ap-label">Backtested</div></div>
+        <div class="ap-stat"><div class="ap-val">2</div><div class="ap-label">Signal Models</div></div>
+        <div class="ap-stat"><div class="ap-val">Live</div><div class="ap-label">Real Trades</div></div>
+        <div class="ap-stat"><div class="ap-val">9:15–3:30</div><div class="ap-label">Auto Hours</div></div>
+      </div>
+    </div>
+
+    <!-- What we are NOT -->
+    <div class="about-nolist-wrap">
+      <h2>What ZeroScreen is <em>not</em></h2>
+      <div class="about-nolist">
+        <div class="about-no-item">❌ Not a SEBI-registered investment advisor</div>
+        <div class="about-no-item">❌ Not a broker or trading platform — we don't execute trades on your behalf</div>
+        <div class="about-no-item">❌ Not a guarantee of returns — all data is historical and educational</div>
+        <div class="about-no-item">❌ Not affiliated with NSE, BSE, or SEBI</div>
+        <div class="about-no-item">❌ Not responsible for your investment decisions</div>
+      </div>
+      <p class="about-nolist-footer">All stock data is sourced from public NSE APIs and fundamentals databases. Use it to learn, form your own views, and always consult a registered advisor for personal investment decisions.</p>
+    </div>
+
+    <!-- Contact CTA -->
+    <div class="about-contact-cta">
+      <p>Questions, feedback, or want to collaborate?</p>
+      <a href="/contact" class="btn-primary">📬 Get in Touch →</a>
+    </div>
+
+    <footer class="page-footer">
+      © 2026 ZeroScreen — For educational and informational purposes only. Not SEBI registered. Not investment advice. Past data does not guarantee future returns. Trade at your own risk.
+    </footer>
+  </div>
+  <script src="/public/js/app.js"></script>
+</body>
+</html>`);
+});
+
 // ── Start ──────────────────────────────────────────────────────────────────────
-// Init DB then start
-initDb().then(() => app.listen(PORT, () => {
-  console.log(`\n🔍 ZeroScreen running at http://localhost:${PORT}`);
-  console.log(`   Screener  : http://localhost:${PORT}/`);
-  console.log(`   Watchlists: http://localhost:${PORT}/watchlists`);
-  console.log(`   API stats : http://localhost:${PORT}/api/stats\n`);
-  startScheduler();
-})).catch(err => { console.error("DB init failed:", err); process.exit(1); });
+const ADMIN_EMAIL = (process.env.ADMIN_EMAIL || "").toLowerCase().trim();
+
+// ── Bot data helpers ────────────────────────────────────────────────────────────
+const BOT_DIR = "/root/trading-bot";
+
+function readBotJSON(file: string, fallback: any = null) {
+  try {
+    const p = `${BOT_DIR}/${file}`;
+    if (!fs.existsSync(p)) return fallback;
+    return JSON.parse(fs.readFileSync(p, "utf-8"));
+  } catch { return fallback; }
+}
+
+function getTodayIST(): string {
+  return new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" });
+}
+
+function computeAnalytics(trades: any[]) {
+  const today = getTodayIST();
+  const todayTrades = trades.filter((t: any) => (t.date || "").startsWith(today));
+  const allWins  = trades.filter((t: any) => t.pnl > 0).length;
+  const allTotal = trades.length;
+
+  let equity = 0, peak = 0, maxDD = 0;
+  const equityCurve: number[] = [];
+  for (const t of trades) {
+    equity += t.pnl ?? 0;
+    if (equity > peak) peak = equity;
+    const dd = peak - equity;
+    if (dd > maxDD) maxDD = dd;
+    equityCurve.push(parseFloat(equity.toFixed(1)));
+  }
+
+  let todayEq = 0, todayPeak = 0, todayMaxDD = 0;
+  for (const t of todayTrades) {
+    todayEq += t.pnl ?? 0;
+    if (todayEq > todayPeak) todayPeak = todayEq;
+    const dd = todayPeak - todayEq;
+    if (dd > todayMaxDD) todayMaxDD = dd;
+  }
+
+  return {
+    today: {
+      trades: todayTrades.length,
+      wins: todayTrades.filter((t: any) => t.pnl > 0).length,
+      losses: todayTrades.filter((t: any) => t.pnl <= 0).length,
+      pnl: parseFloat(todayEq.toFixed(1)),
+      maxDD: parseFloat(todayMaxDD.toFixed(1)),
+    },
+    allTime: {
+      trades: allTotal,
+      wins: allWins,
+      losses: allTotal - allWins,
+      winRate: allTotal > 0 ? parseFloat(((allWins / allTotal) * 100).toFixed(1)) : 0,
+      pnl: parseFloat(equity.toFixed(1)),
+      maxDD: parseFloat(maxDD.toFixed(1)),
+    },
+    equityCurve,
+    recentTrades: trades.slice(-20).reverse(),
+  };
+}
+
+// ── Technical Indicator Engine ─────────────────────────────────────────────────
+
+// Compute EMA from closes
+function computeEMA(closes: number[], period: number): number[] {
+  const k = 2 / (period + 1);
+  const ema: number[] = [];
+  let prev = closes.slice(0, period).reduce((a, b) => a + b, 0) / period;
+  ema.push(prev);
+  for (let i = period; i < closes.length; i++) {
+    prev = closes[i] * k + prev * (1 - k);
+    ema.push(prev);
+  }
+  return ema;
+}
+
+function computeSMA(closes: number[], period: number): number[] {
+  const sma: number[] = [];
+  for (let i = period - 1; i < closes.length; i++) {
+    const sum = closes.slice(i - period + 1, i + 1).reduce((a, b) => a + b, 0);
+    sma.push(sum / period);
+  }
+  return sma;
+}
+
+function computeRSI(closes: number[], period = 14): { value: number; signal: string } {
+  if (closes.length < period + 1) return { value: 50, signal: "NEUTRAL" };
+  let gains = 0, losses = 0;
+  for (let i = 1; i <= period; i++) {
+    const diff = closes[i] - closes[i - 1];
+    if (diff > 0) gains += diff; else losses -= diff;
+  }
+  let avgGain = gains / period;
+  let avgLoss = losses / period;
+  for (let i = period + 1; i < closes.length; i++) {
+    const diff = closes[i] - closes[i - 1];
+    avgGain = (avgGain * (period - 1) + Math.max(diff, 0)) / period;
+    avgLoss = (avgLoss * (period - 1) + Math.max(-diff, 0)) / period;
+  }
+  const rs = avgLoss === 0 ? 100 : avgGain / avgLoss;
+  const rsi = parseFloat((100 - 100 / (1 + rs)).toFixed(2));
+  return {
+    value: rsi,
+    signal: rsi < 30 ? "BUY" : rsi > 70 ? "SELL" : "NEUTRAL",
+  };
+}
+
+function computeMACD(closes: number[]): { macd: number; signal: number; hist: number; trend: string } {
+  if (closes.length < 35) return { macd: 0, signal: 0, hist: 0, trend: "NEUTRAL" };
+  const ema12 = computeEMA(closes, 12);
+  const ema26 = computeEMA(closes, 26);
+  const macdLine: number[] = [];
+  const startIdx = closes.length - ema26.length;
+  for (let i = 0; i < ema26.length; i++) {
+    macdLine.push(ema12[startIdx + i] - ema26[i]);
+  }
+  const signalLine = computeEMA(macdLine, 9);
+  const lastMacd = macdLine[macdLine.length - 1];
+  const lastSignal = signalLine[signalLine.length - 1];
+  const hist = lastMacd - lastSignal;
+  // Crossover: check if previous histogram was negative and current is positive (or vice versa)
+  const prevHist = macdLine[macdLine.length - 2] - signalLine[signalLine.length - 2];
+  let trend = "NEUTRAL";
+  if (prevHist < 0 && hist > 0) trend = "BUY";
+  else if (prevHist > 0 && hist < 0) trend = "SELL";
+  else if (hist > 0) trend = "BULLISH";
+  else if (hist < 0) trend = "BEARISH";
+  return { macd: parseFloat(lastMacd.toFixed(3)), signal: parseFloat(lastSignal.toFixed(3)), hist: parseFloat(hist.toFixed(3)), trend };
+}
+
+function computeBollinger(closes: number[], period = 20, mult = 2): { upper: number; lower: number; mid: number; signal: string; pct: number } {
+  if (closes.length < period) return { upper: 0, lower: 0, mid: 0, signal: "NEUTRAL", pct: 50 };
+  const slice = closes.slice(-period);
+  const mid = slice.reduce((a, b) => a + b, 0) / period;
+  const variance = slice.reduce((a, b) => a + (b - mid) ** 2, 0) / period;
+  const std = Math.sqrt(variance);
+  const upper = mid + mult * std;
+  const lower = mid - mult * std;
+  const last = closes[closes.length - 1];
+  const pct = parseFloat(((last - lower) / (upper - lower) * 100).toFixed(1));
+  const signal = last < lower ? "BUY" : last > upper ? "SELL" : "NEUTRAL";
+  return { upper: parseFloat(upper.toFixed(2)), lower: parseFloat(lower.toFixed(2)), mid: parseFloat(mid.toFixed(2)), signal, pct };
+}
+
+function computeEMACross(closes: number[], fast = 20, slow = 50): { fastEMA: number; slowEMA: number; signal: string } {
+  if (closes.length < slow + 1) return { fastEMA: 0, slowEMA: 0, signal: "NEUTRAL" };
+  const emaFast = computeEMA(closes, fast);
+  const emaSlow = computeEMA(closes, slow);
+  const lastFast = emaFast[emaFast.length - 1];
+  const lastSlow = emaSlow[emaSlow.length - 1];
+  const prevFast = emaFast[emaFast.length - 2];
+  const prevSlow = emaSlow[emaSlow.length - 2];
+  let signal = "NEUTRAL";
+  if (prevFast <= prevSlow && lastFast > lastSlow) signal = "BUY";
+  else if (prevFast >= prevSlow && lastFast < lastSlow) signal = "SELL";
+  else if (lastFast > lastSlow) signal = "BULLISH";
+  else signal = "BEARISH";
+  return { fastEMA: parseFloat(lastFast.toFixed(2)), slowEMA: parseFloat(lastSlow.toFixed(2)), signal };
+}
+
+function computeSMACross(closes: number[], fast = 20, slow = 50): { fastSMA: number; slowSMA: number; signal: string } {
+  const smaFast = computeSMA(closes, fast);
+  const smaSlow = computeSMA(closes, slow);
+  if (smaFast.length < 2 || smaSlow.length < 2) return { fastSMA: 0, slowSMA: 0, signal: "NEUTRAL" };
+  const lastFast = smaFast[smaFast.length - 1];
+  const lastSlow = smaSlow[smaSlow.length - 1];
+  const prevFast = smaFast[smaFast.length - 2];
+  const prevSlow = smaSlow[smaSlow.length - 2];
+  let signal = "NEUTRAL";
+  if (prevFast <= prevSlow && lastFast > lastSlow) signal = "BUY";
+  else if (prevFast >= prevSlow && lastFast < lastSlow) signal = "SELL";
+  else if (lastFast > lastSlow) signal = "BULLISH";
+  else signal = "BEARISH";
+  return { fastSMA: parseFloat(lastFast.toFixed(2)), slowSMA: parseFloat(lastSlow.toFixed(2)), signal };
+}
+
+function computeVWAP(highs: number[], lows: number[], closes: number[], volumes: number[]): { vwap: number; signal: string } {
+  const len = Math.min(highs.length, lows.length, closes.length, volumes.length);
+  if (len < 1) return { vwap: 0, signal: "NEUTRAL" };
+  let cumVP = 0, cumVol = 0;
+  for (let i = 0; i < len; i++) {
+    const tp = (highs[i] + lows[i] + closes[i]) / 3;
+    cumVP += tp * volumes[i];
+    cumVol += volumes[i];
+  }
+  const vwap = parseFloat((cumVol > 0 ? cumVP / cumVol : 0).toFixed(2));
+  const last = closes[closes.length - 1];
+  return { vwap, signal: last > vwap * 1.002 ? "BULLISH" : last < vwap * 0.998 ? "BEARISH" : "NEUTRAL" };
+}
+
+function computeSupertrend(highs: number[], lows: number[], closes: number[], period = 7, mult = 3): { signal: string; value: number } {
+  if (closes.length < period + 1) return { signal: "NEUTRAL", value: 0 };
+  // ATR
+  const atr: number[] = [];
+  for (let i = 1; i < closes.length; i++) {
+    const hl = highs[i] - lows[i];
+    const hc = Math.abs(highs[i] - closes[i - 1]);
+    const lc = Math.abs(lows[i] - closes[i - 1]);
+    atr.push(Math.max(hl, hc, lc));
+  }
+  const atrEMA = computeEMA(atr.slice(-period * 3), period);
+  const lastATR = atrEMA[atrEMA.length - 1];
+  const lastClose = closes[closes.length - 1];
+  const lastHigh = highs[highs.length - 1];
+  const lastLow = lows[lows.length - 1];
+  const mid = (lastHigh + lastLow) / 2;
+  const upper = mid + mult * lastATR;
+  const lower = mid - mult * lastATR;
+  const prevClose = closes[closes.length - 2];
+  // Simplified: if close > upper band area → bullish, < lower → bearish
+  const signal = lastClose > upper ? "BULLISH" : lastClose < lower ? "BEARISH" :
+    lastClose > mid && prevClose <= mid ? "BUY" :
+    lastClose < mid && prevClose >= mid ? "SELL" : "NEUTRAL";
+  return { signal, value: parseFloat(mid.toFixed(2)) };
+}
+
+function computeStochastic(highs: number[], lows: number[], closes: number[], kPeriod = 14, dPeriod = 3): { k: number; d: number; signal: string } {
+  if (closes.length < kPeriod + dPeriod) return { k: 50, d: 50, signal: "NEUTRAL" };
+  const kValues: number[] = [];
+  for (let i = kPeriod - 1; i < closes.length; i++) {
+    const highSlice = highs.slice(i - kPeriod + 1, i + 1);
+    const lowSlice = lows.slice(i - kPeriod + 1, i + 1);
+    const highest = Math.max(...highSlice);
+    const lowest = Math.min(...lowSlice);
+    kValues.push(highest === lowest ? 50 : ((closes[i] - lowest) / (highest - lowest)) * 100);
+  }
+  const dValues = computeSMA(kValues, dPeriod);
+  const k = parseFloat(kValues[kValues.length - 1].toFixed(2));
+  const d = parseFloat(dValues[dValues.length - 1].toFixed(2));
+  const signal = k < 20 && d < 20 ? "BUY" : k > 80 && d > 80 ? "SELL" : k > d ? "BULLISH" : "BEARISH";
+  return { k, d, signal };
+}
+
+function computeWilliamsR(highs: number[], lows: number[], closes: number[], period = 14): { value: number; signal: string } {
+  if (closes.length < period) return { value: -50, signal: "NEUTRAL" };
+  const highest = Math.max(...highs.slice(-period));
+  const lowest = Math.min(...lows.slice(-period));
+  const wr = highest === lowest ? -50 : ((highest - closes[closes.length - 1]) / (highest - lowest)) * -100;
+  const value = parseFloat(wr.toFixed(2));
+  return { value, signal: value < -80 ? "BUY" : value > -20 ? "SELL" : "NEUTRAL" };
+}
+
+function computeADX(highs: number[], lows: number[], closes: number[], period = 14): { adx: number; signal: string } {
+  if (closes.length < period * 2) return { adx: 0, signal: "NEUTRAL" };
+  const trArr: number[] = [];
+  const dmPArr: number[] = [];
+  const dmNArr: number[] = [];
+  for (let i = 1; i < closes.length; i++) {
+    trArr.push(Math.max(highs[i] - lows[i], Math.abs(highs[i] - closes[i-1]), Math.abs(lows[i] - closes[i-1])));
+    const upMove = highs[i] - highs[i-1];
+    const dnMove = lows[i-1] - lows[i];
+    dmPArr.push(upMove > dnMove && upMove > 0 ? upMove : 0);
+    dmNArr.push(dnMove > upMove && dnMove > 0 ? dnMove : 0);
+  }
+  const atr14  = computeEMA(trArr, period);
+  const diP14  = computeEMA(dmPArr, period).map((v, i) => atr14[i] > 0 ? (v / atr14[i]) * 100 : 0);
+  const diN14  = computeEMA(dmNArr, period).map((v, i) => atr14[i] > 0 ? (v / atr14[i]) * 100 : 0);
+  const dx     = diP14.map((v, i) => (v + diN14[i]) > 0 ? Math.abs(v - diN14[i]) / (v + diN14[i]) * 100 : 0);
+  const adxArr = computeEMA(dx, period);
+  const adx = parseFloat(adxArr[adxArr.length - 1].toFixed(2));
+  const lastDiP = diP14[diP14.length - 1];
+  const lastDiN = diN14[diN14.length - 1];
+  const signal = adx > 25 ? (lastDiP > lastDiN ? "BULLISH" : "BEARISH") : "NEUTRAL";
+  return { adx, signal };
+}
+
+// Yahoo Finance price history fetch with caching
+const _yhCache: Map<string, { ts: number; closes: number[]; highs: number[]; lows: number[]; volumes: number[] }> = new Map();
+const YH_CACHE_TTL = 20 * 60 * 1000; // 20 min
+let _yhHostIdx = 0; // rotate between query1 and query2
+const YH_HOSTS = ["query1.finance.yahoo.com", "query2.finance.yahoo.com"];
+const YH_HEADERS = {
+  "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+  "Accept": "application/json,text/plain,*/*",
+  "Accept-Language": "en-US,en;q=0.9",
+  "Origin": "https://finance.yahoo.com",
+  "Referer": "https://finance.yahoo.com/",
+};
+
+async function fetchYahooHistory(symbol: string): Promise<{ closes: number[]; highs: number[]; lows: number[]; volumes: number[] } | null> {
+  const nseSym = symbol.replace(/\.NS$/, "") + ".NS";
+  const cached = _yhCache.get(nseSym);
+  if (cached && Date.now() - cached.ts < YH_CACHE_TTL) return cached;
+
+  const parseResult = (d: any) => {
+    const result = d?.chart?.result?.[0];
+    if (!result) return null;
+    const q0 = result.indicators?.quote?.[0] || {};
+    const closes  = (q0.close  || []).filter((v: any) => v != null);
+    const highs   = (q0.high   || []).filter((v: any) => v != null);
+    const lows    = (q0.low    || []).filter((v: any) => v != null);
+    const volumes = (q0.volume || []).filter((v: any) => v != null);
+    if (closes.length < 15) return null;
+    return { closes, highs, lows, volumes };
+  };
+
+  // Try both hosts, rotating to spread load
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const host = YH_HOSTS[(_yhHostIdx + attempt) % YH_HOSTS.length];
+    try {
+      const url = `https://${host}/v8/finance/chart/${encodeURIComponent(nseSym)}?interval=1d&range=6mo&events=none`;
+      const r = await fetch(url, { headers: YH_HEADERS, signal: AbortSignal.timeout(10000) });
+      if (r.status === 429) continue; // try other host
+      if (!r.ok) continue;
+      const d: any = await r.json();
+      const parsed = parseResult(d);
+      if (!parsed) continue;
+      _yhHostIdx = (_yhHostIdx + 1) % YH_HOSTS.length; // advance rotation
+      const data = { ts: Date.now(), ...parsed };
+      _yhCache.set(nseSym, data);
+      return data;
+    } catch { continue; }
+  }
+  return null;
+}
+
+// ── GET /api/indicator-scan ────────────────────────────────────────────────────
+const _scanCache: Map<string, { ts: number; results: any[] }> = new Map();
+
+app.get("/api/indicator-scan", async (req: Request, res: Response) => {
+  const indicator = (req.query.indicator as string || "RSI").toUpperCase();
+  const signal    = (req.query.signal    as string || "BUY").toUpperCase();
+  const universe  = parseInt(req.query.universe as string || "100");
+  const sector    = (req.query.sector as string || "").trim();
+
+  const cacheKey = `${indicator}|${signal}|${universe}|${sector}`;
+  const cached = _scanCache.get(cacheKey);
+  if (cached && Date.now() - cached.ts < 60 * 60 * 1000) {
+    return res.json({ results: cached.results, cached: true, indicator, signal, scanned: universe });
+  }
+
+  // Get top N stocks from DB by market cap (optionally filtered by sector)
+  let sectorClause = "";
+  const sectorArgs: any[] = [];
+  if (sector) { sectorClause = "AND (s.sector LIKE ? OR s.sector LIKE ?)"; sectorArgs.push(`%${sector}%`, `${sector}%`); }
+  const stocks = await dbAll<{ symbol: string; company_name: string; market_cap: number; sector: string; price: number; change_pct: number }>(
+    `SELECT s.symbol, s.company_name, s.market_cap, s.sector, p.price, p.change_pct
+     FROM stocks s LEFT JOIN prices p ON p.symbol = s.symbol
+     WHERE s.market_cap IS NOT NULL AND s.market_cap > 0 ${sectorClause}
+     ORDER BY s.market_cap DESC LIMIT ?`,
+    [...sectorArgs, universe]
+  );
+
+  // Fetch historical data in parallel (batch of 3 with delay to avoid Yahoo rate limits)
+  const results: any[] = [];
+  const BATCH = 3;
+  for (let i = 0; i < stocks.length; i += BATCH) {
+    if (i > 0) await new Promise(r => setTimeout(r, 350)); // 350ms between batches
+    const batch = stocks.slice(i, i + BATCH);
+    const settled = await Promise.allSettled(batch.map(async (s) => {
+      const hist = await fetchYahooHistory(s.symbol);
+      if (!hist) return null;
+      const { closes, highs, lows, volumes } = hist;
+
+      let sig = "NEUTRAL", detail = "", value: number | null = null;
+
+      if (indicator === "RSI") {
+        const r = computeRSI(closes);
+        sig = r.signal; value = r.value; detail = `RSI ${r.value}`;
+      } else if (indicator === "MACD") {
+        const r = computeMACD(closes);
+        sig = r.trend; detail = `MACD ${r.macd} / Sig ${r.signal} / Hist ${r.hist}`;
+      } else if (indicator === "BOLLINGER") {
+        const r = computeBollinger(closes);
+        sig = r.signal; value = r.pct; detail = `B% ${r.pct}% | Upper ₹${r.upper} Mid ₹${r.mid} Lower ₹${r.lower}`;
+      } else if (indicator === "EMA_CROSS") {
+        const r = computeEMACross(closes);
+        sig = r.signal; detail = `EMA20 ₹${r.fastEMA} vs EMA50 ₹${r.slowEMA}`;
+      } else if (indicator === "SMA_CROSS") {
+        const r = computeSMACross(closes);
+        sig = r.signal; detail = `SMA20 ₹${r.fastSMA} vs SMA50 ₹${r.slowSMA}`;
+      } else if (indicator === "SUPERTREND") {
+        const r = computeSupertrend(highs, lows, closes);
+        sig = r.signal; detail = `Supertrend Mid ₹${r.value}`;
+      } else if (indicator === "STOCHASTIC") {
+        const r = computeStochastic(highs, lows, closes);
+        sig = r.signal; value = r.k; detail = `%K ${r.k} / %D ${r.d}`;
+      } else if (indicator === "WILLIAMS_R") {
+        const r = computeWilliamsR(highs, lows, closes);
+        sig = r.signal; value = r.value; detail = `W%R ${r.value}`;
+      } else if (indicator === "ADX") {
+        const r = computeADX(highs, lows, closes);
+        sig = r.signal; value = r.adx; detail = `ADX ${r.adx}`;
+      } else if (indicator === "VWAP") {
+        const r = computeVWAP(highs, lows, closes, volumes);
+        sig = r.signal; value = r.vwap; detail = `VWAP ₹${r.vwap}`;
+      }
+
+      const wantedSignals = signal === "ALL"
+        ? ["BUY", "SELL", "BULLISH", "BEARISH", "NEUTRAL"]
+        : signal === "BUY"   ? ["BUY", "BULLISH"]
+        : signal === "SELL"  ? ["SELL", "BEARISH"]
+        : [signal];
+      if (!wantedSignals.includes(sig)) return null;
+
+      return {
+        symbol: s.symbol,
+        company: s.company_name,
+        sector: s.sector,
+        price: s.price,
+        change_pct: s.change_pct,
+        signal: sig,
+        detail,
+        value,
+      };
+    }));
+    settled.forEach(r => { if (r.status === "fulfilled" && r.value) results.push(r.value); });
+  }
+
+  _scanCache.set(cacheKey, { ts: Date.now(), results });
+  res.json({ results, cached: false, indicator, signal, scanned: stocks.length });
+});
+
+// ── GET /strategy-builder ──────────────────────────────────────────────────────
+app.get("/strategy-builder", (req: Request, res: Response) => {
+  res.send(`<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Strategy Builder — ZeroScreen</title>
+  <link rel="stylesheet" href="/public/css/style.css">
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.2/dist/chart.umd.min.js"></script>
+  <style>
+    .sb-hero { background: linear-gradient(135deg,#7c3aed 0%,#4f46e5 60%,#059669 100%); padding: 56px 24px 48px; text-align:center; color:#fff; }
+    .sb-hero h1 { font-size: clamp(28px,5vw,46px); font-weight:800; letter-spacing:-1.5px; margin:0 0 12px; }
+    .sb-hero p  { opacity:.85; font-size:17px; max-width:560px; margin:0 auto; }
+    .sb-main { max-width:860px; margin:0 auto; padding:40px 20px 80px; }
+    .sb-input-card { background:var(--bg-card); border:2px solid var(--border); border-radius:var(--radius-lg); padding:28px; box-shadow:var(--shadow); }
+    .sb-label { font-size:13px; font-weight:700; color:var(--text-muted); text-transform:uppercase; letter-spacing:.5px; margin-bottom:8px; }
+    .sb-textarea { width:100%; min-height:120px; resize:vertical; border:1.5px solid var(--border); border-radius:12px; padding:14px 16px; font-size:15px; font-family:inherit; background:var(--bg2); color:var(--text); outline:none; transition:border 0.2s; box-sizing:border-box; }
+    .sb-textarea:focus { border-color:var(--accent); }
+    .sb-examples { display:flex; flex-wrap:wrap; gap:8px; margin:14px 0 18px; }
+    .sb-example { cursor:pointer; background:var(--bg4); border:1.5px solid var(--border); border-radius:20px; padding:6px 14px; font-size:12.5px; color:var(--text-muted); font-weight:500; transition:all 0.15s; }
+    .sb-example:hover { background:var(--accent); color:#fff; border-color:var(--accent); }
+    .sb-btn-parse { width:100%; padding:13px; background:var(--grad-brand); color:#fff; border:none; border-radius:12px; font-size:15px; font-weight:700; cursor:pointer; transition:opacity 0.2s; margin-top:4px; font-family:inherit; }
+    .sb-btn-parse:hover { opacity:.9; }
+    .sb-result { margin-top:28px; }
+    .sb-result-title { font-size:13px; font-weight:700; color:var(--text-muted); text-transform:uppercase; letter-spacing:.5px; margin-bottom:12px; }
+    .sb-filters { display:flex; flex-wrap:wrap; gap:8px; margin-bottom:20px; }
+    .sb-filter-tag { background:var(--accent-glow,rgba(124,58,237,.12)); border:1.5px solid var(--accent); color:var(--accent); border-radius:20px; padding:5px 13px; font-size:12.5px; font-weight:600; }
+    .sb-empty { color:var(--text-muted); font-size:14px; padding:16px 0; }
+    .sb-btn-apply { display:inline-block; padding:11px 28px; background:var(--grad-brand); color:#fff; border-radius:12px; text-decoration:none; font-size:14px; font-weight:700; transition:opacity 0.2s; }
+    .sb-btn-apply:hover { opacity:.88; }
+    .sb-explain { font-size:13.5px; color:var(--text-muted); line-height:1.6; background:var(--bg2); border-radius:10px; padding:14px 16px; margin-bottom:16px; }
+    .sb-tips { background:var(--bg2); border-radius:var(--radius-lg); padding:24px; margin-top:32px; }
+    .sb-tips h3 { margin:0 0 12px; font-size:15px; color:var(--text); }
+    .sb-tips ul { margin:0; padding-left:18px; color:var(--text-muted); font-size:13.5px; line-height:2; }
+    .sb-tips code { background:var(--bg4); border-radius:5px; padding:1px 6px; font-size:12px; color:var(--accent); }
+  </style>
+</head>
+<body>
+  ${nav("strategy-builder", req)}
+  <div class="sb-hero">
+    <h1>🔨 Strategy Builder</h1>
+    <p>Describe your ideal stock in plain English — we'll convert it into screener filters instantly.</p>
+  </div>
+  <div class="sb-main">
+    <div class="sb-input-card">
+      <div class="sb-label">Describe your strategy</div>
+      <textarea class="sb-textarea" id="sb-input" placeholder="e.g. Large cap pharma stocks with ROCE above 20 and debt free, profitable for 3 years…"></textarea>
+      <div class="sb-label" style="margin-top:16px">Try an example</div>
+      <div class="sb-examples" id="sb-examples">
+        <span class="sb-example">Debt-free large cap with high ROCE</span>
+        <span class="sb-example">Pharma stocks with promoter above 60%</span>
+        <span class="sb-example">IT stocks with ROE above 20 and PE below 30</span>
+        <span class="sb-example">Undervalued small cap with growing profits</span>
+        <span class="sb-example">Top gainers today above 2%</span>
+        <span class="sb-example">Dividend paying blue chips</span>
+        <span class="sb-example">Near 52-week high with strong fundamentals</span>
+        <span class="sb-example">Banking stocks below ₹500</span>
+      </div>
+      <button class="sb-btn-parse" id="sb-parse-btn" onclick="parseStrategy()">Parse Strategy →</button>
+    </div>
+
+    <div class="sb-result" id="sb-result" style="display:none">
+      <div class="sb-result-title">Parsed Filters</div>
+      <div class="sb-explain" id="sb-explain"></div>
+      <div class="sb-filters" id="sb-filters"></div>
+      <a href="#" class="sb-btn-apply" id="sb-apply-btn">Apply to Screener →</a>
+    </div>
+
+    <div class="sb-result" id="sb-no-match" style="display:none">
+      <div class="sb-empty">No filters could be parsed. Try being more specific — e.g., <em>"ROCE above 20, debt free, large cap"</em>.</div>
+    </div>
+
+    <div class="sb-tips">
+      <h3>💡 Tips for better results</h3>
+      <ul>
+        <li>Use numbers: <code>ROCE above 20</code>, <code>PE below 25</code>, <code>price below ₹500</code></li>
+        <li>Mention company size: <code>large cap</code>, <code>mid cap</code>, <code>small cap</code></li>
+        <li>Reference sectors: <code>pharma</code>, <code>IT</code>, <code>banking</code>, <code>auto</code>, <code>FMCG</code></li>
+        <li>Use quality terms: <code>debt free</code>, <code>profitable</code>, <code>growing profit</code></li>
+        <li>Use promoter: <code>high promoter</code>, <code>promoter above 60</code></li>
+        <li>Mix criteria: <code>large cap IT with high ROCE, low debt and growing profits</code></li>
+      </ul>
+    </div>
+
+    <!-- ── INDICATOR SCANNER ─────────────────────────────────────────── -->
+    <div class="ind-scanner-wrap">
+      <div class="ind-scanner-header">
+        <div class="ind-scanner-title">
+          <span class="ind-scanner-icon">📈</span>
+          <div>
+            <h2>Technical Indicator Scanner</h2>
+            <p>Pick any indicator — scan top NSE stocks in real-time and find BUY / SELL signals right now.</p>
+          </div>
+        </div>
+        <span class="tier-pill tier-mid">🟡 Traders</span>
+      </div>
+
+      <div class="ind-scanner-controls">
+        <div class="ind-ctrl-group">
+          <label class="ind-ctrl-label">Indicator</label>
+          <select id="ind-indicator" class="ind-select">
+            <optgroup label="Momentum">
+              <option value="RSI">RSI — Relative Strength Index (14)</option>
+              <option value="STOCHASTIC">Stochastic Oscillator (%K/%D)</option>
+              <option value="WILLIAMS_R">Williams %R (14)</option>
+            </optgroup>
+            <optgroup label="Trend">
+              <option value="MACD">MACD (12,26,9)</option>
+              <option value="EMA_CROSS">EMA Crossover (20 / 50)</option>
+              <option value="SMA_CROSS">SMA Crossover (20 / 50)</option>
+              <option value="SUPERTREND">Supertrend (7, 3×ATR)</option>
+              <option value="ADX">ADX — Trend Strength (14)</option>
+            </optgroup>
+            <optgroup label="Volatility / Volume">
+              <option value="BOLLINGER">Bollinger Bands (20, 2σ)</option>
+              <option value="VWAP">VWAP Position</option>
+            </optgroup>
+          </select>
+        </div>
+
+        <div class="ind-ctrl-group">
+          <label class="ind-ctrl-label">Signal</label>
+          <select id="ind-signal" class="ind-select">
+            <option value="BUY">🟢 BUY / Bullish</option>
+            <option value="SELL">🔴 SELL / Bearish</option>
+            <option value="ALL">⚪ All Signals</option>
+          </select>
+        </div>
+
+        <div class="ind-ctrl-group">
+          <label class="ind-ctrl-label">Universe</label>
+          <select id="ind-universe" class="ind-select">
+            <option value="50">Nifty 50 — Top 50 stocks (fastest)</option>
+            <option value="100" selected>Nifty 100 — Top 100 stocks</option>
+            <option value="200">Nifty 200 — Top 200 stocks</option>
+            <option value="500">Nifty 500 — Top 500 stocks (slow)</option>
+          </select>
+        </div>
+
+        <div class="ind-ctrl-group">
+          <label class="ind-ctrl-label">Sector (optional)</label>
+          <select id="ind-sector" class="ind-select">
+            <option value="">All Sectors</option>
+            <option>Banks</option>
+            <option>IT</option>
+            <option>Pharmaceuticals</option>
+            <option>Auto</option>
+            <option>FMCG</option>
+            <option>Infrastructure</option>
+            <option>Metals</option>
+            <option>Energy</option>
+            <option>Realty</option>
+            <option>Chemicals</option>
+            <option>Telecom</option>
+            <option>Cement</option>
+            <option>Finance</option>
+            <option>Insurance</option>
+          </select>
+        </div>
+      </div>
+
+      <!-- Indicator description -->
+      <div class="ind-desc-bar" id="ind-desc-bar">
+        <strong>RSI (14)</strong> — Values below 30 indicate oversold (BUY signal), above 70 indicate overbought (SELL signal). Based on 14-day closing prices.
+      </div>
+
+      <button class="ind-scan-btn" id="ind-scan-btn" onclick="runIndicatorScan()">
+        <span class="ind-scan-icon">⚡</span> Scan Now
+      </button>
+
+      <!-- Results -->
+      <div id="ind-results" style="display:none">
+        <div class="ind-results-meta" id="ind-results-meta"></div>
+        <div class="ind-results-table-wrap">
+          <table class="ind-results-table" id="ind-results-table">
+            <thead id="ind-results-thead"></thead>
+            <tbody id="ind-results-tbody"></tbody>
+          </table>
+        </div>
+        <p class="ind-disclaimer">⚠️ Indicators are computed from historical daily closing prices. This is for educational purposes only — not investment advice. Always do your own research.</p>
+      </div>
+      <div id="ind-loading" style="display:none" class="ind-loading">
+        <div class="ind-spinner"></div>
+        <span id="ind-loading-text">Fetching price history and computing signals…</span>
+      </div>
+      <div id="ind-error" style="display:none" class="ind-error"></div>
+    </div>
+  </div>
+  <script src="/public/js/app.js"></script>
+  <script>
+  // ── Indicator descriptions ────────────────────────────────────────────────────
+  var IND_DESCS = {
+    RSI:        '<strong>RSI (14)</strong> — Values below 30 = oversold (BUY), above 70 = overbought (SELL). Measures speed and change of price movements.',
+    MACD:       '<strong>MACD (12,26,9)</strong> — When MACD line crosses above signal line = BUY, crosses below = SELL. Histogram shows momentum strength.',
+    BOLLINGER:  '<strong>Bollinger Bands (20, 2σ)</strong> — Price below lower band = oversold (BUY), above upper band = overbought (SELL). B% shows position within bands.',
+    EMA_CROSS:  '<strong>EMA Crossover (20/50)</strong> — When EMA20 crosses above EMA50 = BUY signal. When EMA20 crosses below EMA50 = SELL signal.',
+    SMA_CROSS:  '<strong>SMA Crossover (20/50)</strong> — Golden Cross (SMA20 > SMA50) = BUY. Death Cross (SMA20 < SMA50) = SELL.',
+    SUPERTREND: '<strong>Supertrend (7, 3×ATR)</strong> — Price above supertrend line = BULLISH. Price flips below line = SELL signal.',
+    STOCHASTIC: '<strong>Stochastic (14, 3)</strong> — %K and %D below 20 = oversold (BUY). Above 80 = overbought (SELL). %K crossing %D gives signal.',
+    WILLIAMS_R: '<strong>Williams %R (14)</strong> — Values below −80 = oversold (BUY), above −20 = overbought (SELL). Range: 0 to −100.',
+    ADX:        '<strong>ADX (14)</strong> — ADX > 25 = strong trend. +DI > −DI = bullish trend. Helps identify trending vs ranging markets.',
+    VWAP:       '<strong>VWAP</strong> — Price above VWAP = bullish momentum. Price below VWAP = bearish. Calculated from 6 months of daily OHLCV.',
+  };
+  var IND_COLS = {
+    RSI:        ['Symbol','Company','Sector','Price','Chg%','Signal','RSI Value'],
+    MACD:       ['Symbol','Company','Sector','Price','Chg%','Signal','Detail'],
+    BOLLINGER:  ['Symbol','Company','Sector','Price','Chg%','Signal','B% Position','Detail'],
+    EMA_CROSS:  ['Symbol','Company','Sector','Price','Chg%','Signal','EMA20 vs EMA50'],
+    SMA_CROSS:  ['Symbol','Company','Sector','Price','Chg%','Signal','SMA20 vs SMA50'],
+    SUPERTREND: ['Symbol','Company','Sector','Price','Chg%','Signal','Detail'],
+    STOCHASTIC: ['Symbol','Company','Sector','Price','Chg%','Signal','%K Value','Detail'],
+    WILLIAMS_R: ['Symbol','Company','Sector','Price','Chg%','Signal','W%R Value'],
+    ADX:        ['Symbol','Company','Sector','Price','Chg%','Trend','ADX Value'],
+    VWAP:       ['Symbol','Company','Sector','Price','Chg%','Signal','VWAP'],
+  };
+
+  document.getElementById('ind-indicator').addEventListener('change', function() {
+    document.getElementById('ind-desc-bar').innerHTML = IND_DESCS[this.value] || '';
+  });
+
+  function signalBadge(sig) {
+    var cls = sig === 'BUY' || sig === 'BULLISH' ? 'ind-sig-buy'
+            : sig === 'SELL' || sig === 'BEARISH' ? 'ind-sig-sell'
+            : 'ind-sig-neutral';
+    return '<span class="ind-sig-badge ' + cls + '">' + sig + '</span>';
+  }
+
+  async function runIndicatorScan() {
+    var indicator = document.getElementById('ind-indicator').value;
+    var signal    = document.getElementById('ind-signal').value;
+    var universe  = document.getElementById('ind-universe').value;
+    var sector    = document.getElementById('ind-sector').value;
+
+    document.getElementById('ind-results').style.display = 'none';
+    document.getElementById('ind-error').style.display   = 'none';
+    document.getElementById('ind-loading').style.display = 'flex';
+    document.getElementById('ind-scan-btn').disabled = true;
+
+    var msgs = ['Fetching 6-month price history…','Computing ' + indicator + ' signals…','Filtering ' + signal + ' signals…','This may take 1-2 minutes for large universes…'];
+    var mi = 0;
+    var msgTimer = setInterval(function() {
+      mi = (mi + 1) % msgs.length;
+      document.getElementById('ind-loading-text').textContent = msgs[mi];
+    }, 1800);
+
+    try {
+      var qs = 'indicator=' + indicator + '&signal=' + signal + '&universe=' + universe + (sector ? '&sector=' + encodeURIComponent(sector) : '');
+      var res = await fetch('/api/indicator-scan?' + qs);
+      if (!res.ok) throw new Error('Server error ' + res.status);
+      var data = await res.json();
+
+      clearInterval(msgTimer);
+      document.getElementById('ind-loading').style.display = 'none';
+      document.getElementById('ind-scan-btn').disabled = false;
+
+      if (!data.results || data.results.length === 0) {
+        document.getElementById('ind-error').style.display = 'block';
+        document.getElementById('ind-error').textContent = 'No stocks matched ' + signal + ' signal for ' + indicator + ' in top ' + universe + ' stocks' + (sector ? ' (' + sector + ')' : '') + '.';
+        return;
+      }
+
+      var cols = IND_COLS[indicator] || ['Symbol','Company','Sector','Price','Chg%','Signal','Detail'];
+      var meta = data.results.length + ' stock' + (data.results.length > 1 ? 's' : '') + ' matched · Scanned ' + (data.scanned || universe) + ' stocks · ' + (data.cached ? 'Cached result' : 'Live computation') + ' · ' + new Date().toLocaleTimeString('en-IN');
+      document.getElementById('ind-results-meta').textContent = meta;
+
+      // Build table header
+      document.getElementById('ind-results-thead').innerHTML = '<tr>' + cols.map(function(c){ return '<th>' + c + '</th>'; }).join('') + '</tr>';
+
+      // Build table body
+      var rows = data.results.map(function(r) {
+        var chgCls = r.change_pct >= 0 ? 'pos' : 'neg';
+        var chgStr = (r.change_pct >= 0 ? '+' : '') + (r.change_pct || 0).toFixed(2) + '%';
+        var priceStr = r.price ? '₹' + r.price.toLocaleString('en-IN', {minimumFractionDigits:2,maximumFractionDigits:2}) : '—';
+        var sectorStr = r.sector || '—';
+        var base = '<td><a href="/stock/' + r.symbol + '" class="ind-sym-link">' + r.symbol + '</a></td>'
+          + '<td>' + (r.company || '—') + '</td>'
+          + '<td><span class="sector-badge" style="font-size:10px">' + sectorStr + '</span></td>'
+          + '<td>' + priceStr + '</td>'
+          + '<td class="' + chgCls + '">' + chgStr + '</td>'
+          + '<td>' + signalBadge(r.signal) + '</td>';
+
+        if (indicator === 'RSI')       return '<tr>' + base + '<td>' + (r.value || '—') + '</td></tr>';
+        if (indicator === 'BOLLINGER') return '<tr>' + base + '<td>' + (r.value != null ? r.value + '%' : '—') + '</td><td style="font-size:11px">' + (r.detail || '') + '</td></tr>';
+        if (indicator === 'STOCHASTIC') return '<tr>' + base + '<td>' + (r.value || '—') + '</td><td style="font-size:11px">' + (r.detail || '') + '</td></tr>';
+        if (indicator === 'WILLIAMS_R') return '<tr>' + base + '<td>' + (r.value || '—') + '</td></tr>';
+        if (indicator === 'ADX')       return '<tr>' + base + '<td>' + (r.value || '—') + '</td></tr>';
+        if (indicator === 'VWAP')      return '<tr>' + base + '<td>' + (r.value ? '₹' + r.value : '—') + '</td></tr>';
+        return '<tr>' + base + '<td style="font-size:11px">' + (r.detail || '') + '</td></tr>';
+      }).join('');
+
+      document.getElementById('ind-results-tbody').innerHTML = rows;
+      document.getElementById('ind-results').style.display = 'block';
+    } catch(e) {
+      clearInterval(msgTimer);
+      document.getElementById('ind-loading').style.display = 'none';
+      document.getElementById('ind-scan-btn').disabled = false;
+      document.getElementById('ind-error').style.display = 'block';
+      document.getElementById('ind-error').textContent = 'Error: ' + e.message;
+    }
+  }
+
+  // NLP Filter Parser
+  var EXAMPLES = document.querySelectorAll('.sb-example');
+  EXAMPLES.forEach(function(el) {
+    el.addEventListener('click', function() {
+      document.getElementById('sb-input').value = el.textContent;
+      parseStrategy();
+    });
+  });
+
+  function parseStrategy() {
+    var text = document.getElementById('sb-input').value.trim();
+    if (!text) return;
+    var params = {};
+    var labels = {};
+    var t = text.toLowerCase();
+
+    // ── ROCE ───────────────────────────────────────────────────────────────────
+    var m;
+    m = t.match(/roce\\s*(?:above|>|greater than|more than|over|>=)\\s*(\\d+)/);
+    if (m) { params.minRoce = m[1]; labels['ROCE ≥ ' + m[1] + '%'] = true; }
+    m = t.match(/roce\\s*(?:below|<|less than|under|<=)\\s*(\\d+)/);
+    if (m) { params.maxRoce = m[1]; labels['ROCE ≤ ' + m[1] + '%'] = true; }
+
+    // ── ROE ────────────────────────────────────────────────────────────────────
+    m = t.match(/roe\\s*(?:above|>|greater than|more than|over|>=)\\s*(\\d+)/);
+    if (m) { params.minRoe = m[1]; labels['ROE ≥ ' + m[1] + '%'] = true; }
+
+    // ── Debt ───────────────────────────────────────────────────────────────────
+    if (/debt.?free|no debt|zero debt/i.test(t)) {
+      params.maxDe = '0.1'; labels['Debt-Free (D/E ≤ 0.1)'] = true;
+    } else {
+      m = t.match(/d\\/e\\s*(?:below|<|less than|under)\\s*([\\d.]+)/);
+      if (m) { params.maxDe = m[1]; labels['D/E ≤ ' + m[1]] = true; }
+      m = t.match(/low debt|minimal debt/);
+      if (m) { params.maxDe = '0.5'; labels['Low Debt (D/E ≤ 0.5)'] = true; }
+    }
+
+    // ── Market Cap ─────────────────────────────────────────────────────────────
+    if (/large.?cap|bluechip|blue.?chip|nifty 50/i.test(t)) {
+      params.minMc = '20000'; labels['Large Cap (>₹20k Cr)'] = true;
+    } else if (/mid.?cap/i.test(t)) {
+      params.minMc = '5000'; params.maxMc = '20000'; labels['Mid Cap (₹5k–20k Cr)'] = true;
+    } else if (/small.?cap/i.test(t)) {
+      params.minMc = '500'; params.maxMc = '5000'; labels['Small Cap (₹500–5k Cr)'] = true;
+    } else if (/micro.?cap|penny/i.test(t)) {
+      params.maxMc = '500'; labels['Micro Cap (<₹500 Cr)'] = true;
+    }
+
+    // ── Profitability ──────────────────────────────────────────────────────────
+    if (/all profitable|consistently profitable|profit(?:able)?(?: for| every| all)/i.test(t)) {
+      params.allProfit = '1'; labels['Consistently Profitable'] = true;
+    }
+    if (/growing profit|profit.?growing|profit.?uptrend|increasing profit|profit.?increase|earnings? growth/i.test(t)) {
+      params.uptrend = '1'; labels['Growing Profits (Uptrend)'] = true;
+    }
+
+    // ── P/E ────────────────────────────────────────────────────────────────────
+    m = t.match(/p\\/e\\s*(?:above|>|more than|greater than)\\s*(\\d+)/);
+    if (m) { params.minPe = m[1]; labels['P/E ≥ ' + m[1]] = true; }
+    m = t.match(/p\\/e\\s*(?:below|<|less than|under)\\s*(\\d+)/);
+    if (m) { params.maxPe = m[1]; labels['P/E ≤ ' + m[1]] = true; }
+    m = t.match(/pe\\s*(?:above|>|more than|greater than)\\s*(\\d+)/);
+    if (m && !params.minPe) { params.minPe = m[1]; labels['P/E ≥ ' + m[1]] = true; }
+    m = t.match(/pe\\s*(?:below|<|less than|under)\\s*(\\d+)/);
+    if (m && !params.maxPe) { params.maxPe = m[1]; labels['P/E ≤ ' + m[1]] = true; }
+    if (/undervalued|cheap stock/i.test(t) && !params.maxPe) {
+      params.maxPe = '15'; labels['P/E ≤ 15 (Undervalued)'] = true;
+    }
+
+    // ── Promoter ───────────────────────────────────────────────────────────────
+    m = t.match(/promoter(?:\\s*holding)?\\s*(?:above|>|greater than|more than|over|>=)\\s*(\\d+)/);
+    if (m) { params.minPromoter = m[1]; labels['Promoter ≥ ' + m[1] + '%'] = true; }
+    else if (/high promoter|strong promoter|promoter.backed/i.test(t)) {
+      params.minPromoter = '60'; labels['High Promoter (≥60%)'] = true;
+    }
+
+    // ── Dividend ───────────────────────────────────────────────────────────────
+    if (/dividend|income stock|dividend.paying|yield/i.test(t)) {
+      params.minDivYield = '0.5'; labels['Dividend Yield ≥ 0.5%'] = true;
+    }
+
+    // ── Price ──────────────────────────────────────────────────────────────────
+    m = t.match(/price\\s*(?:above|>|over|more than)\\s*[₹]?(\\d+)/);
+    if (m) { params.minPrice = m[1]; labels['Price ≥ ₹' + m[1]] = true; }
+    m = t.match(/price\\s*(?:below|<|under|less than)\\s*[₹]?(\\d+)/);
+    if (m) { params.maxPrice = m[1]; labels['Price ≤ ₹' + m[1]] = true; }
+    m = t.match(/(?:below|under|less than)\\s*[₹](\\d+)/);
+    if (m && !params.maxPrice) { params.maxPrice = m[1]; labels['Price ≤ ₹' + m[1]] = true; }
+
+    // ── Change % ───────────────────────────────────────────────────────────────
+    m = t.match(/(?:up|gain|risen?|change)\\s*(?:more than|above|>)\\s*(\\d+)%/);
+    if (m) { params.minChg = m[1]; labels['Change ≥ +' + m[1] + '%'] = true; }
+    if (/top gainers?|biggest gainers?/i.test(t) && !params.minChg) {
+      params.minChg = '2'; labels['Top Gainers (≥+2%)'] = true;
+    }
+    if (/top losers?|biggest losers?/i.test(t)) {
+      params.maxChg = '-2'; labels['Top Losers (≤-2%)'] = true;
+    }
+
+    // ── 52-week ────────────────────────────────────────────────────────────────
+    if (/52.?week high|near high|all.?time high|hitting high/i.test(t)) {
+      params.near52H = '5'; labels['Near 52-Week High (±5%)'] = true;
+    }
+    if (/52.?week low|near low|at low/i.test(t)) {
+      params.near52L = '5'; labels['Near 52-Week Low (±5%)'] = true;
+    }
+
+    // ── Sectors ────────────────────────────────────────────────────────────────
+    var sectorMap = [
+      [/\\bbanking?\\b|bank stocks?|psu bank/i, 'Banks'],
+      [/\\bit\\b|information tech|software/i, 'IT'],
+      [/pharma|pharmaceutical|healthcare/i, 'Pharmaceuticals'],
+      [/auto\\b|automobile|car stocks?/i, 'Auto'],
+      [/fmcg|consumer goods|consumer staple/i, 'FMCG'],
+      [/infra|infrastructure/i, 'Infrastructure'],
+      [/metal|steel|mining|aluminium/i, 'Metals'],
+      [/energy|power|electricity|solar/i, 'Energy'],
+      [/realty|real estate|housing/i, 'Realty'],
+      [/chemical/i, 'Chemicals'],
+      [/telecom|telecommunication/i, 'Telecom'],
+      [/cement/i, 'Cement'],
+      [/nbfc|finance co/i, 'Finance'],
+      [/insurance/i, 'Insurance'],
+    ];
+    for (var si = 0; si < sectorMap.length; si++) {
+      if (sectorMap[si][0].test(t)) {
+        params.sector = sectorMap[si][1];
+        labels[sectorMap[si][1] + ' Sector'] = true;
+        break;
+      }
+    }
+
+    // ── Strong / quality shortcuts ─────────────────────────────────────────────
+    if (/strong fundamental|quality stock|fundamentally strong/i.test(t)) {
+      if (!params.minRoce) { params.minRoce = '15'; labels['ROCE ≥ 15%'] = true; }
+      if (!params.maxDe)   { params.maxDe   = '1';  labels['D/E ≤ 1']    = true; }
+      params.allProfit = '1'; labels['Consistently Profitable'] = true;
+    }
+
+    // ── Sort hints ─────────────────────────────────────────────────────────────
+    if (/sort.*roce|high roce first/i.test(t)) params.sortBy = 'roce';
+    if (/sort.*volume|high volume first/i.test(t)) params.sortBy = 'volume';
+    if (/sort.*pe|low pe first/i.test(t)) { params.sortBy = 'pe'; params.sortDir = 'asc'; }
+
+    var labelKeys = Object.keys(labels);
+    var resultDiv  = document.getElementById('sb-result');
+    var noMatchDiv = document.getElementById('sb-no-match');
+    var filtersDiv = document.getElementById('sb-filters');
+    var explainDiv = document.getElementById('sb-explain');
+    var applyBtn   = document.getElementById('sb-apply-btn');
+
+    if (!labelKeys.length) {
+      resultDiv.style.display  = 'none';
+      noMatchDiv.style.display = 'block';
+      return;
+    }
+
+    noMatchDiv.style.display = 'none';
+    resultDiv.style.display  = 'block';
+    explainDiv.textContent   = 'Found ' + labelKeys.length + ' filter' + (labelKeys.length>1?'s':'') + ' from your description.';
+    filtersDiv.innerHTML     = labelKeys.map(function(l){ return '<span class="sb-filter-tag">'+l+'</span>'; }).join('');
+
+    var qs = new URLSearchParams(params).toString();
+    applyBtn.href = '/?' + qs;
+  }
+  </script>
+</body>
+</html>`);
+});
+
+// ── GET /admin/analytics ───────────────────────────────────────────────────────
+app.get("/admin/analytics", requireAdmin, async (req: Request, res: Response) => {
+  // Daily views (last 14 days)
+  const daily = await dbAll<{day:string;views:number;unique:number}>(
+    `SELECT date(created_at) as day,
+            COUNT(*) as views,
+            COUNT(DISTINCT ip_hash) as unique
+     FROM page_views
+     WHERE created_at >= date('now','localtime','-14 days')
+     GROUP BY date(created_at) ORDER BY day DESC`
+  );
+  // Top pages (last 30 days)
+  const topPages = await dbAll<{path:string;views:number}>(
+    `SELECT path, COUNT(*) as views FROM page_views
+     WHERE created_at >= date('now','localtime','-30 days')
+     GROUP BY path ORDER BY views DESC LIMIT 15`
+  );
+  // Total views today
+  const todayRow = await dbAll<{c:number}>(
+    `SELECT COUNT(*) as c FROM page_views WHERE date(created_at) = date('now','localtime')`
+  );
+  const todayViews  = todayRow[0]?.c || 0;
+  const todayUnique = await dbAll<{c:number}>(
+    `SELECT COUNT(DISTINCT ip_hash) as c FROM page_views WHERE date(created_at) = date('now','localtime')`
+  );
+  const todayUniqueV = todayUnique[0]?.c || 0;
+  // Recent visits
+  const recent = await dbAll<{path:string;ip_hash:string;user_agent:string;created_at:string}>(
+    `SELECT path, ip_hash, substr(user_agent,1,60) as user_agent, created_at
+     FROM page_views ORDER BY id DESC LIMIT 30`
+  );
+  const totalAllTime = await dbAll<{c:number}>(`SELECT COUNT(*) as c FROM page_views`);
+  const totalV = totalAllTime[0]?.c || 0;
+
+  res.send(`<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Analytics — ZeroScreen</title>
+  <link rel="stylesheet" href="/public/css/style.css">
+</head>
+<body>
+  ${nav("admin-analytics", req)}
+  <div class="container" style="max-width:1100px;padding:32px 20px 80px">
+    <h1 style="font-size:26px;font-weight:800;margin-bottom:6px">📊 Visitor Analytics</h1>
+    <p style="color:var(--text-muted);margin-bottom:28px">Page view tracking · Last 30 days</p>
+
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:16px;margin-bottom:32px">
+      ${[
+        ["Today's Views", todayViews],
+        ["Today Unique", todayUniqueV],
+        ["All-Time Views", totalV],
+        ["Pages Tracked", topPages.length],
+      ].map(([k,v]) => `
+        <div style="background:var(--bg-card);border:1px solid var(--border);border-radius:var(--radius-lg);padding:20px 18px">
+          <div style="font-size:11px;color:var(--text-muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">${k}</div>
+          <div style="font-size:28px;font-weight:800;color:var(--accent)">${v}</div>
+        </div>`).join("")}
+    </div>
+
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:24px;margin-bottom:32px">
+      <div style="background:var(--bg-card);border:1px solid var(--border);border-radius:var(--radius-lg);padding:24px">
+        <h3 style="margin:0 0 16px;font-size:15px">Top Pages (30d)</h3>
+        <table style="width:100%;border-collapse:collapse;font-size:13px">
+          ${topPages.map(p => `<tr style="border-bottom:1px solid var(--border)">
+            <td style="padding:7px 0;color:var(--text)">${esc(p.path)}</td>
+            <td style="padding:7px 0;text-align:right;color:var(--accent);font-weight:700">${p.views}</td>
+          </tr>`).join("")}
+        </table>
+      </div>
+      <div style="background:var(--bg-card);border:1px solid var(--border);border-radius:var(--radius-lg);padding:24px">
+        <h3 style="margin:0 0 16px;font-size:15px">Daily Breakdown (14d)</h3>
+        <table style="width:100%;border-collapse:collapse;font-size:13px">
+          <tr style="color:var(--text-muted);font-size:11px;text-transform:uppercase">
+            <th style="padding:4px 0;text-align:left">Date</th>
+            <th style="padding:4px 0;text-align:right">Views</th>
+            <th style="padding:4px 0;text-align:right">Unique</th>
+          </tr>
+          ${daily.map(d => `<tr style="border-bottom:1px solid var(--border)">
+            <td style="padding:6px 0">${esc(d.day)}</td>
+            <td style="padding:6px 0;text-align:right;font-weight:600">${d.views}</td>
+            <td style="padding:6px 0;text-align:right;color:var(--accent)">${d.unique}</td>
+          </tr>`).join("")}
+        </table>
+      </div>
+    </div>
+
+    <div style="background:var(--bg-card);border:1px solid var(--border);border-radius:var(--radius-lg);padding:24px">
+      <h3 style="margin:0 0 16px;font-size:15px">Recent Visits</h3>
+      <div style="overflow-x:auto">
+        <table style="width:100%;border-collapse:collapse;font-size:12.5px">
+          <tr style="color:var(--text-muted);font-size:11px;text-transform:uppercase;border-bottom:1px solid var(--border)">
+            <th style="padding:6px 8px;text-align:left">Time</th>
+            <th style="padding:6px 8px;text-align:left">Path</th>
+            <th style="padding:6px 8px;text-align:left">Visitor Hash</th>
+            <th style="padding:6px 8px;text-align:left">Agent</th>
+          </tr>
+          ${recent.map(r => `<tr style="border-bottom:1px solid var(--border)">
+            <td style="padding:6px 8px;color:var(--text-muted);white-space:nowrap">${esc(r.created_at)}</td>
+            <td style="padding:6px 8px;color:var(--accent)">${esc(r.path)}</td>
+            <td style="padding:6px 8px;font-family:monospace;font-size:11px;color:var(--text-muted)">${esc(r.ip_hash)}</td>
+            <td style="padding:6px 8px;color:var(--text-muted)">${esc(r.user_agent)}</td>
+          </tr>`).join("")}
+        </table>
+      </div>
+    </div>
+    <div style="margin-top:16px"><a href="/admin" style="color:var(--text-muted);font-size:13px">← Back to Admin</a></div>
+  </div>
+  <script src="/public/js/app.js"></script>
+</body>
+</html>`);
+});
+
+// ── Admin Picks CRUD ──────────────────────────────────────────────────────────
+app.get("/admin/picks", requireAdmin, async (req: Request, res: Response) => {
+  const picks = await getAllPicks();
+  const msg = req.query.msg as string | undefined;
+  const err = req.query.err as string | undefined;
+
+  const riskColors: Record<string, string> = { Low: "#10b981", Medium: "#f59e0b", High: "#ef4444" };
+
+  const typeLabel: Record<string, string> = { intraday: "⚡ Intraday", swing: "🌊 Swing", longterm: "📈 Long Term" };
+  const rows = picks.map(p => `
+    <tr>
+      <td><strong>${esc(p.stock_symbol)}</strong>${p.company_name ? `<br><small class="text-dim">${esc(p.company_name)}</small>` : ""}</td>
+      <td><span class="pick-type-badge pick-type-${(p.pick_type||'intraday').replace(' ','-')}">${typeLabel[p.pick_type ?? 'intraday'] ?? p.pick_type}</span></td>
+      <td><span class="pick-badge-${p.direction.toLowerCase()}">${p.direction}</span></td>
+      <td>₹${p.entry_low}–${p.entry_high}</td>
+      <td>${p.target ? "₹" + p.target : "—"}</td>
+      <td>${p.stop_loss ? "₹" + p.stop_loss : "—"}</td>
+      <td><span style="color:${riskColors[p.risk_level] ?? "#888"}">${esc(p.risk_level)}</span></td>
+      <td><span class="pick-status-badge pick-status-${p.status}">${p.status}</span></td>
+      <td style="font-size:12px;color:var(--text-muted)">${p.published_at?.slice(0, 16) ?? "—"}</td>
+      <td>
+        <form method="POST" action="/admin/picks/${p.id}/status" style="display:inline">
+          <input type="hidden" name="status" value="${p.status === "active" ? "expired" : "active"}">
+          <button class="btn-admin-action" style="min-width:72px">${p.status === "active" ? "Archive" : "Activate"}</button>
+        </form>
+        <form method="POST" action="/admin/picks/${p.id}/delete" style="display:inline;margin-left:4px"
+              onsubmit="return confirm('Delete this pick?')">
+          <button class="btn-admin-action btn-danger">Delete</button>
+        </form>
+      </td>
+    </tr>`).join("");
+
+  res.send(`<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Picks Manager — ZeroScreen Admin</title>
+  <link rel="stylesheet" href="/public/css/style.css">
+</head>
+<body>
+  ${nav("admin-picks", req)}
+  <div class="container" style="max-width:1100px">
+    <div class="admin-header">
+      <div>
+        <h1>🛠 Picks Manager</h1>
+        <p class="page-sub">Curate today's trading opportunities shown on /today</p>
+      </div>
+      <a href="/admin" class="btn-secondary">← Overview</a>
+    </div>
+
+    ${msg ? `<div class="auth-success" style="margin-bottom:18px">✅ ${esc(msg)}</div>` : ""}
+    ${err ? `<div class="auth-error"   style="margin-bottom:18px">⚠️ ${esc(err)}</div>`  : ""}
+
+    <!-- Add Pick Form -->
+    <div class="admin-form-card">
+      <h3 style="margin:0 0 16px">➕ Add New Pick</h3>
+      <form method="POST" action="/admin/picks" class="picks-form">
+        <div class="picks-form-row">
+          <div class="form-group">
+            <label>Symbol *</label>
+            <input type="text" name="stock_symbol" required placeholder="e.g. RELIANCE" class="form-input" style="text-transform:uppercase">
+          </div>
+          <div class="form-group">
+            <label>Company Name</label>
+            <input type="text" name="company_name" placeholder="Optional" class="form-input">
+          </div>
+          <div class="form-group">
+            <label>Type *</label>
+            <select name="pick_type" class="form-input">
+              <option value="intraday" selected>⚡ Intraday</option>
+              <option value="swing">🌊 Swing</option>
+              <option value="longterm">📈 Long Term</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label>Direction *</label>
+            <select name="direction" class="form-input">
+              <option value="LONG">LONG</option>
+              <option value="SHORT">SHORT</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label>Entry Low (₹) *</label>
+            <input type="number" name="entry_low" required step="0.01" class="form-input">
+          </div>
+          <div class="form-group">
+            <label>Entry High (₹) *</label>
+            <input type="number" name="entry_high" required step="0.01" class="form-input">
+          </div>
+          <div class="form-group">
+            <label>Target (₹)</label>
+            <input type="number" name="target" step="0.01" class="form-input">
+          </div>
+          <div class="form-group">
+            <label>Stop Loss (₹)</label>
+            <input type="number" name="stop_loss" step="0.01" class="form-input">
+          </div>
+          <div class="form-group">
+            <label>Risk Level *</label>
+            <select name="risk_level" class="form-input">
+              <option value="Low">Low</option>
+              <option value="Medium" selected>Medium</option>
+              <option value="High">High</option>
+            </select>
+          </div>
+        </div>
+        <div class="form-group" style="margin-top:10px">
+          <label>Reason / Thesis *</label>
+          <textarea name="reason" required rows="3" class="form-input" placeholder="Why this pick? e.g. Breakout above resistance, strong volume, sector tailwind…" style="width:100%;resize:vertical"></textarea>
+        </div>
+        <button type="submit" class="btn-primary" style="margin-top:12px">Add Pick</button>
+      </form>
+    </div>
+
+    <!-- Picks Table -->
+    <div class="table-wrap" style="margin-top:24px;overflow-x:auto">
+      <table class="stocks-table">
+        <thead>
+          <tr>
+            <th>Symbol</th><th>Type</th><th>Dir</th><th>Entry Zone</th><th>Target</th>
+            <th>SL</th><th>Risk</th><th>Status</th><th>Published</th><th>Actions</th>
+          </tr>
+        </thead>
+        <tbody>${rows || '<tr><td colspan="10" class="no-data">No picks yet. Add one above.</td></tr>'}</tbody>
+      </table>
+    </div>
+  </div>
+  <script src="/public/js/app.js"></script>
+</body>
+</html>`);
+});
+
+app.post("/admin/picks", requireAdmin, async (req: Request, res: Response) => {
+  const { stock_symbol, company_name, direction, pick_type, entry_low, entry_high, target, stop_loss, reason, risk_level } = req.body;
+  const sym = (stock_symbol || "").trim().toUpperCase();
+  const eLow = parseFloat(entry_low);
+  const eHigh = parseFloat(entry_high);
+  if (!sym || !reason?.trim() || isNaN(eLow) || isNaN(eHigh)) {
+    res.redirect("/admin/picks?err=Missing+required+fields");
+    return;
+  }
+  await createPick({
+    stock_symbol: sym,
+    company_name: company_name?.trim() || undefined,
+    direction: direction === "SHORT" ? "SHORT" : "LONG",
+    pick_type: ["intraday","swing","longterm"].includes(pick_type) ? pick_type : "intraday",
+    entry_low: eLow, entry_high: eHigh,
+    target: target ? parseFloat(target) : undefined,
+    stop_loss: stop_loss ? parseFloat(stop_loss) : undefined,
+    reason: reason.trim(),
+    risk_level: ["Low", "Medium", "High"].includes(risk_level) ? risk_level : "Medium",
+    status: "active",
+    created_by: req.session.userId,
+  });
+  res.redirect("/admin/picks?msg=Pick+added+successfully");
+});
+
+app.post("/admin/picks/:id/status", requireAdmin, async (req: Request, res: Response) => {
+  const id = parseInt(req.params.id, 10);
+  const { status } = req.body;
+  if (!Number.isInteger(id) || !["active", "expired"].includes(status)) {
+    res.redirect("/admin/picks?err=Invalid+request");
+    return;
+  }
+  await updatePickStatus(id, status);
+  res.redirect("/admin/picks?msg=Status+updated");
+});
+
+app.post("/admin/picks/:id/delete", requireAdmin, async (req: Request, res: Response) => {
+  const id = parseInt(req.params.id, 10);
+  if (!Number.isInteger(id) || id <= 0) { res.redirect("/admin/picks?err=Invalid+id"); return; }
+  await deletePick(id);
+  res.redirect("/admin/picks?msg=Pick+deleted");
+});
+
+// ── Admin Content ─────────────────────────────────────────────────────────────
+app.get("/admin/content", requireAdmin, async (req: Request, res: Response) => {
+  const settings = await getAllSettings();
+  const msg = req.query.msg as string | undefined;
+  res.send(`<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Content — ZeroScreen Admin</title>
+  <link rel="stylesheet" href="/public/css/style.css">
+</head>
+<body>
+  ${nav("admin-content", req)}
+  <div class="container" style="max-width:700px">
+    <div class="admin-header">
+      <div>
+        <h1>📢 Content Control</h1>
+        <p class="page-sub">Update site text and links</p>
+      </div>
+      <a href="/admin" class="btn-secondary">← Overview</a>
+    </div>
+    ${msg ? `<div class="auth-success" style="margin-bottom:18px">✅ ${esc(msg)}</div>` : ""}
+    <form method="POST" action="/admin/content" class="admin-form-card" style="display:flex;flex-direction:column;gap:16px">
+      <div class="form-group">
+        <label>Home Page Headline</label>
+        <input type="text" name="home_headline" class="form-input" value="${esc(settings.home_headline ?? "India\\'s sharpest NSE screener")}">
+      </div>
+      <div class="form-group">
+        <label>Banner Text <small class="text-dim">(optional — shown at top of home page)</small></label>
+        <input type="text" name="banner_text" class="form-input" value="${esc(settings.banner_text ?? "")}" placeholder="e.g. 🎉 New feature: Picks page is live!">
+      </div>
+      <div class="form-group">
+        <label>Telegram Link</label>
+        <input type="url" name="telegram_link" class="form-input" value="${esc(settings.telegram_link ?? "")}" placeholder="https://t.me/your_channel">
+      </div>
+      <button type="submit" class="btn-primary">Save Changes</button>
+    </form>
+  </div>
+  <script src="/public/js/app.js"></script>
+</body>
+</html>`);
+});
+
+app.post("/admin/content", requireAdmin, async (req: Request, res: Response) => {
+  const { home_headline, banner_text, telegram_link } = req.body;
+  await Promise.all([
+    setSetting("home_headline", (home_headline ?? "").trim()),
+    setSetting("banner_text", (banner_text ?? "").trim()),
+    setSetting("telegram_link", (telegram_link ?? "").trim()),
+  ]);
+  res.redirect("/admin/content?msg=Content+updated+successfully");
+});
+
+// ── Admin Signal Control ───────────────────────────────────────────────────────
+app.get("/admin/signals", requireAdmin, async (req: Request, res: Response) => {
+  const signalsMode = await getSetting("signals_mode");
+  const msg = req.query.msg as string | undefined;
+  res.send(`<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Signal Control — ZeroScreen Admin</title>
+  <link rel="stylesheet" href="/public/css/style.css">
+</head>
+<body>
+  ${nav("admin-signals", req)}
+  <div class="container" style="max-width:600px">
+    <div class="admin-header">
+      <div>
+        <h1>🤖 Signal Control</h1>
+        <p class="page-sub">Control what guests see on the Signals page</p>
+      </div>
+      <a href="/admin" class="btn-secondary">← Overview</a>
+    </div>
+    ${msg ? `<div class="auth-success" style="margin-bottom:18px">✅ ${esc(msg)}</div>` : ""}
+    <div class="admin-form-card">
+      <h3 style="margin:0 0 12px">Guest Signals Mode</h3>
+      <p class="text-dim" style="margin-bottom:16px">Controls whether guests see live bot status or a generic teaser message.</p>
+      <form method="POST" action="/admin/signals" style="display:flex;gap:12px;flex-wrap:wrap">
+        <button type="submit" name="mode" value="live"
+          class="${signalsMode === "live" ? "btn-primary" : "btn-secondary"}">
+          📡 Live Mode ${signalsMode === "live" ? "✓ Active" : ""}
+        </button>
+        <button type="submit" name="mode" value="teaser"
+          class="${signalsMode === "teaser" ? "btn-primary" : "btn-secondary"}">
+          🔒 Teaser Mode ${signalsMode === "teaser" ? "✓ Active" : ""}
+        </button>
+      </form>
+      <div class="text-dim" style="margin-top:16px;font-size:13px">
+        <strong>Live Mode</strong>: Guests see simplified live stats (no exact prices).<br>
+        <strong>Teaser Mode</strong>: Guests see a static teaser — "Bot is active" with sign-in CTA only.
+      </div>
+    </div>
+  </div>
+  <script src="/public/js/app.js"></script>
+</body>
+</html>`);
+});
+
+app.post("/admin/signals", requireAdmin, async (req: Request, res: Response) => {
+  const { mode } = req.body;
+  if (!["live", "teaser"].includes(mode)) { res.redirect("/admin/signals?err=Invalid+mode"); return; }
+  await setSetting("signals_mode", mode);
+  res.redirect("/admin/signals?msg=Signal+mode+set+to+" + mode);
+});
+
+// ── GET /today ─────────────────────────────────────────────────────────────────
+app.get("/today", async (req: Request, res: Response) => {
+  const picks = await getActivePicks();
+  const isPremium = userIsPremium(req);
+  const isLoggedIn = !!req.session?.userId;
+  const isAdmin = req.session?.userRole === 'admin';
+
+  // Access tiers:
+  // Guest       → intraday direction only (prices locked), swing/longterm fully locked
+  // Free user   → intraday full + swing direction only (prices locked), longterm locked
+  // Premium/Admin → all picks, full detail
+
+  const riskClass: Record<string, string> = { Low: "risk-low", Medium: "risk-medium", High: "risk-high" };
+  const riskIcon:  Record<string, string> = { Low: "🟢", Medium: "🟡", High: "🔴" };
+
+  const intradayPicks  = picks.filter(p => p.pick_type === 'intraday');
+  const swingPicks     = picks.filter(p => p.pick_type === 'swing');
+  const longtermPicks  = picks.filter(p => p.pick_type === 'longterm');
+
+  function renderPickCard(p: any, showPrices: boolean): string {
+    return `<div class="pick-card pick-card-${p.direction.toLowerCase()}">
+      <div class="pick-card-top">
+        <div>
+          <span class="pick-symbol">${esc(p.stock_symbol)}</span>
+          ${p.company_name ? `<span class="pick-company">${esc(p.company_name)}</span>` : ""}
+        </div>
+        <span class="pick-badge-${p.direction.toLowerCase()}">${p.direction === "LONG" ? "▲ LONG" : "▼ SHORT"}</span>
+      </div>
+      ${showPrices ? `
+      <div class="pick-entry-zone">
+        <span class="pick-entry-label">Entry Zone</span>
+        <span class="pick-entry-val">₹${p.entry_low} – ₹${p.entry_high}</span>
+      </div>
+      ${p.target   ? `<div class="pick-tp"><span class="pick-tp-label">🎯 Target</span><span class="pick-tp-val">₹${p.target}</span></div>` : ""}
+      ${p.stop_loss? `<div class="pick-sl"><span class="pick-sl-label">🛡️ Stop Loss</span><span class="pick-sl-val">₹${p.stop_loss}</span></div>` : ""}
+      <div class="pick-reason">${esc(p.reason)}</div>
+      <div class="pick-footer">
+        <span class="pick-risk-badge ${riskClass[p.risk_level] ?? "risk-medium"}">${riskIcon[p.risk_level] ?? "🟡"} ${p.risk_level} Risk</span>
+        <span class="pick-date">${p.published_at?.slice(0, 10) ?? ""}</span>
+      </div>` : `
+      <div class="pick-locked-body">
+        <div class="pick-locked-row"><span>Entry Zone</span><span class="lock-val">🔒</span></div>
+        <div class="pick-locked-row"><span>Target</span><span class="lock-val">🔒</span></div>
+        <div class="pick-locked-row"><span>Stop Loss</span><span class="lock-val">🔒</span></div>
+      </div>
+      <div class="pick-footer">
+        <span class="pick-risk-badge ${riskClass[p.risk_level] ?? "risk-medium"}">${riskIcon[p.risk_level] ?? "🟡"} ${p.risk_level} Risk</span>
+        <span class="pick-date">${p.published_at?.slice(0, 10) ?? ""}</span>
+      </div>`}
+    </div>`;
+  }
+
+  function renderSection(
+    icon: string, title: string, subtitle: string,
+    sectionPicks: any[], visible: boolean, showPrices: boolean,
+    requiredTier: string
+  ): string {
+    if (!visible || sectionPicks.length === 0) {
+      if (sectionPicks.length === 0 && visible) return "";
+      // Fully locked section teaser
+      return `<div class="picks-section">
+        <div class="picks-section-header picks-section-locked-header">
+          <div>
+            <span class="picks-section-icon">${icon}</span>
+            <span class="picks-section-title">${title}</span>
+            <span class="picks-section-sub">${subtitle}</span>
+          </div>
+          <span class="picks-tier-lock">🔒 ${requiredTier} only</span>
+        </div>
+        <div class="picks-locked-section">
+          <div class="picks-locked-msg">
+            <span class="picks-locked-icon">🔒</span>
+            <div>
+              <strong>${title} picks are ${requiredTier}-only</strong>
+              <p>${requiredTier === 'Free' ? 'Sign in' : 'Upgrade to Premium'} to unlock entry zones, targets, and stop losses for ${title.toLowerCase()} trades.</p>
+            </div>
+            <a href="${requiredTier === 'Free' ? '/login' : '/premium'}" class="btn-upgrade">${requiredTier === 'Free' ? 'Sign In Free →' : 'Upgrade ₹499/mo →'}</a>
+          </div>
+        </div>
+      </div>`;
+    }
+    return `<div class="picks-section">
+      <div class="picks-section-header">
+        <div>
+          <span class="picks-section-icon">${icon}</span>
+          <span class="picks-section-title">${title}</span>
+          <span class="picks-section-sub">${subtitle}</span>
+        </div>
+        <span class="picks-section-count">${sectionPicks.length} pick${sectionPicks.length !== 1 ? 's' : ''}</span>
+      </div>
+      ${!showPrices ? `<div class="picks-prices-locked-bar">🔒 Entry, target &amp; stop loss prices require <a href="/premium">Premium</a></div>` : ""}
+      <div class="picks-grid">${sectionPicks.map(p => renderPickCard(p, showPrices)).join("")}</div>
+    </div>`;
+  }
+
+  // Determine visibility + price access per tier
+  // Guest:   intraday visible (prices locked), swing+longterm locked
+  // Free:    intraday visible (prices shown), swing visible (prices locked), longterm locked
+  // Premium/Admin: all visible, all prices shown
+  const intradayVisible  = true;
+  const intradayPrices   = isLoggedIn || isPremium;
+  const swingVisible     = isLoggedIn || isPremium;
+  const swingPrices      = isPremium;
+  const longtermVisible  = isPremium;
+  const longtermPrices   = isPremium;
+
+  const intradaySection  = renderSection("⚡", "Intraday Picks", "Same-day entry & exit", intradayPicks, intradayVisible, intradayPrices, "Free");
+  const swingSection     = renderSection("🌊", "Swing Picks", "2–10 day holding period", swingPicks, swingVisible, swingPrices, "Premium");
+  const longtermSection  = renderSection("📈", "Long Term Picks", "Months to years horizon", longtermPicks, longtermVisible, longtermPrices, "Premium");
+
+  // For locked sections when not logged in or not premium, show teaser cards
+  const swingTeaser = !swingVisible ? renderSection("🌊", "Swing Picks", "2–10 day holding period", swingPicks.length > 0 ? swingPicks : [{id:0,stock_symbol:"?",company_name:null,direction:"LONG",pick_type:"swing",entry_low:0,entry_high:0,target:null,stop_loss:null,reason:"",risk_level:"Medium",status:"active",published_at:"",expires_at:null,created_by:null}], false, false, "Free") : "";
+  const longtermTeaser = !longtermVisible ? renderSection("📈", "Long Term Picks", "Months to years horizon", longtermPicks.length > 0 ? longtermPicks : [{id:0,stock_symbol:"?",company_name:null,direction:"LONG",pick_type:"longterm",entry_low:0,entry_high:0,target:null,stop_loss:null,reason:"",risk_level:"Low",status:"active",published_at:"",expires_at:null,created_by:null}], false, false, "Premium") : "";
+
+  const tierLabel = isAdmin ? "👑 Admin" : isPremium ? "⚡ Premium" : isLoggedIn ? "🔓 Free User" : "👤 Guest";
+  const tierClass = isAdmin ? "sig-tier-admin" : isPremium ? "sig-tier-premium" : isLoggedIn ? "sig-tier-free" : "sig-tier-guest";
+
+  res.send(`<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Today's Picks — ZeroScreen</title>
+  <link rel="stylesheet" href="/public/css/style.css">
+</head>
+<body class="page-theme-picks">
+  ${nav("today", req)}
+  <div class="container" style="max-width:1060px">
+    <div class="picks-hero">
+      <div class="picks-hero-left">
+        <h1 class="picks-hero-title">🔥 Today's Picks</h1>
+        <p class="picks-hero-sub">Curated trading opportunities across 3 horizons · Updated daily</p>
+        ${picks.length > 0 ? `<div class="picks-hero-count">🎯 ${picks.length} active pick${picks.length !== 1 ? "s" : ""} today</div>` : ""}
+      </div>
+      <div class="picks-hero-meta">
+        <span class="picks-hero-updated">🕐 ${new Date().toLocaleDateString("en-IN",{day:"2-digit",month:"short",year:"numeric"})}</span>
+        <span class="sig-tier-badge ${tierClass}">${tierLabel}</span>
+      </div>
+    </div>
+
+    ${intradaySection}
+    ${swingSection || swingTeaser}
+    ${longtermSection || longtermTeaser}
+
+    <footer class="site-footer"><span>© 2026 ZeroScreen &mdash; Picks are for educational &amp; informational purposes only. Not SEBI registered. Not investment advice. Invest at your own risk.</span></footer>
+  </div>
+  <script src="/public/js/app.js"></script>
+</body>
+</html>`);
+});
+
+// ── Admin Subscriptions ────────────────────────────────────────────────────────
+app.get("/admin/subs", requireAdmin, async (req: Request, res: Response) => {
+  const subs = await getAllSubscriptions();
+  const active  = subs.filter(s => s.status === "active").length;
+  const revenue = subs.filter(s => s.status === "active").reduce((sum) => sum + 499, 0);
+  const rows = subs.map(s => `
+    <tr>
+      <td>${esc(s.user_name)}<br><small class="text-dim">${esc(s.user_email)}</small></td>
+      <td><span class="pick-status-badge pick-status-${s.status}">${s.status}</span></td>
+      <td>₹${(s.amount / 100).toFixed(0)}</td>
+      <td style="font-size:12px;color:var(--text-muted)">${s.starts_at?.slice(0,10) ?? "—"}</td>
+      <td style="font-size:12px;color:var(--text-muted)">${s.expires_at?.slice(0,10) ?? "—"}</td>
+      <td style="font-family:monospace;font-size:11px;color:var(--text-muted)">${s.razorpay_payment_id ?? "—"}</td>
+    </tr>`).join("");
+  res.send(`<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Subscriptions — ZeroScreen Admin</title>
+  <link rel="stylesheet" href="/public/css/style.css">
+</head>
+<body>
+  ${nav("admin-subs", req)}
+  <div class="container" style="max-width:1100px">
+    <div class="admin-header">
+      <div><h1>💳 Subscriptions</h1><p class="page-sub">All Premium subscriptions</p></div>
+      <a href="/admin" class="btn-secondary">← Overview</a>
+    </div>
+    <div class="admin-stats-row">
+      <div class="admin-stat-card"><div class="admin-stat-num green">${active}</div><div class="admin-stat-label">Active</div></div>
+      <div class="admin-stat-card"><div class="admin-stat-num">₹${revenue}</div><div class="admin-stat-label">Monthly Revenue</div></div>
+      <div class="admin-stat-card"><div class="admin-stat-num">${subs.length}</div><div class="admin-stat-label">Total Orders</div></div>
+    </div>
+    <div class="table-wrap" style="margin-top:20px;overflow-x:auto">
+      <table class="stocks-table">
+        <thead><tr><th>User</th><th>Status</th><th>Amount</th><th>Started</th><th>Expires</th><th>Payment ID</th></tr></thead>
+        <tbody>${rows || '<tr><td colspan="6" class="no-data">No subscriptions yet.</td></tr>'}</tbody>
+      </table>
+    </div>
+  </div>
+  <script src="/public/js/app.js"></script>
+</body>
+</html>`);
+});
+
+// ── GET /premium ────────────────────────────────────────────────────────────────
+app.get("/premium", async (req: Request, res: Response) => {
+  const isPremium = userIsPremium(req);
+  const isLoggedIn = !!req.session?.userId;
+  let activeSub = null;
+  if (isLoggedIn) activeSub = await getActiveSubscription(req.session.userId!);
+  const razorpayEnabled = RAZORPAY_KEY_ID && RAZORPAY_KEY_SECRET;
+
+  res.send(`<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Premium — ZeroScreen</title>
+  <link rel="stylesheet" href="/public/css/style.css">
+  ${razorpayEnabled ? `<script src="https://checkout.razorpay.com/v1/checkout.js"></script>` : ""}
+</head>
+<body class="page-theme-premium">
+  ${nav("premium", req)}
+  <div class="container" style="max-width:860px">
+
+    ${isPremium ? `
+    <!-- ALREADY PREMIUM -->
+    <div class="premium-hero">
+      <div class="premium-badge-large">💎</div>
+      <h1>You're a Premium Member</h1>
+      <p>Your premium access is active${activeSub?.expires_at ? ` until <strong>${activeSub.expires_at.slice(0,10)}</strong>` : ""}.</p>
+      <div class="premium-active-features">
+        <div class="paf-item">✅ Live position — exact entry price &amp; stop loss in real time</div>
+        <div class="paf-item">✅ Telegram instant alerts when bot enters or exits</div>
+      </div>
+      <a href="/signals" class="btn-primary" style="margin-top:24px">View Signals →</a>
+    </div>
+    ` : `
+    <!-- UPGRADE PAGE -->
+    <div class="premium-hero">
+      <div class="premium-badge-large">⚡</div>
+      <h1 class="premium-hero-title">Upgrade to <span class="premium-highlight">Premium</span></h1>
+      <p class="premium-hero-sub">Get the full edge — real-time signals, stop loss data, and 5-year backtest insights</p>
+    </div>
+
+    <div class="premium-features-grid">
+      <div class="pf-card">
+        <div class="pf-icon">📡</div>
+        <h3>Real-Time Signals</h3>
+        <p>See exact entry price, stop loss, quantity, and AI confidence score for every BANKNIFTY trade — live.</p>
+        <div class="pf-compare">
+          <span class="pf-free">Free: Direction only</span>
+          <span class="pf-premium">Premium: Full details</span>
+        </div>
+      </div>
+
+      <div class="pf-card">
+        <div class="pf-icon">📢</div>
+        <h3>Telegram Alerts</h3>
+        <p>Get instant notifications when the bot enters or exits a trade — direct to your Telegram.</p>
+        <div class="pf-compare">
+          <span class="pf-free">Free: Email digest only</span>
+          <span class="pf-premium">Premium: Instant Telegram</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Pricing card -->
+    <div class="premium-pricing-card">
+      <div class="pricing-amount">₹499 <span class="pricing-period">/month</span></div>
+      <div class="pricing-label">Cancel anytime · Instant activation</div>
+      <ul class="pricing-features">
+        <li>✅ Live active position — exact entry &amp; stop loss</li>
+        <li>✅ Telegram instant alerts on every trade</li>
+        <li>✅ Priority support</li>
+      </ul>
+      ${isLoggedIn
+        ? razorpayEnabled
+          ? `<button id="pay-btn" class="btn-premium-cta" onclick="startPayment()">⚡ Upgrade Now — ₹499/month</button>`
+          : `<div class="premium-coming-soon">💳 Payment system coming soon<br><small>Contact us to get early access</small></div>`
+        : `<a href="/login?next=/premium" class="btn-premium-cta">Sign In to Upgrade</a>`}
+    </div>
+
+    <!-- Comparison table -->
+    <div class="compare-table-wrap">
+      <h2 style="text-align:center;margin-bottom:20px">Free vs Premium</h2>
+      <table class="compare-table">
+        <thead><tr><th>Feature</th><th>Free</th><th>💎 Premium</th></tr></thead>
+        <tbody>
+          <tr><td>NSE Screener</td><td>✅</td><td>✅</td></tr>
+          <tr><td>Stock Detail Pages</td><td>✅</td><td>✅</td></tr>
+          <tr><td>Today's Picks (entry zone + stop loss)</td><td>✅</td><td>✅</td></tr>
+          <tr><td>Signals (direction + PnL + history)</td><td>✅</td><td>✅</td></tr>
+          <tr><td>Full 5-Year Backtest Dashboard</td><td>✅</td><td>✅</td></tr>
+          <tr class="premium-row"><td>🔴 Live position — entry price + SL + AI score</td><td>🔒</td><td>✅</td></tr>
+          <tr class="premium-row"><td>Telegram instant alerts</td><td>🔒</td><td>✅</td></tr>
+        </tbody>
+      </table>
+    </div>
+    `}
+    <footer class="site-footer"><span>© 2026 ZeroScreen · Secure payment via Razorpay · Cancel anytime</span></footer>
+  </div>
+  <script src="/public/js/app.js"></script>
+  ${isLoggedIn && razorpayEnabled ? `<script>
+  async function startPayment() {
+    const btn = document.getElementById('pay-btn');
+    btn.disabled = true;
+    btn.textContent = 'Creating order…';
+    try {
+      const r = await fetch('/api/razorpay/create-order', { method: 'POST', headers: { 'Content-Type': 'application/json' } });
+      if (!r.ok) throw new Error('Order creation failed');
+      const order = await r.json();
+      if (order.error) throw new Error(order.error);
+      const options = {
+        key: '${RAZORPAY_KEY_ID}',
+        amount: order.amount,
+        currency: 'INR',
+        name: 'ZeroScreen Premium',
+        description: '1 Month Premium Subscription',
+        order_id: order.id,
+        prefill: { name: '${req.session?.userName ?? ""}', email: '' },
+        theme: { color: '#7c3aed' },
+        handler: async function(response) {
+          btn.textContent = 'Verifying…';
+          const v = await fetch('/api/razorpay/verify', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(response)
+          });
+          const vd = await v.json();
+          if (vd.ok) {
+            window.location.href = '/premium?success=1';
+          } else {
+            alert('Payment verification failed. Contact support.');
+            btn.disabled = false;
+            btn.textContent = '⚡ Upgrade Now — ₹499/month';
+          }
+        },
+        modal: {
+          ondismiss: function() {
+            btn.disabled = false;
+            btn.textContent = '⚡ Upgrade Now — ₹499/month';
+          }
+        }
+      };
+      const rzp = new Razorpay(options);
+      rzp.open();
+    } catch(e) {
+      alert('Could not start payment. Please try again.');
+      btn.disabled = false;
+      btn.textContent = '⚡ Upgrade Now — ₹499/month';
+    }
+  }
+  </script>` : ""}
+</body>
+</html>`);
+});
+
+// ── POST /api/razorpay/create-order ──────────────────────────────────────────
+app.post("/api/razorpay/create-order", requireAuth, async (req: Request, res: Response) => {
+  if (!RAZORPAY_KEY_ID || !RAZORPAY_KEY_SECRET) {
+    res.status(503).json({ error: "Payment not configured" });
+    return;
+  }
+  // Check if already premium
+  const existing = await getActiveSubscription(req.session.userId!);
+  if (existing) { res.status(400).json({ error: "Already a Premium member" }); return; }
+
+  const amount = PREMIUM_PRICE_PAISE;
+  const payload = { amount, currency: "INR", receipt: `zs_${req.session.userId}_${Date.now()}` };
+  const auth = Buffer.from(`${RAZORPAY_KEY_ID}:${RAZORPAY_KEY_SECRET}`).toString("base64");
+
+  const r = await fetch("https://api.razorpay.com/v1/orders", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "Authorization": `Basic ${auth}` },
+    body: JSON.stringify(payload),
+  });
+  if (!r.ok) { res.status(502).json({ error: "Razorpay API error" }); return; }
+  const order: any = await r.json();
+  await createOrder(req.session.userId!, order.id, amount);
+  res.json({ id: order.id, amount: order.amount, currency: order.currency });
+});
+
+// ── POST /api/razorpay/verify ─────────────────────────────────────────────────
+app.post("/api/razorpay/verify", requireAuth, async (req: Request, res: Response) => {
+  if (!RAZORPAY_KEY_SECRET) { res.status(503).json({ ok: false }); return; }
+  const { razorpay_order_id, razorpay_payment_id, razorpay_signature } = req.body;
+  if (!razorpay_order_id || !razorpay_payment_id || !razorpay_signature) {
+    res.status(400).json({ ok: false }); return;
+  }
+  // HMAC-SHA256 signature check
+  const crypto = await import("crypto");
+  const body = razorpay_order_id + "|" + razorpay_payment_id;
+  const expected = crypto.createHmac("sha256", RAZORPAY_KEY_SECRET).update(body).digest("hex");
+  if (expected !== razorpay_signature) {
+    res.status(400).json({ ok: false, error: "Invalid signature" }); return;
+  }
+  const userId = await activateSubscription(razorpay_order_id, razorpay_payment_id);
+  if (!userId) { res.json({ ok: false, error: "Order not found" }); return; }
+  // Update session role
+  req.session.userRole = "premium";
+  res.json({ ok: true });
+});
+
+// ── GET /api/bot/status ─────────────────────────────────────────────────────────
+app.get("/api/bot/status", (_req: Request, res: Response) => {
+  const state  = readBotJSON("trade-state.json", {});
+  const trades: any[] = readBotJSON("trades.json", []);
+  const analytics = computeAnalytics(trades);
+  res.json({
+    timestamp: new Date().toLocaleString("en-IN", { timeZone: "Asia/Kolkata" }),
+    activeState: state,
+    ...analytics,
+  });
+});
+
+// ── GET /paper-trade ───────────────────────────────────────────────────────────
+app.get("/paper-trade", (req: Request, res: Response) => {
+  const PAPER_DIR = "/home/ubuntu/trading-bot";
+  function readPaperJSON(file: string, fallback: any = null) {
+    try {
+      const p = `${PAPER_DIR}/${file}`;
+      if (!fs.existsSync(p)) return fallback;
+      return JSON.parse(fs.readFileSync(p, "utf-8"));
+    } catch { return fallback; }
+  }
+
+  const trades: any[] = readPaperJSON("paper-trades.json", []);
+  const records: any  = readPaperJSON("paper-records.json", { daily: [], weekly: [], monthly: [] });
+
+  // Summary stats
+  const closed   = trades.filter((t: any) => t.status !== "OPEN");
+  const open     = trades.filter((t: any) => t.status === "OPEN");
+  const wins     = closed.filter((t: any) => (t.pnl ?? 0) > 0).length;
+  const totalPnl = closed.reduce((s: number, t: any) => s + (t.pnl ?? 0), 0);
+  const winRate  = closed.length > 0 ? ((wins / closed.length) * 100).toFixed(1) : "—";
+  const avgPnl   = closed.length > 0 ? (totalPnl / closed.length).toFixed(1) : "—";
+
+  // By strategy
+  const bySt = ["BANKNIFTY", "EQUITY_SWING", "PENNY"].map(st => {
+    const stClosed = closed.filter((t: any) => t.strategy === st);
+    const stPnl    = stClosed.reduce((s: number, t: any) => s + (t.pnl ?? 0), 0);
+    const stWins   = stClosed.filter((t: any) => (t.pnl ?? 0) > 0).length;
+    const stOpen   = open.filter((t: any) => t.strategy === st).length;
+    return { st, trades: stClosed.length, wins: stWins, pnl: stPnl, open: stOpen };
+  });
+
+  // Equity curve from closed trades sorted by exitDate
+  const sortedClosed = [...closed].sort((a: any, b: any) =>
+    (a.exitDate ?? "").localeCompare(b.exitDate ?? ""));
+  let eq = 0;
+  const eqCurve = sortedClosed.map((t: any) => { eq += t.pnl ?? 0; return parseFloat(eq.toFixed(1)); });
+  const eqLabels = sortedClosed.map((t: any, i: number) =>
+    t.exitDate ? t.exitDate.slice(5) : `#${i + 1}`);
+
+  // Monthly records
+  const monthly: any[] = [...(records.monthly || [])].reverse().slice(0, 12);
+
+  // Recent trades (newest first)
+  const recentTrades = [...trades].reverse().slice(0, 50);
+
+  const stLabel: Record<string, string> = {
+    BANKNIFTY: "BANKNIFTY", EQUITY_SWING: "Equity Swing", PENNY: "Penny"
+  };
+  const stIcon: Record<string, string> = {
+    BANKNIFTY: "📊", EQUITY_SWING: "📈", PENNY: "🪙"
+  };
+  const statusColor: Record<string, string> = {
+    OPEN: "pt-status-open",
+    HIT_TARGET1: "pt-status-win", HIT_TARGET2: "pt-status-win",
+    EOD_EXIT: "pt-status-eod",
+    HIT_SL: "pt-status-loss",
+    EXPIRED: "pt-status-exp",
+  };
+
+  res.send(`<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Paper Trade — ZeroScreen</title>
+  <link rel="stylesheet" href="/public/css/style.css">
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.2/dist/chart.umd.min.js"></script>
+</head>
+<body class="page-theme-paper">
+  ${nav("paper-trade", req)}
+  <div class="container" style="max-width:1100px">
+
+    <!-- HEADER -->
+    <div class="pt-header">
+      <div>
+        <h1 class="pt-title">📋 Paper Trade</h1>
+        <p class="pt-sub">Simulated portfolio · BANKNIFTY + Equity Swing + Penny · No real money</p>
+      </div>
+      <div class="pt-legend">
+        <span class="pt-badge pt-badge-open">OPEN</span>
+        <span class="pt-badge pt-badge-win">TARGET HIT</span>
+        <span class="pt-badge pt-badge-loss">SL HIT</span>
+        <span class="pt-badge pt-badge-eod">EOD EXIT</span>
+      </div>
+    </div>
+
+    <!-- PERSONAL PAPER TRADE CTA -->
+    <div style="background:linear-gradient(135deg,#10b98115,#059669 0%,#10b98115);border:1px solid #10b98155;border-radius:12px;padding:18px 24px;margin-bottom:24px;display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap">
+      <div>
+        <div style="font-weight:800;font-size:1.05rem;color:#10b981">🎯 Trade Any NSE Stock — Paper Trade It!</div>
+        <div style="font-size:0.85rem;color:var(--text-muted);margin-top:4px">Build your own virtual portfolio · Buy & sell 1,700+ stocks · Start with ₹1,00,000 virtual cash · Track your P&L in real-time</div>
+      </div>
+      <a href="${req.session?.userId ? "/my-paper-trade" : "/login?next=/my-paper-trade"}" style="background:#10b981;color:#fff;border-radius:8px;padding:10px 22px;font-weight:700;font-size:0.92rem;text-decoration:none;white-space:nowrap">${req.session?.userId ? "📋 Open My Portfolio →" : "🔑 Sign In to Start →"}</a>
+    </div>
+
+    <!-- SUMMARY KPIs -->
+    <div class="pt-kpi-grid">
+      <div class="pt-kpi">
+        <div class="pt-kpi-label">Total PnL</div>
+        <div class="pt-kpi-val ${totalPnl >= 0 ? "pt-green" : "pt-red"}">${totalPnl >= 0 ? "+" : ""}₹${totalPnl.toFixed(0)}</div>
+      </div>
+      <div class="pt-kpi">
+        <div class="pt-kpi-label">Closed Trades</div>
+        <div class="pt-kpi-val">${closed.length}</div>
+      </div>
+      <div class="pt-kpi">
+        <div class="pt-kpi-label">Win Rate</div>
+        <div class="pt-kpi-val pt-green">${winRate}${winRate !== "—" ? "%" : ""}</div>
+      </div>
+      <div class="pt-kpi">
+        <div class="pt-kpi-label">Wins / Losses</div>
+        <div class="pt-kpi-val"><span class="pt-green">${wins}</span> / <span class="pt-red">${closed.length - wins}</span></div>
+      </div>
+      <div class="pt-kpi">
+        <div class="pt-kpi-label">Avg PnL / Trade</div>
+        <div class="pt-kpi-val">${avgPnl !== "—" ? "₹" + avgPnl : "—"}</div>
+      </div>
+      <div class="pt-kpi">
+        <div class="pt-kpi-label">Open Positions</div>
+        <div class="pt-kpi-val pt-yellow">${open.length}</div>
+      </div>
+    </div>
+
+    <!-- BY STRATEGY -->
+    <div class="pt-section-label">By Strategy</div>
+    <div class="pt-strat-grid">
+      ${bySt.map(({ st, trades: t, wins: w, pnl, open: o }) => `
+      <div class="pt-strat-card">
+        <div class="pt-strat-icon">${stIcon[st] || "📊"}</div>
+        <div class="pt-strat-name">${stLabel[st] || st}</div>
+        <div class="pt-strat-pnl ${pnl >= 0 ? "pt-green" : "pt-red"}">${pnl >= 0 ? "+" : ""}₹${pnl.toFixed(0)}</div>
+        <div class="pt-strat-meta">${t} closed · ${w} wins · ${o} open</div>
+      </div>`).join("")}
+    </div>
+
+    <!-- EQUITY CURVE -->
+    <div class="pt-section-label">Equity Curve</div>
+    <div class="pt-chart-card">
+      ${eqCurve.length < 2
+        ? `<div class="pt-empty">No closed trades yet — equity curve appears once trades are completed.</div>`
+        : `<canvas id="ptEqChart" height="80"></canvas>`}
+    </div>
+
+    <!-- MONTHLY RECORDS -->
+    ${monthly.length > 0 ? `
+    <div class="pt-section-label">Monthly Summary</div>
+    <div class="pt-table-wrap">
+      <table class="pt-table">
+        <thead><tr>
+          <th>Period</th><th>Trades</th><th>Wins</th><th>Win Rate</th>
+          <th>Best Trade</th><th>Worst Trade</th><th>PnL</th>
+        </tr></thead>
+        <tbody>
+          ${monthly.map((m: any) => {
+            const p = parseFloat(m.totalPnl ?? 0);
+            return `<tr>
+              <td class="pt-td-bold">${m.period}</td>
+              <td>${m.totalTrades ?? "—"}</td>
+              <td>${m.wins ?? "—"}</td>
+              <td>${m.winRate ?? "—"}%</td>
+              <td class="pt-green">${m.bestTrade ? m.bestTrade.symbol + " ₹" + parseFloat(m.bestTrade.pnl).toFixed(0) : "—"}</td>
+              <td class="pt-red">${m.worstTrade ? m.worstTrade.symbol + " ₹" + parseFloat(m.worstTrade.pnl).toFixed(0) : "—"}</td>
+              <td class="pt-td-bold ${p >= 0 ? "pt-green" : "pt-red"}">${p >= 0 ? "+" : ""}₹${p.toFixed(0)}</td>
+            </tr>`;
+          }).join("")}
+        </tbody>
+      </table>
+    </div>` : ""}
+
+    <!-- TRADE HISTORY -->
+    <div class="pt-section-label">Trade History</div>
+    ${recentTrades.length === 0
+      ? `<div class="pt-empty">No trades yet. The engine runs weekdays at 7:36 PM IST and will appear here after its first run.</div>`
+      : `<div class="pt-table-wrap">
+        <table class="pt-table">
+          <thead><tr>
+            <th>Date</th><th>Strategy</th><th>Symbol</th><th>Dir</th>
+            <th>Entry</th><th>Exit</th><th>Qty</th><th>Status</th><th>Hold</th><th>PnL</th><th>PnL%</th>
+          </tr></thead>
+          <tbody>
+            ${recentTrades.map((t: any) => {
+              const pnl = t.pnl ?? null;
+              const pnlPct = t.pnlPct ?? null;
+              const isPos = pnl !== null && pnl > 0;
+              const cls = statusColor[t.status] || "";
+              return `<tr>
+                <td>${t.entryDate ?? "—"}</td>
+                <td>${stIcon[t.strategy] || ""} ${stLabel[t.strategy] || t.strategy}</td>
+                <td class="pt-td-bold">${t.symbol ?? "—"}</td>
+                <td><span class="pt-dir pt-dir-${(t.direction || "").toLowerCase()}">${t.direction ?? "—"}</span></td>
+                <td>₹${t.entryPrice ?? "—"}</td>
+                <td>${t.exitPrice != null ? "₹" + t.exitPrice : "—"}</td>
+                <td>${t.qty ?? "—"}</td>
+                <td><span class="pt-status ${cls}">${t.status ?? "—"}</span></td>
+                <td>${t.holdDays != null ? t.holdDays + "d" : "—"}</td>
+                <td class="${pnl !== null ? (isPos ? "pt-green" : "pt-red") : ""} pt-td-bold">${pnl !== null ? (isPos ? "+" : "") + "₹" + pnl.toFixed(0) : "—"}</td>
+                <td class="${pnlPct !== null ? (pnlPct > 0 ? "pt-green" : "pt-red") : ""}">${pnlPct !== null ? (pnlPct > 0 ? "+" : "") + pnlPct.toFixed(1) + "%" : "—"}</td>
+              </tr>`;
+            }).join("")}
+          </tbody>
+        </table>
+      </div>`}
+
+    <footer class="site-footer"><span>© 2026 ZeroScreen · Paper trading simulation — no real capital at risk</span></footer>
+  </div>
+  <script src="/public/js/app.js"></script>
+  <script>
+  ${eqCurve.length >= 2 ? `
+  (function() {
+    const labels = ${JSON.stringify(eqLabels)};
+    const data   = ${JSON.stringify(eqCurve)};
+    const isDark = document.documentElement.classList.contains('dark');
+    const color  = data[data.length - 1] >= 0 ? '#10b981' : '#ef4444';
+    new Chart(document.getElementById('ptEqChart').getContext('2d'), {
+      type: 'line',
+      data: { labels, datasets: [{
+        label: 'Paper PnL (₹)',
+        data, borderColor: color,
+        backgroundColor: data[data.length-1] >= 0 ? 'rgba(16,185,129,0.08)' : 'rgba(239,68,68,0.08)',
+        fill: true, tension: 0.35,
+        pointRadius: data.length > 60 ? 0 : 3, borderWidth: 2,
+      }]},
+      options: {
+        responsive: true,
+        plugins: { legend: { display: false }, tooltip: { mode: 'index', intersect: false, callbacks: { label: ctx => '₹' + ctx.raw } } },
+        scales: { x: { display: data.length <= 80, ticks: { maxTicksLimit: 10 } }, y: { ticks: { callback: v => '₹' + v } } }
+      }
+    });
+  })();
+  ` : ""}
+  </script>
+</body>
+</html>`);
+});
+
+// ── GET /my-paper-trade ─ Personal paper trading portfolio ──────────────────
+app.get("/my-paper-trade", requireAuth, async (req: Request, res: Response) => {
+  const userId   = req.session.userId!;
+  const userName = req.session.userName || "Trader";
+
+  // ── Mobile verification gate ────────────────────────────────────────────────
+  const uInfo = await dbAll<{ mobile_verified: number }>(
+    "SELECT mobile_verified FROM users WHERE id=?", [userId]
+  );
+  if (!uInfo[0]?.mobile_verified) {
+    res.redirect("/verify-mobile?next=/my-paper-trade"); return;
+  }
+
+  const [port, positions, trades, tradeCount, ptConfig, activeSub] = await Promise.all([
+    getPaperPortfolio(userId),
+    getPaperPositions(userId),
+    getPaperTrades(userId, 60),
+    countPaperTrades(userId),
+    getPaperTradeConfig(userId),
+    getActiveSubscription(userId),
+  ]);
+
+  // ── Credits ─────────────────────────────────────────────────────────────────
+  const freeLimit  = parseInt(await getSetting("paper_free_limit") || "10", 10);
+  const isPremium  = !!activeSub || req.session.userRole === "premium" || req.session.userRole === "admin";
+  const tradesLeft = isPremium ? null : Math.max(0, freeLimit - tradeCount);
+  const creditsOut = !isPremium && tradeCount >= freeLimit;
+
+  // Portfolio value: balance + current market value of positions
+  // (use avg_price as proxy since live prices may not all be in DB)
+  const dbPrices = positions.length
+    ? await dbAll<{ symbol: string; price: number | null }>(
+        `SELECT symbol, price FROM prices WHERE symbol IN (${positions.map(() => "?").join(",")})`,
+        positions.map(p => p.symbol)
+      )
+    : [];
+  const priceMap: Record<string, number> = {};
+  for (const r of dbPrices) if (r.price != null) priceMap[r.symbol] = r.price;
+
+  const posRows = positions.map(p => {
+    const livePrice = priceMap[p.symbol] ?? p.avg_price;
+    const curVal    = parseFloat((livePrice * p.qty).toFixed(2));
+    const pnl       = parseFloat((curVal - p.invested).toFixed(2));
+    const pnlPct    = parseFloat(((pnl / p.invested) * 100).toFixed(2));
+    return { ...p, livePrice, curVal, pnl, pnlPct };
+  });
+
+  const investedTotal  = posRows.reduce((s, p) => s + p.invested, 0);
+  const curValTotal    = posRows.reduce((s, p) => s + p.curVal,   0);
+  const portfolioValue = parseFloat((port.balance + curValTotal).toFixed(2));
+  const totalPnl       = parseFloat((portfolioValue - 100000).toFixed(2));
+  const totalPnlPct    = parseFloat(((totalPnl / 100000) * 100).toFixed(2));
+
+  const sellTrades     = trades.filter(t => t.action === "SELL");
+  const realizedPnl    = parseFloat(sellTrades.reduce((s, t) => s + (t.pnl ?? 0), 0).toFixed(2));
+  const wins           = sellTrades.filter(t => (t.pnl ?? 0) > 0).length;
+  const losses         = sellTrades.filter(t => (t.pnl ?? 0) <= 0).length;
+  const winRate        = sellTrades.length > 0 ? ((wins / sellTrades.length) * 100).toFixed(1) : "—";
+
+  // Equity curve from sell trades
+  let eq = 0;
+  const eqData   = sellTrades.slice().reverse().map(t => { eq += t.pnl ?? 0; return parseFloat(eq.toFixed(2)); });
+  const eqLabels = sellTrades.slice().reverse().map(t => t.traded_at.slice(5, 10));
+
+  res.send(`<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>My Paper Trade — ZeroScreen</title>
+  <link rel="stylesheet" href="/public/css/style.css">
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.2/dist/chart.umd.min.js"></script>
+  <style>
+    .mpt-hero { background: var(--card-bg); border: 1px solid var(--border); border-radius: 14px; padding: 24px 28px; margin-bottom: 24px; display:flex; align-items:center; justify-content:space-between; gap:16px; flex-wrap:wrap; }
+    .mpt-hero-title { font-size: 1.5rem; font-weight: 800; }
+    .mpt-hero-sub   { color: var(--text-muted); font-size: 0.88rem; margin-top: 4px; }
+    .mpt-balance    { font-size: 2rem; font-weight: 800; color: var(--accent); font-variant-numeric: tabular-nums; }
+    .mpt-bal-label  { font-size: 0.78rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: .06em; }
+    .mpt-kpi-row    { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px,1fr)); gap: 12px; margin-bottom: 24px; }
+    .mpt-kpi        { background: var(--card-bg); border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; }
+    .mpt-kpi-label  { font-size: 0.75rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: .05em; margin-bottom: 4px; }
+    .mpt-kpi-val    { font-size: 1.25rem; font-weight: 700; font-variant-numeric: tabular-nums; }
+    .mpt-green { color: #10b981; } .mpt-red { color: #ef4444; } .mpt-yellow { color: #f59e0b; }
+    .mpt-section    { font-size: 0.72rem; font-weight: 700; text-transform: uppercase; letter-spacing: .1em; color: var(--text-muted); border-bottom: 1px solid var(--border); padding-bottom: 8px; margin: 24px 0 14px; }
+    .mpt-pos-table, .mpt-history-table { width: 100%; border-collapse: collapse; font-size: 0.88rem; }
+    .mpt-pos-table th, .mpt-history-table th { text-align: left; padding: 8px 10px; border-bottom: 2px solid var(--border); font-size: 0.75rem; text-transform: uppercase; color: var(--text-muted); }
+    .mpt-pos-table td, .mpt-history-table td { padding: 9px 10px; border-bottom: 1px solid var(--border); vertical-align: middle; }
+    .mpt-pos-table tr:hover td, .mpt-history-table tr:hover td { background: var(--hover-bg); }
+    .mpt-sym { font-weight: 700; color: var(--accent); cursor:pointer; }
+    .mpt-sym:hover { text-decoration: underline; }
+    .mpt-action-buy  { background:#10b98122; color:#10b981; border:1px solid #10b98155; border-radius:4px; padding:2px 8px; font-size:0.75rem; font-weight:700; }
+    .mpt-action-sell { background:#ef444422; color:#ef4444; border:1px solid #ef444455; border-radius:4px; padding:2px 8px; font-size:0.75rem; font-weight:700; }
+    .mpt-sell-btn   { background: #ef444422; color: #ef4444; border: 1px solid #ef444455; border-radius: 6px; padding: 4px 12px; font-size: 0.8rem; cursor:pointer; font-weight:600; }
+    .mpt-sell-btn:hover { background: #ef444440; }
+    .mpt-buy-form   { background: var(--card-bg); border: 1px solid var(--border); border-radius: 12px; padding: 20px 24px; margin-bottom: 24px; }
+    .mpt-buy-form h3 { margin: 0 0 16px; font-size: 1rem; font-weight: 700; }
+    .mpt-form-row   { display: flex; gap: 10px; flex-wrap: wrap; align-items: flex-end; }
+    .mpt-form-group { display: flex; flex-direction: column; gap: 5px; }
+    .mpt-form-group label { font-size: 0.78rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: .05em; }
+    .mpt-form-group input, .mpt-form-group select { background: var(--input-bg); border: 1px solid var(--border); border-radius: 7px; padding: 8px 12px; color: var(--text); font-size: 0.9rem; width: 160px; }
+    .mpt-btn-buy    { background: #10b981; color: #fff; border: none; border-radius: 8px; padding: 10px 22px; font-weight: 700; font-size: 0.9rem; cursor: pointer; }
+    .mpt-btn-buy:hover { background: #059669; }
+    .mpt-btn-reset  { background: transparent; color: var(--text-muted); border: 1px solid var(--border); border-radius: 8px; padding: 8px 16px; font-size: 0.82rem; cursor: pointer; }
+    .mpt-btn-reset:hover { color: #ef4444; border-color: #ef4444; }
+    .mpt-msg { padding: 12px 16px; border-radius: 8px; margin-bottom: 16px; font-size: 0.9rem; font-weight: 600; }
+    .mpt-msg-ok  { background: #10b98122; color: #10b981; border: 1px solid #10b98155; }
+    .mpt-msg-err { background: #ef444422; color: #ef4444; border: 1px solid #ef444455; }
+    .mpt-empty  { color: var(--text-muted); font-size: 0.9rem; padding: 24px; text-align: center; }
+    .mpt-chart-wrap { background: var(--card-bg); border: 1px solid var(--border); border-radius: 12px; padding: 16px 20px; margin-bottom: 24px; }
+    .mpt-search-wrap { position: relative; }
+    .mpt-search-drop { position: absolute; top: 100%; left: 0; background: var(--card-bg); border: 1px solid var(--border); border-radius: 8px; z-index: 200; width: 240px; box-shadow: 0 8px 24px rgba(0,0,0,.2); max-height: 240px; overflow-y: auto; }
+    .mpt-search-item { padding: 9px 14px; cursor: pointer; font-size: 0.88rem; }
+    .mpt-search-item:hover { background: var(--hover-bg); }
+    .mpt-search-sym  { font-weight: 700; }
+    .mpt-search-co   { color: var(--text-muted); font-size: 0.8rem; }
+    .mpt-disclaimer  { font-size: 0.78rem; color: var(--text-muted); background: var(--bg2); border-radius: 8px; padding: 12px 16px; margin-top: 24px; }
+    .mpt-credits-bar { display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap; background:var(--card-bg); border:1px solid var(--border); border-radius:10px; padding:12px 18px; margin-bottom:18px; font-size:0.88rem; }
+    .mpt-credits-free { color:#f59e0b; font-weight:700; }
+    .mpt-credits-prem { color:#10b981; font-weight:700; }
+    .mpt-credits-out  { background:#ef444415; border-color:#ef444455; }
+    .mpt-mh-badge { font-size:0.78rem; padding:3px 10px; border-radius:20px; font-weight:700; }
+    .mpt-mh-open  { background:#10b98122; color:#10b981; border:1px solid #10b98155; }
+    .mpt-mh-closed{ background:#ef444415; color:#ef4444; border:1px solid #ef444455; }
+    .mpt-type-intra { background:#3b82f622; color:#3b82f6; border:1px solid #3b82f655; border-radius:4px; padding:2px 7px; font-size:0.73rem; font-weight:700; }
+    .mpt-type-hold  { background:#a855f722; color:#a855f7; border:1px solid #a855f755; border-radius:4px; padding:2px 7px; font-size:0.73rem; font-weight:700; }
+    @media (max-width:600px) { .mpt-form-row { flex-direction: column; } .mpt-form-group input, .mpt-form-group select { width: 100%; } }
+  </style>
+</head>
+<body>
+  ${nav("my-paper-trade", req)}
+  <div class="container" style="max-width:1060px">
+
+    <!-- HERO -->
+    <div class="mpt-hero">
+      <div>
+        <div class="mpt-hero-title">📋 My Paper Portfolio</div>
+        <div class="mpt-hero-sub">Virtual trading with ₹1,00,000 starting capital · No real money · Zero risk</div>
+      </div>
+      <div style="text-align:right">
+        <div class="mpt-bal-label">Available Cash</div>
+        <div class="mpt-balance">₹${port.balance.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
+      </div>
+    </div>
+
+    <!-- FLASH MESSAGE -->
+    ${req.query.msg ? `<div class="mpt-msg mpt-msg-ok">✅ ${esc(req.query.msg as string)}</div>` : ""}
+    ${req.query.err ? `<div class="mpt-msg mpt-msg-err">❌ ${esc(req.query.err as string)}</div>` : ""}
+
+    <!-- CREDITS & MARKET HOURS BAR -->
+    <div class="mpt-credits-bar ${creditsOut ? 'mpt-credits-out' : ''}">
+      <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap">
+        ${isPremium
+          ? `<span class="mpt-credits-prem">👑 Premium — Unlimited trades</span>`
+          : creditsOut
+            ? `<span style="color:#ef4444;font-weight:700">⚠️ Free trades used up (${tradeCount}/${freeLimit}) — <a href="/my-paper-trade/upgrade" style="color:#ef4444">Upgrade to Premium →</a></span>`
+            : `<span class="mpt-credits-free">🎫 Free: ${tradesLeft} of ${freeLimit} trades left</span>
+               <a href="/my-paper-trade/upgrade" style="font-size:0.8rem;color:var(--text-muted)">Upgrade for unlimited →</a>`
+        }
+      </div>
+      <div style="display:flex;align-items:center;gap:10px">
+        <span class="mpt-mh-badge ${isMarketHours() ? 'mpt-mh-open' : 'mpt-mh-closed'}">${isMarketHours() ? '🟢 Market Open' : '🔴 Market Closed'}</span>
+        <a href="/my-paper-trade/config" style="font-size:0.8rem;color:var(--text-muted)">⚙️ Settings</a>
+      </div>
+    </div>
+
+    <!-- KPI ROW -->
+    <div class="mpt-kpi-row">
+      <div class="mpt-kpi">
+        <div class="mpt-kpi-label">Portfolio Value</div>
+        <div class="mpt-kpi-val ${portfolioValue >= 100000 ? "mpt-green" : "mpt-red"}">₹${portfolioValue.toLocaleString("en-IN", { maximumFractionDigits: 0 })}</div>
+      </div>
+      <div class="mpt-kpi">
+        <div class="mpt-kpi-label">Total PnL</div>
+        <div class="mpt-kpi-val ${totalPnl >= 0 ? "mpt-green" : "mpt-red"}">${totalPnl >= 0 ? "+" : ""}₹${Math.abs(totalPnl).toLocaleString("en-IN", { maximumFractionDigits: 0 })} (${totalPnlPct >= 0 ? "+" : ""}${totalPnlPct}%)</div>
+      </div>
+      <div class="mpt-kpi">
+        <div class="mpt-kpi-label">Realized PnL</div>
+        <div class="mpt-kpi-val ${realizedPnl >= 0 ? "mpt-green" : "mpt-red"}">${realizedPnl >= 0 ? "+" : ""}₹${Math.abs(realizedPnl).toLocaleString("en-IN", { maximumFractionDigits: 0 })}</div>
+      </div>
+      <div class="mpt-kpi">
+        <div class="mpt-kpi-label">Win Rate</div>
+        <div class="mpt-kpi-val ${wins > losses ? "mpt-green" : "mpt-red"}">${winRate}${winRate !== "—" ? "%" : ""}</div>
+      </div>
+      <div class="mpt-kpi">
+        <div class="mpt-kpi-label">Wins / Losses</div>
+        <div class="mpt-kpi-val"><span class="mpt-green">${wins}</span> / <span class="mpt-red">${losses}</span></div>
+      </div>
+      <div class="mpt-kpi">
+        <div class="mpt-kpi-label">Invested</div>
+        <div class="mpt-kpi-val">₹${investedTotal.toLocaleString("en-IN", { maximumFractionDigits: 0 })}</div>
+      </div>
+    </div>
+
+    <!-- BUY FORM -->
+    <div class="mpt-buy-form">
+      <h3>🛒 Buy / Enter Trade ${creditsOut ? `<span style="color:#ef4444;font-size:0.82rem;font-weight:500">— Upgrade required</span>` : ""}</h3>
+      <form method="POST" action="/my-paper-trade/buy" id="mpt-buy-form" ${creditsOut ? 'onsubmit="event.preventDefault();window.location=\'`+`/my-paper-trade/upgrade\'"' : ''}>
+        <div class="mpt-form-row">
+          <div class="mpt-form-group mpt-search-wrap">
+            <label>Stock / Instrument</label>
+            <input type="text" id="mpt-stock-search" placeholder="Search or type symbol…" autocomplete="off" required style="width:200px">
+            <input type="hidden" name="symbol" id="mpt-symbol-val" required>
+            <div class="mpt-search-drop" id="mpt-search-drop" style="display:none"></div>
+          </div>
+          <div class="mpt-form-group">
+            <label>Trade Type</label>
+            <select name="trade_type" id="mpt-trade-type" style="width:130px">
+              <option value="INTRADAY" ${ptConfig.trade_type === 'INTRADAY' ? 'selected' : ''}>Intraday</option>
+              <option value="HOLDING"  ${ptConfig.trade_type === 'HOLDING'  ? 'selected' : ''}>Holding</option>
+            </select>
+          </div>
+          <div class="mpt-form-group">
+            <label>Qty (shares)</label>
+            <input type="number" name="qty" id="mpt-qty" min="1" max="10000" value="${ptConfig.default_qty}" required style="width:90px">
+          </div>
+          <div class="mpt-form-group">
+            <label>Price (₹)</label>
+            <input type="number" name="price" id="mpt-price" step="0.05" min="0.1" placeholder="Live price" required style="width:120px">
+          </div>
+          <div class="mpt-form-group">
+            <label>Est. Cost</label>
+            <div id="mpt-est-cost" style="padding:8px 12px; font-weight:700; font-size:0.95rem; color: var(--accent)">—</div>
+          </div>
+          <div class="mpt-form-group">
+            <label>&nbsp;</label>
+            <button type="submit" class="mpt-btn-buy" ${creditsOut ? 'disabled style="opacity:.5;cursor:not-allowed"' : ''}>${creditsOut ? '🔒 Upgrade' : '📈 Buy'}</button>
+          </div>
+        </div>
+      </form>
+    </div>
+
+    <!-- OPEN POSITIONS -->
+    <div class="mpt-section">Open Positions (${posRows.length})</div>
+    ${posRows.length === 0
+      ? `<div class="mpt-empty">No open positions yet. Search and buy a stock above to get started.</div>`
+      : `<div style="overflow-x:auto">
+        <table class="mpt-pos-table">
+          <thead><tr>
+            <th>Symbol</th><th>Company</th><th>Type</th><th>Qty</th>
+            <th>Avg Price</th><th>Invested</th><th>Live Price</th>
+            <th>Cur. Value</th><th>P&L</th><th>P&L%</th><th>Action</th>
+          </tr></thead>
+          <tbody>
+            ${posRows.map(p => `<tr>
+              <td><a href="/stock/${p.symbol}" class="mpt-sym">${p.symbol}</a></td>
+              <td style="font-size:0.83rem; max-width:140px; overflow:hidden; white-space:nowrap; text-overflow:ellipsis">${p.company_name ?? "—"}</td>
+              <td><span class="${p.trade_type === 'HOLDING' ? 'mpt-type-hold' : 'mpt-type-intra'}">${p.trade_type === 'HOLDING' ? 'HOLD' : 'INTRA'}</span></td>
+              <td>${p.qty}</td>
+              <td>₹${p.avg_price.toFixed(2)}</td>
+              <td>₹${p.invested.toLocaleString("en-IN", { maximumFractionDigits: 0 })}</td>
+              <td>₹${p.livePrice.toFixed(2)}</td>
+              <td>₹${p.curVal.toLocaleString("en-IN", { maximumFractionDigits: 0 })}</td>
+              <td class="${p.pnl >= 0 ? "mpt-green" : "mpt-red"}" style="font-weight:700">${p.pnl >= 0 ? "+" : ""}₹${p.pnl.toLocaleString("en-IN", { maximumFractionDigits: 0 })}</td>
+              <td class="${p.pnl >= 0 ? "mpt-green" : "mpt-red"}">${p.pnlPct >= 0 ? "+" : ""}${p.pnlPct}%</td>
+              <td>
+                <form method="POST" action="/my-paper-trade/sell" style="display:inline-flex;gap:6px;align-items:center">
+                  <input type="hidden" name="symbol" value="${p.symbol}">
+                  <input type="number" name="qty" min="1" max="${p.qty}" value="${p.qty}" style="width:60px;padding:3px 7px;border-radius:5px;border:1px solid var(--border);background:var(--input-bg);color:var(--text);font-size:0.82rem">
+                  <input type="hidden" name="price" value="${p.livePrice.toFixed(2)}">
+                  <button type="submit" class="mpt-sell-btn">Sell</button>
+                </form>
+              </td>
+            </tr>`).join("")}
+          </tbody>
+        </table>
+      </div>`}
+
+    <!-- EQUITY CURVE -->
+    ${eqData.length >= 2 ? `
+    <div class="mpt-section">Realized P&L Curve</div>
+    <div class="mpt-chart-wrap">
+      <canvas id="mptEqChart" height="70"></canvas>
+    </div>` : ""}
+
+    <!-- TRADE HISTORY -->
+    <div class="mpt-section">Trade History (${trades.length})</div>
+    ${trades.length === 0
+      ? `<div class="mpt-empty">No trades yet. Buy a stock above to start your journey.</div>`
+      : `<div style="overflow-x:auto">
+        <table class="mpt-history-table">
+          <thead><tr>
+            <th>Date/Time</th><th>Symbol</th><th>Type</th><th>Action</th><th>Qty</th>
+            <th>Price</th><th>Total</th><th>P&L</th><th>P&L%</th><th>Balance After</th>
+          </tr></thead>
+          <tbody>
+            ${trades.map(t => {
+              const isPos = (t.pnl ?? 0) >= 0;
+              return `<tr>
+                <td style="font-size:0.82rem;color:var(--text-muted)">${t.traded_at.slice(0, 16).replace("T", " ")}</td>
+                <td><a href="/stock/${t.symbol}" class="mpt-sym">${t.symbol}</a></td>
+                <td><span class="${(t.trade_type||'INTRADAY') === 'HOLDING' ? 'mpt-type-hold' : 'mpt-type-intra'}">${(t.trade_type||'INTRADAY') === 'HOLDING' ? 'HOLD' : 'INTRA'}</span></td>
+                <td><span class="mpt-action-${t.action.toLowerCase()}">${t.action}</span></td>
+                <td>${t.qty}</td>
+                <td>₹${t.price.toFixed(2)}</td>
+                <td>₹${t.total.toLocaleString("en-IN", { maximumFractionDigits: 0 })}</td>
+                <td class="${t.pnl != null ? (isPos ? "mpt-green" : "mpt-red") : ""}" style="font-weight:${t.pnl != null ? "700" : "400"}">${t.pnl != null ? (isPos ? "+" : "") + "₹" + t.pnl.toLocaleString("en-IN", { maximumFractionDigits: 0 }) : "—"}</td>
+                <td class="${t.pnl_pct != null ? ((t.pnl_pct ?? 0) >= 0 ? "mpt-green" : "mpt-red") : ""}">${t.pnl_pct != null ? ((t.pnl_pct ?? 0) >= 0 ? "+" : "") + t.pnl_pct + "%" : "—"}</td>
+                <td>₹${t.balance_after.toLocaleString("en-IN", { maximumFractionDigits: 0 })}</td>
+              </tr>`;
+            }).join("")}
+          </tbody>
+        </table>
+      </div>`}
+
+    <!-- RESET -->
+    <div style="margin-top:32px; padding-top:20px; border-top:1px solid var(--border); display:flex; align-items:center; gap:16px; flex-wrap:wrap">
+      <form method="POST" action="/my-paper-trade/reset" onsubmit="return confirm('Reset your entire paper portfolio? This cannot be undone.')">
+        <button type="submit" class="mpt-btn-reset">🔄 Reset Portfolio (restart with ₹1,00,000)</button>
+      </form>
+      <span style="font-size:0.8rem; color:var(--text-muted)">Hi ${esc(userName.split(" ")[0])} · Your portfolio is saved to your account</span>
+    </div>
+
+    <div class="mpt-disclaimer">
+      ⚠️ <strong>Disclaimer:</strong> Paper trading uses simulated virtual money — no real funds are at risk.
+      Prices used for buy/sell are from the ZeroScreen DB (NSE data, updated periodically) and may not reflect the exact live market price.
+      Results from paper trading do not guarantee similar outcomes in real trading.
+    </div>
+
+    <footer class="site-footer" style="margin-top:24px"><span>© 2026 ZeroScreen · Paper trading simulation · no real capital at risk</span></footer>
+  </div>
+
+  <script src="/public/js/app.js"></script>
+  <script>
+  // ── Stock search autocomplete ────────────────────────────────────────────────
+  (function() {
+    var inp   = document.getElementById('mpt-stock-search');
+    var drop  = document.getElementById('mpt-search-drop');
+    var symVal = document.getElementById('mpt-symbol-val');
+    var priceInp = document.getElementById('mpt-price');
+    var qtyInp   = document.getElementById('mpt-qty');
+    var estCost  = document.getElementById('mpt-est-cost');
+    var timer = null;
+
+    function updateCost() {
+      var p = parseFloat(priceInp.value); var q = parseInt(qtyInp.value);
+      if (p > 0 && q > 0) estCost.textContent = '₹' + (p * q).toLocaleString('en-IN', {maximumFractionDigits:0});
+      else estCost.textContent = '—';
+    }
+    priceInp.addEventListener('input', updateCost);
+    qtyInp.addEventListener('input', updateCost);
+
+    inp.addEventListener('input', function() {
+      clearTimeout(timer);
+      var q = inp.value.trim();
+      if (q.length < 1) { drop.style.display = 'none'; return; }
+      timer = setTimeout(function() {
+        fetch('/api/search?q=' + encodeURIComponent(q))
+          .then(function(r) { return r.json(); })
+          .then(function(data) {
+            if (!data.length) { drop.style.display = 'none'; return; }
+            drop.innerHTML = data.map(function(s) {
+              return '<div class="mpt-search-item" data-sym="' + s.symbol + '" data-price="' + (s.price || '') + '">'
+                + '<span class="mpt-search-sym">' + s.symbol + '</span>'
+                + (s.company_name ? ' <span class="mpt-search-co">— ' + s.company_name + '</span>' : '')
+                + '</div>';
+            }).join('');
+            drop.style.display = 'block';
+            drop.querySelectorAll('.mpt-search-item').forEach(function(el) {
+              el.addEventListener('click', function() {
+                var sym = el.getAttribute('data-sym');
+                inp.value = sym;
+                symVal.value = sym;
+                drop.style.display = 'none';
+                // Fetch live price
+                fetch('/api/price/' + sym)
+                  .then(function(r) { return r.json(); })
+                  .then(function(d) { if (d.price) { priceInp.value = d.price.toFixed(2); updateCost(); } })
+                  .catch(function() {});
+              });
+            });
+          }).catch(function() {});
+      }, 220);
+    });
+    document.addEventListener('click', function(e) {
+      if (!e.target.closest('.mpt-search-wrap')) drop.style.display = 'none';
+    });
+
+    // Auto-set symbol if sym in URL
+    var urlSym = new URLSearchParams(window.location.search).get('buy');
+    if (urlSym) {
+      inp.value = urlSym; symVal.value = urlSym;
+      fetch('/api/price/' + urlSym)
+        .then(function(r) { return r.json(); })
+        .then(function(d) { if (d.price) { priceInp.value = d.price.toFixed(2); updateCost(); } })
+        .catch(function() {});
+    }
+  })();
+  ${eqData.length >= 2 ? `
+  (function() {
+    var labels = ${JSON.stringify(eqLabels)};
+    var data   = ${JSON.stringify(eqData)};
+    var color  = data[data.length-1] >= 0 ? '#10b981' : '#ef4444';
+    new Chart(document.getElementById('mptEqChart').getContext('2d'), {
+      type: 'line',
+      data: { labels, datasets: [{ data, borderColor: color,
+        backgroundColor: data[data.length-1] >= 0 ? 'rgba(16,185,129,0.08)' : 'rgba(239,68,68,0.08)',
+        fill: true, tension: 0.35, pointRadius: data.length > 50 ? 0 : 4, borderWidth: 2 }] },
+      options: { responsive:true, plugins:{legend:{display:false},tooltip:{mode:'index',intersect:false,callbacks:{label:ctx=>'₹'+ctx.raw}}},
+        scales:{x:{display:data.length<=60,ticks:{maxTicksLimit:10}},y:{ticks:{callback:v=>'₹'+v}}} }
+    });
+  })();` : ""}
+  </script>
+</body>
+</html>`);
+});
+
+// ── POST /my-paper-trade/buy ──────────────────────────────────────────────────
+app.post("/my-paper-trade/buy", requireAuth, async (req: Request, res: Response) => {
+  const userId = req.session.userId!;
+  if (!isMarketHours()) {
+    res.redirect("/my-paper-trade?err=" + encodeURIComponent("Paper trading only available during market hours (Mon–Fri 9:15 AM – 3:30 PM IST)")); return;
+  }
+  const uInfo = await dbAll<{ mobile_verified: number }>("SELECT mobile_verified FROM users WHERE id=?", [userId]);
+  if (!uInfo[0]?.mobile_verified) { res.redirect("/verify-mobile?next=/my-paper-trade"); return; }
+  const [tradeCount, activeSub] = await Promise.all([countPaperTrades(userId), getActiveSubscription(userId)]);
+  const freeLimit = parseInt(await getSetting("paper_free_limit") || "10", 10);
+  const isPremium = !!activeSub || req.session.userRole === "premium" || req.session.userRole === "admin";
+  if (!isPremium && tradeCount >= freeLimit) {
+    res.redirect("/my-paper-trade/upgrade?err=" + encodeURIComponent(`Free limit reached (${freeLimit} trades). Upgrade to Premium for unlimited trades.`)); return;
+  }
+  const symbol    = ((req.body.symbol as string) || "").toUpperCase().trim();
+  const qty       = parseInt(req.body.qty, 10);
+  const price     = parseFloat(req.body.price);
+  const tradeType = req.body.trade_type === "HOLDING" ? "HOLDING" : "INTRADAY";
+  if (!symbol || !Number.isInteger(qty) || qty < 1 || qty > 10000 || isNaN(price) || price <= 0) {
+    res.redirect("/my-paper-trade?err=Invalid+buy+parameters"); return;
+  }
+  const stock = await dbAll<{ company_name: string | null }>("SELECT company_name FROM stocks WHERE symbol=?", [symbol]);
+  const companyName = stock[0]?.company_name ?? null;
+  const result = await paperBuy(userId, symbol, companyName, qty, price, tradeType);
+  res.redirect(`/my-paper-trade?${result.ok ? "msg" : "err"}=${encodeURIComponent(result.msg)}`);
+});
+
+// ── POST /my-paper-trade/sell ─────────────────────────────────────────────────
+app.post("/my-paper-trade/sell", requireAuth, async (req: Request, res: Response) => {
+  const userId = req.session.userId!;
+  if (!isMarketHours()) {
+    res.redirect("/my-paper-trade?err=" + encodeURIComponent("Paper trading only available during market hours (Mon–Fri 9:15 AM – 3:30 PM IST)")); return;
+  }
+  const symbol  = ((req.body.symbol as string) || "").toUpperCase().trim();
+  const qty     = parseInt(req.body.qty, 10);
+  const price   = parseFloat(req.body.price);
+  if (!symbol || !Number.isInteger(qty) || qty < 1 || isNaN(price) || price <= 0) {
+    res.redirect("/my-paper-trade?err=Invalid+sell+parameters"); return;
+  }
+  const result = await paperSell(userId, symbol, qty, price);
+  res.redirect(`/my-paper-trade?${result.ok ? "msg" : "err"}=${encodeURIComponent(result.msg)}`);
+});
+
+// ── POST /my-paper-trade/reset ────────────────────────────────────────────────
+app.post("/my-paper-trade/reset", requireAuth, async (req: Request, res: Response) => {
+  await paperReset(req.session.userId!);
+  res.redirect("/my-paper-trade?msg=Portfolio+reset+successfully.+Starting+fresh+with+%E2%82%B91%2C00%2C000");
+});
+
+// ── GET /my-paper-trade/config ────────────────────────────────────────────────
+app.get("/my-paper-trade/config", requireAuth, async (req: Request, res: Response) => {
+  const cfg   = await getPaperTradeConfig(req.session.userId!);
+  const saved = req.query.saved === "1";
+  res.send(`<!DOCTYPE html><html lang="en"><head>
+  <meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Paper Trade Settings — ZeroScreen</title>
+  <link rel="stylesheet" href="/public/css/style.css">
+  <style>
+    .cfg-card{max-width:480px;margin:40px auto;background:var(--card-bg);border:1px solid var(--border);border-radius:14px;padding:28px 32px}
+    .cfg-title{font-size:1.25rem;font-weight:800;margin-bottom:4px}
+    .cfg-sub{color:var(--text-muted);font-size:0.85rem;margin-bottom:24px}
+    .cfg-row{display:flex;flex-direction:column;gap:5px;margin-bottom:16px}
+    .cfg-label{font-size:0.78rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:.05em}
+    .cfg-input,.cfg-select{background:var(--input-bg);border:1px solid var(--border);border-radius:7px;padding:8px 12px;color:var(--text);font-size:0.9rem;width:100%;box-sizing:border-box}
+    .cfg-btn{background:var(--accent);color:#fff;border:none;border-radius:8px;padding:10px 24px;font-weight:700;cursor:pointer;font-size:0.9rem;margin-top:8px}
+    .cfg-ok{background:#10b98122;color:#10b981;border:1px solid #10b98155;border-radius:8px;padding:10px 14px;margin-bottom:16px;font-size:0.88rem}
+  </style>
+</head><body>${nav("my-paper-trade", req)}
+<div class="container">
+  <div class="cfg-card">
+    <div class="cfg-title">⚙️ Paper Trade Settings</div>
+    <div class="cfg-sub">Your default settings for new trades. You can override per-trade on the main page.</div>
+    ${saved ? `<div class="cfg-ok">✅ Settings saved!</div>` : ""}
+    <form method="POST" action="/my-paper-trade/config">
+      <div class="cfg-row">
+        <label class="cfg-label">Default Trade Type</label>
+        <select class="cfg-select" name="trade_type">
+          <option value="INTRADAY" ${cfg.trade_type === "INTRADAY" ? "selected" : ""}>Intraday (square off same day)</option>
+          <option value="HOLDING"  ${cfg.trade_type === "HOLDING"  ? "selected" : ""}>Holding (positional / multi-day)</option>
+        </select>
+      </div>
+      <div class="cfg-row">
+        <label class="cfg-label">Default Quantity</label>
+        <input class="cfg-input" type="number" name="default_qty" min="1" max="10000" value="${cfg.default_qty}">
+      </div>
+      <div class="cfg-row">
+        <label class="cfg-label">Default Stop Loss %</label>
+        <input class="cfg-input" type="number" name="default_sl_pct" min="0.1" max="50" step="0.1" value="${cfg.default_sl_pct}">
+      </div>
+      <div class="cfg-row">
+        <label class="cfg-label">Default Target %</label>
+        <input class="cfg-input" type="number" name="default_tgt_pct" min="0.1" max="200" step="0.1" value="${cfg.default_tgt_pct}">
+      </div>
+      <div class="cfg-row">
+        <label class="cfg-label">Max Open Positions</label>
+        <input class="cfg-input" type="number" name="max_positions" min="1" max="50" value="${cfg.max_positions}">
+      </div>
+      <button type="submit" class="cfg-btn">Save Settings</button>
+    </form>
+    <p style="margin-top:16px"><a href="/my-paper-trade" style="color:var(--text-muted);font-size:0.85rem">← Back to Portfolio</a></p>
+  </div>
+</div>
+<script src="/public/js/app.js"></script></body></html>`);
+});
+
+app.post("/my-paper-trade/config", requireAuth, async (req: Request, res: Response) => {
+  const userId = req.session.userId!;
+  const trade_type      = req.body.trade_type === "HOLDING" ? "HOLDING" : "INTRADAY";
+  const default_qty     = Math.max(1, Math.min(10000, parseInt(req.body.default_qty, 10) || 1));
+  const default_sl_pct  = Math.max(0.1, Math.min(50,  parseFloat(req.body.default_sl_pct)  || 2));
+  const default_tgt_pct = Math.max(0.1, Math.min(200, parseFloat(req.body.default_tgt_pct) || 4));
+  const max_positions   = Math.max(1, Math.min(50, parseInt(req.body.max_positions, 10) || 10));
+  await savePaperTradeConfig(userId, { trade_type, default_qty, default_sl_pct, default_tgt_pct, max_positions });
+  res.redirect("/my-paper-trade/config?saved=1");
+});
+
+// ── GET /my-paper-trade/upgrade ───────────────────────────────────────────────
+app.get("/my-paper-trade/upgrade", requireAuth, async (req: Request, res: Response) => {
+  const err       = esc(req.query.err as string || "");
+  const activeSub = await getActiveSubscription(req.session.userId!);
+  const isPremium = !!activeSub || req.session.userRole === "premium" || req.session.userRole === "admin";
+  const freeLimit = await getSetting("paper_free_limit") || "10";
+  res.send(`<!DOCTYPE html><html lang="en"><head>
+  <meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Upgrade — Paper Trade Premium</title>
+  <link rel="stylesheet" href="/public/css/style.css">
+  <style>
+    .upg-card{max-width:520px;margin:40px auto;background:var(--card-bg);border:1px solid var(--border);border-radius:16px;padding:32px 36px;text-align:center}
+    .upg-icon{font-size:2.5rem;margin-bottom:12px}
+    .upg-title{font-size:1.5rem;font-weight:800;margin-bottom:6px}
+    .upg-sub{color:var(--text-muted);font-size:0.9rem;margin-bottom:24px}
+    .upg-err{background:#ef444422;color:#ef4444;border:1px solid #ef444455;border-radius:8px;padding:10px 14px;margin-bottom:18px;font-size:0.88rem}
+    .upg-feats{text-align:left;background:var(--bg2);border-radius:10px;padding:16px 20px;margin-bottom:24px}
+    .upg-feat{padding:6px 0;font-size:0.9rem;border-bottom:1px solid var(--border)}
+    .upg-feat:last-child{border-bottom:none}
+    .upg-price{font-size:1.8rem;font-weight:800;color:var(--accent);margin-bottom:4px}
+    .upg-period{font-size:0.82rem;color:var(--text-muted);margin-bottom:20px}
+    .upg-btn{display:inline-block;background:var(--accent);color:#fff;border:none;border-radius:10px;padding:12px 32px;font-weight:700;font-size:1rem;cursor:pointer;text-decoration:none}
+    .upg-ok{background:#10b98122;color:#10b981;border:1px solid #10b98155;border-radius:8px;padding:12px 16px;margin-bottom:16px;font-weight:700}
+  </style>
+</head><body>${nav("my-paper-trade", req)}
+<div class="container">
+  <div class="upg-card">
+    <div class="upg-icon">👑</div>
+    <div class="upg-title">Paper Trade Premium</div>
+    <div class="upg-sub">Unlock unlimited paper trades every month and advanced features.</div>
+    ${err ? `<div class="upg-err">⚠️ ${err}</div>` : ""}
+    ${isPremium ? `<div class="upg-ok">✅ You are already on Premium! Enjoy unlimited paper trades.</div>` : ""}
+    <div class="upg-feats">
+      <div class="upg-feat">✅ <strong>Free plan:</strong> ${esc(freeLimit)} paper trades total</div>
+      <div class="upg-feat">👑 <strong>Premium:</strong> Unlimited trades per month</div>
+      <div class="upg-feat">📈 All trade types — Intraday &amp; Holding</div>
+      <div class="upg-feat">📊 Full trade history &amp; P&amp;L analytics</div>
+      <div class="upg-feat">🔔 Market hours enforcement (9:15 AM – 3:30 PM IST)</div>
+      <div class="upg-feat">⚙️ Custom strategy configurations (SL%, Target%, Max positions)</div>
+    </div>
+    <div class="upg-price">₹499<span style="font-size:1rem;font-weight:400">/month</span></div>
+    <div class="upg-period">Monthly subscription — cancel anytime</div>
+    ${!isPremium ? `<a href="/subscribe" class="upg-btn">👑 Subscribe Now →</a>` : `<a href="/my-paper-trade" class="upg-btn">← Back to Portfolio</a>`}
+    <p style="font-size:0.82rem;color:var(--text-muted);margin-top:16px">Have questions? <a href="/contact">Contact us</a></p>
+  </div>
+</div>
+<script src="/public/js/app.js"></script></body></html>`);
+});
+
+// ── GET /api/price/:symbol ─ live price for paper trade buy form ──────────────
+app.get("/api/price/:symbol", async (req: Request, res: Response) => {
+  const symbol = req.params.symbol.toUpperCase().trim();
+  const row = await dbAll<{ price: number | null }>("SELECT price FROM prices WHERE symbol=?", [symbol]);
+  res.json({ price: row[0]?.price ?? null });
+});
+
+// ── GET /strategies ────────────────────────────────────────────────────────────
+app.get("/strategies", (req: Request, res: Response) => {
+  const backtest: any = readBotJSON("5year-backtest-result.json", {});
+  const monthly: Record<string, any> = backtest.monthly || {};
+  const mKeys = Object.keys(monthly).sort();
+
+  // Derive key stats
+  const allBbTrades = mKeys.reduce((s, k) => s + (monthly[k].bbTrades ?? 0), 0);
+  const allBbWins   = mKeys.reduce((s, k) => s + (monthly[k].bbWins   ?? 0), 0);
+  const allRcTrades = mKeys.reduce((s, k) => s + (monthly[k].rcTrades ?? 0), 0);
+  const allRcWins   = mKeys.reduce((s, k) => s + (monthly[k].rcWins   ?? 0), 0);
+  const bbWR = allBbTrades > 0 ? ((allBbWins / allBbTrades) * 100).toFixed(1) : "—";
+  const rcWR = allRcTrades > 0 ? ((allRcWins / allRcTrades) * 100).toFixed(1) : "—";
+  const bbPnl = backtest.totals?.bodyBreakout ?? 0;
+  const rcPnl = backtest.totals?.rcConfirm    ?? 0;
+  const totalPnl = bbPnl + rcPnl;
+
+  const profitMonths = mKeys.filter(k => (monthly[k].bbTotal + monthly[k].rcTotal) > 0).length;
+  const monthPct = mKeys.length > 0 ? ((profitMonths / mKeys.length) * 100).toFixed(0) : "—";
+
+  res.send(`<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Strategies — ZeroScreen</title>
+  <link rel="stylesheet" href="/public/css/style.css">
+</head>
+<body class="page-theme-strategies">
+  ${nav("strategies", req)}
+
+  <div class="container" style="max-width:980px">
+
+    <!-- HEADER -->
+    <div class="strat-header">
+      <h1 class="strat-title">⚙️ Trading Strategies</h1>
+      <p class="strat-sub">BANKNIFTY Options · Automated intraday trading · Strategy logic is proprietary and not disclosed</p>
+    </div>
+
+    <!-- ACTIVE STRATEGY HERO -->
+    <div class="strat-hero">
+      <div class="strat-hero-badge">ACTIVE</div>
+      <div class="strat-hero-name">Proprietary Intraday Strategy</div>
+      <div class="strat-hero-desc">
+        A fully automated intraday options trading system on BANKNIFTY.
+        Built on years of backtesting and live market refinement — strategy logic and signal conditions are not disclosed.
+      </div>
+      <div class="strat-hero-stats">
+        <div class="strat-hero-stat"><span class="strat-hs-val">+${parseFloat(totalPnl.toFixed(0)).toLocaleString("en-IN")}</span><span class="strat-hs-label">5-Year PnL (pts)</span></div>
+        <div class="strat-hero-stat"><span class="strat-hs-val">${mKeys.length}</span><span class="strat-hs-label">Months Backtested</span></div>
+        <div class="strat-hero-stat"><span class="strat-hs-val">${monthPct}%</span><span class="strat-hs-label">Profitable Months</span></div>
+        <div class="strat-hero-stat"><span class="strat-hs-val">${backtest.tradingDays ?? "—"}</span><span class="strat-hs-label">Trading Days</span></div>
+      </div>
+    </div>
+
+    <!-- BENEFITS -->
+    <div class="strat-section-label">Why It Works</div>
+    <div class="strat-modes-grid">
+
+      <div class="strat-mode-card">
+        <div class="strat-mode-header">
+          <span class="strat-mode-icon">📈</span>
+          <div>
+            <div class="strat-mode-name">Consistent Edge</div>
+            <div class="strat-mode-type">Backed by 5 years of data</div>
+          </div>
+        </div>
+        <p class="strat-mode-desc">
+          Backtested across 1,241 trading days (2021–2026) covering multiple bull and bear market cycles.
+          Demonstrates consistent profitability with ${monthPct}% of months ending in positive territory.
+        </p>
+        <div class="strat-mode-stats">
+          <div class="strat-ms"><span class="strat-ms-val strat-green">+${parseFloat(totalPnl.toFixed(0)).toLocaleString("en-IN")} pts</span><span class="strat-ms-label">5-Year PnL</span></div>
+          <div class="strat-ms"><span class="strat-ms-val">${profitMonths} / ${mKeys.length}</span><span class="strat-ms-label">Profitable Months</span></div>
+          <div class="strat-ms"><span class="strat-ms-val">${backtest.tradingDays ?? "—"}</span><span class="strat-ms-label">Days Tested</span></div>
+        </div>
+      </div>
+
+      <div class="strat-mode-card">
+        <div class="strat-mode-header">
+          <span class="strat-mode-icon">🤖</span>
+          <div>
+            <div class="strat-mode-name">Fully Automated</div>
+            <div class="strat-mode-type">Zero manual intervention</div>
+          </div>
+        </div>
+        <p class="strat-mode-desc">
+          Runs end-to-end without human involvement — from signal generation to order placement and exit management.
+          Eliminates emotional bias and execution delay, trading with mechanical precision every session.
+        </p>
+        <div class="strat-mode-stats">
+          <div class="strat-ms"><span class="strat-ms-val">9:15 AM</span><span class="strat-ms-label">Market Open</span></div>
+          <div class="strat-ms"><span class="strat-ms-val">3:30 PM</span><span class="strat-ms-label">Auto Square-off</span></div>
+          <div class="strat-ms"><span class="strat-ms-val">BANKNIFTY</span><span class="strat-ms-label">Instrument</span></div>
+        </div>
+      </div>
+
+      <div class="strat-mode-card">
+        <div class="strat-mode-header">
+          <span class="strat-mode-icon">🛡️</span>
+          <div>
+            <div class="strat-mode-name">Built-in Risk Control</div>
+            <div class="strat-mode-type">Capital protection first</div>
+          </div>
+        </div>
+        <p class="strat-mode-desc">
+          Hard limits on daily loss, trade count, and position size prevent runaway drawdowns.
+          Every trade has a predefined stop-loss. The system stops trading automatically if daily limits are hit.
+        </p>
+        <div class="strat-mode-stats">
+          <div class="strat-ms"><span class="strat-ms-val">100 pts</span><span class="strat-ms-label">Per-Trade SL</span></div>
+          <div class="strat-ms"><span class="strat-ms-val">5</span><span class="strat-ms-label">Max Trades/Day</span></div>
+          <div class="strat-ms"><span class="strat-ms-val">1%</span><span class="strat-ms-label">Risk/Trade</span></div>
+        </div>
+      </div>
+
+      <div class="strat-mode-card">
+        <div class="strat-mode-header">
+          <span class="strat-mode-icon">🎯</span>
+          <div>
+            <div class="strat-mode-name">Dual Signal Confirmation</div>
+            <div class="strat-mode-type">Two independent models</div>
+          </div>
+        </div>
+        <p class="strat-mode-desc">
+          Uses two independent proprietary signal generators that cross-validate before placing trades.
+          Each model targets different market conditions, giving the strategy broad adaptability across trending and ranging sessions.
+        </p>
+        <div class="strat-mode-stats">
+          <div class="strat-ms"><span class="strat-ms-val">2</span><span class="strat-ms-label">Signal Models</span></div>
+          <div class="strat-ms"><span class="strat-ms-val">CE + PE</span><span class="strat-ms-label">Both Directions</span></div>
+          <div class="strat-ms"><span class="strat-ms-val">Options</span><span class="strat-ms-label">Instrument Type</span></div>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- SCREENER STRATEGIES -->
+    <div class="strat-section-label">📋 Screener Presets</div>
+    <p class="strat-preset-intro">Pre-built stock screening filters for different investment styles.</p>
+    <div class="strat-preset-grid">
+      ${STRATEGIES.map(s => `
+      <a href="/?${strategyParams(s)}" class="strat-preset-card">
+        <span class="strat-preset-icon">${s.icon}</span>
+        <div>
+          <div class="strat-preset-name">${s.label}</div>
+          <div class="strat-preset-desc">${s.desc}</div>
+        </div>
+      </a>`).join("")}
+    </div>
+
+    <footer class="site-footer"><span>© 2026 ZeroScreen · Strategy logic is proprietary · Past backtest performance does not guarantee future results</span></footer>
+  </div>
+  <script src="/public/js/app.js"></script>
+</body>
+</html>`);
+});
+
+// ── GET /dashboard ─────────────────────────────────────────────────────────────
+app.get("/dashboard", async (req: Request, res: Response) => {
+  const trades: any[] = readBotJSON("trades.json", []);
+  const backtest: any = readBotJSON("5year-backtest-result.json", {});
+  const analytics = computeAnalytics(trades);
+
+  // Build equity curve labels (trade numbers)
+  const eqLabels = analytics.equityCurve.map((_: any, i: number) => `#${i + 1}`);
+
+  // Build monthly backtest data
+  const monthly: Record<string, any> = backtest.monthly || {};
+  const mKeys = Object.keys(monthly).sort();
+  const mLabels = mKeys.map(k => {
+    const [y, m] = k.split("-");
+    const d = new Date(parseInt(y), parseInt(m) - 1, 1);
+    return d.toLocaleString("en-IN", { month: "short", year: "2-digit" });
+  });
+  const bbData  = mKeys.map(k => parseFloat((monthly[k].bbTotal ?? 0).toFixed(1)));
+  const rcData  = mKeys.map(k => parseFloat((monthly[k].rcTotal ?? 0).toFixed(1)));
+  const combData = mKeys.map(k => parseFloat(((monthly[k].bbTotal ?? 0) + (monthly[k].rcTotal ?? 0)).toFixed(1)));
+  const combColors = combData.map((v: number) => v >= 0 ? "rgba(16,185,129,0.7)" : "rgba(239,68,68,0.7)");
+
+  // Backtest totals
+  const btTotal = (backtest.totals?.bodyBreakout ?? 0) + (backtest.totals?.rcConfirm ?? 0);
+  const btDays = backtest.tradingDays ?? 0;
+  const btFrom = backtest.period?.from ?? "";
+  const btTo   = backtest.period?.to ?? "";
+
+  // All monthly win rates
+  const allBbTrades = mKeys.reduce((s, k) => s + (monthly[k].bbTrades ?? 0), 0);
+  const allBbWins   = mKeys.reduce((s, k) => s + (monthly[k].bbWins ?? 0), 0);
+  const allRcTrades = mKeys.reduce((s, k) => s + (monthly[k].rcTrades ?? 0), 0);
+  const allRcWins   = mKeys.reduce((s, k) => s + (monthly[k].rcWins ?? 0), 0);
+  const bbWinRate = allBbTrades > 0 ? ((allBbWins / allBbTrades) * 100).toFixed(1) : "—";
+  const rcWinRate = allRcTrades > 0 ? ((allRcWins / allRcTrades) * 100).toFixed(1) : "—";
+
+  // ── DASHBOARD (full view for everyone) ─────────────────────────────────────
+  if (false) {
+    res.send(`<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Dashboard — ZeroScreen</title>
+  <link rel="stylesheet" href="/public/css/style.css">
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.2/dist/chart.umd.min.js"></script>
+</head>
+<body class="page-theme-dashboard">
+  ${nav("dashboard", req)}
+  <div class="container" style="max-width:1100px">
+    <div class="dash-header">
+      <div>
+        <h1 class="dash-title">📊 Trading Dashboard</h1>
+        <p class="dash-sub">BANKNIFTY Options Bot · Live performance analytics</p>
+      </div>
+    </div>
+    <div class="dash-kpi-row">
+      <div class="dash-kpi"><span class="dash-kpi-label">All-Time PnL</span><span class="dash-kpi-val ${analytics.allTime.pnl>=0?'sig-green':'sig-red'}">${analytics.allTime.pnl>=0?'+':''}${analytics.allTime.pnl.toFixed(1)} pts</span></div>
+      <div class="dash-kpi"><span class="dash-kpi-label">Total Trades</span><span class="dash-kpi-val">${analytics.allTime.trades}</span></div>
+      <div class="dash-kpi"><span class="dash-kpi-label">Win Rate</span><span class="dash-kpi-val">${analytics.allTime.winRate}%</span></div>
+      <div class="dash-kpi"><span class="dash-kpi-label">Today PnL</span><span class="dash-kpi-val ${analytics.today.pnl>=0?'sig-green':'sig-red'}">${analytics.today.pnl>=0?'+':''}${analytics.today.pnl} pts</span></div>
+      <div class="dash-kpi"><span class="dash-kpi-label">Max Drawdown</span><span class="dash-kpi-val sig-yellow">${analytics.allTime.maxDD} pts</span></div>
+    </div>
+    <div class="dash-section-title">📈 Live Equity Curve</div>
+    ${analytics.equityCurve.length === 0 ? `
+    <div class="dash-empty-chart"><span>📉</span><p>No trades recorded yet. The equity curve will appear here once the bot starts trading.</p></div>` : `
+    <div class="dash-chart-wrap"><canvas id="eqChart"></canvas></div>`}
+
+    <!-- Upgrade CTA -->
+    <div class="upgrade-banner upgrade-banner-dashboard">
+      <div class="upgrade-banner-icon">📊</div>
+      <div class="upgrade-banner-content">
+        <strong>Unlock 5-Year Backtest Analytics</strong>
+        <p>See full monthly breakdown, Model A vs Model B performance, all 60 months of data — exclusively for Premium members.</p>
+      </div>
+      <a href="/premium" class="btn-upgrade">Upgrade — ₹499/mo</a>
+    </div>
+
+    <!-- Preview (blurred) -->
+    <div class="dash-section-title">📅 Monthly Backtest <span class="sig-locked-label">🔒 Premium</span></div>
+    <div class="dash-locked-preview">
+      <div class="dash-locked-overlay">
+        <div class="dash-locked-msg">
+          <span style="font-size:32px">🔒</span>
+          <h3>5-Year Backtest Breakdown</h3>
+          <p>Monthly PnL, Model A vs Model B charts, detailed trade stats — available with Premium.</p>
+          <a href="/premium" class="btn-upgrade">Get Premium Access</a>
+        </div>
+      </div>
+      <div class="dash-locked-blur">
+        <div class="dash-kpi-row" style="margin-bottom:16px">
+          <div class="dash-kpi"><span class="dash-kpi-label">5Y Combined PnL</span><span class="dash-kpi-val">••••</span></div>
+          <div class="dash-kpi"><span class="dash-kpi-label">Model A Win Rate</span><span class="dash-kpi-val">••••</span></div>
+          <div class="dash-kpi"><span class="dash-kpi-label">Model B Win Rate</span><span class="dash-kpi-val">••••</span></div>
+          <div class="dash-kpi"><span class="dash-kpi-label">Trading Days</span><span class="dash-kpi-val">••••</span></div>
+        </div>
+        <div style="height:200px;background:var(--card-bg);border-radius:12px;margin-bottom:16px"></div>
+        <div style="height:160px;background:var(--card-bg);border-radius:12px"></div>
+      </div>
+    </div>
+  </div>
+  <script src="/public/js/app.js"></script>
+  ${analytics.equityCurve.length > 0 ? `<script>
+  (function(){
+    const ctx = document.getElementById('eqChart').getContext('2d');
+    new Chart(ctx, {
+      type: 'line',
+      data: {
+        labels: ${JSON.stringify(eqLabels)},
+        datasets: [{ label: 'Equity (pts)', data: ${JSON.stringify(analytics.equityCurve)}, borderColor: '#7c3aed', backgroundColor: 'rgba(124,58,237,0.1)', fill: true, tension: 0.3, pointRadius: 0 }]
+      },
+      options: { responsive: true, plugins: { legend: { display: false } }, scales: { y: { ticks: { callback: v => v + ' pts' } } } }
+    });
+  })();
+  </script>` : ""}
+</body>
+</html>`);
+    return;
+  }
+
+  res.send(`<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Dashboard — ZeroScreen</title>
+  <link rel="stylesheet" href="/public/css/style.css">
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.2/dist/chart.umd.min.js"></script>
+</head>
+<body class="page-theme-dashboard">
+  ${nav("dashboard", req)}
+  <div class="container" style="max-width:1100px">
+    <div class="dash-hero">
+      <div class="dash-hero-inner">
+        <div class="dash-hero-left">
+          <div class="dash-hero-eyebrow"><span class="dash-live-dot"></span> LIVE · BANKNIFTY OPTIONS</div>
+          <h1 class="dash-hero-title">Trading Dashboard</h1>
+          <p class="dash-hero-sub">Proprietary dual-model intraday strategy · Fully automated 9:15–3:30 IST</p>
+        </div>
+        <div class="dash-hero-right">
+          <div class="dash-hero-stat-box">
+            <div class="dash-hero-stat-label">Backtest Period</div>
+            <div class="dash-hero-stat-val">${btFrom} → ${btTo}</div>
+          </div>
+          <div class="dash-hero-stat-box">
+            <div class="dash-hero-stat-label">Trading Days</div>
+            <div class="dash-hero-stat-val">${btDays}</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- LIVE STATS -->
+    <div class="dash-section-label"><span class="dash-sl-dot dash-sl-red"></span>Live Bot Performance</div>
+    <div class="dash-kpi-grid">
+      <div class="dash-kpi">
+        <div class="dash-kpi-label">All-Time PnL</div>
+        <div class="dash-kpi-val ${analytics.allTime.pnl >= 0 ? "dash-green" : "dash-red"}">${analytics.allTime.pnl >= 0 ? "+" : ""}${analytics.allTime.pnl} pts</div>
+      </div>
+      <div class="dash-kpi">
+        <div class="dash-kpi-label">Total Trades</div>
+        <div class="dash-kpi-val">${analytics.allTime.trades}</div>
+      </div>
+      <div class="dash-kpi">
+        <div class="dash-kpi-label">Win Rate</div>
+        <div class="dash-kpi-val dash-green">${analytics.allTime.winRate}%</div>
+      </div>
+      <div class="dash-kpi">
+        <div class="dash-kpi-label">Wins / Losses</div>
+        <div class="dash-kpi-val"><span class="dash-green">${analytics.allTime.wins}</span> / <span class="dash-red">${analytics.allTime.losses}</span></div>
+      </div>
+      <div class="dash-kpi">
+        <div class="dash-kpi-label">Max Drawdown</div>
+        <div class="dash-kpi-val dash-red">${analytics.allTime.maxDD} pts</div>
+      </div>
+      <div class="dash-kpi">
+        <div class="dash-kpi-label">Today PnL</div>
+        <div class="dash-kpi-val ${analytics.today.pnl >= 0 ? "dash-green" : "dash-red"}">${analytics.today.pnl >= 0 ? "+" : ""}${analytics.today.pnl} pts</div>
+      </div>
+    </div>
+
+    <!-- EQUITY CURVE -->
+    <div class="dash-section-label"><span class="dash-sl-dot dash-sl-green"></span>Live Equity Curve</div>
+    <div class="dash-chart-card">
+      ${analytics.equityCurve.length < 2
+        ? `<div class="dash-empty">No trades yet — equity curve will appear once the bot executes trades.</div>`
+        : `<canvas id="eqChart" height="90"></canvas>`
+      }
+    </div>
+
+    <!-- BACKTEST SECTION -->
+    <div class="dash-section-label"><span class="dash-sl-dot dash-sl-purple"></span>5-Year Backtest (2021–2026)</div>
+    <div class="dash-kpi-grid">
+      <div class="dash-kpi">
+        <div class="dash-kpi-label">Total Backtest PnL</div>
+        <div class="dash-kpi-val dash-green">+${parseFloat(btTotal.toFixed(0)).toLocaleString("en-IN")} pts</div>
+      </div>
+      <div class="dash-kpi">
+        <div class="dash-kpi-label">Model A PnL</div>
+        <div class="dash-kpi-val dash-green">+${parseFloat((backtest.totals?.bodyBreakout ?? 0).toFixed(0)).toLocaleString("en-IN")} pts</div>
+      </div>
+      <div class="dash-kpi">
+        <div class="dash-kpi-label">Model B PnL</div>
+        <div class="dash-kpi-val dash-green">+${parseFloat((backtest.totals?.rcConfirm ?? 0).toFixed(0)).toLocaleString("en-IN")} pts</div>
+      </div>
+      <div class="dash-kpi">
+        <div class="dash-kpi-label">Model A Win Rate</div>
+        <div class="dash-kpi-val">${bbWinRate}%</div>
+      </div>
+      <div class="dash-kpi">
+        <div class="dash-kpi-label">Model B Win Rate</div>
+        <div class="dash-kpi-val">${rcWinRate}%</div>
+      </div>
+      <div class="dash-kpi">
+        <div class="dash-kpi-label">Trading Days</div>
+        <div class="dash-kpi-val">${btDays}</div>
+      </div>
+    </div>
+
+    <!-- MONTHLY BACKTEST CHART -->
+    <div class="dash-chart-card">
+      <div class="dash-chart-title">📊 Monthly Combined PnL (points)</div>
+      <canvas id="monthlyChart" height="90"></canvas>
+    </div>
+
+    <!-- BB vs RC CHART -->
+    <div class="dash-chart-card">
+      <div class="dash-chart-title">⚔️ Model A vs Model B — Monthly PnL</div>
+      <canvas id="stratChart" height="90"></canvas>
+    </div>
+
+    <!-- MONTHLY TABLE -->
+    <div class="dash-section-label"><span class="dash-sl-dot dash-sl-amber"></span>Monthly Breakdown</div>
+    <div class="dash-table-wrap">
+      <table class="dash-table">
+        <thead>
+          <tr>
+            <th>Month</th>
+            <th>Days</th>
+            <th>Model A PnL</th>
+            <th>Model A Trades</th>
+            <th>Model A W/L</th>
+            <th>Model B PnL</th>
+            <th>Model B Trades</th>
+            <th>Model B W/L</th>
+            <th>Combined</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${mKeys.slice().reverse().map(k => {
+            const m = monthly[k];
+            const comb = (m.bbTotal ?? 0) + (m.rcTotal ?? 0);
+            const isPos = comb >= 0;
+            return `<tr class="${isPos ? "dash-row-win" : "dash-row-loss"}">
+              <td class="dash-td-month">${k}</td>
+              <td>${m.days ?? "—"}</td>
+              <td class="${(m.bbTotal ?? 0) >= 0 ? "dash-green" : "dash-red"}">${(m.bbTotal ?? 0) >= 0 ? "+" : ""}${(m.bbTotal ?? 0).toFixed(1)}</td>
+              <td>${m.bbTrades ?? "—"}</td>
+              <td>${m.bbWins ?? 0}/${(m.bbTrades ?? 0) - (m.bbWins ?? 0)}</td>
+              <td class="${(m.rcTotal ?? 0) >= 0 ? "dash-green" : "dash-red"}">${(m.rcTotal ?? 0) >= 0 ? "+" : ""}${(m.rcTotal ?? 0).toFixed(1)}</td>
+              <td>${m.rcTrades ?? "—"}</td>
+              <td>${m.rcWins ?? 0}/${(m.rcTrades ?? 0) - (m.rcWins ?? 0)}</td>
+              <td class="${isPos ? "dash-green dash-td-bold" : "dash-red dash-td-bold"}">${isPos ? "+" : ""}${comb.toFixed(1)}</td>
+            </tr>`;
+          }).join("")}
+        </tbody>
+      </table>
+    </div>
+
+    <footer class="site-footer"><span>© 2026 ZeroScreen &mdash; Backtest results are hypothetical &amp; for informational purposes only. Not SEBI registered. Not investment advice. Past performance is not indicative of future results.</span></footer>
+  </div>
+
+  <script src="/public/js/app.js"></script>
+  <script>
+  // Chart defaults
+  Chart.defaults.color = document.documentElement.classList.contains('dark') ? '#a1a1aa' : '#6b7280';
+  Chart.defaults.borderColor = document.documentElement.classList.contains('dark') ? '#27272a' : '#e5e7eb';
+
+  ${analytics.equityCurve.length >= 2 ? `
+  // Equity curve
+  (function() {
+    const labels = ${JSON.stringify(eqLabels)};
+    const data   = ${JSON.stringify(analytics.equityCurve)};
+    const ctx = document.getElementById('eqChart').getContext('2d');
+    const finalVal = data[data.length - 1];
+    const color = finalVal >= 0 ? '#10b981' : '#ef4444';
+    new Chart(ctx, {
+      type: 'line',
+      data: {
+        labels,
+        datasets: [{
+          label: 'Equity (pts)',
+          data,
+          borderColor: color,
+          backgroundColor: finalVal >= 0 ? 'rgba(16,185,129,0.08)' : 'rgba(239,68,68,0.08)',
+          fill: true,
+          tension: 0.35,
+          pointRadius: data.length > 50 ? 0 : 3,
+          borderWidth: 2,
+        }]
+      },
+      options: {
+        responsive: true,
+        plugins: { legend: { display: false }, tooltip: { mode: 'index', intersect: false } },
+        scales: {
+          x: { display: data.length <= 100, ticks: { maxTicksLimit: 12 } },
+          y: { ticks: { callback: v => v + ' pts' } }
+        }
+      }
+    });
+  })();
+  ` : ""}
+
+  // Monthly combined chart
+  (function() {
+    const labels = ${JSON.stringify(mLabels)};
+    const data   = ${JSON.stringify(combData)};
+    const colors = ${JSON.stringify(combColors)};
+    const ctx = document.getElementById('monthlyChart').getContext('2d');
+    new Chart(ctx, {
+      type: 'bar',
+      data: {
+        labels,
+        datasets: [{
+          label: 'Combined PnL (pts)',
+          data,
+          backgroundColor: colors,
+          borderRadius: 3,
+        }]
+      },
+      options: {
+        responsive: true,
+        plugins: { legend: { display: false }, tooltip: { callbacks: { label: ctx => (ctx.raw >= 0 ? '+' : '') + ctx.raw + ' pts' } } },
+        scales: { y: { ticks: { callback: v => v + ' pts' } } }
+      }
+    });
+  })();
+
+  // BB vs RC stacked chart
+  (function() {
+    const labels = ${JSON.stringify(mLabels)};
+    const bbData = ${JSON.stringify(bbData)};
+    const rcData = ${JSON.stringify(rcData)};
+    const ctx = document.getElementById('stratChart').getContext('2d');
+    new Chart(ctx, {
+      type: 'bar',
+      data: {
+        labels,
+        datasets: [
+          { label: 'Model A', data: bbData, backgroundColor: 'rgba(99,102,241,0.7)', borderRadius: 2 },
+          { label: 'Model B', data: rcData, backgroundColor: 'rgba(245,158,11,0.7)',  borderRadius: 2 },
+        ]
+      },
+      options: {
+        responsive: true,
+        plugins: { tooltip: { mode: 'index', intersect: false } },
+        scales: {
+          x: { stacked: false },
+          y: { stacked: false, ticks: { callback: v => v + ' pts' } }
+        }
+      }
+    });
+  })();
+  </script>
+</body>
+</html>`);
+});
+
+// ── GET /signals ────────────────────────────────────────────────────────────────
+app.get("/signals", (req: Request, res: Response) => {
+  const state:  any   = readBotJSON("trade-state.json", {});
+  const trades: any[] = readBotJSON("trades.json", []);
+  const analytics = computeAnalytics(trades);
+  const hasPosition = state && state.position && state.position !== "FLAT";
+  const premium = userIsPremium(req);
+  const loggedIn = !!req.session?.userId;
+
+  // ── PREMIUM VIEW (full details) ────────────────────────────────────────────
+  const isAdmin = req.session?.userRole === 'admin';
+  if (premium) {
+    res.send(`<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Live Signals — ZeroScreen</title>
+  <link rel="stylesheet" href="/public/css/style.css">
+</head>
+<body class="page-theme-signals">
+  ${nav("signals", req)}
+  <div class="container" style="max-width:960px">
+    <div class="sig-header">
+      <div>
+        <h1 class="sig-title">📡 Live Signals</h1>
+        <p class="sig-sub">BANKNIFTY Options · Live automated trading · Auto-refreshes every 8 seconds</p>
+        <span class="sig-tier-badge ${isAdmin ? 'sig-tier-admin' : 'sig-tier-premium'}">${isAdmin ? '👑 Admin' : '⚡ Premium'} — Full Access</span>
+      </div>
+      <div class="sig-refresh-info">
+        <span class="sig-live-dot"></span><span id="sig-last-update">Connecting…</span>
+      </div>
+    </div>
+    <div class="sig-stats-bar" id="sig-stats-bar">
+      <div class="sig-stat"><span class="sig-stat-label">Today PnL</span><span class="sig-stat-val" id="stat-pnl">${analytics.today.pnl >= 0 ? '+' : ''}${analytics.today.pnl} pts</span></div>
+      <div class="sig-stat"><span class="sig-stat-label">Today Trades</span><span class="sig-stat-val" id="stat-trades">${analytics.today.trades}</span></div>
+      <div class="sig-stat"><span class="sig-stat-label">Wins</span><span class="sig-stat-val" id="stat-wins">${analytics.today.wins}</span></div>
+      <div class="sig-stat"><span class="sig-stat-label">Losses</span><span class="sig-stat-val" id="stat-losses">${analytics.today.losses}</span></div>
+      <div class="sig-stat"><span class="sig-stat-label">Max Drawdown</span><span class="sig-stat-val" id="stat-maxdd">${analytics.today.maxDD} pts</span></div>
+      <div class="sig-stat"><span class="sig-stat-label">All-Time Win Rate</span><span class="sig-stat-val" id="stat-wr">${analytics.allTime.winRate}%</span></div>
+    </div>
+    <div class="sig-section-title">🔴 Active Position</div>
+    <div id="sig-active-wrap">
+      ${hasPosition ? `
+      <div class="sig-card sig-card-active sig-${(state.direction||'flat').toLowerCase()}">
+        <div class="sig-card-top">
+          <span class="sig-badge sig-badge-${(state.direction||'').toLowerCase()}">${state.direction||'—'}</span>
+          <span class="sig-symbol">BANKNIFTY</span>
+          <span class="sig-status-active">● LIVE TRADE</span>
+        </div>
+        <div class="sig-card-body">
+          <div class="sig-field"><span class="sig-field-label">Strategy</span><span class="sig-field-val">${state.strategy||state.type||'—'}</span></div>
+          <div class="sig-field"><span class="sig-field-label">Entry Price</span><span class="sig-field-val">₹${state.entryPrice??state.entry??'—'}</span></div>
+          <div class="sig-field"><span class="sig-field-label">Stop Loss</span><span class="sig-field-val sig-red">₹${state.sl??state.stopLoss??'—'}</span></div>
+          <div class="sig-field"><span class="sig-field-label">Quantity</span><span class="sig-field-val">${state.qty??state.quantity??'—'}</span></div>
+          <div class="sig-field"><span class="sig-field-label">AI Score</span><span class="sig-field-val sig-green">${state.aiScore!=null?(state.aiScore*100).toFixed(0)+'%':'—'}</span></div>
+        </div>
+      </div>` : `
+      <div class="sig-flat-card"><span class="sig-flat-icon">💤</span>
+        <div><div class="sig-flat-title">No Active Position</div>
+        <div class="sig-flat-sub">Bot is watching the market. A signal will appear here when a trade is entered.</div></div>
+      </div>`}
+    </div>
+    <div class="sig-section-title">📋 Recent Trades</div>
+    <div id="sig-trades-wrap" class="sig-cards-grid">
+      ${analytics.recentTrades.length === 0 ? `<div class="sig-empty">No trades recorded yet.</div>` :
+        analytics.recentTrades.map((t: any) => {
+          const isWin = t.pnl > 0;
+          const d = t.date ? new Date(t.date).toLocaleString("en-IN",{timeZone:"Asia/Kolkata",day:"2-digit",month:"short",hour:"2-digit",minute:"2-digit"}) : "—";
+          const dur = t.duration ? (t.duration < 60 ? t.duration + 's' : Math.round(t.duration/60) + 'm') : '—';
+          return `<div class="sig-card sig-card-trade sig-trade-${isWin?'win':'loss'}">
+            <div class="sig-card-top">
+              <span class="sig-badge sig-badge-${(t.direction||'').toLowerCase()}">${t.direction||'—'}</span>
+              <span class="sig-symbol">BANKNIFTY</span>
+              <span class="sig-pnl ${isWin?'sig-green':'sig-red'}">${isWin?'+':''}${t.pnl?.toFixed(1)??'—'} pts</span>
+            </div>
+            <div class="sig-card-body">
+              <div class="sig-field"><span class="sig-field-label">Type</span><span class="sig-field-val">${t.type||'—'}</span></div>
+              <div class="sig-field"><span class="sig-field-label">Entry</span><span class="sig-field-val">₹${t.entryPrice??'—'}</span></div>
+              <div class="sig-field"><span class="sig-field-label">Exit</span><span class="sig-field-val">₹${t.exitPrice??'—'}</span></div>
+              <div class="sig-field"><span class="sig-field-label">Duration</span><span class="sig-field-val">${dur}</span></div>
+              <div class="sig-field"><span class="sig-field-label">Exit Reason</span><span class="sig-field-val">${t.reasonExit||'—'}</span></div>
+              <div class="sig-field"><span class="sig-field-label">Time</span><span class="sig-field-val">${d}</span></div>
+            </div>
+          </div>`;
+        }).join("")}
+    </div>
+    <footer class="site-footer"><span>© 2026 ZeroScreen &mdash; Automated signals shown for informational purposes only. Not SEBI registered. Not investment advice. Trading involves substantial risk of loss.</span></footer>
+  </div>
+  <script src="/public/js/app.js"></script>
+  <script>
+  let _sigTimer;
+  async function loadSignals() {
+    try {
+      const r = await fetch('/api/bot/status');
+      const d = await r.json();
+      document.getElementById('sig-last-update').textContent = 'Updated ' + new Date().toLocaleTimeString('en-IN');
+      const pnl = d.today.pnl;
+      document.getElementById('stat-pnl').textContent = (pnl>=0?'+':'')+pnl+' pts';
+      document.getElementById('stat-pnl').style.color = pnl>=0?'#10b981':'#ef4444';
+      document.getElementById('stat-trades').textContent = d.today.trades;
+      document.getElementById('stat-wins').textContent = d.today.wins;
+      document.getElementById('stat-losses').textContent = d.today.losses;
+      document.getElementById('stat-maxdd').textContent = d.today.maxDD+' pts';
+      document.getElementById('stat-wr').textContent = d.allTime.winRate+'%';
+      const ap = d.activeState;
+      const hasPos = ap && ap.position && ap.position !== 'FLAT';
+      const wrap = document.getElementById('sig-active-wrap');
+      if (hasPos) {
+        const dir = (ap.direction||'').toLowerCase();
+        wrap.innerHTML = '<div class="sig-card sig-card-active sig-'+dir+'"><div class="sig-card-top"><span class="sig-badge sig-badge-'+dir+'">'+(ap.direction||'—')+'</span><span class="sig-symbol">BANKNIFTY</span><span class="sig-status-active">● LIVE TRADE</span></div><div class="sig-card-body"><div class="sig-field"><span class="sig-field-label">Strategy</span><span class="sig-field-val">'+(ap.strategy||ap.type||'—')+'</span></div><div class="sig-field"><span class="sig-field-label">Entry Price</span><span class="sig-field-val">₹'+(ap.entryPrice??ap.entry??'—')+'</span></div><div class="sig-field"><span class="sig-field-label">Stop Loss</span><span class="sig-field-val sig-red">₹'+(ap.sl??ap.stopLoss??'—')+'</span></div><div class="sig-field"><span class="sig-field-label">Quantity</span><span class="sig-field-val">'+(ap.qty??ap.quantity??'—')+'</span></div></div></div>';
+      } else {
+        wrap.innerHTML = '<div class="sig-flat-card"><span class="sig-flat-icon">💤</span><div><div class="sig-flat-title">No Active Position</div><div class="sig-flat-sub">Bot is watching the market. A signal will appear here when a trade is entered.</div></div></div>';
+      }
+      const tw = document.getElementById('sig-trades-wrap');
+      if (!d.recentTrades||!d.recentTrades.length) { tw.innerHTML='<div class="sig-empty">No trades recorded yet.</div>'; return; }
+      tw.innerHTML = d.recentTrades.map(function(t) {
+        const isWin=t.pnl>0;
+        const dur=t.duration?(t.duration<60?t.duration+'s':Math.round(t.duration/60)+'m'):'—';
+        const dt=t.date?new Date(t.date).toLocaleString('en-IN',{timeZone:'Asia/Kolkata',day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit'}):'—';
+        return '<div class="sig-card sig-card-trade sig-trade-'+(isWin?'win':'loss')+'"><div class="sig-card-top"><span class="sig-badge sig-badge-'+((t.direction||'').toLowerCase())+'">'+(t.direction||'—')+'</span><span class="sig-symbol">BANKNIFTY</span><span class="sig-pnl '+(isWin?'sig-green':'sig-red')+'">'+(isWin?'+':'')+(t.pnl?.toFixed(1)??'—')+' pts</span></div><div class="sig-card-body"><div class="sig-field"><span class="sig-field-label">Type</span><span class="sig-field-val">'+(t.type||'—')+'</span></div><div class="sig-field"><span class="sig-field-label">Entry</span><span class="sig-field-val">₹'+(t.entryPrice??'—')+'</span></div><div class="sig-field"><span class="sig-field-label">Exit</span><span class="sig-field-val">₹'+(t.exitPrice??'—')+'</span></div><div class="sig-field"><span class="sig-field-label">Duration</span><span class="sig-field-val">'+dur+'</span></div><div class="sig-field"><span class="sig-field-label">Exit Reason</span><span class="sig-field-val">'+(t.reasonExit||'—')+'</span></div><div class="sig-field"><span class="sig-field-label">Time</span><span class="sig-field-val">'+dt+'</span></div></div></div>';
+      }).join('');
+    } catch(e) { document.getElementById('sig-last-update').textContent='Connection error'; }
+  }
+  loadSignals();
+  _sigTimer = setInterval(loadSignals, 8000);
+  </script>
+</body>
+</html>`);
+    return;
+  }
+
+  // ── GUEST / FREE USER VIEW (simplified) ────────────────────────────────────
+  const tierLabel = loggedIn ? '🔓 Free User' : '👤 Guest';
+  const tierClass = loggedIn ? 'sig-tier-free' : 'sig-tier-guest';
+  res.send(`<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Live Signals — ZeroScreen</title>
+  <link rel="stylesheet" href="/public/css/style.css">
+</head>
+<body class="page-theme-signals">
+  ${nav("signals", req)}
+  <div class="container" style="max-width:720px">
+
+    <div class="sig-header">
+      <div>
+        <h1 class="sig-title">📡 Live Signals</h1>
+        <p class="sig-sub">BANKNIFTY Options · Automated intraday trading bot</p>
+        <span class="sig-tier-badge ${tierClass}">${tierLabel} — Limited View</span>
+      </div>
+      <div class="sig-refresh-info">
+        <span class="sig-live-dot"></span>
+        <span id="sig-last-update">Connecting…</span>
+      </div>
+    </div>
+
+    <div class="sig-stats-bar" id="sig-stats-bar">
+      <div class="sig-stat"><span class="sig-stat-label">Today PnL</span><span class="sig-stat-val" id="stat-pnl">${analytics.today.pnl >= 0 ? '+' : ''}${analytics.today.pnl} pts</span></div>
+      <div class="sig-stat"><span class="sig-stat-label">All-Time Win Rate</span><span class="sig-stat-val" id="stat-wr">${analytics.allTime.winRate}%</span></div>
+      <div class="sig-stat"><span class="sig-stat-label">Today Trades</span><span class="sig-stat-val" id="stat-trades">${analytics.today.trades}</span></div>
+      <div class="sig-stat"><span class="sig-stat-label">Bot Status</span><span class="sig-stat-val" id="stat-status">${hasPosition ? '<span class="sig-status-active">● ACTIVE</span>' : '<span class="text-dim">💤 Idle</span>'}</span></div>
+    </div>
+
+    <div class="sig-section-title">🔴 Bot Status</div>
+    <div id="sig-active-wrap">
+      ${hasPosition ? `
+      <div class="sig-card sig-card-active sig-${(state.direction||'flat').toLowerCase()}">
+        <div class="sig-card-top">
+          <span class="sig-badge sig-badge-${(state.direction||'').toLowerCase()}">${state.direction||'—'}</span>
+          <span class="sig-symbol">BANKNIFTY</span>
+          <span class="sig-status-active">● IN TRADE</span>
+        </div>
+        <div class="sig-card-body">
+          <div class="sig-field"><span class="sig-field-label">Direction</span><span class="sig-field-val">${state.direction||'—'}</span></div>
+          <div class="sig-field sig-locked"><span class="sig-field-label">Entry Price</span><span class="sig-field-val sig-lock-icon">🔒</span></div>
+          <div class="sig-field sig-locked"><span class="sig-field-label">Stop Loss</span><span class="sig-field-val sig-lock-icon">🔒</span></div>
+          <div class="sig-field sig-locked"><span class="sig-field-label">AI Score</span><span class="sig-field-val sig-lock-icon">🔒</span></div>
+        </div>
+      </div>` : `
+      <div class="sig-flat-card"><span class="sig-flat-icon">💤</span>
+        <div><div class="sig-flat-title">Bot Idle</div>
+        <div class="sig-flat-sub">Waiting for the right market conditions to enter a trade.</div></div>
+      </div>`}
+    </div>
+
+    <div class="upgrade-banner">
+      <div class="upgrade-banner-icon">⚡</div>
+      <div class="upgrade-banner-content">
+        <strong>Unlock Real-Time Signals</strong>
+        <p>Get entry price, stop loss, AI confidence score and full trade history with Premium.</p>
+      </div>
+      <a href="/premium" class="btn-upgrade">Upgrade — ₹499/mo</a>
+    </div>
+
+    <div class="sig-section-title">📋 Recent Performance <span style="font-size:10px;font-weight:600;color:#f59e0b;background:rgba(245,158,11,0.1);padding:2px 8px;border-radius:10px;margin-left:6px;">🔒 Prices for Premium</span></div>
+    <div id="sig-trades-wrap" class="sig-cards-grid">
+      ${analytics.recentTrades.length === 0 ? `<div class="sig-empty">No trades recorded yet.</div>` :
+        analytics.recentTrades.slice(0, 5).map((t: any) => {
+          const isWin = t.pnl > 0;
+          return `<div class="sig-card sig-card-trade sig-trade-${isWin?'win':'loss'}">
+            <div class="sig-card-top">
+              <span class="sig-badge sig-badge-${(t.direction||'').toLowerCase()}">${t.direction||'—'}</span>
+              <span class="sig-symbol">BANKNIFTY</span>
+              <span class="sig-pnl ${isWin?'sig-green':'sig-red'}">${isWin?'+':''}${t.pnl?.toFixed(1)??'—'} pts</span>
+            </div>
+            <div class="sig-card-body">
+              <div class="sig-field sig-locked"><span class="sig-field-label">Entry Price</span><span class="sig-field-val sig-lock-icon">🔒</span></div>
+              <div class="sig-field sig-locked"><span class="sig-field-label">Exit Price</span><span class="sig-field-val sig-lock-icon">🔒</span></div>
+              <div class="sig-field"><span class="sig-field-label">Exit Reason</span><span class="sig-field-val">${t.reasonExit||'—'}</span></div>
+            </div>
+          </div>`;
+        }).join("")}
+      ${analytics.recentTrades.length > 5 ? `
+      <div class="sig-more-locked">
+        <span>+${analytics.recentTrades.length - 5} more trades hidden</span>
+        <a href="/premium" class="btn-upgrade-sm">Unlock All →</a>
+      </div>` : ""}
+    </div>
+
+    <footer class="site-footer"><span>© 2026 ZeroScreen &mdash; Automated signals shown for informational purposes only. Not SEBI registered. Not investment advice. Trading involves substantial risk of loss.</span></footer>
+  </div>
+  <script src="/public/js/app.js"></script>
+  <script>
+  async function loadSignalsSummary() {
+    try {
+      const r = await fetch('/api/bot/status');
+      const d = await r.json();
+      document.getElementById('sig-last-update').textContent = 'Updated ' + new Date().toLocaleTimeString('en-IN');
+      const pnl = d.today.pnl;
+      document.getElementById('stat-pnl').textContent = (pnl>=0?'+':'')+pnl+' pts';
+      document.getElementById('stat-pnl').style.color = pnl>=0?'#10b981':'#ef4444';
+      document.getElementById('stat-wr').textContent = d.allTime.winRate+'%';
+      document.getElementById('stat-trades').textContent = d.today.trades;
+      const hasPos = d.activeState&&d.activeState.position&&d.activeState.position!=='FLAT';
+      document.getElementById('stat-status').innerHTML = hasPos ? '<span class="sig-status-active">● ACTIVE</span>' : '<span class="text-dim">💤 Idle</span>';
+    } catch(e) {}
+  }
+  loadSignalsSummary();
+  setInterval(loadSignalsSummary, 15000);
+  </script>
+</body>
+</html>`);
+});
+
+async function ensureAdminEmail() {
+  if (!ADMIN_EMAIL) return;
+  await dbRun(
+    "UPDATE users SET role = 'admin' WHERE email = ? AND role != 'admin'",
+    [ADMIN_EMAIL]
+  );
+}
+
+initDb().then(async () => {
+  await ensureAdminEmail();
+  // Run subscription expiry check on startup
+  expireOldSubscriptions().catch(() => {});
+  app.listen(PORT, () => {
+    console.log(`\n🔍 ZeroScreen running at http://localhost:${PORT}`);
+    console.log(`   Screener  : http://localhost:${PORT}/`);
+    console.log(`   Watchlists: http://localhost:${PORT}/watchlists`);
+    console.log(`   API stats : http://localhost:${PORT}/api/stats\n`);
+    startScheduler();
+  });
+}).catch(err => { console.error("DB init failed:", err); process.exit(1); });

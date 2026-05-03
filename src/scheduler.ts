@@ -15,7 +15,8 @@
 import cron from "node-cron";
 import { fetchLatestBhavcopy } from "./nse";
 import { fetchFundamentals }   from "./scraper";
-import { dbRun, dbAll, upsertStock, upsertPrice, getStaleSymbols, getAllSymbols, initDb } from "./db";
+import { dbRun, dbAll, upsertStock, upsertPrice, getStaleSymbols, getAllSymbols, initDb, screenStocks, getAllActiveAlerts, updateAlertLastSent } from "./db";
+import { sendAlertEmail } from "./mailer";
 
 const FETCH_DELAY_MS = 800;
 function sleep(ms: number) { return new Promise(r => setTimeout(r, ms)); }
@@ -84,6 +85,10 @@ export async function refreshFundamentals(symbols?: string[]): Promise<void> {
           revenue_3:      f.revenues[f.revenues.length - 1] ?? null,
           all_profitable: f.allProfitable ? 1 : 0,
           profit_uptrend: f.profitUptrend ? 1 : 0,
+          week52_high:    f.week52High,
+          week52_low:     f.week52Low,
+          about:          f.about,
+          incorporated:   f.incorporated,
           screener_data:  JSON.stringify({ netProfits: f.netProfits, revenues: f.revenues }),
           fetch_error:    null,
           fetched_at:     new Date().toISOString(),
@@ -100,7 +105,46 @@ export async function refreshFundamentals(symbols?: string[]): Promise<void> {
 
   console.log(`[Scheduler] Done: ${done} updated, ${errors} errors`);
 }
-
+// ── Alert digest ────────────────────────────────────────────────────────────────────
+export async function checkAlerts(): Promise<void> {
+  const alerts = await getAllActiveAlerts();
+  const today = new Date().toISOString().slice(0, 10);
+  let sent = 0;
+  for (const alert of alerts) {
+    if (alert.last_sent?.slice(0, 10) === today) continue; // already sent today
+    try {
+      const filters = JSON.parse(alert.filters_json);
+      // Convert string query params back to typed ScreenerFilter
+      const f = {
+        minRoce:          filters.minRoce     ? parseFloat(filters.minRoce)     : undefined,
+        maxDe:            filters.maxDe       ? parseFloat(filters.maxDe)       : undefined,
+        minPromoter:      filters.minPromoter ? parseFloat(filters.minPromoter) : undefined,
+        maxPe:            filters.maxPe       ? parseFloat(filters.maxPe)       : undefined,
+        minPe:            filters.minPe       ? parseFloat(filters.minPe)       : undefined,
+        minPrice:         filters.minPrice    ? parseFloat(filters.minPrice)    : undefined,
+        maxPrice:         filters.maxPrice    ? parseFloat(filters.maxPrice)    : undefined,
+        minMarketCap:     filters.minMc       ? parseFloat(filters.minMc)       : undefined,
+        maxMarketCap:     filters.maxMc       ? parseFloat(filters.maxMc)       : undefined,
+        minDividendYield: filters.minDivYield ? parseFloat(filters.minDivYield) : undefined,
+        allProfitable:    filters.allProfit === "1",
+        profitUptrend:    filters.uptrend === "1",
+        sector:           filters.sector || undefined,
+        sortBy:           filters.sortBy || "roce",
+        sortDir:          "desc" as const,
+        limit:            20,
+      };
+      const stocks = await screenStocks(f);
+      if (stocks.length > 0) {
+        await sendAlertEmail(alert.user_email, alert.user_name, alert.name, stocks);
+        await updateAlertLastSent(alert.id);
+        sent++;
+      }
+    } catch (e: any) {
+      console.error(`[Alerts] Error processing alert ${alert.id}:`, e.message);
+    }
+  }
+  console.log(`[Alerts] Checked ${alerts.length} alerts, sent ${sent} emails`);
+}
 // ── Seed ──────────────────────────────────────────────────────────────────────
 export async function seedSymbols(): Promise<void> {
   console.log("[Scheduler] Seeding symbols from NSE bhavcopy...");
@@ -127,6 +171,12 @@ export function startScheduler() {
   cron.schedule("0 13 * * 1-5", async () => {
     console.log("[Cron] Daily price refresh");
     await refreshPrices();
+  }, { timezone: "UTC" });
+
+  // Daily alerts: weekdays at 7:30 AM IST (02:00 UTC)
+  cron.schedule("0 2 * * 1-5", async () => {
+    console.log("[Cron] Daily alert digest");
+    await checkAlerts();
   }, { timezone: "UTC" });
 
   // Weekly fundamentals: Sunday 2:00 AM IST (Saturday 20:30 UTC)

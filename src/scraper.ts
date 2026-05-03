@@ -20,6 +20,10 @@ export interface Fundamentals {
   bookValue:     number | null;
   dividendYield: number | null;
   currentRatio:  number | null;
+  week52High:    number | null;
+  week52Low:     number | null;
+  about:         string | null;   // company description from screener.in
+  incorporated:  number | null;   // year of incorporation
   netProfits:    number[];   // oldest → newest, up to 5 years
   revenues:      number[];   // oldest → newest, up to 5 years
   allProfitable: boolean;
@@ -75,6 +79,7 @@ export async function fetchFundamentals(symbol: string): Promise<Fundamentals> {
     symbol, companyName: null, sector: null, marketCap: null, peRatio: null,
     roce: null, roe: null, deRatio: null, promoterPct: null,
     eps: null, bookValue: null, dividendYield: null, currentRatio: null,
+    week52High: null, week52Low: null, about: null, incorporated: null,
     netProfits: [], revenues: [], allProfitable: false, profitUptrend: false,
     error: null,
   };
@@ -98,8 +103,18 @@ export async function fetchFundamentals(symbol: string): Promise<Fundamentals> {
     if (nameMatch) result.companyName = nameMatch[1].trim().replace(/\s+/g, " ");
 
     // ── Sector ────────────────────────────────────────────────────────────────
-    const sectorMatch = html.match(/class="[^"]*company-links[^"]*"[^>]*>[\s\S]*?<a[^>]*>([^<]+)<\/a>/);
-    if (sectorMatch) result.sector = sectorMatch[1].trim();
+    // screener.in puts sector/industry links in .company-links or .breadcrumbs
+    const sectorMatch =
+      html.match(/class="[^"]*company-links[^"]*"[^>]*>[\s\S]*?<a[^>]*href="[^"]*sector[^"]*"[^>]*>([^<]+)<\/a>/) ||
+      html.match(/class="[^"]*company-links[^"]*"[^>]*>[\s\S]*?<a[^>]*href="[^"]*(industry|sector|peer)[^"]*"[^>]*>([^<]+)<\/a>/) ||
+      html.match(/Industry\s*<\/[^>]+>\s*<[^>]+>([^<]{3,50})</);
+    if (sectorMatch) {
+      const raw = (sectorMatch[2] || sectorMatch[1]).trim();
+      // Reject garbage: bare numbers, [1], "edit about", single chars, URLs
+      if (raw.length >= 3 && !/^\[?\d+\]?$/.test(raw) && !/edit|about|login|http/i.test(raw)) {
+        result.sector = raw;
+      }
+    }
 
     // ── Market Cap ────────────────────────────────────────────────────────────
     const mcMatch = html.match(/Market Cap\s*<\/.*?>\s*<.*?>\s*([\d,]+)/);
@@ -157,6 +172,35 @@ export async function fetchFundamentals(symbol: string): Promise<Fundamentals> {
       const nw = e + r;
       if (nw > 0) result.deRatio = Math.round((b / nw) * 100) / 100;
     }
+
+    // ── 52-Week High / Low ────────────────────────────────────────────────────
+    const hiMatch = html.match(/52W High\s*<\/[^>]+>\s*<[^>]+>\s*([\d,]+\.?\d*)/)
+      || html.match(/52 Week High[^\d]*([\d,]+\.?\d*)/);
+    if (hiMatch) result.week52High = parseFloat(hiMatch[1].replace(/,/g, ""));
+
+    const loMatch = html.match(/52W Low\s*<\/[^>]+>\s*<[^>]+>\s*([\d,]+\.?\d*)/)
+      || html.match(/52 Week Low[^\d]*([\d,]+\.?\d*)/);
+    if (loMatch) result.week52Low = parseFloat(loMatch[1].replace(/,/g, ""));
+
+    // ── Company About / Description ───────────────────────────────────────────
+    // Try several screener.in patterns for the about paragraph
+    const aboutRaw =
+      (html.match(/<div[^>]+class="[^"]*about[^"]*"[^>]*>[\s\S]*?<p[^>]*>([\s\S]*?)<\/p>/) ||
+       html.match(/<p[^>]+class="[^"]*sub[^"]*"[^>]*>([\s\S]*?)<\/p>/) ||
+       html.match(/<div[^>]+class="[^"]*company-info[^"]*"[^>]*>[\s\S]*?<p[^>]*>([\s\S]*?)<\/p>/) ||
+       html.match(/<meta[^>]+name="description"[^>]+content="([^"]{40,})"/)
+      )?.[1] ?? null;
+    if (aboutRaw) {
+      result.about = aboutRaw.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim().substring(0, 1200);
+    }
+
+    // ── Incorporation year ────────────────────────────────────────────────────
+    const incMatch =
+      html.match(/[Ii]ncorporated\s+in\s+(\d{4})/) ||
+      html.match(/[Ii]ncorporated\s+on[^\d]*(\d{4})/) ||
+      html.match(/[Ff]ounded\s+in\s+(\d{4})/i) ||
+      html.match(/[Ee]stablished\s+in\s+(\d{4})/i);
+    if (incMatch) result.incorporated = parseInt(incMatch[1], 10);
 
   } catch (e: any) {
     result.error = e.message || "Unknown error";
