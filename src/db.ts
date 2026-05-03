@@ -265,6 +265,25 @@ export async function initDb(): Promise<void> {
       db.run("ALTER TABLE paper_positions ADD COLUMN trade_type TEXT NOT NULL DEFAULT 'INTRADAY'", () => {});
       db.run("ALTER TABLE paper_trades ADD COLUMN trade_type TEXT NOT NULL DEFAULT 'INTRADAY'", () => {});
       db.run("INSERT OR IGNORE INTO app_settings (key,value) VALUES ('paper_free_limit','10')");
+      db.run("INSERT OR IGNORE INTO app_settings (key,value) VALUES ('otp_required','true')");
+      // SL / Target / OrderType on positions (safe migrations)
+      db.run("ALTER TABLE paper_positions ADD COLUMN sl_price REAL", () => {});
+      db.run("ALTER TABLE paper_positions ADD COLUMN target_price REAL", () => {});
+      db.run("ALTER TABLE paper_positions ADD COLUMN order_type TEXT", () => {});
+      db.run("INSERT OR IGNORE INTO app_settings (key,value) VALUES ('registration_open','true')");
+      db.run("INSERT OR IGNORE INTO app_settings (key,value) VALUES ('feature_signals','true')");
+      db.run("INSERT OR IGNORE INTO app_settings (key,value) VALUES ('feature_dashboard','true')");
+      db.run("INSERT OR IGNORE INTO app_settings (key,value) VALUES ('feature_strategies','true')");
+      db.run("INSERT OR IGNORE INTO app_settings (key,value) VALUES ('feature_paper_trade_bot','true')");
+      db.run("INSERT OR IGNORE INTO app_settings (key,value) VALUES ('feature_my_paper_trade','true')");
+      db.run("INSERT OR IGNORE INTO app_settings (key,value) VALUES ('feature_watchlists','true')");
+      db.run("INSERT OR IGNORE INTO app_settings (key,value) VALUES ('feature_alerts','true')");
+      db.run("INSERT OR IGNORE INTO app_settings (key,value) VALUES ('feature_compare','true')");
+      db.run("INSERT OR IGNORE INTO app_settings (key,value) VALUES ('feature_strategy_builder','true')");
+      db.run("INSERT OR IGNORE INTO app_settings (key,value) VALUES ('feature_contact','true')");
+      db.run("INSERT OR IGNORE INTO app_settings (key,value) VALUES ('watchlists_premium_only','false')");
+      db.run("INSERT OR IGNORE INTO app_settings (key,value) VALUES ('alerts_premium_only','false')");
+      db.run("INSERT OR IGNORE INTO app_settings (key,value) VALUES ('paper_trade_premium_only','false')");
       db.run("CREATE INDEX IF NOT EXISTS idx_reset_tokens_user3 ON password_reset_tokens(user_id)", (err) => {
         if (err) resolve(); else resolve();
       });
@@ -363,6 +382,7 @@ export interface ScreenerFilter {
   near52Low?: number;             // Price within X% above 52W low (value zone)
   allProfitable?: boolean; profitUptrend?: boolean;
   sector?: string; sortBy?: string; sortDir?: "asc" | "desc";
+  symbolsIn?: string[];
   limit?: number; offset?: number;
 }
 
@@ -404,6 +424,10 @@ export async function screenStocks(f: ScreenerFilter): Promise<Array<StockRow & 
   if (f.allProfitable) wheres.push("s.all_profitable = 1");
   if (f.profitUptrend) wheres.push("s.profit_uptrend = 1");
   if (f.sector) add("s.sector = ?", f.sector);
+  if (f.symbolsIn && f.symbolsIn.length > 0) {
+    wheres.push(`s.symbol IN (${f.symbolsIn.map(() => '?').join(',')})`);
+    params.push(...f.symbolsIn);
+  }
 
   const allowedSort: Record<string, string> = {
     roce: "s.roce", roe: "s.roe", de: "s.de_ratio", promoter: "s.promoter_pct",
@@ -655,9 +679,9 @@ export async function searchStocks(q: string, limit = 10): Promise<{ symbol: str
   const like = "%" + esc + "%";
   const query = `SELECT symbol, company_name, sector FROM stocks
      WHERE (symbol LIKE ? ESCAPE '\\' OR company_name LIKE ? ESCAPE '\\')
-       AND fetched_at IS NOT NULL
      ORDER BY
        CASE WHEN symbol LIKE ? ESCAPE '\\' THEN 0 ELSE 1 END,
+       CASE WHEN fetched_at IS NOT NULL THEN 0 ELSE 1 END,
        market_cap DESC NULLS LAST
      LIMIT ?`;
   const results: { symbol: string; company_name: string | null; sector: string | null }[] = await dbAll(query, [like, like, like, limit]);
@@ -827,7 +851,7 @@ export async function getPaperTrades(userId: number, limit = 50): Promise<PaperT
   );
 }
 
-export async function paperBuy(userId: number, symbol: string, companyName: string | null, qty: number, price: number, tradeType = 'INTRADAY'): Promise<{ ok: boolean; msg: string; balance: number }> {
+export async function paperBuy(userId: number, symbol: string, companyName: string | null, qty: number, price: number, tradeType = 'INTRADAY', slPrice?: number | null, targetPrice?: number | null, orderType = 'MARKET'): Promise<{ ok: boolean; msg: string; balance: number }> {
   const total = parseFloat((qty * price).toFixed(2));
   const port = await getPaperPortfolio(userId);
   if (port.balance < total) return { ok: false, msg: `Insufficient balance. Need ₹${total.toFixed(0)}, have ₹${port.balance.toFixed(0)}`, balance: port.balance };
@@ -839,11 +863,14 @@ export async function paperBuy(userId: number, symbol: string, companyName: stri
     const newQty   = existing.qty + qty;
     const newAvg   = parseFloat(((existing.avg_price * existing.qty + price * qty) / newQty).toFixed(4));
     const newInv   = parseFloat((existing.invested + total).toFixed(2));
-    await dbRun("UPDATE paper_positions SET qty=?,avg_price=?,invested=? WHERE user_id=? AND symbol=?", [newQty, newAvg, newInv, userId, symbol]);
+    await dbRun(
+      "UPDATE paper_positions SET qty=?,avg_price=?,invested=?,sl_price=?,target_price=?,order_type=? WHERE user_id=? AND symbol=?",
+      [newQty, newAvg, newInv, slPrice ?? null, targetPrice ?? null, orderType, userId, symbol]
+    );
   } else {
     await dbRun(
-      "INSERT INTO paper_positions (user_id,symbol,company_name,qty,avg_price,invested,trade_type) VALUES (?,?,?,?,?,?,?)",
-      [userId, symbol, companyName, qty, price, total, tradeType]
+      "INSERT INTO paper_positions (user_id,symbol,company_name,qty,avg_price,invested,trade_type,sl_price,target_price,order_type) VALUES (?,?,?,?,?,?,?,?,?,?)",
+      [userId, symbol, companyName, qty, price, total, tradeType, slPrice ?? null, targetPrice ?? null, orderType]
     );
   }
   await dbRun("UPDATE paper_portfolio SET balance=? WHERE user_id=?", [newBal, userId]);

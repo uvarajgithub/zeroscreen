@@ -1,4 +1,4 @@
-/**
+﻿/**
  * server.ts — ZeroScreen Express app
  */
 
@@ -22,7 +22,7 @@ import {
   createOrder, activateSubscription, getActiveSubscription, expireOldSubscriptions, getAllSubscriptions,
   getPaperPortfolio, getPaperPositions, getPaperTrades, paperBuy, paperSell, paperReset,
   PaperPosition, PaperTrade,
-  storePhoneOtp, verifyPhoneOtp, setUserMobile, countPaperTrades,
+  storePhoneOtp, verifyPhoneOtp, setUserMobile, getUserByMobile, countPaperTrades,
   getPaperTradeConfig, savePaperTradeConfig, PaperTradeConfig,
 } from "./db";
 import { refreshPrices, refreshFundamentals, startScheduler } from "./scheduler";
@@ -49,7 +49,7 @@ const SESSION_SECRET = process.env.SESSION_SECRET || "zeroscreen-dev-secret-chan
 // ── Google OAuth config ────────────────────────────────────────────────────────
 const GOOGLE_CLIENT_ID     = process.env.GOOGLE_CLIENT_ID     || "";
 const GOOGLE_CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET || "";
-const GOOGLE_CALLBACK_URL  = process.env.GOOGLE_CALLBACK_URL  || "http://139.59.18.52:4000/auth/google/callback";
+const GOOGLE_CALLBACK_URL  = process.env.GOOGLE_CALLBACK_URL  || "http://139-59-18-52.nip.io:4000/auth/google/callback";
 
 // ── Strategy Presets ───────────────────────────────────────────────────────────
 interface Strategy {
@@ -80,15 +80,15 @@ const STRATEGIES: Strategy[] = [
     params: { minPromoter: "65", minRoce: "15", sortBy: "promoter" } },
   { id: "smallcap",   icon: "🌱", label: "Small Cap Gems",
     desc: "High-quality small caps under ₹5,000 Cr",
-    params: { maxMc: "5000", minRoce: "20", allProfit: "1", sortBy: "roce" } },
+    params: { maxPrice: "300", minRoce: "20", allProfit: "1", sortBy: "roce" } },
 
   // ── Trading-style presets ─────────────────────────────────────────────────
   { id: "penny",      icon: "🪙", label: "Penny Stocks",
     desc: "Low-price stocks under ₹50 with decent volume — high risk, high reward",
     params: { maxPrice: "50", minVolume: "100000", sortBy: "volume" } },
   { id: "highvalue",  icon: "🏛️", label: "High Value Blue Chips",
-    desc: "Large-cap leaders above ₹1,000 with strong fundamentals",
-    params: { minPrice: "1000", minMc: "50000", minRoce: "15", allProfit: "1", sortBy: "market_cap" } },
+    desc: "Premium-priced quality stocks above ₹500 with strong fundamentals",
+    params: { minPrice: "500", minRoce: "15", allProfit: "1", sortBy: "price" } },
   { id: "longterm",   icon: "📅", label: "Long Term Compounders",
     desc: "Consistent profits, low debt, high ROCE — hold for 3-5 years",
     params: { minRoce: "18", maxDe: "0.5", minPromoter: "50", allProfit: "1", uptrend: "1", sortBy: "roce" } },
@@ -100,7 +100,13 @@ const STRATEGIES: Strategy[] = [
     params: { minChangePct: "0.3", uptrend: "1", minVolume: "200000", minRoce: "10", sortBy: "change_pct" } },
   { id: "options",    icon: "📊", label: "Options-Ready Stocks",
     desc: "Highly liquid NSE stocks suitable for F&O — high volume, good fundamentals",
-    params: { minVolume: "1000000", minMc: "10000", minRoce: "10", sortBy: "volume" } },
+    params: { minVolume: "500000", minRoce: "10", sortBy: "volume" } },
+  { id: "highroe",    icon: "💯", label: "High ROE Stars",
+    desc: "Top return on equity above 25% — efficient businesses",
+    params: { minRoe: "25", allProfit: "1", sortBy: "roe" } },
+  { id: "innews",     icon: "📰", label: "In News Today",
+    desc: "Stocks mentioned in today's market news headlines",
+    params: { inNews: "1", sortBy: "volume" } },
 ];
 
 function strategyParams(s: Strategy): string {
@@ -244,6 +250,44 @@ function requireAdmin(req: Request, res: Response, next: NextFunction) {
   next();
 }
 
+/** Middleware: blocks access when app_setting[key] === 'false' */
+function featureGate(settingKey: string, featureName: string) {
+  return async (req: Request, res: Response, next: NextFunction) => {
+    const enabled = (await getSetting(settingKey)) !== "false";
+    if (!enabled) {
+      res.status(404).send(`<!DOCTYPE html>
+<html lang="en"><head>
+  <meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>${featureName} Unavailable — ZeroScreen</title>
+  <link rel="stylesheet" href="/public/css/style.css">
+</head><body>
+  ${nav("", req)}
+  <div class="container" style="text-align:center;padding:80px 20px">
+    <div style="font-size:3rem;margin-bottom:16px">🚫</div>
+    <h2 style="margin-bottom:8px">${featureName} is Unavailable</h2>
+    <p style="color:var(--text-dim);margin-bottom:24px">This feature is currently disabled by the administrator.</p>
+    <a href="/" class="btn-primary">← Back to Screener</a>
+  </div>
+  <script src="/public/js/app.js"></script>
+</body></html>`);
+      return;
+    }
+    next();
+  };
+}
+
+/** Middleware: redirects to upgrade page when app_setting[key] === 'true' and user is not premium */
+function premiumGate(settingKey: string, featureName: string) {
+  return async (req: Request, res: Response, next: NextFunction) => {
+    const premiumOnly = (await getSetting(settingKey)) === "true";
+    if (premiumOnly && !userIsPremium(req)) {
+      res.redirect("/my-paper-trade/upgrade?err=" + encodeURIComponent(`${featureName} requires a Premium subscription.`));
+      return;
+    }
+    next();
+  };
+}
+
 function userIsPremium(req: Request): boolean {
   const role = req.session?.userRole;
   return role === "premium" || role === "admin";
@@ -266,11 +310,13 @@ async function sendSmsOtp(mobile: string, otp: string): Promise<boolean> {
     return true;
   }
   try {
-    const url = `https://www.fast2sms.com/dev/bulkV2?authorization=${encodeURIComponent(apiKey)}&variables_values=${otp}&route=otp&numbers=${mobile}`;
-    const resp = await fetch(url, { signal: AbortSignal.timeout(5000), headers: { "cache-control": "no-cache" } });
+    const message = `Your ZeroScreen OTP is ${otp}. Valid for 10 minutes. Do not share.`;
+    const url = `https://www.fast2sms.com/dev/bulkV2?authorization=${encodeURIComponent(apiKey)}&message=${encodeURIComponent(message)}&language=english&route=q&numbers=${mobile}`;
+    const resp = await fetch(url, { signal: AbortSignal.timeout(10000), headers: { "cache-control": "no-cache" } });
     const data = await resp.json() as any;
+    if (!data.return) console.error("[OTP-SMS] Fast2SMS error:", JSON.stringify(data));
     return data.return === true;
-  } catch { return false; }
+  } catch (e) { console.error("[OTP-SMS] Exception:", e); return false; }
 }
 
 // ── Razorpay ──────────────────────────────────────────────────────────────────
@@ -400,7 +446,7 @@ function nav(active: string, req?: Request): string {
         <button class="nav-more-btn${adminActive ? " active" : ""}" id="nav-drop-btn-admin" aria-haspopup="true" aria-expanded="false">
           🛡️ Admin <span class="nav-more-chevron">▾</span>
         </button>
-        <div class="nav-more-drop" id="nav-drop-menu-admin" role="menu">
+        <div class="nav-more-drop nav-more-drop-right" id="nav-drop-menu-admin" role="menu">
           ${adminLinks.map(([key, href, label]) =>
             `<a href="${href}" class="${active === key ? "active" : ""}" role="menuitem">${label}</a>`
           ).join("")}
@@ -409,41 +455,94 @@ function nav(active: string, req?: Request): string {
     : "";
 
   const authLinks = isLoggedIn
-    ? `<div class="nav-user">
+    ? `<div class="nav-user nav-user-menu" id="nav-user-menu">
          ${isPremium && !isAdmin ? `<span class="nav-premium-badge" title="Premium member">💎</span>` : ""}
-         <a href="/profile" class="nav-avatar" title="My Profile">${userName.charAt(0).toUpperCase()}</a>
-         <span class="nav-name">${userName.split(" ")[0]}</span>
-         <a href="/logout" class="btn-nav-logout">Sign Out</a>
+         <button class="nav-avatar" id="nav-user-btn" aria-haspopup="true" aria-expanded="false" title="${userName}">${userName.charAt(0).toUpperCase()}</button>
+         <div class="nav-user-drop" id="nav-user-drop" role="menu">
+           <div class="nav-user-drop-name">${userName.split(" ")[0]}${isPremium && !isAdmin ? ` <span class="nav-udrop-badge">💎 Premium</span>` : isAdmin ? ` <span class="nav-udrop-badge nav-udrop-admin">🛡️ Admin</span>` : ""}</div>
+           <a href="/profile" class="nav-user-drop-link" role="menuitem">👤 My Profile</a>
+           <a href="/logout" class="nav-user-drop-logout" role="menuitem">↩ Sign Out</a>
+         </div>
        </div>`
     : `<div class="nav-auth">
          <a href="/premium" class="btn-nav-premium${active === "premium" ? " active" : ""}">⚡ Premium</a>
          <a href="/login" class="btn-nav-login">Sign In</a>
        </div>`;
 
+  const mobileMobFooter = isLoggedIn
+    ? `<div class="nav-mobile-footer">
+         <div class="nav-mob-identity">
+           <span class="nav-mob-avatar">${userName.charAt(0).toUpperCase()}</span>
+           <div class="nav-mob-identity-info">
+             <span class="nav-mob-name">${userName.split(" ")[0]}</span>
+             ${isPremium && !isAdmin ? `<span class="nav-mob-badge nav-mob-premium">💎 Premium</span>` : ""}
+             ${isAdmin ? `<span class="nav-mob-badge nav-mob-admin-badge">🛡️ Admin</span>` : ""}
+           </div>
+         </div>
+         <a href="/profile" class="nav-mob-link">👤 My Profile</a>
+         ${isAdmin ? `<a href="/admin" class="nav-mob-link">🛡️ Admin Panel</a>` : ""}
+         <a href="/logout" class="nav-mob-logout">↩ Sign Out</a>
+       </div>`
+    : `<div class="nav-mobile-footer">
+         <a href="/login" class="nav-mob-link">🔐 Sign In</a>
+         <a href="/signup" class="nav-mob-signup">⚡ Create Free Account</a>
+       </div>`;
+
   return `<nav class="topnav">
-    <a href="/" class="brand">Zero<span>Screen</span></a>
-    <button class="hamburger" id="hamburger" aria-label="Toggle menu" aria-expanded="false">
-      <span></span><span></span><span></span>
-    </button>
+    <a href="/" class="brand"><img src="/public/images/logo.svg" class="brand-logo" alt="ZeroScreen"><span class="brand-wordmark">Zero<em>Screen</em></span></a>
     <div class="nav-links" id="nav-links">
       <a href="/" class="${active === "home" ? "active" : ""}">🔍 Screener</a>
       <a href="/today" class="${active === "today" ? "active" : ""}">🔥 Picks</a>
-      <a href="/signals" class="${active === "signals" ? "active" : ""}">📡 Signals</a>
-      <a href="/my-paper-trade" class="nav-hot-link${active === "my-paper-trade" ? " active" : ""}">📋 My Trade <span class="nav-hot-badge">HOT</span></a>
+      <a href="/signals" class="nav-signals-link${active === "signals" ? " active" : ""}"><span class="nav-live-dot"></span>🤖 Live Bot</a>
+      <a href="/paper-trade" class="${active === "paper-trade" ? "active" : ""}">📋 Paper Trade</a>
+      ${isLoggedIn ? `<a href="/my-paper-trade" class="nav-hot-link${active === "my-paper-trade" ? " active" : ""}">💼 My Trade <span class="nav-hot-badge">HOT</span></a>` : ""}
       ${exploreDropHtml}
+      ${mobileMobFooter}
+    </div>
+    <div class="nav-right" id="nav-right">
+      <div class="nav-search" id="nav-search-wrap">
+        <input type="text" id="nav-search" class="nav-search-input" placeholder="Search stocks…" autocomplete="off" aria-label="Search stocks">
+        <div class="nav-search-results" id="nav-search-results"></div>
+      </div>
       ${adminDropHtml}
+      <button class="btn-dark-toggle" id="dark-toggle" title="Toggle dark mode" aria-label="Toggle dark mode" onclick="toggleDarkMode()">🌙</button>
+      ${authLinks}
     </div>
-    <div class="nav-search" id="nav-search-wrap">
-      <input type="text" id="nav-search" class="nav-search-input" placeholder="🔎 Search stocks…" autocomplete="off" aria-label="Search stocks">
-      <div class="nav-search-results" id="nav-search-results"></div>
-    </div>
-    <button class="btn-dark-toggle" id="dark-toggle" title="Toggle dark mode" aria-label="Toggle dark mode" onclick="toggleDarkMode()">🌙</button>
-    ${authLinks}
+    <button class="hamburger" id="hamburger" aria-label="Toggle menu" aria-expanded="false">
+      <span></span><span></span><span></span>
+    </button>
   </nav>
   <div class="ticker-wrap" id="ticker-wrap" aria-label="Market news ticker">
     <span class="ticker-label">📰 MARKET</span>
     <div class="ticker-viewport">
       <div class="ticker-track" id="ticker-track">Loading news…</div>
+    </div>
+  </div>
+  <div class="chat-widget" id="chat-widget">
+    <button class="chat-bubble" id="chat-bubble-btn" aria-label="Ask a question">
+      <span class="chat-bubble-icon">💬</span>
+      <span>Help</span>
+    </button>
+    <div class="chat-window" id="chat-window" style="display:none" role="dialog" aria-label="Help chat">
+      <div class="chat-header">
+        <div class="chat-header-left">
+          <div class="chat-header-avatar">🤖</div>
+          <span>ZeroScreen Help</span>
+        </div>
+        <button class="chat-close" id="chat-close" aria-label="Close chat">✕</button>
+      </div>
+      <div class="chat-messages" id="chat-messages">
+        <div class="chat-msg bot">👋 Hi! Ask me anything about ZeroScreen — screener, paper trade, how things work, and more.<div class="chat-chips">
+          <span class="chat-chip" data-q="paper trade">📋 Paper Trade</span>
+          <span class="chat-chip" data-q="screener">🔍 Screener</span>
+          <span class="chat-chip" data-q="free">💰 Is it free?</span>
+          <span class="chat-chip" data-q="get started">🚀 Get started</span>
+        </div></div>
+      </div>
+      <div class="chat-input-row">
+        <input type="text" class="chat-input" id="chat-input" placeholder="Ask a question…" autocomplete="off" maxlength="200">
+        <button class="chat-send" id="chat-send" aria-label="Send">→</button>
+      </div>
     </div>
   </div>`;
 }
@@ -462,7 +561,7 @@ function authLayout(title: string, content: string): string {
 <body class="auth-body">
   <div class="auth-wrapper">
     <div class="auth-brand">
-      <a href="/" class="auth-logo">Zero<span>Screen</span></a>
+      <a href="/" class="auth-logo"><img src="/public/images/logo.svg" class="auth-logo-img" alt="ZeroScreen"><span class="auth-logo-text">Zero<em>Screen</em></span></a>
       <p class="auth-tagline">India's sharpest NSE stock screener</p>
     </div>
     <div class="auth-card">
@@ -475,7 +574,7 @@ function authLayout(title: string, content: string): string {
 }
 
 // GET /signup
-app.get("/signup", (req: Request, res: Response) => {
+app.get("/signup", featureGate("registration_open", "New Registrations"), (req: Request, res: Response) => {
   if (req.session.userId) { res.redirect("/"); return; }
   const error = req.query.error as string | undefined;
   const googleBtn = GOOGLE_CLIENT_ID
@@ -498,30 +597,95 @@ app.get("/signup", (req: Request, res: Response) => {
   <title>Create Account — ZeroScreen</title>
   <link rel="stylesheet" href="/public/css/style.css">
   <style>
-    .signup-hero-cards { display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-top:28px; }
-    .shc { border-radius:12px; padding:14px 16px; position:relative; overflow:hidden; }
-    .shc::before { content:""; position:absolute; inset:0; opacity:0.12; }
-    .shc-paper  { background:linear-gradient(135deg,#064e3b,#065f46); border:1px solid #059669; }
-    .shc-signals{ background:linear-gradient(135deg,#1e1b4b,#312e81); border:1px solid #6366f1; }
-    .shc-screen { background:linear-gradient(135deg,#1e3a5f,#1e40af); border:1px solid #3b82f6; }
-    .shc-watch  { background:linear-gradient(135deg,#451a03,#78350f); border:1px solid #f59e0b; }
-    .shc-icon   { font-size:1.6rem; display:block; margin-bottom:6px; }
-    .shc-title  { font-size:0.82rem; font-weight:700; color:#fff; margin-bottom:3px; }
-    .shc-desc   { font-size:0.73rem; color:rgba(255,255,255,0.7); line-height:1.4; }
-    .shc-badge  { display:inline-block; font-size:0.62rem; font-weight:700; padding:2px 7px; border-radius:20px; margin-bottom:6px; letter-spacing:0.5px; }
-    .badge-free { background:#10b981; color:#fff; }
-    .badge-live { background:#ef4444; color:#fff; }
-    .badge-hot  { background:#f59e0b; color:#000; }
-    .badge-new  { background:#8b5cf6; color:#fff; }
-    .signup-stats { display:flex; gap:0; margin-top:22px; border:1px solid rgba(255,255,255,0.1); border-radius:12px; overflow:hidden; }
-    .ss-stat { flex:1; padding:14px 10px; text-align:center; border-right:1px solid rgba(255,255,255,0.1); }
+    /* ── Tier Score Dots ── */
+    .tier-scores { display:flex; flex-direction:column; gap:10px; margin:24px 0; }
+    .tier-row {
+      display:flex; align-items:stretch; gap:0;
+      border-radius:14px; overflow:hidden;
+      border:1px solid rgba(255,255,255,0.08);
+    }
+    .tier-dot-col {
+      width:54px; flex-shrink:0; display:flex; flex-direction:column;
+      align-items:center; justify-content:center; gap:4px; padding:14px 0;
+    }
+    .tier-dot {
+      width:14px; height:14px; border-radius:50%;
+      box-shadow:0 0 10px currentColor;
+    }
+    .tier-dot.green  { background:#10b981; color:#10b981; }
+    .tier-dot.yellow { background:#f59e0b; color:#f59e0b; }
+    .tier-dot.red    { background:#ef4444; color:#ef4444; }
+    .tier-row-green  { background:linear-gradient(90deg,rgba(16,185,129,0.14) 0%,rgba(16,185,129,0.04) 100%); }
+    .tier-row-yellow { background:linear-gradient(90deg,rgba(245,158,11,0.14) 0%,rgba(245,158,11,0.04) 100%); }
+    .tier-row-red    { background:linear-gradient(90deg,rgba(239,68,68,0.14) 0%,rgba(239,68,68,0.04) 100%); }
+    .tier-content { flex:1; padding:12px 14px 12px 4px; }
+    .tier-label {
+      font-size:10px; font-weight:800; letter-spacing:1px; text-transform:uppercase; margin-bottom:5px;
+    }
+    .tier-label.green  { color:#34d399; }
+    .tier-label.yellow { color:#fbbf24; }
+    .tier-label.red    { color:#f87171; }
+    .tier-title { font-size:13.5px; font-weight:700; color:#f1f5f9; margin-bottom:5px; }
+    .tier-features { display:flex; flex-wrap:wrap; gap:5px; }
+    .tier-tag {
+      font-size:11px; font-weight:600; padding:3px 9px; border-radius:20px; white-space:nowrap;
+    }
+    .tier-tag.green  { background:rgba(16,185,129,0.2); color:#6ee7b7; border:1px solid rgba(16,185,129,0.3); }
+    .tier-tag.yellow { background:rgba(245,158,11,0.2);  color:#fde68a; border:1px solid rgba(245,158,11,0.3); }
+    .tier-tag.red    { background:rgba(239,68,68,0.2);   color:#fca5a5; border:1px solid rgba(239,68,68,0.3); }
+
+    /* ── Feature Preview Cards ── */
+    .signup-feat-cards { display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-top:20px; }
+    .sfc {
+      border-radius:14px; padding:16px; position:relative; overflow:hidden;
+      display:flex; flex-direction:column; gap:0;
+    }
+    .sfc-paper   { background:linear-gradient(145deg,#022c22,#064e3b); border:1px solid rgba(16,185,129,0.4); }
+    .sfc-signals { background:linear-gradient(145deg,#1e1b4b,#312e81); border:1px solid rgba(99,102,241,0.45); }
+    .sfc-screen  { background:linear-gradient(145deg,#0f1535,#1e3a5f); border:1px solid rgba(59,130,246,0.4); }
+    .sfc-backtest{ background:linear-gradient(145deg,#1a0f2e,#3b0764); border:1px solid rgba(139,92,246,0.4); }
+    .sfc-badge {
+      display:inline-flex; align-items:center; gap:4px;
+      font-size:9.5px; font-weight:800; padding:3px 8px; border-radius:20px;
+      margin-bottom:10px; letter-spacing:0.6px; width:fit-content;
+    }
+    .sfc-badge.hot     { background:linear-gradient(135deg,#ef4444,#f97316); color:#fff; }
+    .sfc-badge.live    { background:#ef4444; color:#fff; animation:livePulse 1.5s ease-in-out infinite; }
+    .sfc-badge.free    { background:linear-gradient(135deg,#10b981,#059669); color:#fff; }
+    .sfc-badge.backtest{ background:linear-gradient(135deg,#8b5cf6,#7c3aed); color:#fff; }
+    @keyframes livePulse { 0%,100%{opacity:1} 50%{opacity:0.6} }
+    .sfc-icon { font-size:2.6rem; margin-bottom:8px; line-height:1; }
+    .sfc-title { font-size:13px; font-weight:800; color:#fff; margin-bottom:5px; letter-spacing:-0.2px; }
+    .sfc-desc  { font-size:11.5px; color:rgba(255,255,255,0.65); line-height:1.5; }
+    /* mock P&L mini chart */
+    .sfc-pnl-preview {
+      margin-top:10px; padding:8px 10px; border-radius:8px;
+      background:rgba(0,0,0,0.25); border:1px solid rgba(255,255,255,0.08);
+      display:flex; align-items:center; gap:8px;
+    }
+    .sfc-pnl-num { font-size:15px; font-weight:900; }
+    .sfc-pnl-num.green { color:#4ade80; }
+    .sfc-pnl-num.purple{ color:#c4b5fd; }
+    .sfc-pnl-label { font-size:10px; color:rgba(255,255,255,0.45); }
+    .sfc-mini-bars { display:flex; align-items:flex-end; gap:2px; height:22px; }
+    .sfc-bar { width:5px; border-radius:2px 2px 0 0; }
+    .sfc-bar.g { background:#4ade80; }
+    .sfc-bar.r { background:#f87171; }
+
+    /* ── Stats bar ── */
+    .signup-stats { display:flex; gap:0; margin-top:20px; border:1px solid rgba(255,255,255,0.1); border-radius:12px; overflow:hidden; }
+    .ss-stat { flex:1; padding:13px 8px; text-align:center; border-right:1px solid rgba(255,255,255,0.1); }
     .ss-stat:last-child { border-right:none; }
-    .ss-stat strong { display:block; font-size:1.15rem; font-weight:800; color:#fff; }
-    .ss-stat span { font-size:0.7rem; color:rgba(255,255,255,0.6); }
-    .signup-trust { display:flex; align-items:center; gap:8px; margin-top:20px; font-size:0.75rem; color:rgba(255,255,255,0.5); }
-    .signup-trust span { font-size:1rem; }
-    @media(max-width:900px){ .signup-hero-cards{grid-template-columns:1fr 1fr;} }
-    @media(max-width:600px){ .signup-hero-cards{grid-template-columns:1fr;} .signup-stats{flex-wrap:wrap;} }
+    .ss-stat strong { display:block; font-size:1.2rem; font-weight:900; color:#fff; letter-spacing:-0.5px; }
+    .ss-stat span { font-size:10px; color:rgba(255,255,255,0.55); font-weight:600; letter-spacing:0.3px; margin-top:2px; display:block; }
+    .signup-trust { display:flex; align-items:center; gap:8px; margin-top:16px; font-size:11.5px; color:rgba(255,255,255,0.45); }
+
+    @media(max-width:600px){
+      .signup-feat-cards { grid-template-columns:1fr; }
+      .signup-stats { flex-wrap:wrap; }
+      .tier-row { flex-direction:column; }
+      .tier-dot-col { flex-direction:row; width:100%; justify-content:flex-start; padding:10px 14px 0; }
+    }
   </style>
 </head>
 <body class="auth-body landing-page">
@@ -530,35 +694,88 @@ app.get("/signup", (req: Request, res: Response) => {
     <!-- LEFT: Feature showcase -->
     <div class="landing-hero">
       <div class="landing-hero-inner">
-        <a href="/" class="landing-logo">Zero<span>Screen</span></a>
+        <a href="/" class="landing-logo"><img src="/public/images/logo.svg" class="landing-logo-img" alt="ZeroScreen"><span class="landing-logo-text">Zero<em>Screen</em></span></a>
         <div class="landing-badge">🇮🇳 Built for Indian Markets · Free Forever</div>
         <h1 class="landing-headline">Everything you need<br>to trade smarter.<br><span>All in one place.</span></h1>
-        <p class="landing-desc">Join thousands of Indian investors who screen stocks, track a live bot, and paper trade — for free.</p>
 
-        <div class="signup-hero-cards">
-          <div class="shc shc-paper">
-            <span class="shc-badge badge-hot">🔥 HOT</span>
-            <span class="shc-icon">📋</span>
-            <div class="shc-title">Personal Paper Trade</div>
-            <div class="shc-desc">₹1,00,000 virtual money. Trade any NSE stock. Track P&amp;L like a real portfolio.</div>
+        <!-- Beginner callout -->
+        <div style="background:linear-gradient(135deg,rgba(16,185,129,0.15),rgba(16,185,129,0.05));border:1px solid rgba(16,185,129,0.35);border-radius:14px;padding:14px 16px;margin-bottom:20px">
+          <div style="font-size:12px;font-weight:800;color:#34d399;letter-spacing:0.4px;text-transform:uppercase;margin-bottom:6px">🌱 New to Trading?</div>
+          <div style="font-size:14px;font-weight:700;color:#f1f5f9;margin-bottom:6px">Afraid of losing real money?<br>Let's learn together — zero risk.</div>
+          <div style="font-size:12px;color:rgba(255,255,255,0.6);line-height:1.6">Start with ₹1,00,000 virtual money. Practice on real NSE stocks, discover your strategy, and get confident before you ever risk a single rupee.</div>
+          <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px">
+            <span style="background:rgba(16,185,129,0.2);color:#34d399;font-size:11px;font-weight:700;padding:4px 10px;border-radius:99px;border:1px solid rgba(16,185,129,0.3)">✅ No real money needed</span>
+            <span style="background:rgba(16,185,129,0.2);color:#34d399;font-size:11px;font-weight:700;padding:4px 10px;border-radius:99px;border:1px solid rgba(16,185,129,0.3)">📈 Real market prices</span>
+            <span style="background:rgba(16,185,129,0.2);color:#34d399;font-size:11px;font-weight:700;padding:4px 10px;border-radius:99px;border:1px solid rgba(16,185,129,0.3)">🎯 Master before going live</span>
           </div>
-          <div class="shc shc-signals">
-            <span class="shc-badge badge-live">🔴 LIVE</span>
-            <span class="shc-icon">📡</span>
-            <div class="shc-title">Live Bot Signals</div>
-            <div class="shc-desc">Real BANKNIFTY options trades. Auto-refreshes every 8 seconds. CE/PE with PnL.</div>
+        </div>
+
+        <!-- Feature preview cards with mock data -->
+        <div class="signup-feat-cards">
+          <div class="sfc sfc-paper">
+            <span class="sfc-badge hot">🔥 HOT</span>
+            <div class="sfc-icon">📋</div>
+            <div class="sfc-title">My Paper Trade</div>
+            <div class="sfc-desc">₹1,00,000 virtual portfolio. Trade any NSE stock in real market hours.</div>
+            <div class="sfc-pnl-preview">
+              <div>
+                <div class="sfc-pnl-num green">+₹4,320</div>
+                <div class="sfc-pnl-label">Your P&amp;L today</div>
+              </div>
+              <div class="sfc-mini-bars" style="margin-left:auto">
+                <div class="sfc-bar r" style="height:8px"></div>
+                <div class="sfc-bar g" style="height:14px"></div>
+                <div class="sfc-bar g" style="height:18px"></div>
+                <div class="sfc-bar r" style="height:10px"></div>
+                <div class="sfc-bar g" style="height:22px"></div>
+              </div>
+            </div>
           </div>
-          <div class="shc shc-screen">
-            <span class="shc-badge badge-free">FREE</span>
-            <span class="shc-icon">🔍</span>
-            <div class="shc-title">NSE Stock Screener</div>
-            <div class="shc-desc">1,700+ stocks. ROCE, ROE, D/E, P/E filters. 14 strategy presets. No login needed.</div>
+          <div class="sfc sfc-signals">
+            <span class="sfc-badge live">● LIVE</span>
+            <div class="sfc-icon">📡</div>
+            <div class="sfc-title">Live Bot Signals</div>
+            <div class="sfc-desc">Real BANKNIFTY CE/PE trades. Refreshes every 8 seconds with AI confidence.</div>
+            <div class="sfc-pnl-preview">
+              <div>
+                <div class="sfc-pnl-num" style="color:#a5f3fc">CE 48200</div>
+                <div class="sfc-pnl-label">Active position</div>
+              </div>
+              <div style="margin-left:auto;text-align:right">
+                <div style="font-size:11px;font-weight:700;color:#4ade80">+142 pts</div>
+                <div style="font-size:10px;color:rgba(255,255,255,0.4)">Unrealised</div>
+              </div>
+            </div>
           </div>
-          <div class="shc shc-watch">
-            <span class="shc-badge badge-new">⭐ YOURS</span>
-            <span class="shc-icon">🔔</span>
-            <div class="shc-title">Watchlists &amp; Alerts</div>
-            <div class="shc-desc">Save stocks to watchlists. Daily email digest when your filter criteria match.</div>
+          <div class="sfc sfc-screen">
+            <span class="sfc-badge free">FREE</span>
+            <div class="sfc-icon">🔍</div>
+            <div class="sfc-title">NSE Screener</div>
+            <div class="sfc-desc">1,700+ stocks. Filter by ROCE, ROE, D/E, P/E. 14 one-click strategy presets.</div>
+            <div class="sfc-pnl-preview" style="justify-content:space-between">
+              <span style="font-size:11px;color:#93c5fd;font-weight:700">ROCE &gt; 20%</span>
+              <span style="font-size:11px;color:#93c5fd;font-weight:700">D/E &lt; 0.5</span>
+              <span style="font-size:11px;color:#6ee7b7;font-weight:700">142 stocks</span>
+            </div>
+          </div>
+          <div class="sfc sfc-backtest">
+            <span class="sfc-badge backtest">📊 5-YEAR</span>
+            <div class="sfc-icon">📈</div>
+            <div class="sfc-title">Backtest Analytics</div>
+            <div class="sfc-desc">5 years of BANKNIFTY bot performance. Monthly P&amp;L charts. Win rate by model.</div>
+            <div class="sfc-pnl-preview">
+              <div>
+                <div class="sfc-pnl-num purple">68.4%</div>
+                <div class="sfc-pnl-label">Win rate (5yr)</div>
+              </div>
+              <div class="sfc-mini-bars" style="margin-left:auto">
+                <div class="sfc-bar g" style="height:12px"></div>
+                <div class="sfc-bar r" style="height:6px"></div>
+                <div class="sfc-bar g" style="height:18px"></div>
+                <div class="sfc-bar g" style="height:15px"></div>
+                <div class="sfc-bar g" style="height:22px"></div>
+              </div>
+            </div>
           </div>
         </div>
 
@@ -570,7 +787,7 @@ app.get("/signup", (req: Request, res: Response) => {
         </div>
 
         <div class="signup-trust">
-          <span>🔒</span> No credit card · No broker account needed · Cancel anytime
+          🔒 No credit card · No broker account needed · Free forever
         </div>
       </div>
     </div>
@@ -614,7 +831,7 @@ app.get("/signup", (req: Request, res: Response) => {
 });
 
 // POST /signup
-app.post("/signup", async (req: Request, res: Response) => {
+app.post("/signup", featureGate("registration_open", "New Registrations"), async (req: Request, res: Response) => {
   const ip = (req.headers["x-forwarded-for"] as string || req.socket.remoteAddress || "unknown").split(",")[0].trim();
   if (!checkRateLimit(`signup:${ip}`, 5, 60 * 60 * 1000)) {
     res.redirect("/signup?error=Too+many+signups+from+this+IP.+Please+try+later."); return;
@@ -673,51 +890,108 @@ app.get("/login", (req: Request, res: Response) => {
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>Sign In — ZeroScreen</title>
   <link rel="stylesheet" href="/public/css/style.css">
+  <style>
+    /* ── Live status cards ── */
+    .login-live-cards { display: flex; flex-direction: column; gap: 10px; margin: 24px 0 20px; }
+    .llc {
+      display: flex; align-items: center; gap: 14px;
+      padding: 14px 16px; border-radius: 14px;
+      border: 1px solid rgba(255,255,255,0.08); position: relative; overflow: hidden;
+      text-decoration: none; transition: transform 0.15s;
+    }
+    .llc:hover { transform: translateX(4px); }
+    .llc-signals { background: linear-gradient(90deg,rgba(16,185,129,0.18) 0%,rgba(16,185,129,0.04) 100%); border-color: rgba(16,185,129,0.3); }
+    .llc-trade   { background: linear-gradient(90deg,rgba(239,68,68,0.15) 0%,rgba(239,68,68,0.03) 100%);  border-color: rgba(239,68,68,0.3); }
+    .llc-screen  { background: linear-gradient(90deg,rgba(59,130,246,0.15) 0%,rgba(59,130,246,0.03) 100%); border-color: rgba(59,130,246,0.3); }
+    .llc-dash    { background: linear-gradient(90deg,rgba(139,92,246,0.15) 0%,rgba(139,92,246,0.03) 100%); border-color: rgba(139,92,246,0.3); }
+    .llc-icon { font-size: 2rem; flex-shrink: 0; line-height: 1; }
+    .llc-body { flex: 1; min-width: 0; }
+    .llc-title { font-size: 13.5px; font-weight: 700; color: #f1f5f9; margin-bottom: 3px; }
+    .llc-desc  { font-size: 12px; color: rgba(255,255,255,0.5); line-height: 1.45; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .llc-status {
+      flex-shrink: 0; display: flex; align-items: center; gap: 5px;
+      font-size: 10px; font-weight: 700; padding: 3px 9px; border-radius: 20px;
+      letter-spacing: 0.4px;
+    }
+    .llc-status.live   { background: rgba(16,185,129,0.25); color: #34d399; }
+    .llc-status.hot    { background: rgba(239,68,68,0.25); color: #f87171; }
+    .llc-status.free   { background: rgba(59,130,246,0.22); color: #93c5fd; }
+    .llc-status.data   { background: rgba(139,92,246,0.22); color: #c4b5fd; }
+    .llc-pulse { width: 7px; height: 7px; border-radius: 50%; background: currentColor; animation: liveP 1.5s ease-in-out infinite; }
+    @keyframes liveP { 0%,100%{opacity:1} 50%{opacity:0.3} }
+
+    /* ── Quick stats bar ── */
+    .login-stats { display: flex; gap: 0; border: 1px solid rgba(255,255,255,0.1); border-radius: 12px; overflow: hidden; margin-top: 4px; }
+    .login-stat { flex: 1; padding: 12px 8px; text-align: center; border-right: 1px solid rgba(255,255,255,0.1); }
+    .login-stat:last-child { border-right: none; }
+    .login-stat strong { display: block; font-size: 1.15rem; font-weight: 900; color: #fff; letter-spacing: -0.5px; }
+    .login-stat span { font-size: 10px; color: rgba(255,255,255,0.5); font-weight: 600; letter-spacing: 0.3px; margin-top: 2px; display: block; }
+
+    /* ── Tier pills at bottom ── */
+    .login-tier-row { display: flex; align-items: center; gap: 8px; margin-top: 18px; flex-wrap: wrap; }
+    .login-tier-pill {
+      display: inline-flex; align-items: center; gap: 5px; font-size: 11px; font-weight: 700;
+      padding: 5px 12px; border-radius: 20px; letter-spacing: 0.3px;
+    }
+    .login-tier-pill.green  { background: rgba(16,185,129,0.18); color: #34d399; border: 1px solid rgba(16,185,129,0.3); }
+    .login-tier-pill.yellow { background: rgba(245,158,11,0.18);  color: #fbbf24; border: 1px solid rgba(245,158,11,0.3); }
+    .login-tier-pill.red    { background: rgba(239,68,68,0.18);   color: #f87171; border: 1px solid rgba(239,68,68,0.3); }
+    .login-tier-label { font-size: 11px; color: rgba(255,255,255,0.4); width: 100%; margin-top: 2px; }
+
+    @media(max-width:600px){ .llc-desc { display:none; } }
+  </style>
 </head>
 <body class="auth-body landing-page">
   <div class="landing-split">
 
-    <!-- LEFT: Hero panel -->
+    <!-- LEFT: 3-slide auto-carousel -->
     <div class="landing-hero">
       <div class="landing-hero-inner">
-        <a href="/" class="landing-logo">Zero<span>Screen</span></a>
-        <div class="landing-badge">🇮🇳 Built for Indian Markets</div>
-        <h1 class="landing-headline">Screen 1,700+ NSE Stocks.<br>Track a Live Trading Bot.<br><span>100% Free.</span></h1>
-        <p class="landing-desc">India's sharpest stock screener with fundamental filters, strategy presets, and a live BANKNIFTY options bot — all in one place.</p>
-        <div class="landing-features">
-          <div class="lf-item">
-            <span class="lf-icon">🔍</span>
-            <div>
-              <strong>Smart Screener</strong>
-              <span>ROCE, D/E, P/E, promoter %, 14 strategy presets</span>
+        <a href="/" class="landing-logo"><img src="/public/images/logo.svg" class="landing-logo-img" alt="ZeroScreen"><span class="landing-logo-text">Zero<em>Screen</em></span></a>
+        <div class="landing-badge">🇮🇳 Built for Indian Markets · Free Forever</div>
+        <h1 class="landing-headline">Welcome back.<br>Your market edge<br><span>is waiting.</span></h1>
+
+        <!-- Live feature status cards for returning users -->
+        <div class="login-live-cards">
+          <a href="/signals" class="llc llc-signals">
+            <div class="llc-icon">📡</div>
+            <div class="llc-body">
+              <div class="llc-title">Live BANKNIFTY Bot</div>
+              <div class="llc-desc">Real CE/PE signals · AI confidence · refreshes every 8s</div>
             </div>
-          </div>
-          <div class="lf-item">
-            <span class="lf-icon">📡</span>
-            <div>
-              <strong>Live Trading Bot</strong>
-              <span>BANKNIFTY options · real trades · 8s auto-refresh</span>
+            <div class="llc-status live"><span class="llc-pulse"></span> LIVE</div>
+          </a>
+          <a href="/my-paper-trade" class="llc llc-trade">
+            <div class="llc-icon">📋</div>
+            <div class="llc-body">
+              <div class="llc-title">My Paper Trade</div>
+              <div class="llc-desc">₹1,00,000 virtual portfolio · trade any NSE stock</div>
             </div>
-          </div>
-          <div class="lf-item">
-            <span class="lf-icon">📊</span>
-            <div>
-              <strong>5-Year Backtest</strong>
-              <span>Monthly P&amp;L breakdown · equity curve · win rates</span>
+            <div class="llc-status hot">🔥 HOT</div>
+          </a>
+          <a href="/" class="llc llc-screen">
+            <div class="llc-icon">🔍</div>
+            <div class="llc-body">
+              <div class="llc-title">NSE Screener</div>
+              <div class="llc-desc">1,700+ stocks · 14 strategies · ROCE, ROE, D/E filters</div>
             </div>
-          </div>
-          <div class="lf-item">
-            <span class="lf-icon">⭐</span>
-            <div>
-              <strong>Watchlists &amp; Alerts</strong>
-              <span>Save stocks · daily email digest when filters match</span>
+            <div class="llc-status free">FREE</div>
+          </a>
+          <a href="/dashboard" class="llc llc-dash">
+            <div class="llc-icon">📊</div>
+            <div class="llc-body">
+              <div class="llc-title">Bot Analytics</div>
+              <div class="llc-desc">5-year backtest · 68.4% win rate · monthly P&amp;L charts</div>
             </div>
-          </div>
+            <div class="llc-status data">5-YR DATA</div>
+          </a>
         </div>
-        <div class="landing-stats">
-          <div class="ls-stat"><strong>1,700+</strong><span>NSE Stocks</span></div>
-          <div class="ls-stat"><strong>14</strong><span>Strategies</span></div>
-          <div class="ls-stat"><strong>Free</strong><span>Always</span></div>
+
+        <div class="login-stats">
+          <div class="login-stat"><strong>1,700+</strong><span>NSE Stocks</span></div>
+          <div class="login-stat"><strong>14</strong><span>Strategies</span></div>
+          <div class="login-stat"><strong>5-Year</strong><span>Backtest</span></div>
+          <div class="login-stat"><strong>Free</strong><span>Forever</span></div>
         </div>
       </div>
     </div>
@@ -726,7 +1000,7 @@ app.get("/login", (req: Request, res: Response) => {
     <div class="landing-auth">
       <div class="auth-card">
         <h2>Welcome back</h2>
-        <p class="auth-sub">Sign in to your account or browse as guest</p>
+        <p class="auth-sub">Sign in to access your portfolio &amp; alerts</p>
         ${error ? `<div class="auth-error">${esc(error)}</div>` : ""}
         <a href="/?guest=1" class="btn-guest">👀 Continue as Guest — Browse freely</a>
         <div class="auth-divider"><span>or sign in for full access</span></div>
@@ -744,7 +1018,12 @@ app.get("/login", (req: Request, res: Response) => {
           <button type="submit" class="btn-auth">Sign In →</button>
         </form>
         <p class="auth-switch"><a href="/forgot-password">Forgot password?</a></p>
-        <p class="auth-switch">New here? <a href="/signup">Create a free account</a></p>
+        <p class="auth-switch">New here? <a href="/signup">Create a free account →</a></p>
+        <div style="margin-top:18px;padding:12px 16px;background:linear-gradient(135deg,rgba(16,185,129,0.07),rgba(59,130,246,0.07));border:1px solid rgba(16,185,129,0.15);border-radius:10px;font-size:0.78rem;color:var(--text-muted);line-height:1.7">
+          🔒 <strong style="color:var(--text)">Signing in unlocks:</strong><br>
+          📋 Personal paper trade portfolio &nbsp;·&nbsp; ⭐ Saved watchlists<br>
+          🔔 Email alerts on custom filters &nbsp;·&nbsp; 📊 Full bot analytics
+        </div>
       </div>
     </div>
 
@@ -1116,6 +1395,11 @@ app.post("/verify-mobile/confirm", requireAuth, async (req: Request, res: Respon
   if (!ok) {
     res.redirect(`/verify-mobile?mobile=${mobile}&sent=1&err=${encodeURIComponent("Invalid or expired OTP. Please try again.")}&next=${encodeURIComponent(next)}`); return;
   }
+  // Block if this mobile is already verified on a DIFFERENT account
+  const existingUser = await getUserByMobile(mobile);
+  if (existingUser && existingUser.id !== req.session.userId) {
+    res.redirect(`/verify-mobile?err=${encodeURIComponent("This mobile number is already linked to another account.")}&next=${encodeURIComponent(next)}`); return;
+  }
   await setUserMobile(req.session.userId!, mobile);
   req.session.mobileVerified = true;
   res.redirect(next + (next.includes("?") ? "&" : "?") + "msg=" + encodeURIComponent("Mobile verified! You can now paper trade."));
@@ -1166,7 +1450,31 @@ app.get("/", async (req: Request, res: Response) => {
     offset,
   };
 
-  const FILTER_KEYS = ['minRoce','maxRoce','maxDe','minPromoter','maxPromoter','minPe','maxPe','minPrice','maxPrice','minVolume','minMc','maxMc','minDivYield','allProfit','uptrend','sector','strategy','minRoe','minEps','minCr','maxPb','minChg','maxChg','near52H','near52L'];
+  // ── In-News filter: extract NSE symbols from news headlines ──────────────
+  if (req.query.inNews === "1") {
+    const newsItems = await fetchMarketNews();
+    // Extract only from titles (not links which have CDATA/URL garbage)
+    const rawWords = newsItems.flatMap(n =>
+      (n.title || '').match(/\b([A-Z]{3,10})\b/g) || []
+    );
+    const skipWords = new Set([
+      "NSE","BSE","IPO","FII","DII","GDP","RBI","SEBI","FY","Q1","Q2","Q3","Q4",
+      "CEO","CFO","MD","AGM","EGM","USA","UAE","IRAN","GOLD","MINT","CDATA",
+      "HTTP","HTTPS","COM","WWW","HTML","RSS","XML","API","USD","INR",
+      "MARKET","STOCK","STOCKS","SHARE","SHARES","INDIA","NIFTY","SENSEX",
+      "BANK","RATE","YEAR","WEEKLY","DAILY","TRADE","TRADING","JUNE",
+      "JULY","AUG","SEP","OCT","NOV","DEC","JAN","FEB","MAR","APR","MAY",
+    ]);
+    const candidates = [...new Set(rawWords.filter(w => !skipWords.has(w)))];
+    if (candidates.length > 0) {
+      f.symbolsIn = candidates.slice(0, 60);
+    } else {
+      // Fallback: show top movers if no stock symbols found in news
+      f.minChangePct = 0.5;
+    }
+  }
+
+  const FILTER_KEYS = ['minRoce','maxRoce','maxDe','minPromoter','maxPromoter','minPe','maxPe','minPrice','maxPrice','minVolume','minMc','maxMc','minDivYield','allProfit','uptrend','sector','strategy','minRoe','minEps','minCr','maxPb','minChg','maxChg','near52H','near52L','inNews'];
   const hasFilters = FILTER_KEYS.some(k => req.query[k] && req.query[k] !== '');
   // Only expand the filter panel when the user has MANUALLY set filters (not from a strategy click)
   const openFilters = !req.query.strategy && FILTER_KEYS.filter(k => k !== 'strategy').some(k => req.query[k] && req.query[k] !== '');
@@ -1177,6 +1485,10 @@ app.get("/", async (req: Request, res: Response) => {
   const sectors = await getSectors();
   const todayPicks = await getActivePicks();
   const activeStrategy = req.query.strategy as string | undefined;
+  const dbStats = await getDbStats();
+  const priceAsOf = dbStats.lastPriceUpdate
+    ? new Date(dbStats.lastPriceUpdate).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric", timeZone: "Asia/Kolkata" })
+    : null;
 
   // Build pagination query string (preserve all filters, change page)
   const paginationQ = new URLSearchParams(req.query as any);
@@ -1193,13 +1505,12 @@ app.get("/", async (req: Request, res: Response) => {
       : `<span style="color:${deColor(s.de_ratio)}">${fmt(s.de_ratio)}</span>`;
     const cleanSector = (s.sector && s.sector.length >= 3 && !/^\[?\d+\]?$/.test(s.sector) && !/edit|about/i.test(s.sector))
       ? s.sector : null;
-    const sectorStr = cleanSector ? `<span class="sector-tag">${cleanSector}</span>` : "—";
+    void cleanSector; // kept for potential future use
     return `
     <tr>
       <td class="cmp-check-cell"><input type="checkbox" class="cmp-check" value="${s.symbol}" onchange="updateCompare()"></td>
       <td><a href="/stock/${s.symbol}" class="sym-link">${s.symbol}</a></td>
       <td class="company-name" title="${(s.company_name || "").replace(/"/g, "&quot;")}">${s.company_name || "—"}</td>
-      <td>${sectorStr}</td>
       <td class="td-price">₹${fmt(s.price, 2)}</td>
       <td>${chgPill}</td>
       <td>${fmtVol(s.volume)}</td>
@@ -1208,7 +1519,6 @@ app.get("/", async (req: Request, res: Response) => {
       <td>${deStr}</td>
       <td>${fmt(s.promoter_pct)}%</td>
       <td>${fmt(s.pe_ratio, 1)}</td>
-      <td>${fmtCr(s.market_cap)}</td>
       <td>${s.all_profitable ? "✅" : "❌"} ${s.profit_uptrend ? "↑" : "↓"}</td>
     </tr>`;
   }).join("");
@@ -1227,12 +1537,10 @@ app.get("/", async (req: Request, res: Response) => {
   const q = req.query;
 
   const strategyCards = STRATEGIES.map(s => `
-    <a href="/?strategy=${s.id}&${strategyParams(s)}" class="strategy-card s-${s.id} ${activeStrategy === s.id ? "active" : ""}">
-      <span class="strategy-icon">${s.icon}</span>
-      <div class="strategy-info">
-        <span class="strategy-label">${s.label}</span>
-        <span class="strategy-desc">${s.desc}</span>
-      </div>
+    <a href="/?strategy=${s.id}&${strategyParams(s)}" class="strategy-card s-${s.id} ${activeStrategy === s.id ? "active" : ""}" title="${s.desc}">
+      <span class="s-flag">🇮🇳</span>
+      <span class="s-emoji">${s.icon}</span>
+      <span class="strategy-label">${s.label}</span>
     </a>`).join("");
 
   res.send(`<!DOCTYPE html>
@@ -1251,120 +1559,116 @@ app.get("/", async (req: Request, res: Response) => {
     <div class="market-strip" id="market-strip">
       <div class="mkt-track" id="mkt-track">
         <!-- set A -->
-        <span class="mkt-region-label">🇮🇳 India</span>
         <div class="mkt-tile" id="mkt-NSEI">
-          <span class="mkt-label">NIFTY 50</span>
+          <span class="mkt-label"><img src="https://flagcdn.com/16x12/in.png" class="mkt-flag-img" alt="IN"> NIFTY 50</span>
           <span class="mkt-price">—</span>
           <span class="mkt-chg">—</span>
         </div>
         <div class="mkt-tile" id="mkt-NSEBANK">
-          <span class="mkt-label">BANK NIFTY</span>
+          <span class="mkt-label"><img src="https://flagcdn.com/16x12/in.png" class="mkt-flag-img" alt="IN"> BANK NIFTY</span>
           <span class="mkt-price">—</span>
           <span class="mkt-chg">—</span>
         </div>
         <div class="mkt-tile" id="mkt-FINNIFTY">
-          <span class="mkt-label">FIN NIFTY</span>
+          <span class="mkt-label"><img src="https://flagcdn.com/16x12/in.png" class="mkt-flag-img" alt="IN"> FIN NIFTY</span>
           <span class="mkt-price">—</span>
           <span class="mkt-chg">—</span>
         </div>
         <div class="mkt-tile" id="mkt-NIFTYIT">
-          <span class="mkt-label">NIFTY IT</span>
+          <span class="mkt-label"><img src="https://flagcdn.com/16x12/in.png" class="mkt-flag-img" alt="IN"> NIFTY IT</span>
           <span class="mkt-price">—</span>
           <span class="mkt-chg">—</span>
         </div>
         <div class="mkt-tile" id="mkt-INDIAVIX">
-          <span class="mkt-label">INDIA VIX</span>
+          <span class="mkt-label"><img src="https://flagcdn.com/16x12/in.png" class="mkt-flag-img" alt="IN"> INDIA VIX</span>
           <span class="mkt-price">—</span>
           <span class="mkt-chg">—</span>
         </div>
         <div class="mkt-tile" id="mkt-MIDCAP">
-          <span class="mkt-label">MIDCAP 100</span>
+          <span class="mkt-label"><img src="https://flagcdn.com/16x12/in.png" class="mkt-flag-img" alt="IN"> MIDCAP 100</span>
           <span class="mkt-price">—</span>
           <span class="mkt-chg">—</span>
         </div>
         <div class="mkt-divider" aria-hidden="true"></div>
-        <span class="mkt-region-label">🌍 Global</span>
         <div class="mkt-tile" id="mkt-DJI">
-          <span class="mkt-label">DOW JONES</span>
+          <span class="mkt-label"><img src="https://flagcdn.com/16x12/us.png" class="mkt-flag-img" alt="US"> DOW JONES</span>
           <span class="mkt-price">—</span>
           <span class="mkt-chg">—</span>
         </div>
         <div class="mkt-tile" id="mkt-IXIC">
-          <span class="mkt-label">NASDAQ</span>
+          <span class="mkt-label"><img src="https://flagcdn.com/16x12/us.png" class="mkt-flag-img" alt="US"> NASDAQ</span>
           <span class="mkt-price">—</span>
           <span class="mkt-chg">—</span>
         </div>
         <div class="mkt-tile" id="mkt-GSPC">
-          <span class="mkt-label">S&amp;P 500</span>
+          <span class="mkt-label"><img src="https://flagcdn.com/16x12/us.png" class="mkt-flag-img" alt="US"> S&amp;P 500</span>
           <span class="mkt-price">—</span>
           <span class="mkt-chg">—</span>
         </div>
         <div class="mkt-tile" id="mkt-N225">
-          <span class="mkt-label">NIKKEI 225</span>
+          <span class="mkt-label"><img src="https://flagcdn.com/16x12/jp.png" class="mkt-flag-img" alt="JP"> NIKKEI 225</span>
           <span class="mkt-price">—</span>
           <span class="mkt-chg">—</span>
         </div>
         <div class="mkt-tile" id="mkt-HSI">
-          <span class="mkt-label">HANG SENG</span>
+          <span class="mkt-label"><img src="https://flagcdn.com/16x12/hk.png" class="mkt-flag-img" alt="HK"> HANG SENG</span>
           <span class="mkt-price">—</span>
           <span class="mkt-chg">—</span>
         </div>
         <!-- set B (duplicate for seamless loop) -->
-        <span class="mkt-region-label" aria-hidden="true">🇮🇳 India</span>
         <div class="mkt-tile mkt-clone" data-src="mkt-NSEI">
-          <span class="mkt-label">NIFTY 50</span>
+          <span class="mkt-label"><img src="https://flagcdn.com/16x12/in.png" class="mkt-flag-img" alt="IN"> NIFTY 50</span>
           <span class="mkt-price">—</span>
           <span class="mkt-chg">—</span>
         </div>
         <div class="mkt-tile mkt-clone" data-src="mkt-NSEBANK">
-          <span class="mkt-label">BANK NIFTY</span>
+          <span class="mkt-label"><img src="https://flagcdn.com/16x12/in.png" class="mkt-flag-img" alt="IN"> BANK NIFTY</span>
           <span class="mkt-price">—</span>
           <span class="mkt-chg">—</span>
         </div>
         <div class="mkt-tile mkt-clone" data-src="mkt-FINNIFTY">
-          <span class="mkt-label">FIN NIFTY</span>
+          <span class="mkt-label"><img src="https://flagcdn.com/16x12/in.png" class="mkt-flag-img" alt="IN"> FIN NIFTY</span>
           <span class="mkt-price">—</span>
           <span class="mkt-chg">—</span>
         </div>
         <div class="mkt-tile mkt-clone" data-src="mkt-NIFTYIT">
-          <span class="mkt-label">NIFTY IT</span>
+          <span class="mkt-label"><img src="https://flagcdn.com/16x12/in.png" class="mkt-flag-img" alt="IN"> NIFTY IT</span>
           <span class="mkt-price">—</span>
           <span class="mkt-chg">—</span>
         </div>
         <div class="mkt-tile mkt-clone" data-src="mkt-INDIAVIX">
-          <span class="mkt-label">INDIA VIX</span>
+          <span class="mkt-label"><img src="https://flagcdn.com/16x12/in.png" class="mkt-flag-img" alt="IN"> INDIA VIX</span>
           <span class="mkt-price">—</span>
           <span class="mkt-chg">—</span>
         </div>
         <div class="mkt-tile mkt-clone" data-src="mkt-MIDCAP">
-          <span class="mkt-label">MIDCAP 100</span>
+          <span class="mkt-label"><img src="https://flagcdn.com/16x12/in.png" class="mkt-flag-img" alt="IN"> MIDCAP 100</span>
           <span class="mkt-price">—</span>
           <span class="mkt-chg">—</span>
         </div>
         <div class="mkt-divider" aria-hidden="true"></div>
-        <span class="mkt-region-label" aria-hidden="true">🌍 Global</span>
         <div class="mkt-tile mkt-clone" data-src="mkt-DJI">
-          <span class="mkt-label">DOW JONES</span>
+          <span class="mkt-label"><img src="https://flagcdn.com/16x12/us.png" class="mkt-flag-img" alt="US"> DOW JONES</span>
           <span class="mkt-price">—</span>
           <span class="mkt-chg">—</span>
         </div>
         <div class="mkt-tile mkt-clone" data-src="mkt-IXIC">
-          <span class="mkt-label">NASDAQ</span>
+          <span class="mkt-label"><img src="https://flagcdn.com/16x12/us.png" class="mkt-flag-img" alt="US"> NASDAQ</span>
           <span class="mkt-price">—</span>
           <span class="mkt-chg">—</span>
         </div>
         <div class="mkt-tile mkt-clone" data-src="mkt-GSPC">
-          <span class="mkt-label">S&amp;P 500</span>
+          <span class="mkt-label"><img src="https://flagcdn.com/16x12/us.png" class="mkt-flag-img" alt="US"> S&amp;P 500</span>
           <span class="mkt-price">—</span>
           <span class="mkt-chg">—</span>
         </div>
         <div class="mkt-tile mkt-clone" data-src="mkt-N225">
-          <span class="mkt-label">NIKKEI 225</span>
+          <span class="mkt-label"><img src="https://flagcdn.com/16x12/jp.png" class="mkt-flag-img" alt="JP"> NIKKEI 225</span>
           <span class="mkt-price">—</span>
           <span class="mkt-chg">—</span>
         </div>
         <div class="mkt-tile mkt-clone" data-src="mkt-HSI">
-          <span class="mkt-label">HANG SENG</span>
+          <span class="mkt-label"><img src="https://flagcdn.com/16x12/hk.png" class="mkt-flag-img" alt="HK"> HANG SENG</span>
           <span class="mkt-price">—</span>
           <span class="mkt-chg">—</span>
         </div>
@@ -1381,6 +1685,7 @@ app.get("/", async (req: Request, res: Response) => {
         <div class="screener-hero-text">
           <h1>NSE Stock Screener</h1>
           <p class="screener-hero-sub">Filter 1,700+ stocks by ROCE, D/E, P/E, promoter % and more — free forever</p>
+          ${priceAsOf ? `<span class="data-freshness-badge">📅 Prices as of ${priceAsOf} · NSE EOD · Fundamentals updated weekly</span>` : ""}
         </div>
         <div class="screener-hero-stats">
           <div class="sh-stat"><strong>1,700+</strong><span>NSE Stocks</span></div>
@@ -1402,6 +1707,7 @@ app.get("/", async (req: Request, res: Response) => {
           </div>
           <a href="/today" class="today-view-all">View all ${todayPicks.length} →</a>
         </div>
+        <div class="picks-data-note">📋 Based on last market close · Fundamentals, signals &amp; price action analysed · Not SEBI registered · Educational only</div>
         <div class="today-picks-grid">
           ${todayPicks.slice(0, 6).map(p => `
           <a href="/today" class="today-pick-card today-pick-card-${p.direction.toLowerCase()}">
@@ -1715,7 +2021,7 @@ app.get("/", async (req: Request, res: Response) => {
       </details>
 
       <!-- Results -->
-      <div class="results-header">
+      <div id="results-section" class="results-header">
         <span>${stocks.length}${hasNextPage ? "+" : ""} stocks${page > 1 ? ` · Page ${page}` : ""}${activeStrategy ? ` · <strong>${STRATEGIES.find(s => s.id === activeStrategy)?.label || ""}</strong>` : ""}</span>
         <span class="tier-pill tier-expert">🔴 Investors</span>
         <div class="results-actions">
@@ -1731,22 +2037,22 @@ app.get("/", async (req: Request, res: Response) => {
           <thead>
             <tr>
               <th class="cmp-col"></th>
-              <th>Symbol</th><th>Company</th><th>Sector</th>
+              <th>Symbol</th><th>Company</th>
               <th>Price</th><th>Chg%</th><th>Volume</th>
               <th>ROCE%</th><th>ROE%</th><th>D/E</th>
-              <th>Promoter%</th><th>P/E</th><th>Mkt Cap</th><th>Profit</th>
+              <th>Promoter%</th><th>P/E</th><th>Profit</th>
             </tr>
           </thead>
-          <tbody>${rows || '<tr><td colspan="14" class="no-data">No results. Try a strategy above or adjust filters.</td></tr>'}</tbody>
+          <tbody>${rows || '<tr><td colspan="12" class="no-data">No results. Try a strategy above or adjust filters.</td></tr>'}</tbody>
         </table>
       </div>
 
       <!-- Pagination -->
       ${(page > 1 || hasNextPage) ? `
       <div class="pagination">
-        ${page > 1 ? `<a href="/?${prevPageQ.toString()}" class="btn-secondary page-btn">← Prev</a>` : `<span class="page-btn page-disabled">← Prev</span>`}
+        ${page > 1 ? `<a href="/?${prevPageQ.toString()}#results-section" class="btn-secondary page-btn">← Prev</a>` : `<span class="page-btn page-disabled">← Prev</span>`}
         <span class="page-info">Page ${page}</span>
-        ${hasNextPage ? `<a href="/?${nextPageQ.toString()}" class="btn-secondary page-btn">Next →</a>` : `<span class="page-btn page-disabled">Next →</span>`}
+        ${hasNextPage ? `<a href="/?${nextPageQ.toString()}#results-section" class="btn-secondary page-btn">Next →</a>` : `<span class="page-btn page-disabled">Next →</span>`}
       </div>` : ""}
     </div>
 
@@ -2281,7 +2587,7 @@ app.get("/stock/:symbol", async (req: Request, res: Response) => {
 });
 
 // ── GET /watchlists ────────────────────────────────────────────────────────────
-app.get("/watchlists", requireAuth, async (req: Request, res: Response) => {
+app.get("/watchlists", requireAuth, featureGate("feature_watchlists", "Watchlists"), premiumGate("watchlists_premium_only", "Watchlists"), async (req: Request, res: Response) => {
   const lists = (await getWatchlists()) as any[];
   const cards = lists.map(w => `
     <div class="wl-card">
@@ -2439,9 +2745,9 @@ app.get("/admin", requireAdmin, async (req: Request, res: Response) => {
   const activePicks  = await getActivePicks();
 
   const [pvToday, pvTotal, uvToday] = await Promise.all([
-    dbAll<{ c: number }>("SELECT COUNT(*) as c FROM page_views WHERE date(viewed_at) = date('now','localtime')"),
+    dbAll<{ c: number }>("SELECT COUNT(*) as c FROM page_views WHERE date(created_at) = date('now','localtime')"),
     dbAll<{ c: number }>("SELECT COUNT(*) as c FROM page_views"),
-    dbAll<{ c: number }>("SELECT COUNT(DISTINCT ip_hash) as c FROM page_views WHERE date(viewed_at) = date('now','localtime')"),
+    dbAll<{ c: number }>("SELECT COUNT(DISTINCT ip_hash) as c FROM page_views WHERE date(created_at) = date('now','localtime')"),
   ]);
 
   const botStatus = (() => {
@@ -2512,6 +2818,7 @@ app.get("/admin", requireAdmin, async (req: Request, res: Response) => {
           <a href="/admin/users" class="btn-secondary">👥 Users</a>
           <a href="/admin/analytics" class="btn-secondary">📊 Analytics</a>
           <a href="/admin/content" class="btn-secondary">📢 Content</a>
+          <a href="/admin/settings" class="btn-secondary">⚙️ Settings</a>
         </div>
       </div>
     </div>
@@ -2569,6 +2876,7 @@ app.get("/admin/users", requireAdmin, async (req: Request, res: Response) => {
         <a href="/admin" class="btn-secondary">🧠 Overview</a>
         <a href="/admin/analytics" class="btn-secondary">📈 Analytics</a>
         <a href="/admin/data" class="btn-secondary">📊 Data Control</a>
+        <a href="/admin/settings" class="btn-secondary">⚙️ Settings</a>
       </div>
     </div>
 
@@ -2630,6 +2938,24 @@ app.get("/admin/data", requireAdmin, async (req: Request, res: Response) => {
   <meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
   <title>Data Control — ZeroScreen Admin</title>
   <link rel="stylesheet" href="/public/css/style.css">
+  <style>
+    .settings-section { margin-top:32px; }
+    .settings-section h2 { font-size:16px; font-weight:600; margin-bottom:16px; color:var(--text-main); }
+    .setting-row { display:flex; align-items:center; justify-content:space-between; gap:16px; padding:16px 20px; background:var(--card-bg); border:1px solid var(--border); border-radius:10px; margin-bottom:12px; }
+    .setting-info { flex:1; }
+    .setting-title { font-weight:600; font-size:14px; color:var(--text-main); }
+    .setting-desc  { font-size:12px; color:var(--text-dim); margin-top:3px; }
+    .toggle-wrap { display:flex; align-items:center; gap:10px; flex-shrink:0; }
+    .toggle-label { font-size:13px; font-weight:600; }
+    .toggle-label.on  { color:#16a34a; }
+    .toggle-label.off { color:#dc2626; }
+    .toggle-btn { position:relative; width:52px; height:28px; cursor:pointer; }
+    .toggle-btn input { opacity:0; width:0; height:0; position:absolute; }
+    .toggle-slider { position:absolute; inset:0; border-radius:28px; background:#cbd5e1; transition:.25s; }
+    .toggle-slider:before { content:""; position:absolute; height:20px; width:20px; left:4px; bottom:4px; border-radius:50%; background:#fff; transition:.25s; }
+    .toggle-btn input:checked + .toggle-slider { background:#16a34a; }
+    .toggle-btn input:checked + .toggle-slider:before { transform:translateX(24px); }
+  </style>
 </head>
 <body>
   ${nav("admin-users", req)}
@@ -2638,7 +2964,7 @@ app.get("/admin/data", requireAdmin, async (req: Request, res: Response) => {
       <div>
         <a href="/admin" class="back-link">← Admin</a>
         <h1>📊 Data Control</h1>
-        <p class="page-sub">Manage stock data on the server</p>
+        <p class="page-sub">Manage stock data and feature settings</p>
       </div>
     </div>
     ${msg ? `<div class="auth-success" style="margin-bottom:18px">✅ ${esc(msg)}</div>` : ""}
@@ -2669,6 +2995,7 @@ app.get("/admin/data", requireAdmin, async (req: Request, res: Response) => {
       <div class="progress-spinner"></div>
       <span id="job-status-text">Running…</span>
     </div>
+
   </div>
   <script>
     async function triggerJob(type, btn) {
@@ -2689,6 +3016,164 @@ app.get("/admin/data", requireAdmin, async (req: Request, res: Response) => {
         statusText.textContent = '⚠️ Network error';
       }
       btn.disabled = false;
+    }
+
+
+  </script>
+  <script src="/public/js/app.js"></script>
+</body>
+</html>`);
+});
+
+// ── POST /admin/settings/toggle ───────────────────────────────────────────────
+app.post("/admin/settings/toggle", requireAdmin, async (req: Request, res: Response) => {
+  const allowed = [
+    "otp_required", "razorpay_enabled",
+    "registration_open",
+    "feature_signals", "feature_dashboard", "feature_strategies",
+    "feature_paper_trade_bot", "feature_my_paper_trade",
+    "feature_watchlists", "feature_alerts", "feature_compare",
+    "feature_strategy_builder", "feature_contact",
+    "watchlists_premium_only", "alerts_premium_only", "paper_trade_premium_only",
+  ];
+  const { key, value } = req.body as { key: string; value: string };
+  if (!allowed.includes(key) || !["true", "false"].includes(value)) {
+    res.status(400).json({ error: "Invalid setting" }); return;
+  }
+  await setSetting(key, value);
+  res.json({ ok: true });
+});
+
+// ── GET /admin/settings ────────────────────────────────────────────────────────
+app.get("/admin/settings", requireAdmin, async (req: Request, res: Response) => {
+  const s: Record<string, string> = {};
+  const keys = [
+    "otp_required", "registration_open",
+    "feature_signals", "feature_dashboard", "feature_strategies",
+    "feature_paper_trade_bot", "feature_my_paper_trade",
+    "feature_watchlists", "feature_alerts", "feature_compare",
+    "feature_strategy_builder", "feature_contact",
+    "watchlists_premium_only", "alerts_premium_only", "paper_trade_premium_only",
+  ];
+  await Promise.all(keys.map(async k => { s[k] = await getSetting(k); }));
+
+  const isOn  = (k: string) => s[k] !== "false";
+  const isOff = (k: string) => s[k] === "false";
+
+  function toggle(key: string, label: string, desc: string, extra = "") {
+    const on = isOn(key);
+    return `
+    <div class="setting-row">
+      <div class="setting-info">
+        <div class="setting-title">${label}</div>
+        <div class="setting-desc">${desc}${extra ? `<br><span style="color:#f59e0b;font-size:11px">⚠️ ${extra}</span>` : ""}</div>
+      </div>
+      <div class="toggle-wrap">
+        <span class="toggle-label ${on ? "on" : "off"}" id="lbl-${key}">${on ? "ON" : "OFF"}</span>
+        <label class="toggle-btn">
+          <input type="checkbox" id="tog-${key}" ${on ? "checked" : ""} onchange="save('${key}', this.checked)">
+          <span class="toggle-slider"></span>
+        </label>
+      </div>
+    </div>`;
+  }
+
+  res.send(`<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Feature Settings — ZeroScreen Admin</title>
+  <link rel="stylesheet" href="/public/css/style.css">
+  <style>
+    .settings-section { margin-top:28px; }
+    .settings-section h2 { font-size:15px; font-weight:700; margin-bottom:14px; color:var(--text-main); padding-bottom:8px; border-bottom:1px solid var(--border); }
+    .setting-row { display:flex; align-items:center; justify-content:space-between; gap:16px; padding:14px 18px; background:var(--card-bg); border:1px solid var(--border); border-radius:10px; margin-bottom:10px; }
+    .setting-info { flex:1; min-width:0; }
+    .setting-title { font-weight:600; font-size:14px; color:var(--text-main); }
+    .setting-desc  { font-size:12px; color:var(--text-dim); margin-top:3px; line-height:1.5; }
+    .toggle-wrap { display:flex; align-items:center; gap:10px; flex-shrink:0; }
+    .toggle-label { font-size:13px; font-weight:700; min-width:28px; text-align:right; }
+    .toggle-label.on  { color:#16a34a; }
+    .toggle-label.off { color:#dc2626; }
+    .toggle-btn { position:relative; width:52px; height:28px; cursor:pointer; }
+    .toggle-btn input { opacity:0; width:0; height:0; position:absolute; }
+    .toggle-slider { position:absolute; inset:0; border-radius:28px; background:#cbd5e1; transition:.25s; }
+    .toggle-slider:before { content:""; position:absolute; height:20px; width:20px; left:4px; bottom:4px; border-radius:50%; background:#fff; transition:.25s; }
+    .toggle-btn input:checked + .toggle-slider { background:#16a34a; }
+    .toggle-btn input:checked + .toggle-slider:before { transform:translateX(24px); }
+    .toast { position:fixed; bottom:24px; right:24px; background:#1e293b; color:#fff; padding:10px 18px; border-radius:8px; font-size:13px; opacity:0; transition:opacity .3s; pointer-events:none; z-index:9999; }
+    .toast.show { opacity:1; }
+  </style>
+</head>
+<body>
+  ${nav("admin-users", req)}
+  <div class="container" style="max-width:720px">
+    <div class="page-header">
+      <div>
+        <a href="/admin" class="back-link">← Admin</a>
+        <h1>⚙️ Feature Settings</h1>
+        <p class="page-sub">Enable or disable pages and control role-based access</p>
+      </div>
+    </div>
+
+    <div class="settings-section">
+      <h2>🔐 Registration & Auth</h2>
+      ${toggle("otp_required", "📱 Mobile OTP Verification", "Require users to verify mobile via OTP before accessing Paper Trade. Disable if SMS delivery is unavailable.")}
+      ${toggle("registration_open", "🆕 New User Registration", "Allow new users to sign up. Disable to make the platform invite-only.", "Existing users can still log in.")}
+    </div>
+
+    <div class="settings-section">
+      <h2>📄 Page Visibility <span style="font-size:11px;font-weight:400;color:var(--text-dim)">(OFF = 404 for all users)</span></h2>
+      ${toggle("feature_signals", "📡 Signals Page", "Live BANKNIFTY bot signals and trade history.")}
+      ${toggle("feature_dashboard", "📊 Dashboard Page", "Bot analytics, equity curve, 5-year backtest stats.")}
+      ${toggle("feature_strategies", "⚙️ Strategies Page", "Strategy showcase with backtest numbers.")}
+      ${toggle("feature_paper_trade_bot", "📋 Bot Paper Trade Page", "Public paper trade portfolio run by the bot engine.")}
+      ${toggle("feature_my_paper_trade", "👤 My Paper Trade", "Personal paper trading portfolio for logged-in users.")}
+      ${toggle("feature_watchlists", "⭐ Watchlists", "Named stock watchlists for logged-in users.")}
+      ${toggle("feature_alerts", "🔔 Alerts", "Saved screener filter alerts with email digest.")}
+      ${toggle("feature_compare", "⚖️ Compare Tool", "Side-by-side stock comparison.")}
+      ${toggle("feature_strategy_builder", "🔨 Strategy Builder", "Plain-English strategy parser.")}
+      ${toggle("feature_contact", "📬 Contact Page", "Contact form and support enquiries.")}
+    </div>
+
+    <div class="settings-section">
+      <h2>💎 Premium-Only Access <span style="font-size:11px;font-weight:400;color:var(--text-dim)">(ON = Premium or Admin only)</span></h2>
+      ${toggle("watchlists_premium_only", "⭐ Watchlists — Premium Only", "Restrict Watchlists to Premium subscribers and admins.")}
+      ${toggle("alerts_premium_only", "🔔 Alerts — Premium Only", "Restrict Alerts to Premium subscribers and admins.")}
+      ${toggle("paper_trade_premium_only", "👤 My Paper Trade — Premium Only", "Restrict personal Paper Trading to Premium subscribers and admins.", "Users on the free plan will be redirected to the upgrade page.")}
+    </div>
+  </div>
+
+  <div class="toast" id="toast"></div>
+
+  <script>
+    async function save(key, value) {
+      const lbl  = document.getElementById('lbl-' + key);
+      const chk  = document.getElementById('tog-' + key);
+      try {
+        const r = await fetch('/admin/settings/toggle', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ key, value: value ? 'true' : 'false' })
+        });
+        if (r.ok) {
+          lbl.textContent = value ? 'ON' : 'OFF';
+          lbl.className = 'toggle-label ' + (value ? 'on' : 'off');
+          showToast('✅ Saved');
+        } else {
+          chk.checked = !value;
+          showToast('⚠️ Failed to save');
+        }
+      } catch(e) {
+        chk.checked = !value;
+        showToast('⚠️ Network error');
+      }
+    }
+    function showToast(msg) {
+      const t = document.getElementById('toast');
+      t.textContent = msg;
+      t.classList.add('show');
+      setTimeout(() => t.classList.remove('show'), 2200);
     }
   </script>
   <script src="/public/js/app.js"></script>
@@ -2744,7 +3229,7 @@ app.get("/api/screen/csv", requireAuth, async (req: Request, res: Response) => {
 });
 
 // ── GET /compare ──────────────────────────────────────────────────────────────
-app.get("/compare", async (req: Request, res: Response) => {
+app.get("/compare", featureGate("feature_compare", "Compare"), async (req: Request, res: Response) => {
   const symbolsParam = (req.query.symbols as string || "").toUpperCase();
   const symbols = symbolsParam.split(",").map(s => s.trim()).filter(Boolean).slice(0, 5);
 
@@ -2929,7 +3414,7 @@ app.get("/compare", async (req: Request, res: Response) => {
 });
 
 // ── GET /alerts ───────────────────────────────────────────────────────────────
-app.get("/alerts", requireAuth, async (req: Request, res: Response) => {
+app.get("/alerts", requireAuth, featureGate("feature_alerts", "Alerts"), premiumGate("alerts_premium_only", "Alerts"), async (req: Request, res: Response) => {
   const alerts = await getAlerts(req.session.userId!);
 
   const cards = alerts.map(a => {
@@ -3241,7 +3726,7 @@ app.post("/api/refresh/stock/:symbol", async (req: Request, res: Response) => {
 });
 
 // ── GET /contact ──────────────────────────────────────────────────────────────
-app.get("/contact", (req: Request, res: Response) => {
+app.get("/contact", featureGate("feature_contact", "Contact"), (req: Request, res: Response) => {
   const success = req.query.sent === "1";
   const error   = req.query.error as string | undefined;
   res.send(`<!DOCTYPE html>
@@ -3879,7 +4364,7 @@ app.get("/api/indicator-scan", async (req: Request, res: Response) => {
 });
 
 // ── GET /strategy-builder ──────────────────────────────────────────────────────
-app.get("/strategy-builder", (req: Request, res: Response) => {
+app.get("/strategy-builder", featureGate("feature_strategy_builder", "Strategy Builder"), (req: Request, res: Response) => {
   res.send(`<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -4219,13 +4704,13 @@ app.get("/strategy-builder", (req: Request, res: Response) => {
 
     // ── Market Cap ─────────────────────────────────────────────────────────────
     if (/large.?cap|bluechip|blue.?chip|nifty 50/i.test(t)) {
-      params.minMc = '20000'; labels['Large Cap (>₹20k Cr)'] = true;
+      params.minPrice = '500'; labels['Large Cap (Price ≥ ₹500)'] = true;
     } else if (/mid.?cap/i.test(t)) {
-      params.minMc = '5000'; params.maxMc = '20000'; labels['Mid Cap (₹5k–20k Cr)'] = true;
+      params.minPrice = '100'; params.maxPrice = '1500'; labels['Mid Cap (₹100–1500)'] = true;
     } else if (/small.?cap/i.test(t)) {
-      params.minMc = '500'; params.maxMc = '5000'; labels['Small Cap (₹500–5k Cr)'] = true;
+      params.maxPrice = '300'; labels['Small Cap (Price ≤ ₹300)'] = true;
     } else if (/micro.?cap|penny/i.test(t)) {
-      params.maxMc = '500'; labels['Micro Cap (<₹500 Cr)'] = true;
+      params.maxPrice = '50'; labels['Micro Cap / Penny (Price ≤ ₹50)'] = true;
     }
 
     // ── Profitability ──────────────────────────────────────────────────────────
@@ -4343,7 +4828,7 @@ app.get("/strategy-builder", (req: Request, res: Response) => {
     filtersDiv.innerHTML     = labelKeys.map(function(l){ return '<span class="sb-filter-tag">'+l+'</span>'; }).join('');
 
     var qs = new URLSearchParams(params).toString();
-    applyBtn.href = '/?' + qs;
+    applyBtn.href = '/?' + qs + '&strategy=custom';
   }
   </script>
 </body>
@@ -4356,7 +4841,7 @@ app.get("/admin/analytics", requireAdmin, async (req: Request, res: Response) =>
   const daily = await dbAll<{day:string;views:number;unique:number}>(
     `SELECT date(created_at) as day,
             COUNT(*) as views,
-            COUNT(DISTINCT ip_hash) as unique
+            COUNT(DISTINCT ip_hash) as unique_visitors
      FROM page_views
      WHERE created_at >= date('now','localtime','-14 days')
      GROUP BY date(created_at) ORDER BY day DESC`
@@ -4432,7 +4917,7 @@ app.get("/admin/analytics", requireAdmin, async (req: Request, res: Response) =>
           ${daily.map(d => `<tr style="border-bottom:1px solid var(--border)">
             <td style="padding:6px 0">${esc(d.day)}</td>
             <td style="padding:6px 0;text-align:right;font-weight:600">${d.views}</td>
-            <td style="padding:6px 0;text-align:right;color:var(--accent)">${d.unique}</td>
+            <td style="padding:6px 0;text-align:right;color:var(--accent)">${(d as any).unique_visitors}</td>
           </tr>`).join("")}
         </table>
       </div>
@@ -4881,6 +5366,7 @@ app.get("/today", async (req: Request, res: Response) => {
         <h1 class="picks-hero-title">🔥 Today's Picks</h1>
         <p class="picks-hero-sub">Curated trading opportunities across 3 horizons · Updated daily</p>
         ${picks.length > 0 ? `<div class="picks-hero-count">🎯 ${picks.length} active pick${picks.length !== 1 ? "s" : ""} today</div>` : ""}
+        <div class="picks-disclaimer-banner">📋 Picks are selected based on <strong>last market close data</strong> — fundamentals, price action &amp; signals analysed post-market. Entry zones are reference prices only. <strong>Not SEBI registered. Not investment advice. Do your own research.</strong></div>
       </div>
       <div class="picks-hero-meta">
         <span class="picks-hero-updated">🕐 ${new Date().toLocaleDateString("en-IN",{day:"2-digit",month:"short",year:"numeric"})}</span>
@@ -5156,7 +5642,7 @@ app.get("/api/bot/status", (_req: Request, res: Response) => {
 });
 
 // ── GET /paper-trade ───────────────────────────────────────────────────────────
-app.get("/paper-trade", (req: Request, res: Response) => {
+app.get("/paper-trade", featureGate("feature_paper_trade_bot", "Paper Trade"), async (req: Request, res: Response) => {
   const PAPER_DIR = "/home/ubuntu/trading-bot";
   function readPaperJSON(file: string, fallback: any = null) {
     try {
@@ -5166,53 +5652,58 @@ app.get("/paper-trade", (req: Request, res: Response) => {
     } catch { return fallback; }
   }
 
-  const trades: any[] = readPaperJSON("paper-trades.json", []);
-  const records: any  = readPaperJSON("paper-records.json", { daily: [], weekly: [], monthly: [] });
-
-  // Summary stats
-  const closed   = trades.filter((t: any) => t.status !== "OPEN");
-  const open     = trades.filter((t: any) => t.status === "OPEN");
+  // ── Bot performance stats (always shown for social proof) ──────────────────
+  const botTrades: any[] = readPaperJSON("paper-trades.json", []);
+  const closed   = botTrades.filter((t: any) => t.status !== "OPEN");
   const wins     = closed.filter((t: any) => (t.pnl ?? 0) > 0).length;
   const totalPnl = closed.reduce((s: number, t: any) => s + (t.pnl ?? 0), 0);
   const winRate  = closed.length > 0 ? ((wins / closed.length) * 100).toFixed(1) : "—";
   const avgPnl   = closed.length > 0 ? (totalPnl / closed.length).toFixed(1) : "—";
+  const openCount = botTrades.filter((t: any) => t.status === "OPEN").length;
 
-  // By strategy
-  const bySt = ["BANKNIFTY", "EQUITY_SWING", "PENNY"].map(st => {
-    const stClosed = closed.filter((t: any) => t.strategy === st);
-    const stPnl    = stClosed.reduce((s: number, t: any) => s + (t.pnl ?? 0), 0);
-    const stWins   = stClosed.filter((t: any) => (t.pnl ?? 0) > 0).length;
-    const stOpen   = open.filter((t: any) => t.strategy === st).length;
-    return { st, trades: stClosed.length, wins: stWins, pnl: stPnl, open: stOpen };
-  });
+  // ── User-specific data (only when logged in) ───────────────────────────────
+  const userId = req.session?.userId;
+  const isLoggedIn = !!userId;
+  let port: any = { balance: 100000 }, tradeCount = 0, ptConfig: any = { trade_type: "INTRADAY", default_qty: 1 };
+  let isPremiumUser = false, creditsOut = false, tradesLeft: number | null = null, freeLimit = 10;
+  let userPositions: any[] = [];
 
-  // Equity curve from closed trades sorted by exitDate
-  const sortedClosed = [...closed].sort((a: any, b: any) =>
-    (a.exitDate ?? "").localeCompare(b.exitDate ?? ""));
-  let eq = 0;
-  const eqCurve = sortedClosed.map((t: any) => { eq += t.pnl ?? 0; return parseFloat(eq.toFixed(1)); });
-  const eqLabels = sortedClosed.map((t: any, i: number) =>
-    t.exitDate ? t.exitDate.slice(5) : `#${i + 1}`);
+  if (isLoggedIn) {
+    const [activeSub, portData, count, config, fl] = await Promise.all([
+      getActiveSubscription(userId!),
+      getPaperPortfolio(userId!),
+      countPaperTrades(userId!),
+      getPaperTradeConfig(userId!),
+      getSetting("paper_free_limit"),
+    ]);
+    port = portData;
+    tradeCount = count;
+    ptConfig = config;
+    freeLimit = parseInt(fl || "10", 10);
+    isPremiumUser = !!activeSub || req.session!.userRole === "premium" || req.session!.userRole === "admin";
+    tradesLeft = isPremiumUser ? null : Math.max(0, freeLimit - tradeCount);
+    creditsOut = !isPremiumUser && tradeCount >= freeLimit;
 
-  // Monthly records
-  const monthly: any[] = [...(records.monthly || [])].reverse().slice(0, 12);
+    // Load open positions for quick reference
+    userPositions = await getPaperPositions(userId!);
+    const dbPrices = userPositions.length
+      ? await dbAll<{ symbol: string; price: number | null }>(
+          `SELECT symbol, price FROM prices WHERE symbol IN (${userPositions.map(() => "?").join(",")})`,
+          userPositions.map((p: any) => p.symbol)
+        )
+      : [];
+    const priceMap: Record<string, number> = {};
+    for (const r of dbPrices) if (r.price != null) priceMap[r.symbol] = r.price;
+    userPositions = userPositions.map(p => {
+      const livePrice = priceMap[p.symbol] ?? p.avg_price;
+      const pnl = parseFloat(((livePrice - p.avg_price) * p.qty).toFixed(2));
+      return { ...p, livePrice, pnl };
+    });
+  }
 
-  // Recent trades (newest first)
-  const recentTrades = [...trades].reverse().slice(0, 50);
-
-  const stLabel: Record<string, string> = {
-    BANKNIFTY: "BANKNIFTY", EQUITY_SWING: "Equity Swing", PENNY: "Penny"
-  };
-  const stIcon: Record<string, string> = {
-    BANKNIFTY: "📊", EQUITY_SWING: "📈", PENNY: "🪙"
-  };
-  const statusColor: Record<string, string> = {
-    OPEN: "pt-status-open",
-    HIT_TARGET1: "pt-status-win", HIT_TARGET2: "pt-status-win",
-    EOD_EXIT: "pt-status-eod",
-    HIT_SL: "pt-status-loss",
-    EXPIRED: "pt-status-exp",
-  };
+  const marketOpen = isMarketHours();
+  const msgParam = req.query.msg ? `<div class="mpt-msg mpt-msg-ok" style="margin-bottom:16px">✅ ${esc(req.query.msg as string)}</div>` : "";
+  const errParam = req.query.err ? `<div class="mpt-msg mpt-msg-err" style="margin-bottom:16px">❌ ${esc(req.query.err as string)}</div>` : "";
 
   res.send(`<!DOCTYPE html>
 <html lang="en">
@@ -5221,186 +5712,647 @@ app.get("/paper-trade", (req: Request, res: Response) => {
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>Paper Trade — ZeroScreen</title>
   <link rel="stylesheet" href="/public/css/style.css">
-  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.2/dist/chart.umd.min.js"></script>
+  <style>
+    /* ── Layout ── */
+    .pt2-hero{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;flex-wrap:wrap;margin-bottom:24px}
+    .pt2-hero-title{font-size:1.7rem;font-weight:800}
+    .pt2-hero-sub{color:var(--text-muted);font-size:0.9rem;margin-top:4px}
+    /* ── Gate (not logged in) ── */
+    .pt2-gate{background:var(--card-bg);border:1px solid var(--border);border-radius:16px;padding:36px 28px;text-align:center;margin-bottom:28px}
+    .pt2-gate-icon{font-size:2.8rem;margin-bottom:12px}
+    .pt2-gate-title{font-size:1.3rem;font-weight:800;margin-bottom:8px}
+    .pt2-gate-sub{color:var(--text-muted);font-size:0.92rem;margin-bottom:24px}
+    .pt2-gate-btn{display:inline-block;background:linear-gradient(135deg,#10b981,#059669);color:#fff;border-radius:10px;padding:13px 32px;font-weight:700;font-size:1rem;text-decoration:none}
+    .pt2-features{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin:24px 0}
+    .pt2-feat{background:var(--bg2);border-radius:10px;padding:14px;text-align:center;font-size:0.88rem}
+    .pt2-feat-icon{font-size:1.4rem;margin-bottom:6px}
+    .pt2-feat-label{font-weight:700}
+    .pt2-feat-desc{color:var(--text-muted);font-size:0.8rem;margin-top:3px}
+    /* ── Credits bar ── */
+    .pt2-credits{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;background:var(--card-bg);border:1px solid var(--border);border-radius:10px;padding:10px 16px;margin-bottom:16px;font-size:0.85rem}
+    .pt2-mh-open{background:#10b98122;color:#10b981;border:1px solid #10b98155;border-radius:20px;padding:3px 10px;font-size:0.78rem;font-weight:700}
+    .pt2-mh-closed{background:#ef444415;color:#ef4444;border:1px solid #ef444455;border-radius:20px;padding:3px 10px;font-size:0.78rem;font-weight:700}
+    /* ── Rich Trade Card ── */
+    .pt2-trade-card{background:var(--card-bg);border:1px solid var(--border);border-radius:16px;overflow:visible;margin-bottom:24px;box-shadow:0 2px 16px rgba(0,0,0,0.06)}
+    .pt2-card-hdr{background:linear-gradient(135deg,#0d9488 0%,#059669 100%);padding:14px 20px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;border-radius:15px 15px 0 0}
+    .pt2-card-title{font-size:0.95rem;font-weight:800;color:#fff;letter-spacing:0.02em}
+    /* Segmented controls */
+    .pt2-seg{display:inline-flex;background:rgba(0,0,0,0.2);border-radius:8px;padding:3px;gap:2px}
+    .pt2-seg-btn{padding:4px 14px;border:none;border-radius:6px;font-weight:700;font-size:0.78rem;cursor:pointer;background:transparent;color:rgba(255,255,255,0.78);transition:all .15s}
+    .pt2-seg-btn.active{background:#fff;color:#059669}
+    .pt2-seg2{display:inline-flex;background:var(--bg2);border-radius:8px;padding:3px;gap:2px}
+    .pt2-seg2-btn{padding:5px 14px;border:none;border-radius:6px;font-weight:700;font-size:0.8rem;cursor:pointer;background:transparent;color:var(--text-muted);transition:all .15s}
+    .pt2-seg2-btn.active{background:#10b981;color:#fff}
+    /* Card body */
+    .pt2-card-body{padding:18px 20px}
+    /* Symbol search row */
+    .pt2-sym-row{margin-bottom:14px}
+    .pt2-sym-inp-wrap{position:relative;display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+    .pt2-sym-inp{flex:1;min-width:160px;background:var(--input-bg,#f4f7fe);border:1.5px solid var(--border);border-radius:10px;padding:10px 14px;color:var(--text);font-size:0.95rem;font-weight:600}
+    .pt2-sym-inp:focus{border-color:#10b981;outline:none;box-shadow:0 0 0 3px rgba(16,185,129,0.12)}
+    html.dark .pt2-sym-inp{background:#1c2128}
+    .pt2-search-drop{position:absolute;top:calc(100% + 4px);left:0;background:var(--card-bg);border:1px solid var(--border);border-radius:10px;z-index:200;width:280px;box-shadow:0 8px 28px rgba(0,0,0,0.18);max-height:240px;overflow-y:auto}
+    .pt2-search-item{padding:9px 14px;cursor:pointer;font-size:0.88rem}
+    .pt2-search-item:hover{background:var(--hover-bg)}
+    /* Live price badge */
+    .pt2-lpb{display:none;align-items:center;gap:8px;background:var(--bg2);border:1px solid var(--border);border-radius:20px;padding:5px 12px;font-size:0.85rem;font-weight:800;white-space:nowrap}
+    .pt2-lpb.visible{display:inline-flex}
+    .pt2-lpb-chg{font-size:0.76rem}
+    .pt2-lpb-chg.pos{color:#10b981}
+    .pt2-lpb-chg.neg{color:#ef4444}
+    /* Order type row */
+    .pt2-ot-row{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:14px}
+    .pt2-ot-label{font-size:0.7rem;font-weight:700;text-transform:uppercase;letter-spacing:.07em;color:var(--text-muted)}
+    /* Fields row */
+    .pt2-fields-row{display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;margin-bottom:14px}
+    .pt2-fld{display:flex;flex-direction:column;gap:4px}
+    .pt2-fld>label{font-size:0.7rem;font-weight:700;text-transform:uppercase;letter-spacing:.07em;color:var(--text-muted)}
+    .pt2-fld input,.pt2-fld select{background:var(--input-bg,#f4f7fe);border:1.5px solid var(--border);border-radius:8px;padding:8px 11px;color:var(--text);font-size:0.9rem;font-weight:600;transition:border-color .15s}
+    .pt2-fld input:focus,.pt2-fld select:focus{border-color:#10b981;outline:none}
+    html.dark .pt2-fld input,html.dark .pt2-fld select{background:#1c2128}
+    .pt2-cost-disp{padding:8px 12px;font-weight:800;font-size:1.05rem;color:#10b981;background:rgba(16,185,129,0.09);border:1.5px solid rgba(16,185,129,0.22);border-radius:8px;min-width:110px;text-align:right;font-variant-numeric:tabular-nums}
+    /* Risk row — SL & Target */
+    .pt2-risk-row{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:16px}
+    .pt2-risk-card{border-radius:12px;padding:12px 14px;border:1.5px solid}
+    .pt2-risk-card.sl{background:rgba(239,68,68,0.05);border-color:rgba(239,68,68,0.28)}
+    .pt2-risk-card.tgt{background:rgba(16,185,129,0.05);border-color:rgba(16,185,129,0.28)}
+    .pt2-risk-hdr{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px}
+    .pt2-risk-lbl{font-size:0.7rem;font-weight:700;text-transform:uppercase;letter-spacing:.07em}
+    .pt2-risk-card.sl .pt2-risk-lbl{color:#ef4444}
+    .pt2-risk-card.tgt .pt2-risk-lbl{color:#10b981}
+    .pt2-pct-wrap{display:flex;align-items:center;gap:3px}
+    .pt2-pct-inp{width:52px;padding:4px 6px;border-radius:6px;border:1.5px solid var(--border);background:var(--input-bg,#f4f7fe);font-size:0.82rem;font-weight:700;text-align:center;color:var(--text)}
+    html.dark .pt2-pct-inp{background:#1c2128}
+    .pt2-pct-suf{font-size:0.78rem;color:var(--text-muted);font-weight:600}
+    .pt2-risk-price{font-size:1.08rem;font-weight:800;margin:4px 0 2px;font-variant-numeric:tabular-nums}
+    .pt2-risk-card.sl .pt2-risk-price{color:#ef4444}
+    .pt2-risk-card.tgt .pt2-risk-price{color:#10b981}
+    .pt2-risk-note{font-size:0.72rem;color:var(--text-muted)}
+    /* Buy row */
+    .pt2-buy-row{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}
+    .pt2-rr-badge{font-size:0.78rem;background:var(--bg2);border-radius:20px;padding:5px 14px;color:var(--text-muted);font-weight:700;border:1px solid var(--border)}
+    .pt2-btn-place{background:linear-gradient(135deg,#10b981 0%,#059669 100%);color:#fff;border:none;border-radius:10px;padding:12px 32px;font-weight:800;font-size:1rem;cursor:pointer;transition:filter .15s;white-space:nowrap}
+    .pt2-btn-place:hover{filter:brightness(1.08)}
+    .pt2-btn-place:disabled{opacity:.5;cursor:not-allowed;filter:none}
+    /* Open positions */
+    .pt2-pos-section{border-top:1px solid var(--border);margin-top:18px;padding-top:14px}
+    .pt2-pos-row{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:8px 0;border-bottom:1px solid var(--border);font-size:0.87rem;flex-wrap:wrap}
+    .pt2-pos-sym{font-weight:700;color:var(--accent)}
+    .pt2-pos-badge{font-size:0.7rem;padding:2px 7px;border-radius:12px;font-weight:700}
+    .pt2-pos-sl{background:rgba(239,68,68,0.1);color:#ef4444;border:1px solid rgba(239,68,68,0.3)}
+    .pt2-pos-tgt{background:rgba(16,185,129,0.1);color:#10b981;border:1px solid rgba(16,185,129,0.3)}
+    /* Bot stats */
+    .pt2-stats-bar{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:10px;margin:28px 0 8px}
+    .pt2-stat{background:var(--card-bg);border:1px solid var(--border);border-radius:10px;padding:12px 14px;text-align:center}
+    .pt2-stat-label{font-size:0.72rem;text-transform:uppercase;letter-spacing:.06em;color:var(--text-muted);margin-bottom:4px}
+    .pt2-stat-val{font-size:1.15rem;font-weight:700}
+    /* Options panel */
+    .pt2-opts-panel{background:var(--bg2,#f8f6ff);border:1.5px solid rgba(124,58,237,0.22);border-radius:10px;padding:14px 16px;margin-top:14px;display:none}
+    .pt2-opts-panel.show{display:block}
+    .pt2-opts-title{font-size:0.78rem;font-weight:700;text-transform:uppercase;letter-spacing:.07em;color:#7c3aed;margin-bottom:12px}
+    .pt2-opts-row{display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end}
+    .pt2-opt-type-btn{padding:7px 18px;border-radius:7px;border:1.5px solid #7c3aed;font-weight:700;font-size:0.88rem;cursor:pointer;background:transparent;color:#7c3aed;transition:all .15s}
+    .pt2-opt-type-btn.active{background:#7c3aed;color:#fff}
+    .pt2-strike-wrap{display:flex;align-items:center;gap:4px}
+    .pt2-strike-step{width:28px;height:28px;border-radius:6px;border:1px solid var(--border);background:var(--bg2,#f4f7fe);font-weight:700;font-size:1rem;cursor:pointer;display:flex;align-items:center;justify-content:center;color:var(--text)}
+    .pt2-expiry-badge{font-size:0.78rem;background:rgba(124,58,237,0.1);color:#7c3aed;border-radius:20px;padding:3px 10px;font-weight:600}
+    .pt2-atm-label{font-size:0.72rem;color:#10b981;font-weight:700;margin-top:2px}
+    /* Messages */
+    .mpt-msg{padding:12px 16px;border-radius:8px;font-size:0.9rem;font-weight:600}
+    .mpt-msg-ok{background:#10b98122;color:#10b981;border:1px solid #10b98155}
+    .mpt-msg-err{background:#ef444422;color:#ef4444;border:1px solid #ef444455}
+    .mpt-green{color:#10b981} .mpt-red{color:#ef4444} .mpt-yellow{color:#f59e0b}
+    @media(max-width:580px){
+      .pt2-risk-row{grid-template-columns:1fr}
+      .pt2-fields-row{flex-direction:column}
+      .pt2-fld input,.pt2-fld select{width:100%;box-sizing:border-box}
+      .pt2-cost-disp{text-align:left}
+      .pt2-buy-row{flex-direction:column-reverse;align-items:stretch}
+      .pt2-btn-place{text-align:center;width:100%}
+      .pt2-opts-row{flex-direction:column}
+    }
+  </style>
 </head>
 <body class="page-theme-paper">
   ${nav("paper-trade", req)}
-  <div class="container" style="max-width:1100px">
+  <div class="container" style="max-width:840px">
 
-    <!-- HEADER -->
-    <div class="pt-header">
+    ${msgParam}${errParam}
+
+    <div class="pt2-hero">
       <div>
-        <h1 class="pt-title">📋 Paper Trade</h1>
-        <p class="pt-sub">Simulated portfolio · BANKNIFTY + Equity Swing + Penny · No real money</p>
+        <h1 class="pt2-hero-title">📋 Paper Trade</h1>
+        <p class="pt2-hero-sub">Practice trading any NSE stock with ₹1,00,000 virtual money · Zero risk</p>
       </div>
-      <div class="pt-legend">
-        <span class="pt-badge pt-badge-open">OPEN</span>
-        <span class="pt-badge pt-badge-win">TARGET HIT</span>
-        <span class="pt-badge pt-badge-loss">SL HIT</span>
-        <span class="pt-badge pt-badge-eod">EOD EXIT</span>
-      </div>
+      ${isLoggedIn ? `<a href="/my-paper-trade" style="display:inline-flex;align-items:center;gap:8px;background:var(--card-bg);border:1px solid var(--border);border-radius:10px;padding:10px 18px;font-weight:700;font-size:0.88rem;text-decoration:none;color:var(--text)">📊 My Portfolio →</a>` : ""}
     </div>
 
-    <!-- PERSONAL PAPER TRADE CTA -->
-    <div style="background:linear-gradient(135deg,#10b98115,#059669 0%,#10b98115);border:1px solid #10b98155;border-radius:12px;padding:18px 24px;margin-bottom:24px;display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap">
-      <div>
-        <div style="font-weight:800;font-size:1.05rem;color:#10b981">🎯 Trade Any NSE Stock — Paper Trade It!</div>
-        <div style="font-size:0.85rem;color:var(--text-muted);margin-top:4px">Build your own virtual portfolio · Buy & sell 1,700+ stocks · Start with ₹1,00,000 virtual cash · Track your P&L in real-time</div>
-      </div>
-      <a href="${req.session?.userId ? "/my-paper-trade" : "/login?next=/my-paper-trade"}" style="background:#10b981;color:#fff;border-radius:8px;padding:10px 22px;font-weight:700;font-size:0.92rem;text-decoration:none;white-space:nowrap">${req.session?.userId ? "📋 Open My Portfolio →" : "🔑 Sign In to Start →"}</a>
+    ${!isLoggedIn ? `
+    <!-- SIGN-IN GATE -->
+    <div class="pt2-gate">
+      <div class="pt2-gate-icon">📋</div>
+      <div class="pt2-gate-title">Paper Trade Any NSE Stock — Free</div>
+      <div class="pt2-gate-sub">Create a free account to get ₹1,00,000 virtual cash and start practising trades with zero real risk.</div>
+      <a href="/login?next=/paper-trade" class="pt2-gate-btn">🔑 Sign In to Start Trading →</a>
+      <div style="margin-top:12px"><a href="/signup" style="font-size:0.85rem;color:var(--text-muted)">No account? Sign up free →</a></div>
     </div>
 
-    <!-- SUMMARY KPIs -->
-    <div class="pt-kpi-grid">
-      <div class="pt-kpi">
-        <div class="pt-kpi-label">Total PnL</div>
-        <div class="pt-kpi-val ${totalPnl >= 0 ? "pt-green" : "pt-red"}">${totalPnl >= 0 ? "+" : ""}₹${totalPnl.toFixed(0)}</div>
-      </div>
-      <div class="pt-kpi">
-        <div class="pt-kpi-label">Closed Trades</div>
-        <div class="pt-kpi-val">${closed.length}</div>
-      </div>
-      <div class="pt-kpi">
-        <div class="pt-kpi-label">Win Rate</div>
-        <div class="pt-kpi-val pt-green">${winRate}${winRate !== "—" ? "%" : ""}</div>
-      </div>
-      <div class="pt-kpi">
-        <div class="pt-kpi-label">Wins / Losses</div>
-        <div class="pt-kpi-val"><span class="pt-green">${wins}</span> / <span class="pt-red">${closed.length - wins}</span></div>
-      </div>
-      <div class="pt-kpi">
-        <div class="pt-kpi-label">Avg PnL / Trade</div>
-        <div class="pt-kpi-val">${avgPnl !== "—" ? "₹" + avgPnl : "—"}</div>
-      </div>
-      <div class="pt-kpi">
-        <div class="pt-kpi-label">Open Positions</div>
-        <div class="pt-kpi-val pt-yellow">${open.length}</div>
-      </div>
+    <div class="pt2-features">
+      <div class="pt2-feat"><div class="pt2-feat-icon">💰</div><div class="pt2-feat-label">₹1,00,000 Virtual Cash</div><div class="pt2-feat-desc">Start with real-scale capital</div></div>
+      <div class="pt2-feat"><div class="pt2-feat-icon">📈</div><div class="pt2-feat-label">1,700+ NSE Stocks</div><div class="pt2-feat-desc">Trade any NSE-listed stock</div></div>
+      <div class="pt2-feat"><div class="pt2-feat-icon">🕐</div><div class="pt2-feat-label">Intraday & Holding</div><div class="pt2-feat-desc">Both trade types supported</div></div>
+      <div class="pt2-feat"><div class="pt2-feat-icon">📊</div><div class="pt2-feat-label">Live P&L Tracking</div><div class="pt2-feat-desc">Real NSE prices from DB</div></div>
     </div>
 
-    <!-- BY STRATEGY -->
-    <div class="pt-section-label">By Strategy</div>
-    <div class="pt-strat-grid">
-      ${bySt.map(({ st, trades: t, wins: w, pnl, open: o }) => `
-      <div class="pt-strat-card">
-        <div class="pt-strat-icon">${stIcon[st] || "📊"}</div>
-        <div class="pt-strat-name">${stLabel[st] || st}</div>
-        <div class="pt-strat-pnl ${pnl >= 0 ? "pt-green" : "pt-red"}">${pnl >= 0 ? "+" : ""}₹${pnl.toFixed(0)}</div>
-        <div class="pt-strat-meta">${t} closed · ${w} wins · ${o} open</div>
-      </div>`).join("")}
+    ` : `
+    <!-- LOGGED-IN: CREDITS BAR -->
+    <div class="pt2-credits">
+      <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+        ${isPremiumUser
+          ? `<span style="color:#10b981;font-weight:700">👑 Premium — Unlimited trades</span>`
+          : creditsOut
+            ? `<span style="color:#ef4444;font-weight:700">⚠️ Free limit reached (${tradeCount}/${freeLimit}) — <a href="/my-paper-trade/upgrade" style="color:#ef4444">Upgrade →</a></span>`
+            : `<span style="color:#f59e0b;font-weight:700">🎫 ${tradesLeft} of ${freeLimit} free trades left</span>`
+        }
+        <span style="font-size:0.8rem;color:var(--text-muted)">Cash: <strong>₹${port.balance.toLocaleString("en-IN", { maximumFractionDigits: 0 })}</strong></span>
+      </div>
+      <span class="${marketOpen ? "pt2-mh-open" : "pt2-mh-closed"}">${marketOpen ? "🟢 Market Open" : "🔴 Market Closed"}</span>
     </div>
 
-    <!-- EQUITY CURVE -->
-    <div class="pt-section-label">Equity Curve</div>
-    <div class="pt-chart-card">
-      ${eqCurve.length < 2
-        ? `<div class="pt-empty">No closed trades yet — equity curve appears once trades are completed.</div>`
-        : `<canvas id="ptEqChart" height="80"></canvas>`}
+    <!-- RICH TRADE CARD -->
+    <div class="pt2-trade-card">
+      <div class="pt2-card-hdr">
+        <div class="pt2-card-title">🛒 New Order</div>
+        <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+          ${!marketOpen ? `<span style="font-size:0.74rem;background:rgba(255,255,255,0.15);color:#fff;border-radius:12px;padding:3px 10px;font-weight:600">⏸ Market Closed</span>` : ""}
+          <div class="pt2-seg" id="pt2-type-seg">
+            <button type="button" class="pt2-seg-btn ${ptConfig.trade_type === 'HOLDING' ? '' : 'active'}" data-t="INTRADAY" onclick="pt2SetType('INTRADAY')">Intraday</button>
+            <button type="button" class="pt2-seg-btn ${ptConfig.trade_type === 'HOLDING' ? 'active' : ''}" data-t="HOLDING" onclick="pt2SetType('HOLDING')">Holding</button>
+          </div>
+        </div>
+      </div>
+      <div class="pt2-card-body">
+        ${creditsOut ? `<div style="background:#ef444415;border:1px solid #ef444455;border-radius:8px;padding:10px 14px;margin-bottom:14px;font-size:0.85rem;color:#ef4444;font-weight:600">⚠️ Free trade limit reached — <a href="/my-paper-trade/upgrade" style="color:#ef4444;text-decoration:underline">Upgrade to Premium →</a></div>` : ""}
+
+        <form method="POST" action="/my-paper-trade/buy" id="pt2-buy-form">
+          <input type="hidden" name="trade_type" id="pt2-trade-type" value="${ptConfig.trade_type || 'INTRADAY'}">
+          <input type="hidden" name="order_type" id="pt2-order-type-val" value="MARKET">
+          <input type="hidden" name="symbol" id="pt2-symbol-val" required>
+
+          <!-- Symbol search -->
+          <div class="pt2-sym-row">
+            <label style="font-size:0.7rem;font-weight:700;text-transform:uppercase;letter-spacing:.07em;color:var(--text-muted);display:block;margin-bottom:5px">Stock / Symbol</label>
+            <div class="pt2-sym-inp-wrap">
+              <div style="position:relative;flex:1;min-width:160px">
+                <input type="text" id="pt2-stock-search" class="pt2-sym-inp" placeholder="Search symbol or company name…" autocomplete="off" required>
+                <div class="pt2-search-drop" id="pt2-search-drop" style="display:none"></div>
+              </div>
+              <div class="pt2-lpb" id="pt2-lpb">
+                <span id="pt2-lpb-sym" style="color:var(--accent)"></span>
+                <span id="pt2-lpb-price" style="font-variant-numeric:tabular-nums">—</span>
+                <span class="pt2-lpb-chg" id="pt2-lpb-chg"></span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Order type -->
+          <div class="pt2-ot-row">
+            <span class="pt2-ot-label">Order Type</span>
+            <div class="pt2-seg2">
+              <button type="button" class="pt2-seg2-btn active" data-ot="MARKET" onclick="pt2SetOrderType('MARKET')">Market</button>
+              <button type="button" class="pt2-seg2-btn" data-ot="LIMIT" onclick="pt2SetOrderType('LIMIT')">Limit</button>
+            </div>
+            <span id="pt2-ot-note" style="font-size:0.74rem;color:var(--text-muted)">Executes at current market price</span>
+          </div>
+
+          <!-- Qty / Price / Cost -->
+          <div class="pt2-fields-row">
+            <div class="pt2-fld">
+              <label>Quantity</label>
+              <input type="number" name="qty" id="pt2-qty" min="1" max="10000" value="${ptConfig.default_qty || 1}" required style="width:90px" oninput="pt2UpdateRisk()">
+            </div>
+            <div class="pt2-fld">
+              <label id="pt2-price-label">Market Price</label>
+              <input type="number" name="price" id="pt2-price" step="0.05" min="0.1" placeholder="Select a stock" required style="width:130px" readonly oninput="pt2UpdateRisk()">
+            </div>
+            <div class="pt2-fld">
+              <label>Est. Cost</label>
+              <div class="pt2-cost-disp" id="pt2-est-cost">—</div>
+            </div>
+          </div>
+
+          <!-- SL & Target -->
+          <div class="pt2-risk-row">
+            <div class="pt2-risk-card sl">
+              <div class="pt2-risk-hdr">
+                <span class="pt2-risk-lbl">🛡️ Stop Loss</span>
+                <span class="pt2-pct-wrap">
+                  <input type="number" class="pt2-pct-inp" id="pt2-sl-pct" name="sl_pct" step="0.1" min="0" max="50" value="${ptConfig.default_sl_pct || 2.0}" oninput="pt2UpdateRisk()">
+                  <span class="pt2-pct-suf">%</span>
+                </span>
+              </div>
+              <div class="pt2-risk-price" id="pt2-sl-price">₹ —</div>
+              <div class="pt2-risk-note" id="pt2-sl-note">Select a stock first</div>
+            </div>
+            <div class="pt2-risk-card tgt">
+              <div class="pt2-risk-hdr">
+                <span class="pt2-risk-lbl">🎯 Target</span>
+                <span class="pt2-pct-wrap">
+                  <input type="number" class="pt2-pct-inp" id="pt2-tgt-pct" name="target_pct" step="0.1" min="0" max="200" value="${ptConfig.default_tgt_pct || 4.0}" oninput="pt2UpdateRisk()">
+                  <span class="pt2-pct-suf">%</span>
+                </span>
+              </div>
+              <div class="pt2-risk-price" id="pt2-tgt-price">₹ —</div>
+              <div class="pt2-risk-note" id="pt2-tgt-note">Select a stock first</div>
+            </div>
+          </div>
+
+          <!-- Place order row -->
+          <div class="pt2-buy-row">
+            <div class="pt2-rr-badge" id="pt2-rr-badge">Select a stock to see R:R</div>
+            <button type="submit" class="pt2-btn-place" ${creditsOut ? 'disabled onclick="window.location=\'/my-paper-trade/upgrade\';return false;"' : ""}>📈 Place Order</button>
+          </div>
+
+          <!-- OPTIONS PANEL: shown when index symbol detected -->
+          <div class="pt2-opts-panel" id="pt2-opts-panel">
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+              <div class="pt2-opts-title" style="margin-bottom:0">📊 Options Details</div>
+              <button type="button" onclick="document.getElementById('pt2-opts-panel').classList.remove('show');document.getElementById('pt2-stock-search').value='';document.getElementById('pt2-symbol-val').value='';" style="background:none;border:none;cursor:pointer;font-size:1.1rem;color:var(--text-muted);line-height:1;padding:2px 6px" title="Close options panel">✕</button>
+            </div>
+            <div class="pt2-opts-row">
+              <div class="pt2-fld">
+                <label>Option Type</label>
+                <div style="display:flex;gap:6px">
+                  <button type="button" class="pt2-opt-type-btn active" id="pt2-btn-ce" onclick="pt2SelectOptType('CE')">CE</button>
+                  <button type="button" class="pt2-opt-type-btn" id="pt2-btn-pe" onclick="pt2SelectOptType('PE')">PE</button>
+                </div>
+              </div>
+              <div class="pt2-fld">
+                <label>Strike Price</label>
+                <div class="pt2-strike-wrap">
+                  <button type="button" class="pt2-strike-step" onclick="pt2StepStrike(-1)">−</button>
+                  <input type="number" id="pt2-strike-inp" step="1" placeholder="Strike…" style="width:100px;padding:7px 10px;border-radius:7px;border:1px solid var(--border);background:var(--input-bg,#fff);color:var(--text);font-size:0.9rem;font-weight:700" oninput="pt2UpdateOptSymbol()">
+                  <button type="button" class="pt2-strike-step" onclick="pt2StepStrike(1)">+</button>
+                </div>
+                <div class="pt2-atm-label" id="pt2-strike-hint"></div>
+              </div>
+              <div class="pt2-fld">
+                <label>Expiry</label>
+                <div class="pt2-expiry-badge" id="pt2-expiry-badge">—</div>
+              </div>
+              <div class="pt2-fld">
+                <label>Option Symbol</label>
+                <div style="font-size:0.85rem;font-weight:700;color:var(--accent);padding:8px 0" id="pt2-opt-sym-disp">—</div>
+              </div>
+            </div>
+            <div style="font-size:0.75rem;color:var(--text-muted);margin-top:8px">💡 Enter the current option premium in the <strong>Market Price</strong> field above · Qty = number of lots</div>
+          </div>
+        </form>
+
+        ${userPositions.length > 0 ? `
+        <div class="pt2-pos-section">
+          <div style="font-size:0.72rem;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--text-muted);margin-bottom:10px">Open Positions (${userPositions.length})</div>
+          ${userPositions.map((p: any) => `
+          <div class="pt2-pos-row">
+            <span class="pt2-pos-sym"><a href="/stock/${p.symbol}" style="color:var(--accent);text-decoration:none">${p.symbol}</a></span>
+            <span style="font-size:0.8rem;color:var(--text-muted)">${p.trade_type === 'HOLDING' ? 'HOLD' : 'INTRA'} · ${p.qty} qty · ₹${p.avg_price.toFixed(2)}</span>
+            <div style="display:flex;gap:5px;align-items:center;flex-wrap:wrap">
+              ${p.sl_price ? `<span class="pt2-pos-badge pt2-pos-sl">SL ₹${parseFloat(p.sl_price).toFixed(2)}</span>` : ""}
+              ${p.target_price ? `<span class="pt2-pos-badge pt2-pos-tgt">TGT ₹${parseFloat(p.target_price).toFixed(2)}</span>` : ""}
+            </div>
+            <span style="font-weight:700" class="${p.pnl >= 0 ? "mpt-green" : "mpt-red"}">${p.pnl >= 0 ? "+" : ""}₹${p.pnl.toLocaleString("en-IN", { maximumFractionDigits: 0 })}</span>
+            <form method="POST" action="/my-paper-trade/sell" style="display:inline-flex;gap:6px;align-items:center">
+              <input type="hidden" name="symbol" value="${p.symbol}">
+              <input type="number" name="qty" min="1" max="${p.qty}" value="${p.qty}" style="width:56px;padding:3px 7px;border-radius:5px;border:1px solid var(--border);background:var(--input-bg);color:var(--text);font-size:0.8rem">
+              <input type="hidden" name="price" value="${p.livePrice.toFixed(2)}">
+              <button type="submit" style="background:#ef444422;color:#ef4444;border:1px solid #ef444455;border-radius:6px;padding:3px 10px;font-size:0.78rem;cursor:pointer;font-weight:600">Sell</button>
+            </form>
+          </div>`).join("")}
+        </div>` : ""}
+      </div>
     </div>
+    `}
 
-    <!-- MONTHLY RECORDS -->
-    ${monthly.length > 0 ? `
-    <div class="pt-section-label">Monthly Summary</div>
-    <div class="pt-table-wrap">
-      <table class="pt-table">
-        <thead><tr>
-          <th>Period</th><th>Trades</th><th>Wins</th><th>Win Rate</th>
-          <th>Best Trade</th><th>Worst Trade</th><th>PnL</th>
-        </tr></thead>
-        <tbody>
-          ${monthly.map((m: any) => {
-            const p = parseFloat(m.totalPnl ?? 0);
-            return `<tr>
-              <td class="pt-td-bold">${m.period}</td>
-              <td>${m.totalTrades ?? "—"}</td>
-              <td>${m.wins ?? "—"}</td>
-              <td>${m.winRate ?? "—"}%</td>
-              <td class="pt-green">${m.bestTrade ? m.bestTrade.symbol + " ₹" + parseFloat(m.bestTrade.pnl).toFixed(0) : "—"}</td>
-              <td class="pt-red">${m.worstTrade ? m.worstTrade.symbol + " ₹" + parseFloat(m.worstTrade.pnl).toFixed(0) : "—"}</td>
-              <td class="pt-td-bold ${p >= 0 ? "pt-green" : "pt-red"}">${p >= 0 ? "+" : ""}₹${p.toFixed(0)}</td>
-            </tr>`;
-          }).join("")}
-        </tbody>
-      </table>
-    </div>` : ""}
+    <!-- BOT PERFORMANCE (social proof / always shown) -->
+    <div style="font-size:0.72rem;font-weight:700;text-transform:uppercase;letter-spacing:.1em;color:var(--text-muted);border-bottom:1px solid var(--border);padding-bottom:8px;margin:28px 0 14px">📊 Bot's Paper Trade Performance — Strategy Benchmark</div>
+    <div class="pt2-stats-bar">
+      <div class="pt2-stat">
+        <div class="pt2-stat-label">Total PnL (Bot)</div>
+        <div class="pt2-stat-val ${totalPnl >= 0 ? "mpt-green" : "mpt-red"}">${totalPnl >= 0 ? "+" : ""}₹${Math.abs(totalPnl).toFixed(0)}</div>
+      </div>
+      <div class="pt2-stat">
+        <div class="pt2-stat-label">Closed Trades</div>
+        <div class="pt2-stat-val">${closed.length}</div>
+      </div>
+      <div class="pt2-stat">
+        <div class="pt2-stat-label">Win Rate</div>
+        <div class="pt2-stat-val">${winRate}${winRate !== "—" ? "%" : ""}</div>
+      </div>
+      <div class="pt2-stat">
+        <div class="pt2-stat-label">Avg PnL / Trade</div>
+        <div class="pt2-stat-val">${avgPnl !== "—" ? "₹" + avgPnl : "—"}</div>
+      </div>
+      <div class="pt2-stat">
+        <div class="pt2-stat-label">Open Now</div>
+        <div class="pt2-stat-val pt2-yellow">${openCount}</div>
+      </div>
+    </div>
+    <div style="text-align:right;margin-bottom:8px"><a href="/paper-trade/bot-stats" style="font-size:0.8rem;color:var(--text-muted)">View full bot history →</a></div>
 
-    <!-- TRADE HISTORY -->
-    <div class="pt-section-label">Trade History</div>
-    ${recentTrades.length === 0
-      ? `<div class="pt-empty">No trades yet. The engine runs weekdays at 7:36 PM IST and will appear here after its first run.</div>`
-      : `<div class="pt-table-wrap">
-        <table class="pt-table">
-          <thead><tr>
-            <th>Date</th><th>Strategy</th><th>Symbol</th><th>Dir</th>
-            <th>Entry</th><th>Exit</th><th>Qty</th><th>Status</th><th>Hold</th><th>PnL</th><th>PnL%</th>
-          </tr></thead>
-          <tbody>
-            ${recentTrades.map((t: any) => {
-              const pnl = t.pnl ?? null;
-              const pnlPct = t.pnlPct ?? null;
-              const isPos = pnl !== null && pnl > 0;
-              const cls = statusColor[t.status] || "";
-              return `<tr>
-                <td>${t.entryDate ?? "—"}</td>
-                <td>${stIcon[t.strategy] || ""} ${stLabel[t.strategy] || t.strategy}</td>
-                <td class="pt-td-bold">${t.symbol ?? "—"}</td>
-                <td><span class="pt-dir pt-dir-${(t.direction || "").toLowerCase()}">${t.direction ?? "—"}</span></td>
-                <td>₹${t.entryPrice ?? "—"}</td>
-                <td>${t.exitPrice != null ? "₹" + t.exitPrice : "—"}</td>
-                <td>${t.qty ?? "—"}</td>
-                <td><span class="pt-status ${cls}">${t.status ?? "—"}</span></td>
-                <td>${t.holdDays != null ? t.holdDays + "d" : "—"}</td>
-                <td class="${pnl !== null ? (isPos ? "pt-green" : "pt-red") : ""} pt-td-bold">${pnl !== null ? (isPos ? "+" : "") + "₹" + pnl.toFixed(0) : "—"}</td>
-                <td class="${pnlPct !== null ? (pnlPct > 0 ? "pt-green" : "pt-red") : ""}">${pnlPct !== null ? (pnlPct > 0 ? "+" : "") + pnlPct.toFixed(1) + "%" : "—"}</td>
-              </tr>`;
-            }).join("")}
-          </tbody>
-        </table>
-      </div>`}
-
-    <footer class="site-footer"><span>© 2026 ZeroScreen · Paper trading simulation — no real capital at risk</span></footer>
+    <footer class="site-footer"><span>© 2026 ZeroScreen · Paper trading uses virtual money — no real capital at risk · Prices from NSE data updated periodically</span></footer>
   </div>
   <script src="/public/js/app.js"></script>
   <script>
-  ${eqCurve.length >= 2 ? `
-  (function() {
-    const labels = ${JSON.stringify(eqLabels)};
-    const data   = ${JSON.stringify(eqCurve)};
-    const isDark = document.documentElement.classList.contains('dark');
-    const color  = data[data.length - 1] >= 0 ? '#10b981' : '#ef4444';
-    new Chart(document.getElementById('ptEqChart').getContext('2d'), {
-      type: 'line',
-      data: { labels, datasets: [{
-        label: 'Paper PnL (₹)',
-        data, borderColor: color,
-        backgroundColor: data[data.length-1] >= 0 ? 'rgba(16,185,129,0.08)' : 'rgba(239,68,68,0.08)',
-        fill: true, tension: 0.35,
-        pointRadius: data.length > 60 ? 0 : 3, borderWidth: 2,
-      }]},
-      options: {
-        responsive: true,
-        plugins: { legend: { display: false }, tooltip: { mode: 'index', intersect: false, callbacks: { label: ctx => '₹' + ctx.raw } } },
-        scales: { x: { display: data.length <= 80, ticks: { maxTicksLimit: 10 } }, y: { ticks: { callback: v => '₹' + v } } }
-      }
+  // ── Trade form interaction ──────────────────────────────────────────────────
+  function pt2SetType(t) {
+    document.getElementById('pt2-trade-type').value = t;
+    document.querySelectorAll('.pt2-seg-btn[data-t]').forEach(function(b) {
+      b.classList.toggle('active', b.getAttribute('data-t') === t);
     });
+  }
+
+  function pt2SetOrderType(ot) {
+    document.getElementById('pt2-order-type-val').value = ot;
+    document.querySelectorAll('.pt2-seg2-btn[data-ot]').forEach(function(b) {
+      b.classList.toggle('active', b.getAttribute('data-ot') === ot);
+    });
+    var priceInp = document.getElementById('pt2-price');
+    var priceLabel = document.getElementById('pt2-price-label');
+    var note = document.getElementById('pt2-ot-note');
+    if (ot === 'MARKET') {
+      priceInp.readOnly = true;
+      priceInp.style.opacity = '0.75';
+      if (priceLabel) priceLabel.textContent = 'Market Price';
+      if (note) note.textContent = 'Executes at current market price';
+    } else {
+      priceInp.readOnly = false;
+      priceInp.style.opacity = '1';
+      if (priceLabel) priceLabel.textContent = 'Limit Price';
+      if (note) note.textContent = 'Enter your desired limit price';
+    }
+  }
+
+  function pt2UpdateRisk() {
+    var p = parseFloat(document.getElementById('pt2-price').value) || 0;
+    var q = parseInt(document.getElementById('pt2-qty').value) || 1;
+    var slPct  = parseFloat(document.getElementById('pt2-sl-pct')  ? document.getElementById('pt2-sl-pct').value  : '2') || 0;
+    var tgtPct = parseFloat(document.getElementById('pt2-tgt-pct') ? document.getElementById('pt2-tgt-pct').value : '4') || 0;
+
+    // Cost
+    var cost = p * q;
+    var costEl = document.getElementById('pt2-est-cost');
+    if (costEl) costEl.textContent = cost > 0 ? '₹' + cost.toLocaleString('en-IN', {maximumFractionDigits:0}) : '—';
+
+    if (p > 0) {
+      var slPrice  = p * (1 - slPct / 100);
+      var tgtPrice = p * (1 + tgtPct / 100);
+      var slLoss   = (p - slPrice) * q;
+      var tgtGain  = (tgtPrice - p) * q;
+
+      var slPEl  = document.getElementById('pt2-sl-price');
+      var tgtPEl = document.getElementById('pt2-tgt-price');
+      var slNEl  = document.getElementById('pt2-sl-note');
+      var tgtNEl = document.getElementById('pt2-tgt-note');
+      var rrEl   = document.getElementById('pt2-rr-badge');
+
+      if (slPEl)  slPEl.textContent  = '₹' + slPrice.toFixed(2);
+      if (tgtPEl) tgtPEl.textContent = '₹' + tgtPrice.toFixed(2);
+      if (slNEl)  slNEl.textContent  = slPct > 0 ? 'Max loss ₹' + slLoss.toFixed(0) : 'No stop loss set';
+      if (tgtNEl) tgtNEl.textContent = tgtPct > 0 ? 'Potential gain ₹' + tgtGain.toFixed(0) : 'No target set';
+
+      if (rrEl) {
+        if (slPct > 0 && tgtPct > 0) {
+          var rr = tgtPct / slPct;
+          rrEl.textContent = 'R:R = 1 : ' + rr.toFixed(1) + (rr >= 2 ? '  ✅' : rr < 1 ? '  ⚠️' : '');
+        } else {
+          rrEl.textContent = 'Set both SL & Target for R:R';
+        }
+      }
+    } else {
+      ['pt2-sl-price','pt2-tgt-price'].forEach(function(id) {
+        var el = document.getElementById(id); if (el) el.textContent = '₹ —';
+      });
+      var slNEl  = document.getElementById('pt2-sl-note');
+      var tgtNEl = document.getElementById('pt2-tgt-note');
+      if (slNEl)  slNEl.textContent  = 'Select a stock first';
+      if (tgtNEl) tgtNEl.textContent = 'Select a stock first';
+      var rrEl = document.getElementById('pt2-rr-badge');
+      if (rrEl) rrEl.textContent = 'Select a stock to see R:R';
+    }
+  }
+
+  // ── Search autocomplete ─────────────────────────────────────────────────────
+  (function() {
+    var inp    = document.getElementById('pt2-stock-search');
+    var symVal = document.getElementById('pt2-symbol-val');
+    var drop   = document.getElementById('pt2-search-drop');
+    var priceInp = document.getElementById('pt2-price');
+    var lpb    = document.getElementById('pt2-lpb');
+    if (!inp) return;
+
+    function selectSymbol(sym, price, changePct) {
+      inp.value = sym;
+      symVal.value = sym;
+      drop.style.display = 'none';
+      var lpbSym = document.getElementById('pt2-lpb-sym');
+      var lpbPrc = document.getElementById('pt2-lpb-price');
+      var lpbChg = document.getElementById('pt2-lpb-chg');
+      if (lpbSym) lpbSym.textContent = sym;
+      if (price) {
+        priceInp.value = price.toFixed(2);
+        priceInp.dataset.indexPrice = price.toFixed(2);
+        if (lpbPrc) lpbPrc.textContent = '₹' + price.toFixed(2);
+        if (lpbChg && changePct != null) {
+          lpbChg.textContent = (changePct >= 0 ? '+' : '') + changePct.toFixed(2) + '%';
+          lpbChg.className = 'pt2-lpb-chg ' + (changePct >= 0 ? 'pos' : 'neg');
+        }
+        if (lpb) lpb.classList.add('visible');
+        pt2UpdateRisk();
+      }
+      pt2CheckIndex(sym);
+    }
+
+    var timer;
+    inp.addEventListener('input', function() {
+      clearTimeout(timer);
+      var q = inp.value.trim();
+      if (q.length < 1) {
+        drop.style.display = 'none';
+        var panel = document.getElementById('pt2-opts-panel');
+        if (panel) panel.classList.remove('show');
+        var symVal2 = document.getElementById('pt2-symbol-val');
+        if (symVal2) symVal2.value = '';
+        return;
+      }
+      timer = setTimeout(function() {
+        var qUpper = q.toUpperCase();
+        // Check for index symbol matches (BANKNIFTY, NIFTY, etc.)
+        var indexKeys = ['BANKNIFTY','NIFTY','FINNIFTY','MIDCPNIFTY','SENSEX','BANKEX'];
+        var idxMatches = indexKeys.filter(function(k) { return k.indexOf(qUpper) === 0; });
+        fetch('/api/search?q=' + encodeURIComponent(q))
+          .then(function(r) { return r.json(); })
+          .then(function(data) {
+            var idxItems = idxMatches.map(function(sym) {
+              return '<div class="pt2-search-item" data-sym="' + sym + '" data-isindex="1">'
+                + '<span style="font-weight:700">' + sym + '</span>'
+                + ' <span style="color:var(--text-muted);font-size:0.8rem">— Index Options (CE/PE)</span>'
+                + '</div>';
+            }).join('');
+            if (!data.length && !idxMatches.length) { drop.style.display = 'none'; return; }
+            drop.innerHTML = idxItems + data.map(function(s) {
+              return '<div class="pt2-search-item" data-sym="' + s.symbol + '">'
+                + '<span style="font-weight:700">' + s.symbol + '</span>'
+                + (s.company_name ? ' <span style="color:var(--text-muted);font-size:0.8rem">— ' + s.company_name + '</span>' : '')
+                + '</div>';
+            }).join('');
+            drop.style.display = 'block';
+            drop.querySelectorAll('.pt2-search-item').forEach(function(el) {
+              el.addEventListener('click', function() {
+                var sym = el.getAttribute('data-sym');
+                var isIdx = el.getAttribute('data-isindex') === '1';
+                if (isIdx) {
+                  selectSymbol(sym, null, null);
+                } else {
+                  fetch('/api/price/' + sym)
+                    .then(function(r) { return r.json(); })
+                    .then(function(d) { selectSymbol(sym, d.price || null, d.change_pct != null ? d.change_pct : null); })
+                    .catch(function() { selectSymbol(sym, null, null); });
+                }
+              });
+            });
+          }).catch(function() {});
+      }, 220);
+    });
+
+    document.addEventListener('click', function(e) {
+      if (!e.target.closest('.pt2-sym-row')) drop.style.display = 'none';
+    });
+
+    // Auto-fill from URL ?buy=SYMBOL
+    var urlSym = new URLSearchParams(window.location.search).get('buy');
+    if (urlSym) {
+      inp.value = urlSym; symVal.value = urlSym;
+      pt2CheckIndex(urlSym);
+      fetch('/api/price/' + urlSym)
+        .then(function(r) { return r.json(); })
+        .then(function(d) { selectSymbol(urlSym, d.price || null, d.change_pct != null ? d.change_pct : null); })
+        .catch(function() {});
+    }
+
+    // Initial order type setup
+    pt2SetOrderType('MARKET');
   })();
-  ` : ""}
+
+  // ── Options index detection & strike picker ─────────────────────────────────
+  var pt2OptType = 'CE';
+  var pt2IndexConfig = {
+    BANKNIFTY:  { step:100, expiry:'WED', lotSize:15 },
+    NIFTY:      { step:50,  expiry:'THU', lotSize:25 },
+    FINNIFTY:   { step:50,  expiry:'TUE', lotSize:40 },
+    MIDCPNIFTY: { step:25,  expiry:'MON', lotSize:75 },
+    SENSEX:     { step:100, expiry:'FRI', lotSize:10 },
+    BANKEX:     { step:100, expiry:'MON', lotSize:15 },
+  };
+
+  function pt2GetExpiry(expiryDay) {
+    var days = {SUN:0,MON:1,TUE:2,WED:3,THU:4,FRI:5,SAT:6};
+    var target = days[expiryDay] || 4;
+    var now = new Date();
+    var ist = new Date(now.toLocaleString('en-US',{timeZone:'Asia/Kolkata'}));
+    var diff = (target - ist.getDay() + 7) % 7;
+    if (diff === 0 && ist.getHours() >= 16) diff = 7;
+    var exp = new Date(ist); exp.setDate(ist.getDate() + diff);
+    var dd = String(exp.getDate()).padStart(2,'0');
+    var mon = ['JAN','FEB','MAR','APR','MAY','JUN','JUL','AUG','SEP','OCT','NOV','DEC'][exp.getMonth()];
+    var yy = String(exp.getFullYear()).slice(2);
+    return { label: dd+' '+mon+' '+exp.getFullYear(), code: yy+mon+dd };
+  }
+
+  function pt2FormatSymbol(index, expCode, strike, optType) {
+    return index + expCode + strike + optType;
+  }
+
+  function pt2UpdateOptSymbol() {
+    var symInp   = document.getElementById('pt2-symbol-val');
+    var strikeInp = document.getElementById('pt2-strike-inp');
+    var disp     = document.getElementById('pt2-opt-sym-disp');
+    var hint     = document.getElementById('pt2-strike-hint');
+    var idx      = document.getElementById('pt2-stock-search').value.trim().toUpperCase();
+    var cfg      = pt2IndexConfig[idx];
+    if (!cfg || !strikeInp.value) { if (disp) disp.textContent = '—'; return; }
+    var exp = pt2GetExpiry(cfg.expiry);
+    var sym = pt2FormatSymbol(idx, exp.code, strikeInp.value, pt2OptType);
+    if (symInp) symInp.value = sym;
+    if (disp) disp.textContent = sym;
+    var atmPrice = parseFloat(document.getElementById('pt2-price').dataset.indexPrice || '0');
+    var atm = Math.round(atmPrice / cfg.step) * cfg.step;
+    var s = parseInt(strikeInp.value);
+    if (hint) {
+      if (s === atm) hint.textContent = '✓ ATM';
+      else if ((pt2OptType === 'CE' && s < atm) || (pt2OptType === 'PE' && s > atm)) hint.textContent = 'ITM (' + (Math.abs(s - atm) / cfg.step) + ' strikes)';
+      else hint.textContent = 'OTM (' + (Math.abs(s - atm) / cfg.step) + ' strikes)';
+    }
+  }
+
+  function pt2SelectOptType(t) {
+    pt2OptType = t;
+    document.getElementById('pt2-btn-ce').classList.toggle('active', t === 'CE');
+    document.getElementById('pt2-btn-pe').classList.toggle('active', t === 'PE');
+    pt2UpdateOptSymbol();
+  }
+
+  function pt2StepStrike(dir) {
+    var si  = document.getElementById('pt2-strike-inp');
+    var idx = document.getElementById('pt2-stock-search').value.trim().toUpperCase();
+    var step = (pt2IndexConfig[idx] || {}).step || 100;
+    var cur  = parseInt(si.value) || 0;
+    si.value = cur + dir * step;
+    pt2UpdateOptSymbol();
+  }
+
+  function pt2CheckIndex(sym) {
+    var panel = document.getElementById('pt2-opts-panel');
+    if (!panel) return;
+    var cfg = pt2IndexConfig[sym.toUpperCase()];
+    if (cfg) {
+      panel.classList.add('show');
+      pt2SetOrderType('LIMIT'); // options need limit price
+      var exp = pt2GetExpiry(cfg.expiry);
+      var badge = document.getElementById('pt2-expiry-badge');
+      if (badge) badge.textContent = exp.label;
+      var priceInp = document.getElementById('pt2-price');
+      var atmPrice = parseFloat(priceInp.value) || 0;
+      if (atmPrice > 0) {
+        var atm = Math.round(atmPrice / cfg.step) * cfg.step;
+        var si  = document.getElementById('pt2-strike-inp');
+        if (si && !si.value) { si.value = String(atm); priceInp.dataset.indexPrice = String(atmPrice); }
+        pt2UpdateOptSymbol();
+      }
+    } else {
+      panel.classList.remove('show');
+      var symVal = document.getElementById('pt2-symbol-val');
+      if (symVal) symVal.value = sym.toUpperCase();
+    }
+  }
   </script>
 </body>
 </html>`);
 });
 
 // ── GET /my-paper-trade ─ Personal paper trading portfolio ──────────────────
-app.get("/my-paper-trade", requireAuth, async (req: Request, res: Response) => {
+app.get("/my-paper-trade", requireAuth, featureGate("feature_my_paper_trade", "Paper Trading"), premiumGate("paper_trade_premium_only", "Paper Trading"), async (req: Request, res: Response) => {
   const userId   = req.session.userId!;
   const userName = req.session.userName || "Trader";
 
   // ── Mobile verification gate ────────────────────────────────────────────────
-  const uInfo = await dbAll<{ mobile_verified: number }>(
-    "SELECT mobile_verified FROM users WHERE id=?", [userId]
-  );
-  if (!uInfo[0]?.mobile_verified) {
-    res.redirect("/verify-mobile?next=/my-paper-trade"); return;
+  const otpRequired = (await getSetting("otp_required")) !== "false";
+  if (otpRequired) {
+    const uInfo = await dbAll<{ mobile_verified: number }>(
+      "SELECT mobile_verified FROM users WHERE id=?", [userId]
+    );
+    if (!uInfo[0]?.mobile_verified) {
+      res.redirect("/verify-mobile?next=/my-paper-trade"); return;
+    }
   }
 
   const [port, positions, trades, tradeCount, ptConfig, activeSub] = await Promise.all([
@@ -5525,12 +6477,15 @@ app.get("/my-paper-trade", requireAuth, async (req: Request, res: Response) => {
     <!-- HERO -->
     <div class="mpt-hero">
       <div>
-        <div class="mpt-hero-title">📋 My Paper Portfolio</div>
-        <div class="mpt-hero-sub">Virtual trading with ₹1,00,000 starting capital · No real money · Zero risk</div>
+        <div class="mpt-hero-title">� My Portfolio</div>
+        <div class="mpt-hero-sub">Virtual trading dashboard · ₹1,00,000 starting capital · Zero real risk</div>
       </div>
-      <div style="text-align:right">
-        <div class="mpt-bal-label">Available Cash</div>
-        <div class="mpt-balance">₹${port.balance.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
+      <div style="text-align:right;display:flex;flex-direction:column;align-items:flex-end;gap:10px">
+        <a href="/paper-trade" style="display:inline-flex;align-items:center;gap:8px;background:#10b981;color:#fff;border-radius:10px;padding:10px 20px;font-weight:700;font-size:0.9rem;text-decoration:none">📈 New Trade →</a>
+        <div>
+          <div class="mpt-bal-label">Available Cash</div>
+          <div class="mpt-balance">₹${port.balance.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
+        </div>
       </div>
     </div>
 
@@ -5551,7 +6506,6 @@ app.get("/my-paper-trade", requireAuth, async (req: Request, res: Response) => {
       </div>
       <div style="display:flex;align-items:center;gap:10px">
         <span class="mpt-mh-badge ${isMarketHours() ? 'mpt-mh-open' : 'mpt-mh-closed'}">${isMarketHours() ? '🟢 Market Open' : '🔴 Market Closed'}</span>
-        <a href="/my-paper-trade/config" style="font-size:0.8rem;color:var(--text-muted)">⚙️ Settings</a>
       </div>
     </div>
 
@@ -5583,48 +6537,10 @@ app.get("/my-paper-trade", requireAuth, async (req: Request, res: Response) => {
       </div>
     </div>
 
-    <!-- BUY FORM -->
-    <div class="mpt-buy-form">
-      <h3>🛒 Buy / Enter Trade ${creditsOut ? `<span style="color:#ef4444;font-size:0.82rem;font-weight:500">— Upgrade required</span>` : ""}</h3>
-      <form method="POST" action="/my-paper-trade/buy" id="mpt-buy-form" ${creditsOut ? 'onsubmit="event.preventDefault();window.location=\'`+`/my-paper-trade/upgrade\'"' : ''}>
-        <div class="mpt-form-row">
-          <div class="mpt-form-group mpt-search-wrap">
-            <label>Stock / Instrument</label>
-            <input type="text" id="mpt-stock-search" placeholder="Search or type symbol…" autocomplete="off" required style="width:200px">
-            <input type="hidden" name="symbol" id="mpt-symbol-val" required>
-            <div class="mpt-search-drop" id="mpt-search-drop" style="display:none"></div>
-          </div>
-          <div class="mpt-form-group">
-            <label>Trade Type</label>
-            <select name="trade_type" id="mpt-trade-type" style="width:130px">
-              <option value="INTRADAY" ${ptConfig.trade_type === 'INTRADAY' ? 'selected' : ''}>Intraday</option>
-              <option value="HOLDING"  ${ptConfig.trade_type === 'HOLDING'  ? 'selected' : ''}>Holding</option>
-            </select>
-          </div>
-          <div class="mpt-form-group">
-            <label>Qty (shares)</label>
-            <input type="number" name="qty" id="mpt-qty" min="1" max="10000" value="${ptConfig.default_qty}" required style="width:90px">
-          </div>
-          <div class="mpt-form-group">
-            <label>Price (₹)</label>
-            <input type="number" name="price" id="mpt-price" step="0.05" min="0.1" placeholder="Live price" required style="width:120px">
-          </div>
-          <div class="mpt-form-group">
-            <label>Est. Cost</label>
-            <div id="mpt-est-cost" style="padding:8px 12px; font-weight:700; font-size:0.95rem; color: var(--accent)">—</div>
-          </div>
-          <div class="mpt-form-group">
-            <label>&nbsp;</label>
-            <button type="submit" class="mpt-btn-buy" ${creditsOut ? 'disabled style="opacity:.5;cursor:not-allowed"' : ''}>${creditsOut ? '🔒 Upgrade' : '📈 Buy'}</button>
-          </div>
-        </div>
-      </form>
-    </div>
-
     <!-- OPEN POSITIONS -->
     <div class="mpt-section">Open Positions (${posRows.length})</div>
     ${posRows.length === 0
-      ? `<div class="mpt-empty">No open positions yet. Search and buy a stock above to get started.</div>`
+      ? `<div class="mpt-empty">No open positions yet. <a href="/paper-trade" style="color:var(--accent)">Place your first trade →</a></div>`
       : `<div style="overflow-x:auto">
         <table class="mpt-pos-table">
           <thead><tr>
@@ -5667,7 +6583,7 @@ app.get("/my-paper-trade", requireAuth, async (req: Request, res: Response) => {
     <!-- TRADE HISTORY -->
     <div class="mpt-section">Trade History (${trades.length})</div>
     ${trades.length === 0
-      ? `<div class="mpt-empty">No trades yet. Buy a stock above to start your journey.</div>`
+      ? `<div class="mpt-empty">No trades yet. <a href="/paper-trade" style="color:var(--accent)">Place your first trade →</a></div>`
       : `<div style="overflow-x:auto">
         <table class="mpt-history-table">
           <thead><tr>
@@ -5713,70 +6629,6 @@ app.get("/my-paper-trade", requireAuth, async (req: Request, res: Response) => {
 
   <script src="/public/js/app.js"></script>
   <script>
-  // ── Stock search autocomplete ────────────────────────────────────────────────
-  (function() {
-    var inp   = document.getElementById('mpt-stock-search');
-    var drop  = document.getElementById('mpt-search-drop');
-    var symVal = document.getElementById('mpt-symbol-val');
-    var priceInp = document.getElementById('mpt-price');
-    var qtyInp   = document.getElementById('mpt-qty');
-    var estCost  = document.getElementById('mpt-est-cost');
-    var timer = null;
-
-    function updateCost() {
-      var p = parseFloat(priceInp.value); var q = parseInt(qtyInp.value);
-      if (p > 0 && q > 0) estCost.textContent = '₹' + (p * q).toLocaleString('en-IN', {maximumFractionDigits:0});
-      else estCost.textContent = '—';
-    }
-    priceInp.addEventListener('input', updateCost);
-    qtyInp.addEventListener('input', updateCost);
-
-    inp.addEventListener('input', function() {
-      clearTimeout(timer);
-      var q = inp.value.trim();
-      if (q.length < 1) { drop.style.display = 'none'; return; }
-      timer = setTimeout(function() {
-        fetch('/api/search?q=' + encodeURIComponent(q))
-          .then(function(r) { return r.json(); })
-          .then(function(data) {
-            if (!data.length) { drop.style.display = 'none'; return; }
-            drop.innerHTML = data.map(function(s) {
-              return '<div class="mpt-search-item" data-sym="' + s.symbol + '" data-price="' + (s.price || '') + '">'
-                + '<span class="mpt-search-sym">' + s.symbol + '</span>'
-                + (s.company_name ? ' <span class="mpt-search-co">— ' + s.company_name + '</span>' : '')
-                + '</div>';
-            }).join('');
-            drop.style.display = 'block';
-            drop.querySelectorAll('.mpt-search-item').forEach(function(el) {
-              el.addEventListener('click', function() {
-                var sym = el.getAttribute('data-sym');
-                inp.value = sym;
-                symVal.value = sym;
-                drop.style.display = 'none';
-                // Fetch live price
-                fetch('/api/price/' + sym)
-                  .then(function(r) { return r.json(); })
-                  .then(function(d) { if (d.price) { priceInp.value = d.price.toFixed(2); updateCost(); } })
-                  .catch(function() {});
-              });
-            });
-          }).catch(function() {});
-      }, 220);
-    });
-    document.addEventListener('click', function(e) {
-      if (!e.target.closest('.mpt-search-wrap')) drop.style.display = 'none';
-    });
-
-    // Auto-set symbol if sym in URL
-    var urlSym = new URLSearchParams(window.location.search).get('buy');
-    if (urlSym) {
-      inp.value = urlSym; symVal.value = urlSym;
-      fetch('/api/price/' + urlSym)
-        .then(function(r) { return r.json(); })
-        .then(function(d) { if (d.price) { priceInp.value = d.price.toFixed(2); updateCost(); } })
-        .catch(function() {});
-    }
-  })();
   ${eqData.length >= 2 ? `
   (function() {
     var labels = ${JSON.stringify(eqLabels)};
@@ -5800,10 +6652,13 @@ app.get("/my-paper-trade", requireAuth, async (req: Request, res: Response) => {
 app.post("/my-paper-trade/buy", requireAuth, async (req: Request, res: Response) => {
   const userId = req.session.userId!;
   if (!isMarketHours()) {
-    res.redirect("/my-paper-trade?err=" + encodeURIComponent("Paper trading only available during market hours (Mon–Fri 9:15 AM – 3:30 PM IST)")); return;
+    res.redirect("/paper-trade?err=" + encodeURIComponent("Paper trading only available during market hours (Mon–Fri 9:15 AM – 3:30 PM IST)")); return;
   }
-  const uInfo = await dbAll<{ mobile_verified: number }>("SELECT mobile_verified FROM users WHERE id=?", [userId]);
-  if (!uInfo[0]?.mobile_verified) { res.redirect("/verify-mobile?next=/my-paper-trade"); return; }
+  const otpReq = (await getSetting("otp_required")) !== "false";
+  if (otpReq) {
+    const uInfo = await dbAll<{ mobile_verified: number }>("SELECT mobile_verified FROM users WHERE id=?", [userId]);
+    if (!uInfo[0]?.mobile_verified) { res.redirect("/verify-mobile?next=/my-paper-trade"); return; }
+  }
   const [tradeCount, activeSub] = await Promise.all([countPaperTrades(userId), getActiveSubscription(userId)]);
   const freeLimit = parseInt(await getSetting("paper_free_limit") || "10", 10);
   const isPremium = !!activeSub || req.session.userRole === "premium" || req.session.userRole === "admin";
@@ -5814,12 +6669,17 @@ app.post("/my-paper-trade/buy", requireAuth, async (req: Request, res: Response)
   const qty       = parseInt(req.body.qty, 10);
   const price     = parseFloat(req.body.price);
   const tradeType = req.body.trade_type === "HOLDING" ? "HOLDING" : "INTRADAY";
+  const orderType = req.body.order_type === "LIMIT" ? "LIMIT" : "MARKET";
+  const slPct     = parseFloat(req.body.sl_pct);
+  const tgtPct    = parseFloat(req.body.target_pct);
   if (!symbol || !Number.isInteger(qty) || qty < 1 || qty > 10000 || isNaN(price) || price <= 0) {
     res.redirect("/my-paper-trade?err=Invalid+buy+parameters"); return;
   }
+  const slPrice     = (!isNaN(slPct)  && slPct  > 0) ? parseFloat((price * (1 - slPct  / 100)).toFixed(2)) : null;
+  const targetPrice = (!isNaN(tgtPct) && tgtPct > 0) ? parseFloat((price * (1 + tgtPct / 100)).toFixed(2)) : null;
   const stock = await dbAll<{ company_name: string | null }>("SELECT company_name FROM stocks WHERE symbol=?", [symbol]);
   const companyName = stock[0]?.company_name ?? null;
-  const result = await paperBuy(userId, symbol, companyName, qty, price, tradeType);
+  const result = await paperBuy(userId, symbol, companyName, qty, price, tradeType, slPrice, targetPrice, orderType);
   res.redirect(`/my-paper-trade?${result.ok ? "msg" : "err"}=${encodeURIComponent(result.msg)}`);
 });
 
@@ -5969,7 +6829,7 @@ app.get("/api/price/:symbol", async (req: Request, res: Response) => {
 });
 
 // ── GET /strategies ────────────────────────────────────────────────────────────
-app.get("/strategies", (req: Request, res: Response) => {
+app.get("/strategies", featureGate("feature_strategies", "Strategies"), (req: Request, res: Response) => {
   const backtest: any = readBotJSON("5year-backtest-result.json", {});
   const monthly: Record<string, any> = backtest.monthly || {};
   const mKeys = Object.keys(monthly).sort();
@@ -6127,7 +6987,7 @@ app.get("/strategies", (req: Request, res: Response) => {
 });
 
 // ── GET /dashboard ─────────────────────────────────────────────────────────────
-app.get("/dashboard", async (req: Request, res: Response) => {
+app.get("/dashboard", featureGate("feature_dashboard", "Dashboard"), async (req: Request, res: Response) => {
   const trades: any[] = readBotJSON("trades.json", []);
   const backtest: any = readBotJSON("5year-backtest-result.json", {});
   const analytics = computeAnalytics(trades);
@@ -6494,13 +7354,30 @@ app.get("/dashboard", async (req: Request, res: Response) => {
 });
 
 // ── GET /signals ────────────────────────────────────────────────────────────────
-app.get("/signals", (req: Request, res: Response) => {
+app.get("/signals", featureGate("feature_signals", "Signals"), (req: Request, res: Response) => {
   const state:  any   = readBotJSON("trade-state.json", {});
   const trades: any[] = readBotJSON("trades.json", []);
   const analytics = computeAnalytics(trades);
   const hasPosition = state && state.position && state.position !== "FLAT";
   const premium = userIsPremium(req);
   const loggedIn = !!req.session?.userId;
+  const backtest: any = readBotJSON("5year-backtest-result.json", {});
+  const monthly: Record<string, any> = backtest.monthly || {};
+
+  // Build last 4 months summary (no strategy names exposed)
+  function monthLabel(key: string) {
+    const [y, m] = key.split("-");
+    return new Date(parseInt(y), parseInt(m) - 1, 1).toLocaleString("en-IN", { month: "short", year: "2-digit" });
+  }
+  const recentMonthKeys = Object.keys(monthly).sort().slice(-4);
+  const recentMonthData = recentMonthKeys.map(k => {
+    const d = monthly[k];
+    const combined = (d.bbTotal ?? 0) + (d.rcTotal ?? 0);
+    const totalTrades = (d.bbTrades ?? 0) + (d.rcTrades ?? 0);
+    const totalWins   = (d.bbWins ?? 0) + (d.rcWins ?? 0);
+    const winRate = totalTrades > 0 ? ((totalWins / totalTrades) * 100).toFixed(0) : "—";
+    return { label: monthLabel(k), combined: combined.toFixed(0), winRate, days: d.days ?? 0, profit: combined > 0 };
+  });
 
   // ── PREMIUM VIEW (full details) ────────────────────────────────────────────
   const isAdmin = req.session?.userRole === 'admin';
@@ -6555,27 +7432,57 @@ app.get("/signals", (req: Request, res: Response) => {
         <div class="sig-flat-sub">Bot is watching the market. A signal will appear here when a trade is entered.</div></div>
       </div>`}
     </div>
+    <div class="sig-section-title">� Recent Monthly Performance (Backtest)</div>
+    <div class="sig-month-grid">
+      ${recentMonthData.map(m => `
+      <div class="sig-month-card ${m.profit ? 'sig-month-profit' : 'sig-month-loss'}">
+        <div class="sig-month-label">${m.label}</div>
+        <div class="sig-month-pnl">${m.profit ? '+' : ''}${m.combined} <span class="sig-month-unit">pts</span></div>
+        <div class="sig-month-meta">
+          <span>${m.winRate}% win rate</span>
+          <span>${m.days} days</span>
+        </div>
+      </div>`).join("")}
+    </div>
     <div class="sig-section-title">📋 Recent Trades</div>
-    <div id="sig-trades-wrap" class="sig-cards-grid">
-      ${analytics.recentTrades.length === 0 ? `<div class="sig-empty">No trades recorded yet.</div>` :
+    <div id="sig-trades-wrap" class="sig-trades-list">
+      ${analytics.recentTrades.length === 0 ? (() => {
+        const demoTrades = [
+          { direction:"CE", pnl:42.5, type:"MODEL_A", entryPrice:"328.00", exitPrice:"370.50", duration:1380, reasonExit:"TARGET HIT", date:"2026-04-30T10:17:00+05:30" },
+          { direction:"PE", pnl:38.0, type:"MODEL_B", entryPrice:"412.50", exitPrice:"450.50", duration:960,  reasonExit:"TARGET HIT", date:"2026-04-29T14:22:00+05:30" },
+          { direction:"CE", pnl:-12.0,type:"MODEL_A", entryPrice:"290.00", exitPrice:"278.00", duration:510,  reasonExit:"SL HIT",     date:"2026-04-28T11:45:00+05:30" },
+          { direction:"PE", pnl:55.0, type:"MODEL_B", entryPrice:"380.00", exitPrice:"435.00", duration:2100, reasonExit:"EOD EXIT",   date:"2026-04-25T15:10:00+05:30" },
+          { direction:"CE", pnl:28.5, type:"MODEL_A", entryPrice:"315.00", exitPrice:"343.50", duration:1620, reasonExit:"TARGET HIT", date:"2026-04-24T10:55:00+05:30" },
+          { direction:"PE", pnl:-8.5, type:"MODEL_B", entryPrice:"355.00", exitPrice:"346.50", duration:480,  reasonExit:"SL HIT",     date:"2026-04-23T13:30:00+05:30" },
+        ];
+        const header = `<div style="font-size:0.78rem;color:var(--text-muted);margin-bottom:6px;padding:5px 10px;background:rgba(5,150,105,0.06);border-radius:6px;border:1px solid rgba(5,150,105,0.15)">📊 No live trades yet — sample trades shown for preview</div>`;
+        return header + demoTrades.map((t: any) => {
+          const isWin = t.pnl > 0;
+          const d = new Date(t.date).toLocaleString("en-IN",{timeZone:"Asia/Kolkata",day:"2-digit",month:"short",hour:"2-digit",minute:"2-digit"});
+          const dur = t.duration < 60 ? t.duration+'s' : Math.round(t.duration/60)+'m';
+          const rc = t.reasonExit==='TARGET HIT'?'sig-tr-target':t.reasonExit==='SL HIT'?'sig-tr-sl':'sig-tr-eod';
+          return `<div class="sig-trade-row ${isWin?'win':'loss'} demo">
+            <span class="sig-badge sig-badge-${t.direction.toLowerCase()}">${t.direction}</span>
+            <span class="sig-tr-date">${d}</span>
+            <span class="sig-tr-prices">₹${t.entryPrice} → ₹${t.exitPrice}</span>
+            <span class="sig-tr-pnl ${isWin?'sig-green':'sig-red'}">${isWin?'+':''}${t.pnl.toFixed(1)} pts</span>
+            <span class="sig-tr-dur">${dur}</span>
+            <span class="sig-tr-reason ${rc}">${t.reasonExit}</span>
+          </div>`;
+        }).join("");
+      })() :
         analytics.recentTrades.map((t: any) => {
           const isWin = t.pnl > 0;
           const d = t.date ? new Date(t.date).toLocaleString("en-IN",{timeZone:"Asia/Kolkata",day:"2-digit",month:"short",hour:"2-digit",minute:"2-digit"}) : "—";
           const dur = t.duration ? (t.duration < 60 ? t.duration + 's' : Math.round(t.duration/60) + 'm') : '—';
-          return `<div class="sig-card sig-card-trade sig-trade-${isWin?'win':'loss'}">
-            <div class="sig-card-top">
-              <span class="sig-badge sig-badge-${(t.direction||'').toLowerCase()}">${t.direction||'—'}</span>
-              <span class="sig-symbol">BANKNIFTY</span>
-              <span class="sig-pnl ${isWin?'sig-green':'sig-red'}">${isWin?'+':''}${t.pnl?.toFixed(1)??'—'} pts</span>
-            </div>
-            <div class="sig-card-body">
-              <div class="sig-field"><span class="sig-field-label">Type</span><span class="sig-field-val">${t.type||'—'}</span></div>
-              <div class="sig-field"><span class="sig-field-label">Entry</span><span class="sig-field-val">₹${t.entryPrice??'—'}</span></div>
-              <div class="sig-field"><span class="sig-field-label">Exit</span><span class="sig-field-val">₹${t.exitPrice??'—'}</span></div>
-              <div class="sig-field"><span class="sig-field-label">Duration</span><span class="sig-field-val">${dur}</span></div>
-              <div class="sig-field"><span class="sig-field-label">Exit Reason</span><span class="sig-field-val">${t.reasonExit||'—'}</span></div>
-              <div class="sig-field"><span class="sig-field-label">Time</span><span class="sig-field-val">${d}</span></div>
-            </div>
+          const rc = t.reasonExit==='TARGET HIT'?'sig-tr-target':t.reasonExit==='SL HIT'?'sig-tr-sl':'sig-tr-eod';
+          return `<div class="sig-trade-row ${isWin?'win':'loss'}">
+            <span class="sig-badge sig-badge-${(t.direction||'').toLowerCase()}">${t.direction||'—'}</span>
+            <span class="sig-tr-date">${d}</span>
+            <span class="sig-tr-prices">₹${t.entryPrice??'—'} → ₹${t.exitPrice??'—'}</span>
+            <span class="sig-tr-pnl ${isWin?'sig-green':'sig-red'}">${isWin?'+':''}${t.pnl?.toFixed(1)??'—'} pts</span>
+            <span class="sig-tr-dur">${dur}</span>
+            <span class="sig-tr-reason ${rc}">${t.reasonExit||'—'}</span>
           </div>`;
         }).join("")}
     </div>
@@ -6607,7 +7514,19 @@ app.get("/signals", (req: Request, res: Response) => {
         wrap.innerHTML = '<div class="sig-flat-card"><span class="sig-flat-icon">💤</span><div><div class="sig-flat-title">No Active Position</div><div class="sig-flat-sub">Bot is watching the market. A signal will appear here when a trade is entered.</div></div></div>';
       }
       const tw = document.getElementById('sig-trades-wrap');
-      if (!d.recentTrades||!d.recentTrades.length) { tw.innerHTML='<div class="sig-empty">No trades recorded yet.</div>'; return; }
+      if (!d.recentTrades||!d.recentTrades.length) {
+        var demo=[
+          {direction:'CE',pnl:42.5,type:'MODEL_A',entryPrice:'328.00',exitPrice:'370.50',duration:1380,reasonExit:'TARGET HIT',date:'2026-04-30T10:17:00+05:30'},
+          {direction:'PE',pnl:38.0,type:'MODEL_B',entryPrice:'412.50',exitPrice:'450.50',duration:960, reasonExit:'TARGET HIT',date:'2026-04-29T14:22:00+05:30'},
+          {direction:'CE',pnl:-12.0,type:'MODEL_A',entryPrice:'290.00',exitPrice:'278.00',duration:510, reasonExit:'SL HIT',date:'2026-04-28T11:45:00+05:30'},
+          {direction:'PE',pnl:55.0,type:'MODEL_B',entryPrice:'380.00',exitPrice:'435.00',duration:2100,reasonExit:'EOD EXIT',date:'2026-04-25T15:10:00+05:30'},
+          {direction:'CE',pnl:28.5,type:'MODEL_A',entryPrice:'315.00',exitPrice:'343.50',duration:1620,reasonExit:'TARGET HIT',date:'2026-04-24T10:55:00+05:30'},
+          {direction:'PE',pnl:-8.5,type:'MODEL_B',entryPrice:'355.00',exitPrice:'346.50',duration:480, reasonExit:'SL HIT',date:'2026-04-23T13:30:00+05:30'},
+        ];
+        tw.innerHTML='<div style="grid-column:1/-1;font-size:0.78rem;color:var(--text-muted);margin-bottom:4px;padding:6px 10px;background:rgba(5,150,105,0.06);border-radius:6px;border:1px solid rgba(5,150,105,0.15)">📊 No live trades yet — backtest sample trades shown</div>'
+          +demo.map(function(t){var w=t.pnl>0;var dur=t.duration<60?t.duration+'s':Math.round(t.duration/60)+'m';var dt=new Date(t.date).toLocaleString('en-IN',{timeZone:'Asia/Kolkata',day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit'});return '<div class="sig-card sig-card-trade sig-trade-'+(w?'win':'loss')+'" style="opacity:.72"><div class="sig-card-top"><span class="sig-badge sig-badge-'+t.direction.toLowerCase()+'">'+t.direction+'</span><span class="sig-symbol">BANKNIFTY</span><span class="sig-pnl '+(w?'sig-green':'sig-red')+'">'+(w?'+':'')+t.pnl.toFixed(1)+' pts</span></div><div class="sig-card-body"><div class="sig-field"><span class="sig-field-label">Type</span><span class="sig-field-val">'+t.type+'</span></div><div class="sig-field"><span class="sig-field-label">Entry</span><span class="sig-field-val">₹'+t.entryPrice+'</span></div><div class="sig-field"><span class="sig-field-label">Exit</span><span class="sig-field-val">₹'+t.exitPrice+'</span></div><div class="sig-field"><span class="sig-field-label">Duration</span><span class="sig-field-val">'+dur+'</span></div><div class="sig-field"><span class="sig-field-label">Exit Reason</span><span class="sig-field-val">'+t.reasonExit+'</span></div><div class="sig-field"><span class="sig-field-label">Date</span><span class="sig-field-val">'+dt+'</span></div></div></div>';}).join('');
+        return;
+      }
       tw.innerHTML = d.recentTrades.map(function(t) {
         const isWin=t.pnl>0;
         const dur=t.duration?(t.duration<60?t.duration+'s':Math.round(t.duration/60)+'m'):'—';
@@ -6688,28 +7607,35 @@ app.get("/signals", (req: Request, res: Response) => {
       <a href="/premium" class="btn-upgrade">Upgrade — ₹499/mo</a>
     </div>
 
-    <div class="sig-section-title">📋 Recent Performance <span style="font-size:10px;font-weight:600;color:#f59e0b;background:rgba(245,158,11,0.1);padding:2px 8px;border-radius:10px;margin-left:6px;">🔒 Prices for Premium</span></div>
-    <div id="sig-trades-wrap" class="sig-cards-grid">
+    <div class="sig-section-title">� Recent Monthly Performance</div>
+    <div class="sig-month-grid">
+      ${recentMonthData.map(m => `
+      <div class="sig-month-card ${m.profit ? 'sig-month-profit' : 'sig-month-loss'}">
+        <div class="sig-month-label">${m.label}</div>
+        <div class="sig-month-pnl">${m.profit ? '+' : ''}${m.combined} <span class="sig-month-unit">pts</span></div>
+        <div class="sig-month-meta">
+          <span>${m.winRate}% win rate</span>
+          <span>${m.days} days</span>
+        </div>
+      </div>`).join("")}
+    </div>
+
+    <div class="sig-section-title">📋 Recent Trade Results <span style="font-size:10px;font-weight:600;color:#f59e0b;background:rgba(245,158,11,0.1);padding:2px 8px;border-radius:10px;margin-left:6px;">🔒 Prices for Premium</span></div>
+    <div id="sig-trades-wrap" class="sig-trades-list">
       ${analytics.recentTrades.length === 0 ? `<div class="sig-empty">No trades recorded yet.</div>` :
         analytics.recentTrades.slice(0, 5).map((t: any) => {
           const isWin = t.pnl > 0;
-          return `<div class="sig-card sig-card-trade sig-trade-${isWin?'win':'loss'}">
-            <div class="sig-card-top">
-              <span class="sig-badge sig-badge-${(t.direction||'').toLowerCase()}">${t.direction||'—'}</span>
-              <span class="sig-symbol">BANKNIFTY</span>
-              <span class="sig-pnl ${isWin?'sig-green':'sig-red'}">${isWin?'+':''}${t.pnl?.toFixed(1)??'—'} pts</span>
-            </div>
-            <div class="sig-card-body">
-              <div class="sig-field sig-locked"><span class="sig-field-label">Entry Price</span><span class="sig-field-val sig-lock-icon">🔒</span></div>
-              <div class="sig-field sig-locked"><span class="sig-field-label">Exit Price</span><span class="sig-field-val sig-lock-icon">🔒</span></div>
-              <div class="sig-field"><span class="sig-field-label">Exit Reason</span><span class="sig-field-val">${t.reasonExit||'—'}</span></div>
-            </div>
+          const rc = t.reasonExit==='TARGET HIT'?'sig-tr-target':t.reasonExit==='SL HIT'?'sig-tr-sl':'sig-tr-eod';
+          return `<div class="sig-trade-row ${isWin?'win':'loss'}">
+            <span class="sig-badge sig-badge-${(t.direction||'').toLowerCase()}">${t.direction||'—'}</span>
+            <span class="sig-tr-prices" style="flex:1">₹🔒 → ₹🔒</span>
+            <span class="sig-tr-pnl ${isWin?'sig-green':'sig-red'}">${isWin?'+':''}${t.pnl?.toFixed(1)??'—'} pts</span>
+            <span class="sig-tr-reason ${rc}">${t.reasonExit||'—'}</span>
           </div>`;
         }).join("")}
       ${analytics.recentTrades.length > 5 ? `
-      <div class="sig-more-locked">
-        <span>+${analytics.recentTrades.length - 5} more trades hidden</span>
-        <a href="/premium" class="btn-upgrade-sm">Unlock All →</a>
+      <div style="font-size:12px;color:var(--text-muted);padding:6px 10px;text-align:center">
+        +${analytics.recentTrades.length - 5} more trades · <a href="/premium" style="color:var(--accent)">Upgrade for full details →</a>
       </div>` : ""}
     </div>
 

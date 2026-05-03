@@ -15,7 +15,7 @@
 import cron from "node-cron";
 import { fetchLatestBhavcopy } from "./nse";
 import { fetchFundamentals }   from "./scraper";
-import { dbRun, dbAll, upsertStock, upsertPrice, getStaleSymbols, getAllSymbols, initDb, screenStocks, getAllActiveAlerts, updateAlertLastSent } from "./db";
+import { dbRun, dbAll, upsertStock, upsertPrice, getStaleSymbols, getAllSymbols, initDb, screenStocks, getAllActiveAlerts, updateAlertLastSent, createPick } from "./db";
 import { sendAlertEmail } from "./mailer";
 
 const FETCH_DELAY_MS = 800;
@@ -165,6 +165,180 @@ export async function seedSymbols(): Promise<void> {
   console.log(`[Scheduler] Seeded ${i} symbols. Run --fundamentals to fetch data.`);
 }
 
+// ── Auto-pick generation ───────────────────────────────────────────────────────
+export async function generateDailyPicks(): Promise<void> {
+  console.log("[Picks] Generating daily auto-picks from last market close...");
+
+  const today = new Date().toISOString().slice(0, 10);
+
+  // Expire all previous auto-picks (created_by IS NULL = auto-generated)
+  await dbRun(
+    `UPDATE picks SET status='expired' WHERE status='active' AND created_by IS NULL AND date(published_at) < ?`,
+    [today]
+  );
+
+  // Check if auto-picks already generated today
+  const existing = await dbAll(
+    `SELECT id FROM picks WHERE status='active' AND created_by IS NULL AND date(published_at) = ?`,
+    [today]
+  );
+  if (existing.length > 0) {
+    console.log(`[Picks] Already have ${existing.length} auto-picks for today, skipping`);
+    return;
+  }
+
+  // Fetch stocks with recent price data (up to 7 days back to cover weekends)
+  const stocks = await dbAll<any>(`
+    SELECT s.symbol, s.company_name, s.sector,
+           s.roce, s.roe, s.de_ratio, s.promoter_pct, s.pe_ratio,
+           s.all_profitable, s.profit_uptrend, s.market_cap,
+           s.week52_high, s.week52_low,
+           p.price, p.volume, p.change_pct, p.day_high, p.day_low, p.prev_close
+    FROM stocks s
+    JOIN prices p ON s.symbol = p.symbol
+    WHERE p.price > 0 AND p.price IS NOT NULL
+      AND p.updated_at >= date('now', '-7 days')
+  `);
+
+  if (stocks.length === 0) {
+    console.log("[Picks] No price data available, skipping pick generation");
+    return;
+  }
+  console.log(`[Picks] Pool: ${stocks.length} stocks with price data`);
+
+  let intradayCount = 0, swingCount = 0, longtermCount = 0;
+
+  // ── INTRADAY PICKS — high volume movers with price momentum ─────────────────
+  const intradayPool = stocks
+    .filter(s => s.price > 50 && s.price < 8000 && (s.volume ?? 0) > 300_000 && Math.abs(s.change_pct ?? 0) > 0.5)
+    .map(s => ({
+      ...s,
+      score: ((s.volume ?? 0) / 1_000_000) * Math.abs(s.change_pct ?? 0) * (s.roce != null && s.roce > 0 ? Math.min(s.roce / 10, 2) : 1),
+    }))
+    .sort((a, b) => b.score - a.score)
+    .slice(0, 5);
+
+  for (const s of intradayPool) {
+    const price = s.price;
+    const dir = (s.change_pct ?? 0) >= 0 ? "LONG" : "SHORT";
+    const entryLow   = parseFloat((price * (dir === "LONG" ? 0.997 : 1.003)).toFixed(2));
+    const entryHigh  = parseFloat((price * (dir === "LONG" ? 1.003 : 0.997)).toFixed(2));
+    const target     = parseFloat((price * (dir === "LONG" ? 1.018 : 0.982)).toFixed(2));
+    const stopLoss   = parseFloat((price * (dir === "LONG" ? 0.990 : 1.010)).toFixed(2));
+
+    const parts: string[] = [];
+    if ((s.change_pct ?? 0) > 0) parts.push(`Up ${(s.change_pct as number).toFixed(1)}% today`);
+    else parts.push(`Down ${Math.abs(s.change_pct as number).toFixed(1)}% today`);
+    if ((s.volume ?? 0) > 1_000_000) parts.push(`Volume ${((s.volume as number) / 1e6).toFixed(1)}M`);
+    if ((s.roce ?? 0) > 15) parts.push(`ROCE ${(s.roce as number).toFixed(0)}%`);
+    const reason = parts.slice(0, 3).join(" · ");
+
+    await createPick({
+      stock_symbol: s.symbol, company_name: s.company_name,
+      direction: dir, pick_type: "intraday",
+      entry_low: entryLow, entry_high: entryHigh,
+      target, stop_loss: stopLoss,
+      reason, risk_level: "medium", status: "active",
+    });
+    intradayCount++;
+  }
+
+  // ── SWING PICKS — momentum + quality fundamentals, 1–2 week horizon ─────────
+  const swingPool = stocks
+    .filter(s =>
+      s.price > 100 && s.price < 15000 &&
+      (s.roce ?? 0) > 8 &&
+      (s.de_ratio == null || s.de_ratio < 2.5) &&
+      (s.change_pct ?? 0) > 0 && (s.change_pct ?? 0) < 8
+    )
+    .map(s => ({
+      ...s,
+      score:
+        (s.roce ?? 0) * 0.4 +
+        (s.roe ?? 0) * 0.3 +
+        (s.promoter_pct ?? 0) * 0.1 +
+        (s.change_pct ?? 0) * 2 +
+        (s.all_profitable ? 10 : 0) +
+        (s.profit_uptrend ? 5 : 0),
+    }))
+    .sort((a, b) => b.score - a.score)
+    .slice(0, 5);
+
+  for (const s of swingPool) {
+    const price = s.price;
+    const entryLow  = parseFloat((price * 0.995).toFixed(2));
+    const entryHigh = parseFloat((price * 1.005).toFixed(2));
+    const target    = parseFloat((price * 1.09).toFixed(2));
+    const stopLoss  = parseFloat((price * 0.945).toFixed(2));
+
+    const parts: string[] = [];
+    if ((s.roce ?? 0) > 0) parts.push(`ROCE ${(s.roce as number).toFixed(0)}%`);
+    if ((s.roe ?? 0) > 0)  parts.push(`ROE ${(s.roe as number).toFixed(0)}%`);
+    if (s.all_profitable)  parts.push("Consistently profitable");
+    if (s.profit_uptrend)  parts.push("Profit uptrend");
+    if ((s.change_pct ?? 0) > 0) parts.push(`Momentum +${(s.change_pct as number).toFixed(1)}%`);
+    const reason = parts.slice(0, 4).join(" · ") || `Swing setup — ROCE ${(s.roce ?? 0).toFixed(0)}%`;
+
+    await createPick({
+      stock_symbol: s.symbol, company_name: s.company_name,
+      direction: "LONG", pick_type: "swing",
+      entry_low: entryLow, entry_high: entryHigh,
+      target, stop_loss: stopLoss,
+      reason, risk_level: "medium", status: "active",
+    });
+    swingCount++;
+  }
+
+  // ── LONGTERM PICKS — strong balance sheets, multi-month horizon ───────────────
+  const longtermPool = stocks
+    .filter(s =>
+      s.price > 100 &&
+      (s.roce ?? 0) > 15 && (s.roe ?? 0) > 12 &&
+      (s.de_ratio == null || s.de_ratio < 1) &&
+      (s.pe_ratio ?? 0) > 5 && (s.pe_ratio ?? 0) < 50 &&
+      s.all_profitable === 1
+    )
+    .map(s => ({
+      ...s,
+      score:
+        (s.roce ?? 0) * 0.35 +
+        (s.roe ?? 0) * 0.35 +
+        (s.all_profitable ? 15 : 0) +
+        (s.profit_uptrend ? 10 : 0) +
+        ((s.promoter_pct ?? 0) > 50 ? 5 : 0),
+    }))
+    .sort((a, b) => b.score - a.score)
+    .slice(0, 3);
+
+  for (const s of longtermPool) {
+    const price = s.price;
+    const entryLow  = parseFloat((price * 0.99).toFixed(2));
+    const entryHigh = parseFloat((price * 1.01).toFixed(2));
+    const target    = parseFloat((price * 1.25).toFixed(2));
+    const stopLoss  = parseFloat((price * 0.90).toFixed(2));
+
+    const parts: string[] = [];
+    if ((s.roce ?? 0) > 0) parts.push(`ROCE ${(s.roce as number).toFixed(0)}%`);
+    if ((s.roe ?? 0) > 0)  parts.push(`ROE ${(s.roe as number).toFixed(0)}%`);
+    if (s.de_ratio != null && s.de_ratio < 0.5) parts.push("Near debt-free");
+    else if (s.de_ratio != null && s.de_ratio < 1) parts.push(`Low D/E ${(s.de_ratio as number).toFixed(2)}`);
+    if (s.all_profitable)  parts.push("All years profitable");
+    if (s.profit_uptrend)  parts.push("Profit uptrend");
+    const reason = parts.slice(0, 4).join(" · ") || `Strong fundamentals — ROCE ${(s.roce ?? 0).toFixed(0)}%, ROE ${(s.roe ?? 0).toFixed(0)}%`;
+
+    await createPick({
+      stock_symbol: s.symbol, company_name: s.company_name,
+      direction: "LONG", pick_type: "longterm",
+      entry_low: entryLow, entry_high: entryHigh,
+      target, stop_loss: stopLoss,
+      reason, risk_level: "low", status: "active",
+    });
+    longtermCount++;
+  }
+
+  console.log(`[Picks] Done — ${intradayCount} intraday, ${swingCount} swing, ${longtermCount} longterm (total ${intradayCount + swingCount + longtermCount})`);
+}
+
 // ── Cron ──────────────────────────────────────────────────────────────────────
 export function startScheduler() {
   // Daily prices: weekdays at 6:30 PM IST (13:00 UTC)
@@ -185,6 +359,12 @@ export function startScheduler() {
     await refreshFundamentals();
   }, { timezone: "UTC" });
 
+  // Daily picks: weekdays at 6:45 PM IST (13:15 UTC) — runs after price refresh at 13:00 UTC
+  cron.schedule("15 13 * * 1-5", async () => {
+    console.log("[Cron] Daily auto-picks generation");
+    await generateDailyPicks();
+  }, { timezone: "UTC" });
+
   console.log("[Scheduler] Cron jobs registered");
 }
 
@@ -198,8 +378,10 @@ if (require.main === module) {
       await refreshPrices();
     } else if (args.includes("--fundamentals")) {
       await refreshFundamentals();
+    } else if (args.includes("--picks")) {
+      await generateDailyPicks();
     } else {
-      console.log("Usage: ts-node src/scheduler.ts [--seed | --prices | --fundamentals]");
+      console.log("Usage: ts-node src/scheduler.ts [--seed | --prices | --fundamentals | --picks]");
     }
     process.exit(0);
   }).catch(e => { console.error(e); process.exit(1); });

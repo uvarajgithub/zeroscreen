@@ -454,38 +454,21 @@ Compress-Archive -Path src,public,package.json,package-lock.json,tsconfig.json -
 
 ---
 
+## Recent Changes (May 2026)
+
+- **Nav responsive fix** — `flex-shrink:0` on nav-right; search bar narrowed to 160px; nav links collapse at ≤1160px and ≤980px breakpoints so profile avatar is always visible
+- **Signals — compact trade rows** — Recent trades now render as single-line `.sig-trade-row` cards (direction badge · date · entry→exit prices · PnL · duration · exit reason). Both SSR and auto-refresh JS updated.
+- **Paper Trade — index symbol autocomplete** — Typing `BANKNIFTY`, `NIFTY`, `FINNIFTY`, `MIDCPNIFTY`, `SENSEX`, or `BANKEX` in the symbol search now shows those as "Index Options (CE/PE)" at the top of the dropdown
+- **Paper Trade — options panel** — Selecting an index auto-switches to Limit order and shows the CE/PE toggle + strike picker with a ✕ close button. Clearing the search input also hides the panel.
+- **Paper Trade — dropdown overlap fixed** — `.pt2-trade-card` changed from `overflow:hidden` to `overflow:visible` so search results render above other form elements
+- **Picks cards** — Reduced font sizes and padding; grid now uses `minmax(180px, 1fr)` showing more cards per row
+- **Nav — double Admin panel** — Removed "🛡️ Admin Panel" link from profile dropdown (it already exists as a dedicated nav dropdown for admins)
+
+---
+
 ## License
 
 Private / self-hosted use. Data sourced from screener.in and NSE India — not for redistribution. Trading strategy logic is proprietary.
-
-
----
-
-## What You See, Screen by Screen
-
-### 1. Launch URL — `http://139.59.18.52:4000/`
-
-**Stock Screener (home page) — no login required**
-
-The first thing you land on is the full NSE screener. No signup wall.
-
-- **Nav bar** — ZeroScreen brand · 5 primary links (Screener, Signals, Dashboard, Strategies, Paper Trade) · More dropdown · search bar · dark mode toggle · Sign In
-- **News ticker** — scrolling market headlines across the top
-- **Strategy preset cards** — 14 one-click strategies: Quality Blue Chips, Debt-Free, Growth, Value, High ROCE, Dividend, Promoter, Small Cap, Penny, High Value, Long Term, Short Term, Swing, Options
-- **Filter panel** (collapsible) — ROCE, ROE, D/E, Promoter %, P/E, Price range, Market Cap, Volume, Sector, Change %, 52-Week proximity, Profitable years, Profit uptrend
-- **Results table** — up to 50 stocks per page, columns: Symbol, Company, Sector, Price, Change %, Volume, ROCE, ROE, D/E, Promoter %, P/E, Market Cap, Profitable
-  - Debt-free stocks show "Debt-free 💎"
-  - Change % colored green/red
-  - ROCE colored green → yellow → red
-- **Pagination** — Prev / Next with filter state preserved
-- **Column toggles** — show/hide any metric column
-- **Multi-select compare** — tick checkboxes → "Compare Selected" button appears
-
----
-
-### 2. Stock Detail — `http://139.59.18.52:4000/stock/RELIANCE`
-
-Click any symbol in the screener to open its detail page.
 
 - **Hero bar** — symbol, company name, live price, change %, day high/low, prev close, 52-week range slider
 - **TradingView chart** — full interactive price chart (550px, syncs dark/light mode)

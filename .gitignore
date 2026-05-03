@@ -5,3 +5,11 @@ dist/
 *.db-wal
 .env
 *.log
+*.exe
+*.zip
+.playwright-mcp/
+test-*.mjs
+test_*.js
+picks_seed*.sql
+deploy.ps1
+public/images/

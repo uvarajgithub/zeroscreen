@@ -134,6 +134,24 @@ setInterval(loadTicker, 5 * 60 * 1000);
   });
 })();
 
+// ── Avatar dropdown ────────────────────────────────────────────────────────────
+(function () {
+  const wrap = document.getElementById('nav-user-menu');
+  const btn  = document.getElementById('nav-user-btn');
+  if (!wrap || !btn) return;
+  btn.addEventListener('click', function(e) {
+    e.stopPropagation();
+    const open = wrap.classList.toggle('open');
+    btn.setAttribute('aria-expanded', String(open));
+  });
+  document.addEventListener('click', function(e) {
+    if (!wrap.contains(e.target)) {
+      wrap.classList.remove('open');
+      btn.setAttribute('aria-expanded', 'false');
+    }
+  });
+})();
+
 // ── "More" / tier dropdowns — generic handler for all .nav-more elements ──────
 (function () {
   // Handle all nav-more dropdowns generically
@@ -209,3 +227,108 @@ setInterval(loadTicker, 5 * 60 * 1000);
     }
   });
 })();
+
+// ── FAQ Chatbot ────────────────────────────────────────────────────────────────
+(function () {
+  var btn     = document.getElementById('chat-bubble-btn');
+  var win     = document.getElementById('chat-window');
+  var closeBtn= document.getElementById('chat-close');
+  var input   = document.getElementById('chat-input');
+  var sendBtn = document.getElementById('chat-send');
+  var msgs    = document.getElementById('chat-messages');
+  if (!btn || !win) return;
+
+  // ── FAQ data ── (no strategy secrets, no bot logic, only platform info)
+  var faqs = [
+    { k: ['paper trade','virtual','practice','1 lakh','₹1','paper money','risk free','no risk','lose money','afraid'],
+      a: "📋 <strong>Paper Trade</strong> lets you practice trading with ₹1,00,000 virtual money — zero real money at risk! Trade any NSE stock at live market prices. It's perfect if you're new or afraid of losing money. <a href='/my-paper-trade'>Start here →</a>" },
+    { k: ['beginner','new','start','afraid','scared','learn','first time','how to begin'],
+      a: "🌱 <strong>New to trading?</strong> Start with Paper Trade — get ₹1,00,000 virtual money to practice on real NSE stocks without any risk. Find a strategy that works for <em>you</em> before going live. <a href='/paper-trade'>See how it works →</a>" },
+    { k: ['screener','filter','search stocks','find stocks','nse stocks'],
+      a: "🔍 <strong>NSE Screener</strong> covers 1,700+ stocks. Filter by ROCE, ROE, D/E ratio, P/E, promoter %, market cap, sector, and more. Or click any of the 14 strategy preset cards for instant results. <a href='/'>Open Screener →</a>" },
+    { k: ['free','cost','price','subscription','pay','premium'],
+      a: "✅ <strong>ZeroScreen is free forever</strong> for all screener features, signals, and paper trade. Premium (₹499/month) unlocks unlimited paper trades beyond the free 10-trade limit. <a href='/premium'>See plans →</a>" },
+    { k: ['get started','sign up','signup','register','create account'],
+      a: "🚀 <strong>Getting started is easy:</strong> Create a free account in 30 seconds — no credit card, no broker account needed. Or browse as a guest first! <a href='/signup'>Sign up free →</a>" },
+    { k: ['roce','return on capital'],
+      a: "📊 <strong>ROCE (Return on Capital Employed)</strong> measures how efficiently a company uses its capital to generate profit. ROCE > 15% is generally good; > 20% is excellent. Use the screener to filter by ROCE." },
+    { k: ['roe','return on equity'],
+      a: "📊 <strong>ROE (Return on Equity)</strong> shows how much profit is earned per rupee of shareholder equity. ROE > 15% is generally considered strong performance." },
+    { k: ['d/e','debt','debt to equity','leverage'],
+      a: "⚖️ <strong>D/E Ratio (Debt to Equity)</strong> measures financial risk. Lower is safer — D/E < 1 means more equity than debt. You can filter for 'Debt-Free' stocks directly in the screener." },
+    { k: ['p/e','pe ratio','valuation'],
+      a: "📈 <strong>P/E Ratio (Price to Earnings)</strong> shows how much you pay for each rupee of earnings. Lower P/E may mean undervalued, but compare within the same sector for best results." },
+    { k: ['live bot','signals','banknifty','options bot','live signals'],
+      a: "🤖 <strong>Live Bot</strong> shows real BANKNIFTY options trades made by our automated system — refreshes every 8 seconds with live P&L and confidence score. <a href='/signals'>Watch live →</a>" },
+    { k: ['strategy','strategies','preset','blue chip','growth','value','dividend'],
+      a: "🎯 ZeroScreen has <strong>14 one-click strategy presets</strong>: Quality Blue Chips, Debt-Free, Growth, Value, High ROCE, Dividend, Promoter, Small Cap, Penny, and more. Click any preset on the screener home page for instant results!" },
+    { k: ['intraday','holding','swing','positional'],
+      a: "📋 <strong>Intraday</strong> trades open and close on the same day. <strong>Holding</strong> trades can stay open for multiple days (positional). You can set your default in Paper Trade Settings." },
+    { k: ['watchlist','watch list','save stocks'],
+      a: "⭐ <strong>Watchlists</strong> let you save your favorite stocks and track their live prices. Create unlimited watchlists after signing in. <a href='/watchlists'>Go to Watchlists →</a>" },
+    { k: ['alert','email alert','notification','notify'],
+      a: "🔔 <strong>Alerts</strong> send you a morning email on weekdays when stocks match your saved screener filters. Set up alerts after signing in. <a href='/alerts'>Set up Alerts →</a>" },
+    { k: ['compare','comparison','side by side'],
+      a: "⚖️ <strong>Compare</strong> lets you pit 2–5 NSE stocks side-by-side on all key fundamentals — ROCE, ROE, D/E, P/E, EPS, Book Value, and more. <a href='/compare'>Compare stocks →</a>" },
+    { k: ['dashboard','backtest','performance','win rate','equity curve'],
+      a: "📊 <strong>Dashboard</strong> shows bot analytics with 5-year backtest data, monthly P&L charts, win rates, and a live equity curve. <a href='/dashboard'>View Dashboard →</a>" },
+    { k: ['login','sign in','password','forgot','reset'],
+      a: "🔐 You can <a href='/login'>sign in here</a> with email/password or Google. Forgot your password? Use the <a href='/forgot-password'>reset link</a>." },
+    { k: ['contact','help','support'],
+      a: "📬 Need more help? Visit our <a href='/contact'>Contact page</a> and send us a message. We usually respond within 24 hours." },
+  ];
+
+  function findAnswer(q) {
+    q = q.toLowerCase();
+    for (var i = 0; i < faqs.length; i++) {
+      for (var j = 0; j < faqs[i].k.length; j++) {
+        if (q.includes(faqs[i].k[j])) return faqs[i].a;
+      }
+    }
+    return "🤔 I'm not sure about that one. Try asking about <strong>paper trade</strong>, <strong>screener</strong>, <strong>ROCE/ROE</strong>, <strong>alerts</strong>, or <strong>watchlists</strong>. Or visit our <a href='/contact'>Contact page</a> for more help!";
+  }
+
+  function addMsg(text, role) {
+    var m = document.createElement('div');
+    m.className = 'chat-msg ' + role;
+    m.innerHTML = text;
+    msgs.appendChild(m);
+    msgs.scrollTop = msgs.scrollHeight;
+  }
+
+  function handleSend() {
+    var q = input.value.trim();
+    if (!q) return;
+    addMsg(q, 'user');
+    input.value = '';
+    var ans = findAnswer(q);
+    setTimeout(function () { addMsg(ans, 'bot'); }, 320);
+  }
+
+  btn.addEventListener('click', function () {
+    var isOpen = win.style.display !== 'none';
+    win.style.display = isOpen ? 'none' : 'flex';
+    if (!isOpen) { setTimeout(function () { input.focus(); }, 50); }
+  });
+  if (closeBtn) closeBtn.addEventListener('click', function () { win.style.display = 'none'; });
+  if (sendBtn) sendBtn.addEventListener('click', handleSend);
+  if (input) input.addEventListener('keydown', function (e) { if (e.key === 'Enter') handleSend(); });
+
+  // Chip clicks
+  msgs.addEventListener('click', function (e) {
+    var chip = e.target.closest('.chat-chip');
+    if (!chip) return;
+    var q = chip.getAttribute('data-q') || chip.textContent;
+    addMsg(q, 'user');
+    var ans = findAnswer(q);
+    setTimeout(function () { addMsg(ans, 'bot'); }, 320);
+  });
+
+  // Close when clicking outside
+  document.addEventListener('click', function (e) {
+    if (!e.target.closest('.chat-widget')) {
+      win.style.display = 'none';
+    }
+  });
+})();
+
