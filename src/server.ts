@@ -411,6 +411,7 @@ function nav(active: string, req?: Request): string {
     ["admin-content",   "/admin/content",   "📢 Content"],
     ["admin-signals",   "/admin/signals",   "🤖 Signal Control"],
     ["admin-subs",      "/admin/subs",      "💳 Subscriptions"],
+    ["admin-trading",    "/admin/trading",    "📈 Trading"],
   ] : [];
 
   const allTiered = [...beginnerLinks, ...traderLinks, ...investorLinks];
@@ -5506,6 +5507,191 @@ app.get("/admin/subs", requireAdmin, async (req: Request, res: Response) => {
 </body>
 </html>`);
 });
+
+
+// -- Admin Trading Dashboard ------------------------------------------------
+app.get("/admin/trading", requireAdmin, (req: Request, res: Response) => {
+  const BDIR = "/home/ubuntu/trading-bot";
+  function rb(f: string, fb: any = null) {
+    try {
+      const fs2 = require("fs");
+      const p = `${BDIR}/${f}`;
+      if (!fs2.existsSync(p)) return fb;
+      return JSON.parse(fs2.readFileSync(p, "utf-8"));
+    } catch { return fb; }
+  }
+
+  const hb      = rb("bot-heartbeat.json");
+  const state   = rb("trade-state.json", {});
+  const trades: any[] = rb("trades.json", []);
+  const ptrades: any[] = rb("paper-trades.json", []);
+
+  const todayIST2 = new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" });
+  const todayTrades = trades.filter((t: any) => (t.date||"").startsWith(todayIST2));
+  const allTrades   = trades;
+
+  // analytics
+  const totalPnL  = allTrades.reduce((s: number, t: any) => s + (t.pnl||0), 0);
+  const todayPnL  = todayTrades.reduce((s: number, t: any) => s + (t.pnl||0), 0);
+  const wins      = allTrades.filter((t: any) => t.pnl > 0).length;
+  const losses    = allTrades.filter((t: any) => t.pnl < 0).length;
+  const winRate   = allTrades.length ? Math.round(wins / allTrades.length * 100) : 0;
+
+  const isAlive   = hb?.at ? (Date.now() - new Date(hb.at).getTime()) < 3 * 60 * 1000 : false;
+  const statusLabel = isAlive ? (hb.inTrade ? `IN TRADE · ${hb.direction}` : "RUNNING · FLAT") : "OFFLINE";
+  const statusColor = isAlive ? (hb.inTrade ? "#3b82f6" : "#10b981") : "#ef4444";
+
+  // paper trades summary
+  const openPaper  = ptrades.filter((t: any) => t.status === "OPEN").length;
+  const closedPaper = ptrades.filter((t: any) => t.status !== "OPEN");
+  const paperPnL   = closedPaper.reduce((s: number, t: any) => s + (t.pnl||0), 0);
+
+  // today trade rows
+  const tradeRowsHtml = todayTrades.length === 0
+    ? `<tr><td colspan="6" style="text-align:center;color:#888;padding:1.5rem">No live trades today</td></tr>`
+    : todayTrades.slice(-20).reverse().map((t: any) => {
+        const pnl = t.pnl || 0;
+        const pnlColor = pnl > 0 ? "#10b981" : pnl < 0 ? "#ef4444" : "#888";
+        const pnlSign = pnl >= 0 ? "+" : "";
+        const timeStr = t.date ? new Date(t.date).toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata", hour: "2-digit", minute: "2-digit" }) : "-";
+        return `<tr>
+          <td>${timeStr}</td>
+          <td>${t.type||"-"}</td>
+          <td><span style="color:${t.direction==="CE"?"#3b82f6":"#ef4444"}">${t.direction||"-"}</span></td>
+          <td>₹${(t.entryPrice||0).toFixed(1)}</td>
+          <td>₹${(t.exitPrice||0).toFixed(1)}</td>
+          <td style="color:${pnlColor};font-weight:600">${pnlSign}${pnl.toFixed(1)} pts</td>
+        </tr>`;
+      }).join("");
+
+  // recent paper trade rows
+  const paperRowsHtml = closedPaper.length === 0
+    ? `<tr><td colspan="6" style="text-align:center;color:#888;padding:1.5rem">No paper trades yet</td></tr>`
+    : closedPaper.slice(-10).reverse().map((t: any) => {
+        const pnl = t.pnl || 0;
+        const pnlColor = pnl > 0 ? "#10b981" : pnl < 0 ? "#ef4444" : "#888";
+        const pnlSign = pnl >= 0 ? "+" : "";
+        const pnlPct = t.pnlPct ? `(${pnl>=0?"+":""}${t.pnlPct.toFixed(1)}%)` : "";
+        return `<tr>
+          <td>${t.exitDate||t.entryDate||"-"}</td>
+          <td><span style="font-size:0.75rem;background:#1e293b;padding:2px 6px;border-radius:4px">${t.strategy||"-"}</span></td>
+          <td>${t.symbol||"-"}</td>
+          <td><span style="color:${t.direction==="LONG"?"#10b981":"#ef4444"}">${t.direction||"-"}</span></td>
+          <td style="color:${pnlColor};font-weight:600">${pnlSign}${pnl.toFixed ? pnl.toFixed(0) : pnl} ${pnlPct}</td>
+          <td><span style="font-size:0.7rem;color:#888">${t.status||"-"}</span></td>
+        </tr>`;
+      }).join("");
+
+  res.send(`<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Trading Dashboard — Admin</title>
+  <link rel="stylesheet" href="/public/css/style.css">
+  <style>
+    .td-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(160px,1fr)); gap:1rem; margin:1.5rem 0; }
+    .td-card { background:#111827; border:1px solid #1e293b; border-radius:10px; padding:1.2rem 1.5rem; }
+    .td-card-label { font-size:0.72rem; color:#64748b; text-transform:uppercase; letter-spacing:.08em; margin-bottom:.4rem; }
+    .td-card-val { font-size:1.6rem; font-weight:700; }
+    .td-section { background:#0f172a; border:1px solid #1e293b; border-radius:10px; margin:1.5rem 0; overflow:hidden; }
+    .td-section-hd { display:flex; align-items:center; justify-content:space-between; padding:.9rem 1.2rem; border-bottom:1px solid #1e293b; font-size:.85rem; font-weight:600; color:#94a3b8; }
+    .td-table { width:100%; border-collapse:collapse; font-size:.82rem; }
+    .td-table th { padding:.55rem 1rem; text-align:left; color:#64748b; font-weight:500; border-bottom:1px solid #1e293b; }
+    .td-table td { padding:.6rem 1rem; border-bottom:1px solid #0d1117; }
+    .td-table tr:last-child td { border-bottom:none; }
+    .td-status-badge { display:inline-block; padding:.3rem .8rem; border-radius:20px; font-size:.75rem; font-weight:700; }
+    .td-refresh { font-size:.75rem; color:#475569; margin-left:.5rem; }
+    .admin-section-title { font-size:1.2rem; font-weight:700; color:#f1f5f9; margin:2rem 0 .5rem; }
+  </style>
+</head>
+<body>
+  ${nav("admin-trading", req)}
+  <div class="container" style="max-width:1100px;padding:2rem 1rem">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:1.5rem;flex-wrap:wrap;gap:.5rem">
+      <h1 style="font-size:1.4rem;font-weight:800;color:#f1f5f9;margin:0">📈 Trading Dashboard</h1>
+      <div style="display:flex;align-items:center;gap:.8rem">
+        <span class="td-status-badge" style="background:${statusColor}22;color:${statusColor}">● ${statusLabel}</span>
+        <span class="td-refresh" id="td-last-update">Updated: ${new Date().toLocaleTimeString("en-IN",{timeZone:"Asia/Kolkata"})}</span>
+        <button onclick="location.reload()" style="background:#1e293b;border:1px solid #334155;color:#94a3b8;padding:.3rem .8rem;border-radius:6px;cursor:pointer;font-size:.75rem">↻ Refresh</button>
+      </div>
+    </div>
+
+    <!-- Stat cards -->
+    <div class="td-grid">
+      <div class="td-card">
+        <div class="td-card-label">Bot Status</div>
+        <div class="td-card-val" style="color:${statusColor};font-size:1.1rem">${statusLabel}</div>
+        <div style="font-size:.72rem;color:#64748b;margin-top:.3rem">Mode: ${(hb?.mode||"PAPER").toUpperCase()}</div>
+      </div>
+      <div class="td-card">
+        <div class="td-card-label">Today P&L (Live)</div>
+        <div class="td-card-val" style="color:${todayPnL>=0?"#10b981":"#ef4444"}">${todayPnL>=0?"+":""}${todayPnL.toFixed(1)} pts</div>
+        <div style="font-size:.72rem;color:#64748b;margin-top:.3rem">${todayTrades.length} trades today</div>
+      </div>
+      <div class="td-card">
+        <div class="td-card-label">All-time P&L (Live)</div>
+        <div class="td-card-val" style="color:${totalPnL>=0?"#10b981":"#ef4444"}">${totalPnL>=0?"+":""}${totalPnL.toFixed(1)} pts</div>
+        <div style="font-size:.72rem;color:#64748b;margin-top:.3rem">${allTrades.length} total trades | Win ${winRate}%</div>
+      </div>
+      <div class="td-card">
+        <div class="td-card-label">Paper Trades P&L</div>
+        <div class="td-card-val" style="color:${paperPnL>=0?"#10b981":"#ef4444"}">${paperPnL>=0?"+":""}${paperPnL>=0?paperPnL.toFixed(0):Math.abs(paperPnL).toFixed(0)}</div>
+        <div style="font-size:.72rem;color:#64748b;margin-top:.3rem">${openPaper} open | ${closedPaper.length} closed</div>
+      </div>
+      ${hb?.inTrade ? `
+      <div class="td-card" style="border-color:#3b82f680">
+        <div class="td-card-label">Active Trade</div>
+        <div class="td-card-val" style="color:${hb.direction==="CE"?"#3b82f6":"#ef4444"};font-size:1.1rem">${hb.direction} @ ₹${hb.entryPrice||"-"}</div>
+        <div style="font-size:.72rem;color:#64748b;margin-top:.3rem">Unrealised: ${hb.unrealisedPnL>=0?"+":""}${hb.unrealisedPnL||0} pts</div>
+      </div>` : ""}
+    </div>
+
+    <!-- Today Live Trades -->
+    <div class="td-section">
+      <div class="td-section-hd">
+        <span>📌 Today’s Live Trades</span>
+        <span style="color:#475569">${todayIST2}</span>
+      </div>
+      <table class="td-table">
+        <thead><tr>
+          <th>Time</th><th>Strategy</th><th>Dir</th><th>Entry</th><th>Exit</th><th>P&L</th>
+        </tr></thead>
+        <tbody>${tradeRowsHtml}</tbody>
+      </table>
+    </div>
+
+    <!-- Recent Paper Trades -->
+    <div class="td-section">
+      <div class="td-section-hd">
+        <span>🗒 Recent Paper Trades (last 10)</span>
+        <a href="/paper-trade" style="color:#3b82f6;font-size:.75rem">View Full →</a>
+      </div>
+      <table class="td-table">
+        <thead><tr>
+          <th>Date</th><th>Strategy</th><th>Symbol</th><th>Dir</th><th>P&L</th><th>Status</th>
+        </tr></thead>
+        <tbody>${paperRowsHtml}</tbody>
+      </table>
+    </div>
+
+    <!-- Quick links -->
+    <div style="display:flex;gap:.8rem;flex-wrap:wrap;margin-top:1rem">
+      <a href="/signals" style="background:#1e293b;border:1px solid #334155;color:#94a3b8;padding:.5rem 1rem;border-radius:8px;text-decoration:none;font-size:.82rem">🛰️ Live Bot Feed</a>
+      <a href="/paper-trade" style="background:#1e293b;border:1px solid #334155;color:#94a3b8;padding:.5rem 1rem;border-radius:8px;text-decoration:none;font-size:.82rem">📊 Full Paper Trade</a>
+      <a href="/admin/analytics" style="background:#1e293b;border:1px solid #334155;color:#94a3b8;padding:.5rem 1rem;border-radius:8px;text-decoration:none;font-size:.82rem">📈 Analytics</a>
+      <a href="/admin/picks" style="background:#1e293b;border:1px solid #334155;color:#94a3b8;padding:.5rem 1rem;border-radius:8px;text-decoration:none;font-size:.82rem">⚡ Hot Picks</a>
+    </div>
+  </div>
+  <script src="/public/js/app.js"></script>
+  <script>
+    // Auto-refresh every 30s
+    setTimeout(() => location.reload(), 30000);
+  </script>
+</body>
+</html>`);
+});
+
 
 // ── GET /premium ────────────────────────────────────────────────────────────────
 app.get("/premium", async (req: Request, res: Response) => {
