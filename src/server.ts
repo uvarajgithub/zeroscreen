@@ -1554,65 +1554,57 @@ app.get("/", async (req: Request, res: Response) => {
 <body>
   ${nav("home", req)}
 
-  <!-- ── Compact Index Grid ── -->
-  <div class="idx-grid-outer">
-    <div class="idx-grid" id="idx-grid">
-      <div class="idx-card" id="ic-NSEI">
-        <div class="idx-lbl"><img src="https://flagcdn.com/16x12/in.png" class="mkt-flag-img" alt="IN"> NIFTY 50</div>
-        <div class="idx-price" id="ip-NSEI">—</div>
-        <div class="idx-chg idx-d" id="icc-NSEI">—</div>
-      </div>
-      <div class="idx-card" id="ic-NSEBANK">
-        <div class="idx-lbl"><img src="https://flagcdn.com/16x12/in.png" class="mkt-flag-img" alt="IN"> BANK NIFTY</div>
-        <div class="idx-price" id="ip-NSEBANK">—</div>
-        <div class="idx-chg idx-d" id="icc-NSEBANK">—</div>
-      </div>
-      <div class="idx-card" id="ic-FINNIFTY">
-        <div class="idx-lbl"><img src="https://flagcdn.com/16x12/in.png" class="mkt-flag-img" alt="IN"> FIN NIFTY</div>
-        <div class="idx-price" id="ip-FINNIFTY">—</div>
-        <div class="idx-chg idx-d" id="icc-FINNIFTY">—</div>
-      </div>
-      <div class="idx-card" id="ic-INDIAVIX">
-        <div class="idx-lbl"><img src="https://flagcdn.com/16x12/in.png" class="mkt-flag-img" alt="IN"> INDIA VIX</div>
-        <div class="idx-price" id="ip-INDIAVIX">—</div>
-        <div class="idx-chg idx-d" id="icc-INDIAVIX">—</div>
-      </div>
-      <div class="idx-card" id="ic-MIDCAP">
-        <div class="idx-lbl"><img src="https://flagcdn.com/16x12/in.png" class="mkt-flag-img" alt="IN"> MIDCAP 100</div>
-        <div class="idx-price" id="ip-MIDCAP">—</div>
-        <div class="idx-chg idx-d" id="icc-MIDCAP">—</div>
-      </div>
-      <div class="idx-card" id="ic-NIFTYIT">
-        <div class="idx-lbl"><img src="https://flagcdn.com/16x12/in.png" class="mkt-flag-img" alt="IN"> NIFTY IT</div>
-        <div class="idx-price" id="ip-NIFTYIT">—</div>
-        <div class="idx-chg idx-d" id="icc-NIFTYIT">—</div>
-      </div>
-      <div class="idx-card idx-card-global" id="ic-DJI">
-        <div class="idx-lbl"><img src="https://flagcdn.com/16x12/us.png" class="mkt-flag-img" alt="US"> DOW JONES</div>
-        <div class="idx-price" id="ip-DJI">—</div>
-        <div class="idx-chg idx-d" id="icc-DJI">—</div>
-      </div>
-      <div class="idx-card idx-card-global" id="ic-IXIC">
-        <div class="idx-lbl"><img src="https://flagcdn.com/16x12/us.png" class="mkt-flag-img" alt="US"> NASDAQ</div>
-        <div class="idx-price" id="ip-IXIC">—</div>
-        <div class="idx-chg idx-d" id="icc-IXIC">—</div>
-      </div>
-      <div class="idx-card idx-card-global" id="ic-GSPC">
-        <div class="idx-lbl"><img src="https://flagcdn.com/16x12/us.png" class="mkt-flag-img" alt="US"> S&amp;P 500</div>
-        <div class="idx-price" id="ip-GSPC">—</div>
-        <div class="idx-chg idx-d" id="icc-GSPC">—</div>
-      </div>
-      <div class="idx-card idx-card-global" id="ic-N225">
-        <div class="idx-lbl"><img src="https://flagcdn.com/16x12/jp.png" class="mkt-flag-img" alt="JP"> NIKKEI 225</div>
-        <div class="idx-price" id="ip-N225">—</div>
-        <div class="idx-chg idx-d" id="icc-N225">—</div>
-      </div>
-      <div class="idx-card idx-card-global" id="ic-HSI">
-        <div class="idx-lbl"><img src="https://flagcdn.com/16x12/hk.png" class="mkt-flag-img" alt="HK"> HANG SENG</div>
-        <div class="idx-price" id="ip-HSI">—</div>
-        <div class="idx-chg idx-d" id="icc-HSI">—</div>
+  <!-- ── Index Ticker Marquee ── -->
+  <div class="idx-ticker-outer">
+    <div class="idx-ticker-track">
+      <div class="idx-ticker-inner" id="idx-grid">
+        <span class="idx-ti" id="ic-NSEI"><img src="https://flagcdn.com/16x12/in.png" class="mkt-flag-img" alt="IN"><span class="idx-ti-lbl">NIFTY 50</span><span class="idx-price" id="ip-NSEI">—</span><span class="idx-chg idx-d" id="icc-NSEI">—</span></span>
+        <span class="idx-ti-sep">◆</span>
+        <span class="idx-ti" id="ic-NSEBANK"><img src="https://flagcdn.com/16x12/in.png" class="mkt-flag-img" alt="IN"><span class="idx-ti-lbl">BANK NIFTY</span><span class="idx-price" id="ip-NSEBANK">—</span><span class="idx-chg idx-d" id="icc-NSEBANK">—</span></span>
+        <span class="idx-ti-sep">◆</span>
+        <span class="idx-ti" id="ic-FINNIFTY"><img src="https://flagcdn.com/16x12/in.png" class="mkt-flag-img" alt="IN"><span class="idx-ti-lbl">FIN NIFTY</span><span class="idx-price" id="ip-FINNIFTY">—</span><span class="idx-chg idx-d" id="icc-FINNIFTY">—</span></span>
+        <span class="idx-ti-sep">◆</span>
+        <span class="idx-ti" id="ic-INDIAVIX"><img src="https://flagcdn.com/16x12/in.png" class="mkt-flag-img" alt="IN"><span class="idx-ti-lbl">INDIA VIX</span><span class="idx-price" id="ip-INDIAVIX">—</span><span class="idx-chg idx-d" id="icc-INDIAVIX">—</span></span>
+        <span class="idx-ti-sep">◆</span>
+        <span class="idx-ti" id="ic-MIDCAP"><img src="https://flagcdn.com/16x12/in.png" class="mkt-flag-img" alt="IN"><span class="idx-ti-lbl">MIDCAP 100</span><span class="idx-price" id="ip-MIDCAP">—</span><span class="idx-chg idx-d" id="icc-MIDCAP">—</span></span>
+        <span class="idx-ti-sep">◆</span>
+        <span class="idx-ti" id="ic-NIFTYIT"><img src="https://flagcdn.com/16x12/in.png" class="mkt-flag-img" alt="IN"><span class="idx-ti-lbl">NIFTY IT</span><span class="idx-price" id="ip-NIFTYIT">—</span><span class="idx-chg idx-d" id="icc-NIFTYIT">—</span></span>
+        <span class="idx-ti-sep">◇</span>
+        <span class="idx-ti" id="ic-DJI"><img src="https://flagcdn.com/16x12/us.png" class="mkt-flag-img" alt="US"><span class="idx-ti-lbl">DOW JONES</span><span class="idx-price" id="ip-DJI">—</span><span class="idx-chg idx-d" id="icc-DJI">—</span></span>
+        <span class="idx-ti-sep">◇</span>
+        <span class="idx-ti" id="ic-IXIC"><img src="https://flagcdn.com/16x12/us.png" class="mkt-flag-img" alt="US"><span class="idx-ti-lbl">NASDAQ</span><span class="idx-price" id="ip-IXIC">—</span><span class="idx-chg idx-d" id="icc-IXIC">—</span></span>
+        <span class="idx-ti-sep">◇</span>
+        <span class="idx-ti" id="ic-GSPC"><img src="https://flagcdn.com/16x12/us.png" class="mkt-flag-img" alt="US"><span class="idx-ti-lbl">S&amp;P 500</span><span class="idx-price" id="ip-GSPC">—</span><span class="idx-chg idx-d" id="icc-GSPC">—</span></span>
+        <span class="idx-ti-sep">◇</span>
+        <span class="idx-ti" id="ic-N225"><img src="https://flagcdn.com/16x12/jp.png" class="mkt-flag-img" alt="JP"><span class="idx-ti-lbl">NIKKEI 225</span><span class="idx-price" id="ip-N225">—</span><span class="idx-chg idx-d" id="icc-N225">—</span></span>
+        <span class="idx-ti-sep">◇</span>
+        <span class="idx-ti" id="ic-HSI"><img src="https://flagcdn.com/16x12/hk.png" class="mkt-flag-img" alt="HK"><span class="idx-ti-lbl">HANG SENG</span><span class="idx-price" id="ip-HSI">—</span><span class="idx-chg idx-d" id="icc-HSI">—</span></span>
+        <span class="idx-ti-sep">◆</span>
+        <!-- duplicate for seamless loop -->
+        <span class="idx-ti" id="ic-NSEI-d"><img src="https://flagcdn.com/16x12/in.png" class="mkt-flag-img" alt="IN"><span class="idx-ti-lbl">NIFTY 50</span><span class="idx-price" id="ip-NSEI-d">—</span><span class="idx-chg idx-d" id="icc-NSEI-d">—</span></span>
+        <span class="idx-ti-sep">◆</span>
+        <span class="idx-ti" id="ic-NSEBANK-d"><img src="https://flagcdn.com/16x12/in.png" class="mkt-flag-img" alt="IN"><span class="idx-ti-lbl">BANK NIFTY</span><span class="idx-price" id="ip-NSEBANK-d">—</span><span class="idx-chg idx-d" id="icc-NSEBANK-d">—</span></span>
+        <span class="idx-ti-sep">◆</span>
+        <span class="idx-ti" id="ic-FINNIFTY-d"><img src="https://flagcdn.com/16x12/in.png" class="mkt-flag-img" alt="IN"><span class="idx-ti-lbl">FIN NIFTY</span><span class="idx-price" id="ip-FINNIFTY-d">—</span><span class="idx-chg idx-d" id="icc-FINNIFTY-d">—</span></span>
+        <span class="idx-ti-sep">◆</span>
+        <span class="idx-ti" id="ic-INDIAVIX-d"><img src="https://flagcdn.com/16x12/in.png" class="mkt-flag-img" alt="IN"><span class="idx-ti-lbl">INDIA VIX</span><span class="idx-price" id="ip-INDIAVIX-d">—</span><span class="idx-chg idx-d" id="icc-INDIAVIX-d">—</span></span>
+        <span class="idx-ti-sep">◆</span>
+        <span class="idx-ti" id="ic-MIDCAP-d"><img src="https://flagcdn.com/16x12/in.png" class="mkt-flag-img" alt="IN"><span class="idx-ti-lbl">MIDCAP 100</span><span class="idx-price" id="ip-MIDCAP-d">—</span><span class="idx-chg idx-d" id="icc-MIDCAP-d">—</span></span>
+        <span class="idx-ti-sep">◆</span>
+        <span class="idx-ti" id="ic-NIFTYIT-d"><img src="https://flagcdn.com/16x12/in.png" class="mkt-flag-img" alt="IN"><span class="idx-ti-lbl">NIFTY IT</span><span class="idx-price" id="ip-NIFTYIT-d">—</span><span class="idx-chg idx-d" id="icc-NIFTYIT-d">—</span></span>
+        <span class="idx-ti-sep">◇</span>
+        <span class="idx-ti" id="ic-DJI-d"><img src="https://flagcdn.com/16x12/us.png" class="mkt-flag-img" alt="US"><span class="idx-ti-lbl">DOW JONES</span><span class="idx-price" id="ip-DJI-d">—</span><span class="idx-chg idx-d" id="icc-DJI-d">—</span></span>
+        <span class="idx-ti-sep">◇</span>
+        <span class="idx-ti" id="ic-IXIC-d"><img src="https://flagcdn.com/16x12/us.png" class="mkt-flag-img" alt="US"><span class="idx-ti-lbl">NASDAQ</span><span class="idx-price" id="ip-IXIC-d">—</span><span class="idx-chg idx-d" id="icc-IXIC-d">—</span></span>
+        <span class="idx-ti-sep">◇</span>
+        <span class="idx-ti" id="ic-GSPC-d"><img src="https://flagcdn.com/16x12/us.png" class="mkt-flag-img" alt="US"><span class="idx-ti-lbl">S&amp;P 500</span><span class="idx-price" id="ip-GSPC-d">—</span><span class="idx-chg idx-d" id="icc-GSPC-d">—</span></span>
+        <span class="idx-ti-sep">◇</span>
+        <span class="idx-ti" id="ic-N225-d"><img src="https://flagcdn.com/16x12/jp.png" class="mkt-flag-img" alt="JP"><span class="idx-ti-lbl">NIKKEI 225</span><span class="idx-price" id="ip-N225-d">—</span><span class="idx-chg idx-d" id="icc-N225-d">—</span></span>
+        <span class="idx-ti-sep">◇</span>
+        <span class="idx-ti" id="ic-HSI-d"><img src="https://flagcdn.com/16x12/hk.png" class="mkt-flag-img" alt="HK"><span class="idx-ti-lbl">HANG SENG</span><span class="idx-price" id="ip-HSI-d">—</span><span class="idx-chg idx-d" id="icc-HSI-d">—</span></span>
       </div>
     </div>
+    <span class="idx-ticker-updated" id="mkt-updated"></span>
   </div>
 
   <div class="container screener-layout">
@@ -2064,6 +2056,13 @@ app.get("/", async (req: Request, res: Response) => {
             chgEl.textContent = newChg;
             chgEl.className = 'idx-chg ' + (up ? 'idx-up' : 'idx-dn');
           }
+          // sync duplicate ticker items
+          const card2 = document.getElementById('ic-' + key + '-d');
+          const priceEl2 = document.getElementById('ip-' + key + '-d');
+          const chgEl2   = document.getElementById('icc-' + key + '-d');
+          if (card2) { card2.classList.remove('idx-up','idx-dn'); card2.classList.add(up ? 'idx-up' : 'idx-dn'); }
+          if (priceEl2) priceEl2.textContent = newPrice;
+          if (chgEl2) { chgEl2.textContent = newChg; chgEl2.className = 'idx-chg ' + (up ? 'idx-up' : 'idx-dn'); }
         });
         const ts = document.getElementById('mkt-updated');
         if (ts) ts.textContent = 'Updated ' + new Date().toLocaleTimeString('en-IN',{hour:'2-digit',minute:'2-digit'});
