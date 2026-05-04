@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 44 44">
+  <defs>
+    <linearGradient id="g" x1="0%" y1="100%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#2563eb"/>
+      <stop offset="100%" stop-color="#7c3aed"/>
+    </linearGradient>
+    <linearGradient id="gs" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="rgba(255,255,255,0.18)"/>
+      <stop offset="100%" stop-color="rgba(255,255,255,0)"/>
+    </linearGradient>
+  </defs>
+  <!-- Background rounded square -->
+  <rect width="44" height="44" rx="10" fill="url(#g)"/>
+  <!-- Inner top-sheen for depth -->
+  <rect width="44" height="22" rx="10" fill="url(#gs)"/>
+  <!-- Z letterform: top bar → diagonal → bottom bar ending with chart uptick -->
+  <path d="M10 13L34 13L11 31L28 31L34 24"
+        stroke="white" stroke-width="4"
+        stroke-linecap="round" stroke-linejoin="round"
+        fill="none"/>
+</svg>

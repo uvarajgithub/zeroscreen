@@ -1,0 +1,33 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+
+# Databases (sensitive - never commit)
+*.db
+*.db-shm
+*.db-wal
+
+# Environment secrets
+.env
+.env.*
+
+# Sessions
+sessions.db
+
+# Logs
+*.log
+logs/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Test files
+test-*.mjs
+test-*.js
+test_*.js
+
+# PM2
+.pm2/
