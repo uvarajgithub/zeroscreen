@@ -3952,7 +3952,7 @@ app.get("/about", (req: Request, res: Response) => {
 const ADMIN_EMAIL = (process.env.ADMIN_EMAIL || "").toLowerCase().trim();
 
 // ── Bot data helpers ────────────────────────────────────────────────────────────
-const BOT_DIR = "/root/trading-bot";
+const BOT_DIR = "/home/ubuntu/trading-bot";
 
 function readBotJSON(file: string, fallback: any = null) {
   try {
