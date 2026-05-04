@@ -2656,7 +2656,7 @@ html.dark .dash-locked-overlay { background: rgba(0,0,0,0.55); }
   border-bottom: 1px solid var(--border); margin-bottom: 8px;
 }
 html.dark .picks-data-note { color: #64748b; border-color: var(--border); }
-.picks-grid { display: grid; grid-template-columns: repeat(auto-fill,minmax(240px,1fr)); gap: 14px; padding-bottom: 40px; }
+.picks-grid { display: grid; grid-template-columns: repeat(auto-fill,minmax(200px,1fr)); gap: 10px; padding-bottom: 40px; }
 .picks-empty {
   text-align: center; padding: 72px 20px; color: var(--text-muted);
   background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius-xl);
@@ -2666,7 +2666,7 @@ html.dark .picks-data-note { color: #64748b; border-color: var(--border); }
 .picks-empty p { font-size: 15px; }
 .pick-card {
   background: var(--bg-card); border: 1px solid var(--border); border-radius: 12px;
-  padding: 16px; display: flex; flex-direction: column; gap: 8px;
+  padding: 12px; display: flex; flex-direction: column; gap: 6px;
   box-shadow: 0 2px 8px rgba(0,0,0,0.05); transition: box-shadow 0.2s, transform 0.15s;
   border-top: 3px solid var(--border);
 }
@@ -3351,3 +3351,65 @@ html.dark .idx-dn { background:rgba(248,113,113,.1); color:#f87171; }
 .pt2-btn-signin-state {
   background: linear-gradient(135deg, #3b82f6, #2563eb) !important;
 }
+
+/* ============================================================
+   Wave 3: Picks blur CTA + card + dropdown fixes
+   ============================================================ */
+
+/* Blur CTA - overlays at bottom of picks-grid for locked cards */
+.picks-blur-cta {
+  grid-column: 1 / -1;
+  position: relative;
+  margin-top: -72px;
+  padding-top: 72px;
+  background: linear-gradient(to bottom, transparent 0%, var(--bg-card, #fff) 50%);
+  border-radius: 0 0 14px 14px;
+  text-align: center;
+  z-index: 5;
+  pointer-events: auto;
+}
+html.dark .picks-blur-cta {
+  background: linear-gradient(to bottom, transparent 0%, var(--bg-card, #0d1117) 50%);
+}
+.picks-blur-cta-inner {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 18px 20px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+}
+.picks-blur-lock { font-size: 1.7rem; }
+.picks-blur-cta-inner strong { font-size: 14px; font-weight: 800; }
+.picks-blur-cta-inner p { font-size: 12px; color: var(--text-muted); margin: 0; }
+.picks-blur-signin {
+  display: inline-block;
+  background: linear-gradient(135deg, #10b981, #059669);
+  color: #fff !important;
+  padding: 8px 20px;
+  border-radius: 8px;
+  font-weight: 700;
+  font-size: 13px;
+  text-decoration: none;
+}
+.picks-blur-signup {
+  display: inline-block;
+  background: transparent;
+  color: var(--text, #1e293b) !important;
+  border: 1px solid var(--border);
+  padding: 8px 18px;
+  border-radius: 8px;
+  font-weight: 700;
+  font-size: 13px;
+  text-decoration: none;
+}
+html.dark .picks-blur-signup { color: #e2e8f0 !important; }
+
+/* Card grid alignment */
+.picks-section .picks-grid { position: relative; }
+
+/* Explicit opaque dropdown background */
+.pt2-search-drop { background: #ffffff !important; }
+html.dark .pt2-search-drop { background: #1c2128 !important; border-color: #30363d !important; }

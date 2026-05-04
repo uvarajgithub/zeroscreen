@@ -5579,8 +5579,9 @@ app.get("/today", async (req: Request, res: Response) => {
   const swingPicks     = picks.filter(p => p.pick_type === 'swing');
   const longtermPicks  = picks.filter(p => p.pick_type === 'longterm');
 
-  function renderPickCard(p: any, showPrices: boolean, showSym: boolean = true): string {
-    return `<div class="pick-card pick-card-${p.direction.toLowerCase()}">
+  function renderPickCard(p: any, showPrices: boolean, showSym: boolean = true, blurred: boolean = false): string {
+    const blurAttr = blurred ? ' style="filter:blur(5px);pointer-events:none;user-select:none;opacity:.55"' : '';
+    return `<div class="pick-card pick-card-${p.direction.toLowerCase()}"${blurAttr}>
       <div class="pick-card-top">
         <div>
           ${showSym ? `<span class="pick-symbol">${esc(p.stock_symbol)}</span>` : `<span class="pick-symbol pick-sym-locked">&#9608;&#9608;&#9608;</span>`}
@@ -5612,35 +5613,34 @@ app.get("/today", async (req: Request, res: Response) => {
     </div>`;
   }
 
+  // guestBlurFrom: index from which to blur cards (-1 = no blur)
   function renderSection(
     icon: string, title: string, subtitle: string,
-    sectionPicks: any[], visible: boolean, showPrices: boolean,
-    requiredTier: string, showSym: boolean = true
+    sectionPicks: any[], showPrices: boolean,
+    showSym: boolean = true, guestBlurFrom: number = -1
   ): string {
-    if (!visible || sectionPicks.length === 0) {
-      if (sectionPicks.length === 0 && visible) return "";
-      // Fully locked section teaser
-      return `<div class="picks-section">
-        <div class="picks-section-header picks-section-locked-header">
-          <div>
-            <span class="picks-section-icon">${icon}</span>
-            <span class="picks-section-title">${title}</span>
-            <span class="picks-section-sub">${subtitle}</span>
+    if (sectionPicks.length === 0) return "";
+    const hasBlur = guestBlurFrom >= 0 && sectionPicks.length > guestBlurFrom;
+    const cardsHtml = sectionPicks.map((p, i) =>
+      renderPickCard(p, showPrices, showSym, guestBlurFrom >= 0 && i >= guestBlurFrom)
+    ).join("");
+    const pricesBar = !showPrices && !isLoggedIn
+      ? `<div class="picks-prices-locked-bar">🔒 Entry, target &amp; stop loss prices require <a href="/login?next=/today">Sign In</a> or <a href="/premium">Premium</a></div>`
+      : (!showPrices && isLoggedIn
+        ? `<div class="picks-prices-locked-bar">📄 Price details require <a href="/premium">Premium →</a></div>`
+        : "");
+    const blurCta = hasBlur ? `
+      <div class="picks-blur-cta">
+        <div class="picks-blur-cta-inner">
+          <span class="picks-blur-lock">🔒</span>
+          <strong>${sectionPicks.length - guestBlurFrom} more ${title.toLowerCase()} picks</strong>
+          <p>Sign in to unlock all picks &amp; get entry, target &amp; stop loss details.</p>
+          <div style="display:flex;gap:10px;flex-wrap:wrap;justify-content:center">
+            <a href="/login?next=/today" class="picks-blur-signin">Sign In Free →</a>
+            <a href="/signup" class="picks-blur-signup">Create Account</a>
           </div>
-          <span class="picks-tier-lock">🔒 ${requiredTier} only</span>
         </div>
-        <div class="picks-locked-section">
-          <div class="picks-locked-msg">
-            <span class="picks-locked-icon">🔒</span>
-            <div>
-              <strong>${title} picks are ${requiredTier}-only</strong>
-              <p>${requiredTier === 'Free' ? 'Sign in' : 'Upgrade to Premium'} to unlock entry zones, targets, and stop losses for ${title.toLowerCase()} trades.</p>
-            </div>
-            <a href="${requiredTier === 'Free' ? '/login' : '/premium'}" class="btn-upgrade">${requiredTier === 'Free' ? 'Sign In Free →' : 'Upgrade ₹499/mo →'}</a>
-          </div>
-        </div>
-      </div>`;
-    }
+      </div>` : "";
     return `<div class="picks-section">
       <div class="picks-section-header">
         <div>
@@ -5650,8 +5650,8 @@ app.get("/today", async (req: Request, res: Response) => {
         </div>
         <span class="picks-section-count">${sectionPicks.length} pick${sectionPicks.length !== 1 ? 's' : ''}</span>
       </div>
-      ${!showPrices && !isLoggedIn ? `<div class="picks-prices-locked-bar">🔒 Entry, target &amp; stop loss prices require <a href="/login?next=/today">Sign In</a> or <a href="/premium">Premium</a></div>` : (!showPrices && isLoggedIn ? `<div class="picks-prices-locked-bar">📣 Swing &amp; long-term price details require <a href="/premium">Premium →</a></div>` : "")}
-      <div class="picks-grid">${sectionPicks.map(p => renderPickCard(p, showPrices, showSym)).join("")}</div>
+      ${pricesBar}
+      <div class="picks-grid" style="position:relative">${cardsHtml}${blurCta}</div>
     </div>`;
   }
 
@@ -5659,25 +5659,15 @@ app.get("/today", async (req: Request, res: Response) => {
   const guestShowSymbol  = (await getSetting("guest_picks_show_symbol")) !== "false";
   const guestShowPrices  = (await getSetting("guest_picks_show_prices")) !== "false";
   const freeShowPrices   = (await getSetting("free_picks_show_prices")) !== "false";
-  const freeSwingVisible = (await getSetting("free_picks_swing_visible")) !== "false";
-  // Symbol: logged-in / premium / admin always see symbol; guests controlled by toggle
-  const showSymbol      = isLoggedIn || isPremium || isAdmin || guestShowSymbol;
-  // Prices: premium/admin = always; free user = freeShowPrices; guest = guestShowPrices
-  const pricesForUser   = isPremium || isAdmin ? true : isLoggedIn ? freeShowPrices : guestShowPrices;
-  const intradayVisible = true;
-  const swingVisible    = isLoggedIn ? (isPremium || isAdmin ? true : freeSwingVisible) : false;
-  const longtermVisible = true;
-  const intradayPrices  = pricesForUser;
-  const swingPrices     = pricesForUser;
-  const longtermPrices  = pricesForUser;
+  // ALL sections visible to everyone; guests see first 5 per category, rest blurred
+  const GUEST_BLUR_FROM = 5;
+  const showSymbol = isLoggedIn || isPremium || isAdmin || guestShowSymbol;
+  const showPrices = isPremium || isAdmin ? true : isLoggedIn ? freeShowPrices : guestShowPrices;
+  const blurFrom   = (!isLoggedIn) ? GUEST_BLUR_FROM : -1;
 
-  const intradaySection  = renderSection("⚡", "Intraday Picks", "Same-day entry & exit", intradayPicks, intradayVisible, intradayPrices, "Free", showSymbol);
-  const swingSection     = renderSection("🌊", "Swing Picks", "2–10 day holding period", swingPicks, swingVisible, swingPrices, "Premium", showSymbol);
-  const longtermSection  = renderSection("📈", "Long Term Picks", "Months to years horizon", longtermPicks, longtermVisible, longtermPrices, "Premium", showSymbol);
-
-  // For locked sections when not logged in or not premium, show teaser cards
-  const swingTeaser = !swingVisible ? renderSection("🌊", "Swing Picks", "2–10 day holding period", swingPicks.length > 0 ? swingPicks : [{id:0,stock_symbol:"?",company_name:null,direction:"LONG",pick_type:"swing",entry_low:0,entry_high:0,target:null,stop_loss:null,reason:"",risk_level:"Medium",status:"active",published_at:"",expires_at:null,created_by:null}], false, false, "Free") : "";
-  const longtermTeaser = !longtermVisible ? renderSection("📈", "Long Term Picks", "Months to years horizon", longtermPicks.length > 0 ? longtermPicks : [{id:0,stock_symbol:"?",company_name:null,direction:"LONG",pick_type:"longterm",entry_low:0,entry_high:0,target:null,stop_loss:null,reason:"",risk_level:"Low",status:"active",published_at:"",expires_at:null,created_by:null}], false, false, "Premium") : "";
+  const intradaySection  = renderSection("⚡", "Intraday Picks", "Same-day entry & exit",    intradayPicks, showPrices, showSymbol, blurFrom);
+  const swingSection     = renderSection("🏊", "Swing Picks", "2–10 day holding period",   swingPicks, showPrices, showSymbol, blurFrom);
+  const longtermSection  = renderSection("📈", "Long Term Picks", "Months to years horizon", longtermPicks, showPrices, showSymbol, blurFrom);
 
   // Compute the actual last-updated time from picks data
   const allPublished = picks.map((p: any) => p.published_at).filter(Boolean) as string[];
@@ -5705,17 +5695,17 @@ app.get("/today", async (req: Request, res: Response) => {
         <h1 class="picks-hero-title">🔥 Today's Picks</h1>
         <p class="picks-hero-sub">Curated trading opportunities across 3 horizons · Updated daily</p>
         ${picks.length > 0 ? `<div class="picks-hero-count">🎯 ${picks.length} active pick${picks.length !== 1 ? "s" : ""} today</div>` : ""}
+        <span class="sig-tier-badge ${tierClass}" style="display:inline-block;margin:6px 0 2px">${tierLabel}</span>
         <div class="picks-disclaimer-banner">📋 Picks are selected based on <strong>last market close data</strong> — fundamentals, price action &amp; signals analysed post-market. Entry zones are reference prices only. <strong>Not SEBI registered. Not investment advice. Do your own research.</strong></div>
       </div>
       <div class="picks-hero-meta">
         <span class="picks-hero-updated">📅 Picks last updated: ${lastUpdateTime}</span>
-        <span class="sig-tier-badge ${tierClass}">${tierLabel}</span>
       </div>
     </div>
 
     ${intradaySection}
-    ${swingSection || swingTeaser}
-    ${longtermSection || longtermTeaser}
+    ${swingSection}
+    ${longtermSection}
 
     <footer class="site-footer"><span>© 2026 ZeroScreen &mdash; Picks are for educational &amp; informational purposes only. Not SEBI registered. Not investment advice. Invest at your own risk.</span></footer>
   </div>
@@ -6361,7 +6351,7 @@ app.get("/paper-trade", featureGate("feature_paper_trade_bot", "Paper Trade"), a
     .pt2-sym-inp{flex:1;min-width:160px;background:var(--input-bg,#f4f7fe);border:1.5px solid var(--border);border-radius:10px;padding:10px 14px;color:var(--text);font-size:0.95rem;font-weight:600}
     .pt2-sym-inp:focus{border-color:#10b981;outline:none;box-shadow:0 0 0 3px rgba(16,185,129,0.12)}
     html.dark .pt2-sym-inp{background:#1c2128}
-    .pt2-search-drop{position:absolute;top:calc(100% + 4px);left:0;background:var(--card-bg);border:1px solid var(--border);border-radius:10px;z-index:600;width:280px;box-shadow:0 8px 28px rgba(0,0,0,0.18);max-height:240px;overflow-y:auto}
+    .pt2-search-drop{position:absolute;top:calc(100% + 4px);left:0;background:var(--card-bg,#fff);border:1px solid var(--border,#e2e8f0);border-radius:10px;z-index:600;width:280px;box-shadow:0 8px 32px rgba(0,0,0,0.28);max-height:240px;overflow-y:auto}
     .pt2-search-item{padding:9px 14px;cursor:pointer;font-size:0.88rem}
     .pt2-search-item:hover{background:var(--hover-bg)}
     /* Live price badge */
@@ -8620,7 +8610,7 @@ app.get("/signals", featureGate("feature_signals", "Signals"), (req, res) => {
         </table>
       </div>
       <!-- Sign-in overlay on top -->
-      <div style="position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;background:linear-gradient(to bottom,rgba(15,23,42,.1) 0%,rgba(15,23,42,.85) 35%,rgba(15,23,42,.97) 100%);border-radius:14px;padding:28px 24px;text-align:center">
+      <div style="position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;gap:10px;background:linear-gradient(to bottom,rgba(15,23,42,.0) 0%,rgba(15,23,42,.75) 40%,rgba(15,23,42,.97) 100%);border-radius:14px;padding:20px 20px 24px;text-align:center;overflow-y:auto">
         <div style="font-size:2rem">&#128274;</div>
         <div style="font-size:1rem;font-weight:800;color:#f1f5f9">Sign in to see full live trade history</div>
         <div style="font-size:.78rem;color:#94a3b8;max-width:300px">Entry/exit prices, P&amp;L per trade, today's performance &amp; weekly history are visible only to logged-in users.</div>
