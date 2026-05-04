@@ -5525,6 +5525,8 @@ app.get("/admin/trading", requireAdmin, (req: Request, res: Response) => {
   const state   = rb("trade-state.json", {});
   const trades: any[] = rb("trades.json", []);
   const ptrades: any[] = rb("paper-trades.json", []);
+  const uSettings = rb("user-settings.json", {});
+  const currentMode: string = (uSettings.mode || "PAPER").toUpperCase();
 
   const todayIST2 = new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" });
   const todayTrades = trades.filter((t: any) => (t.date||"").startsWith(todayIST2));
@@ -5675,6 +5677,34 @@ app.get("/admin/trading", requireAdmin, (req: Request, res: Response) => {
       </table>
     </div>
 
+    <!-- Mode Control -->
+    <div class="td-section" style="border-color:${currentMode==="LIVE"?"#ef444480":"#10b98180"}">
+      <div class="td-section-hd">
+        <span>🔀 Trading Mode Control</span>
+        <span class="td-status-badge" style="background:${currentMode==="LIVE"?"#ef444422":"#10b98122"};color:${currentMode==="LIVE"?"#ef4444":"#10b981"}">
+          ${currentMode==="LIVE" ? "🔴 LIVE TRADING" : "🟢 PAPER MODE"}
+        </span>
+      </div>
+      <div style="padding:1.2rem 1.5rem">
+        <p style="color:#94a3b8;font-size:.85rem;margin:0 0 1rem">
+          ${currentMode==="LIVE"
+            ? "⚠️ <strong style='color:#ef4444'>LIVE MODE is active</strong> — real orders are being placed via Zerodha Kite. Switch to Paper to stop real trading."
+            : "🟢 Paper mode is active — no real orders. Switch to Live to start real trading with your Zerodha account."}
+        </p>
+        <form method="POST" action="/admin/trading/set-mode" onsubmit="return confirm('Switch to ' + this.mode.value + ' mode and restart the bot?')">
+          <input type="hidden" name="mode" value="${currentMode==="LIVE"?"PAPER":"LIVE"}">
+          <button type="submit" style="
+            background:${currentMode==="LIVE"?"#10b98122":"#ef444422"};
+            border:1px solid ${currentMode==="LIVE"?"#10b981":"#ef4444"};
+            color:${currentMode==="LIVE"?"#10b981":"#ef4444"};
+            padding:.6rem 1.5rem;border-radius:8px;cursor:pointer;font-size:.85rem;font-weight:600">
+            ${currentMode==="LIVE" ? "🟢 Switch to PAPER mode" : "🔴 Switch to LIVE trading"}
+          </button>
+          <span style="color:#475569;font-size:.75rem;margin-left:1rem">Bot will restart automatically</span>
+        </form>
+      </div>
+    </div>
+
     <!-- Quick links -->
     <div style="display:flex;gap:.8rem;flex-wrap:wrap;margin-top:1rem">
       <a href="/signals" style="background:#1e293b;border:1px solid #334155;color:#94a3b8;padding:.5rem 1rem;border-radius:8px;text-decoration:none;font-size:.82rem">🛰️ Live Bot Feed</a>
@@ -5690,6 +5720,35 @@ app.get("/admin/trading", requireAdmin, (req: Request, res: Response) => {
   </script>
 </body>
 </html>`);
+});
+
+
+
+// -- Admin Trading: Set Mode -------------------------------------------------
+app.post("/admin/trading/set-mode", requireAdmin, (req: Request, res: Response) => {
+  const { execSync } = require("child_process");
+  const fs2 = require("fs");
+  const BDIR = "/home/ubuntu/trading-bot";
+  const settingsPath = `${BDIR}/user-settings.json`;
+
+  const rawMode = (req.body?.mode || "PAPER").toString().toUpperCase();
+  const newMode = rawMode === "LIVE" ? "LIVE" : "PAPER";
+
+  try {
+    let settings: any = {};
+    if (fs2.existsSync(settingsPath)) {
+      settings = JSON.parse(fs2.readFileSync(settingsPath, "utf-8"));
+    }
+    settings.mode = newMode;
+    fs2.writeFileSync(settingsPath, JSON.stringify(settings, null, 2));
+
+    // Restart trading-bot so it picks up new mode
+    execSync("pm2 restart trading-bot", { stdio: "ignore" });
+
+    res.redirect("/admin/trading?msg=Mode+switched+to+" + newMode + "+and+bot+restarted");
+  } catch (e: any) {
+    res.redirect("/admin/trading?msg=ERROR:+" + encodeURIComponent(e.message || String(e)));
+  }
 });
 
 
