@@ -273,6 +273,17 @@ export async function initDb(): Promise<void> {
       db.run("ALTER TABLE paper_positions ADD COLUMN sl_price REAL", () => {});
       db.run("ALTER TABLE paper_positions ADD COLUMN target_price REAL", () => {});
       db.run("ALTER TABLE paper_positions ADD COLUMN order_type TEXT", () => {});
+      // Contact messages mailbox
+      db.run(`CREATE TABLE IF NOT EXISTS contact_messages (
+        id         INTEGER PRIMARY KEY AUTOINCREMENT,
+        name       TEXT NOT NULL,
+        email      TEXT NOT NULL,
+        subject    TEXT,
+        message    TEXT NOT NULL,
+        status     TEXT NOT NULL DEFAULT 'unread',
+        user_id    INTEGER REFERENCES users(id) ON DELETE SET NULL,
+        created_at TEXT DEFAULT (datetime('now','localtime'))
+      )`);
       db.run("INSERT OR IGNORE INTO app_settings (key,value) VALUES ('registration_open','true')");
       db.run("INSERT OR IGNORE INTO app_settings (key,value) VALUES ('feature_signals','true')");
       db.run("INSERT OR IGNORE INTO app_settings (key,value) VALUES ('feature_dashboard','true')");
@@ -991,4 +1002,26 @@ export async function savePaperTradeConfig(userId: number, config: Partial<Paper
      VALUES (?,?,?,?,?,?,datetime('now','localtime'))`,
     [userId, m.trade_type, m.default_qty, m.default_sl_pct, m.default_tgt_pct, m.max_positions]
   );
+}
+
+// -- Contact Messages -------------------------------------------------------
+export async function createContactMessage(
+  name: string, email: string, subject: string, message: string, userId?: number
+): Promise<void> {
+  await dbRun(
+    `INSERT INTO contact_messages (name,email,subject,message,user_id) VALUES (?,?,?,?,?)`,
+    [name, email, subject || "General Enquiry", message, userId ?? null]
+  );
+}
+
+export async function getContactMessages(limit = 100): Promise<any[]> {
+  return dbAll(`SELECT * FROM contact_messages ORDER BY created_at DESC LIMIT ?`, [limit]);
+}
+
+export async function markContactRead(id: number): Promise<void> {
+  await dbRun(`UPDATE contact_messages SET status='read' WHERE id=?`, [id]);
+}
+
+export async function deleteContactMessage(id: number): Promise<void> {
+  await dbRun(`DELETE FROM contact_messages WHERE id=?`, [id]);
 }

@@ -18,6 +18,7 @@ import {
   createResetToken, getResetToken, markResetTokenUsed, updateUserPassword,
   updateUserName, searchStocks,
   getActivePicks, getAllPicks, createPick, updatePickStatus, deletePick, PickRow,
+  createContactMessage, getContactMessages, markContactRead, deleteContactMessage,
   getSetting, setSetting, getAllSettings,
   createOrder, activateSubscription, getActiveSubscription, expireOldSubscriptions, getAllSubscriptions,
   getPaperPortfolio, getPaperPositions, getPaperTrades, paperBuy, paperSell, paperReset,
@@ -412,6 +413,7 @@ function nav(active: string, req?: Request): string {
     ["admin-signals",   "/admin/signals",   "🤖 Signal Control"],
     ["admin-subs",      "/admin/subs",      "💳 Subscriptions"],
     ["admin-trading",    "/admin/trading",    "📈 Trading"],
+    ["admin-support",   "/admin/support",   "\U0001f4e7 Support Inbox"],
   ] : [];
 
   const allTiered = [...beginnerLinks, ...traderLinks, ...investorLinks];
@@ -3138,6 +3140,126 @@ app.post("/admin/settings/toggle", requireAdmin, async (req: Request, res: Respo
 });
 
 // ── GET /admin/settings ────────────────────────────────────────────────────────
+
+// -- GET /admin/support (contact messages mailbox) -------------------------
+app.get("/admin/support", requireAdmin, async (req: Request, res: Response) => {
+  const msgs = await getContactMessages(200);
+  const unread = msgs.filter(m => m.status === 'unread').length;
+
+  const rows = msgs.map((m, i) => `
+    <tr class="${m.status === 'unread' ? 'su-row-unread' : ''}">
+      <td class="admin-num">${i + 1}</td>
+      <td>
+        <div style="font-weight:${m.status === 'unread' ? '700' : '400'};color:var(--text)">${esc(m.name)}</div>
+        <div style="font-size:11px;color:var(--text-muted)">${esc(m.email)}</div>
+      </td>
+      <td style="max-width:200px">
+        <div style="font-size:.82rem;font-weight:${m.status === 'unread' ? '600' : '400'}">${esc(m.subject || 'General Enquiry')}</div>
+        <div style="font-size:.75rem;color:var(--text-muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:200px">${esc(m.message.slice(0, 80))}${m.message.length > 80 ? '…' : ''}</div>
+      </td>
+      <td style="font-size:12px;color:var(--text-muted)">${m.created_at?.slice(0,16) ?? '—'}</td>
+      <td><span class="pick-status-badge pick-status-${m.status === 'unread' ? 'active' : 'closed'}">${m.status}</span></td>
+      <td style="white-space:nowrap">
+        ${m.status === 'unread' ? `
+        <form method="POST" action="/admin/support/${m.id}/read" style="display:inline">
+          <button class="au-btn au-btn-ok">Mark Read</button>
+        </form>` : ''}
+        <form method="POST" action="/admin/support/${m.id}/delete" style="display:inline"
+              onsubmit="return confirm('Delete this message?')">
+          <button class="au-btn au-btn-danger" style="margin-left:4px">Delete</button>
+        </form>
+      </td>
+    </tr>`).join('');
+
+  // Full message preview rows (expandable)
+  const previews = msgs.map(m => `
+    <tr id="msg-body-${m.id}" style="display:none;background:var(--bg2)">
+      <td colspan="6" style="padding:14px 20px">
+        <div style="font-size:.75rem;font-weight:700;color:var(--text-muted);margin-bottom:6px">FROM: ${esc(m.name)} &lt;${esc(m.email)}&gt; &mdash; ${m.created_at?.slice(0,16) ?? ''}</div>
+        <div style="font-size:.88rem;white-space:pre-wrap;color:var(--text)">${esc(m.message)}</div>
+        ${m.email ? `<div style="margin-top:10px"><a href="mailto:${esc(m.email)}?subject=Re: ${esc(m.subject||'Your message')}" style="background:#3b82f6;color:#fff;padding:6px 14px;border-radius:6px;text-decoration:none;font-size:.8rem;font-weight:600">Reply via Email</a></div>` : ''}
+      </td>
+    </tr>`).join('');
+
+  const msgParam = req.query.msg ? `<div class="au-msg au-msg-ok">&#10004; ${esc(req.query.msg as string)}</div>` : "";
+
+  res.send(`<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Support Inbox — ZeroScreen Admin</title>
+  <link rel="stylesheet" href="/public/css/style.css">
+</head>
+<body>
+  \${nav("admin-support", req)}
+  <div class="container">
+    <div class="admin-header">
+      <div>
+        <h1>&#128140; Support Inbox</h1>
+        <p class="page-sub">Contact form submissions from users</p>
+      </div>
+      <div style="display:flex;gap:10px;flex-wrap:wrap">
+        <a href="/admin" class="btn-secondary">&#127968; Overview</a>
+        <a href="/admin/users" class="btn-secondary">&#128101; Users</a>
+      </div>
+    </div>
+    \${msgParam}
+    <style>
+      .au-msg{padding:10px 16px;border-radius:8px;margin-bottom:12px;font-size:0.9rem}
+      .au-msg-ok{background:#10b98120;color:#10b981;border:1px solid #10b98140}
+      .au-btn{padding:3px 10px;border-radius:6px;border:none;font-size:11px;font-weight:600;cursor:pointer;margin-left:3px}
+      .au-btn-ok{background:#10b98120;color:#10b981;border:1px solid #10b98140}
+      .au-btn-danger{background:#ef444420;color:#ef4444;border:1px solid #ef444440}
+      .su-row-unread{background:rgba(99,102,241,.06)}
+    </style>
+    <div class="admin-stats-row" style="margin-bottom:16px">
+      <div class="admin-stat-card"><div class="admin-stat-num">\${msgs.length}</div><div class="admin-stat-label">Total Messages</div></div>
+      <div class="admin-stat-card"><div class="admin-stat-num" style="color:#6366f1">\${unread}</div><div class="admin-stat-label">Unread</div></div>
+      <div class="admin-stat-card"><div class="admin-stat-num">\${msgs.length - unread}</div><div class="admin-stat-label">Read</div></div>
+    </div>
+    <div class="table-wrap">
+      <table class="stocks-table" id="support-tbl">
+        <thead>
+          <tr><th>#</th><th>From</th><th>Subject / Preview</th><th>Date</th><th>Status</th><th>Actions</th></tr>
+        </thead>
+        <tbody>
+          \${msgs.length === 0 ? '<tr><td colspan="6" class="no-data">No messages yet.</td></tr>' : rows.split('</tr>').flatMap((row,i) => row + (i < msgs.length ? '</tr>' + (previews.split('</tr>')[i] || '') + '</tr>' : '')).join('')}
+        </tbody>
+      </table>
+    </div>
+  </div>
+  <script>
+  document.getElementById('support-tbl')?.addEventListener('click', function(e) {
+    const row = e.target.closest('tr[class]');
+    if (!row) return;
+    const idx = Array.from(row.parentNode.children).indexOf(row);
+    // Toggle next row (preview)
+    const next = row.nextElementSibling;
+    if (next && next.id && next.id.startsWith('msg-body-')) {
+      next.style.display = next.style.display === 'none' ? '' : 'none';
+    }
+  });
+  </script>
+  <script src="/public/js/app.js"></script>
+</body>
+</html>`);
+});
+
+app.post("/admin/support/:id/read", requireAdmin, async (req: Request, res: Response) => {
+  const id = parseInt(req.params.id, 10);
+  if (!Number.isInteger(id) || id <= 0) { res.redirect("/admin/support"); return; }
+  await markContactRead(id);
+  res.redirect("/admin/support?msg=Marked+as+read");
+});
+
+app.post("/admin/support/:id/delete", requireAdmin, async (req: Request, res: Response) => {
+  const id = parseInt(req.params.id, 10);
+  if (!Number.isInteger(id) || id <= 0) { res.redirect("/admin/support"); return; }
+  await deleteContactMessage(id);
+  res.redirect("/admin/support?msg=Message+deleted");
+});
+
 app.get("/admin/settings", requireAdmin, async (req: Request, res: Response) => {
   const s: Record<string, string> = {};
   const keys = [
@@ -3982,6 +4104,15 @@ app.post("/contact", async (req: Request, res: Response) => {
   if (!name || !email || !message) {
     res.redirect("/contact?error=Name%2C+email+and+message+are+required"); return;
   }
+  const userId = req.session?.userId ?? undefined;
+  // Save to DB mailbox
+  await createContactMessage(
+    (name as string).trim().slice(0, 200),
+    (email as string).trim().slice(0, 200),
+    ((subject as string) || "General Enquiry").trim().slice(0, 200),
+    (message as string).trim().slice(0, 5000),
+    userId
+  );
   sendContactNotification(name, email, subject || "General Enquiry", message).catch(() => {});
   res.redirect("/contact?sent=1");
 });
@@ -5826,6 +5957,7 @@ app.get("/admin/trading", requireAdmin, (req: Request, res: Response) => {
       <a href="/paper-trade" style="background:#1e293b;border:1px solid #334155;color:#94a3b8;padding:.5rem 1rem;border-radius:8px;text-decoration:none;font-size:.82rem">📊 Full Paper Trade</a>
       <a href="/admin/analytics" style="background:#1e293b;border:1px solid #334155;color:#94a3b8;padding:.5rem 1rem;border-radius:8px;text-decoration:none;font-size:.82rem">📈 Analytics</a>
       <a href="/admin/picks" style="background:#1e293b;border:1px solid #334155;color:#94a3b8;padding:.5rem 1rem;border-radius:8px;text-decoration:none;font-size:.82rem">⚡ Hot Picks</a>
+        <a href="/admin/support" style="background:#1e293b;border:1px solid #334155;color:#94a3b8;padding:.5rem 1rem;border-radius:8px;text-decoration:none;font-size:.82rem">&#128140; Support Inbox</a>
     </div>
   </div>
   <script src="/public/js/app.js"></script>
@@ -6328,7 +6460,7 @@ app.get("/paper-trade", featureGate("feature_paper_trade_bot", "Paper Trade"), a
     ` : ""}
 
     <div style="${!isLoggedIn ? 'position:relative' : ''}">
-      <div style="${!isLoggedIn ? 'pointer-events:none;filter:blur(1.5px);opacity:.55;user-select:none' : ''}">
+      <div>
     
     <!-- RICH TRADE CARD -->
     <div class="pt2-trade-card">
@@ -6484,19 +6616,13 @@ app.get("/paper-trade", featureGate("feature_paper_trade_bot", "Paper Trade"), a
     </div>
       </div>
       ${!isLoggedIn ? `
-      <!-- Guest sign-in overlay -->
-      <div style="position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;background:linear-gradient(to bottom,rgba(15,23,42,.05) 0%,rgba(15,23,42,.88) 40%);border-radius:14px;padding:32px 24px;text-align:center;z-index:10">
-        <div style="font-size:2.2rem">📏</div>
-        <div style="font-size:1.1rem;font-weight:800;color:#f1f5f9">Paper Trade Any NSE Stock — Free</div>
-        <div style="font-size:.84rem;color:#94a3b8;max-width:320px">₹1,00,000 virtual cash. Practice buying &amp; selling any NSE stock with zero real risk.</div>
+      <!-- Guest: sign-in CTA replaces submit button area -->
+      <div style="background:linear-gradient(135deg,rgba(16,185,129,.1),rgba(5,150,105,.15));border:1px solid rgba(16,185,129,.3);border-radius:12px;padding:20px 24px;text-align:center;margin-top:8px">
+        <div style="font-size:1rem;font-weight:800;color:#f1f5f9;margin-bottom:6px">&#128640; Paper Trade Any NSE Stock &mdash; Free</div>
+        <div style="font-size:.8rem;color:#94a3b8;margin-bottom:14px">&#x20B9;1,00,000 virtual cash &middot; 1,700+ NSE stocks &middot; Zero real risk</div>
         <div style="display:flex;gap:10px;flex-wrap:wrap;justify-content:center">
-          <a href="/login?next=/paper-trade" style="background:linear-gradient(135deg,#10b981,#059669);color:#fff;padding:11px 28px;border-radius:10px;font-size:.9rem;font-weight:700;text-decoration:none">🔎 Sign In to Start Trading →</a>
-          <a href="/signup" style="background:transparent;color:#94a3b8;border:1px solid #334155;padding:11px 22px;border-radius:10px;font-size:.87rem;font-weight:700;text-decoration:none">Create Free Account</a>
-        </div>
-        <div style="display:flex;gap:24px;flex-wrap:wrap;justify-content:center;margin-top:2px">
-          <span style="font-size:.75rem;color:#475569">✓ ₹1,00,000 Virtual Cash</span>
-          <span style="font-size:.75rem;color:#475569">✓ 1,700+ NSE Stocks</span>
-          <span style="font-size:.75rem;color:#475569">✓ Zero Real Risk</span>
+          <a href="/login?next=/paper-trade" style="background:linear-gradient(135deg,#10b981,#059669);color:#fff;padding:11px 28px;border-radius:10px;font-size:.88rem;font-weight:700;text-decoration:none">&#128274; Sign In to Start Trading &#8594;</a>
+          <a href="/signup" style="background:transparent;color:#10b981;border:1px solid rgba(16,185,129,.4);padding:11px 22px;border-radius:10px;font-size:.85rem;font-weight:700;text-decoration:none">Create Free Account</a>
         </div>
       </div>
       ` : ""}
@@ -8424,21 +8550,49 @@ app.get("/signals", featureGate("feature_signals", "Signals"), (req, res) => {
     </div>
 
     ${!loggedIn ? `
-    <!-- GUEST: blur overlay signin gate -->
+    <!-- GUEST: live trade history teaser with blur gate -->
     <div style="position:relative;margin:20px 0;border-radius:14px;overflow:hidden">
-      <div style="filter:blur(5px);opacity:.35;pointer-events:none;padding:20px;background:var(--card-bg,#1e293b);border:1px solid var(--border,#334155);border-radius:14px">
-        <div style="height:13px;background:#334155;border-radius:6px;margin-bottom:10px;width:55%"></div>
-        <div style="height:11px;background:#334155;border-radius:6px;margin-bottom:8px;width:75%"></div>
-        <div style="height:11px;background:#334155;border-radius:6px;margin-bottom:8px;width:65%"></div>
-        <div style="height:11px;background:#334155;border-radius:6px;width:45%"></div>
+      <!-- Actual trade data blurred behind overlay -->
+      <div style="filter:blur(4px);opacity:.5;pointer-events:none;user-select:none;background:var(--card-bg,#1e293b);border:1px solid var(--border,#334155);border-radius:14px;padding:16px">
+        <div style="font-size:.72rem;font-weight:700;text-transform:uppercase;letter-spacing:.1em;color:#64748b;border-bottom:1px solid #334155;padding-bottom:8px;margin-bottom:12px">&#128202; Live Trade History</div>
+        <table style="width:100%;border-collapse:collapse;font-size:.78rem">
+          <thead><tr style="color:#64748b">
+            <th style="text-align:left;padding:4px 8px">Symbol</th>
+            <th style="text-align:center;padding:4px 8px">Side</th>
+            <th style="text-align:right;padding:4px 8px">Entry</th>
+            <th style="text-align:right;padding:4px 8px">Exit</th>
+            <th style="text-align:right;padding:4px 8px">P&amp;L</th>
+            <th style="text-align:center;padding:4px 8px">Status</th>
+          </tr></thead>
+          <tbody>
+            ${(() => {
+              const rows = trades.slice(0,5);
+              if (!rows.length) return '<tr><td colspan="6" style="padding:12px;text-align:center;color:#475569">No trades yet</td></tr>';
+              return rows.map((t:any) => `<tr style="border-top:1px solid #1e293b">
+                <td style="padding:6px 8px;font-weight:700;color:#e2e8f0">${t.symbol ?? 'BANKNIFTY'}</td>
+                <td style="padding:6px 8px;text-align:center"><span style="background:${(t.direction||'CE')==='CE'?'rgba(59,130,246,.2)':'rgba(239,68,68,.2)'};color:${(t.direction||'CE')==='CE'?'#60a5fa':'#f87171'};border-radius:4px;padding:1px 7px;font-size:.7rem">${(t.direction||'CE')==='CE'?'CALL':'PUT'}</span></td>
+                <td style="padding:6px 8px;text-align:right;color:#94a3b8">&#x20B9;${t.entry_price ?? '&mdash;'}</td>
+                <td style="padding:6px 8px;text-align:right;color:#94a3b8">${t.exit_price ? '&#x20B9;'+t.exit_price : '&mdash;'}</td>
+                <td style="padding:6px 8px;text-align:right;font-weight:700;color:${(t.pnl??0)>=0?'#22c55e':'#ef4444'}">${t.pnl!=null?(t.pnl>=0?'+':'')+t.pnl.toFixed(0):'&mdash;'}</td>
+                <td style="padding:6px 8px;text-align:center"><span style="font-size:.68rem;color:${t.status==='OPEN'?'#fbbf24':'#94a3b8'}">${t.status??'CLOSED'}</span></td>
+              </tr>`).join('');
+            })()}
+          </tbody>
+        </table>
       </div>
-      <div style="position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;background:linear-gradient(to bottom,rgba(15,23,42,.3),rgba(15,23,42,.93));border-radius:14px;padding:24px;text-align:center">
-        <div style="font-size:1.7rem">🔒</div>
-        <div style="font-size:.95rem;font-weight:700;color:#f1f5f9">Sign in to see full live trade history</div>
-        <div style="font-size:.77rem;color:#94a3b8;max-width:280px">Entry/exit prices, P&amp;L per trade, today's performance &amp; weekly history</div>
+      <!-- Sign-in overlay on top -->
+      <div style="position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;background:linear-gradient(to bottom,rgba(15,23,42,.1) 0%,rgba(15,23,42,.85) 35%,rgba(15,23,42,.97) 100%);border-radius:14px;padding:28px 24px;text-align:center">
+        <div style="font-size:2rem">&#128274;</div>
+        <div style="font-size:1rem;font-weight:800;color:#f1f5f9">Sign in to see full live trade history</div>
+        <div style="font-size:.78rem;color:#94a3b8;max-width:300px">Entry/exit prices, P&amp;L per trade, today's performance &amp; weekly history are visible only to logged-in users.</div>
         <div style="display:flex;gap:10px;flex-wrap:wrap;justify-content:center">
-          <a href="/login?next=/signals" style="background:#6366f1;color:#fff;padding:9px 22px;border-radius:9px;font-size:.82rem;font-weight:700;text-decoration:none">Sign In Free →</a>
-          <a href="/signup" style="background:transparent;color:#94a3b8;border:1px solid #334155;padding:9px 20px;border-radius:9px;font-size:.82rem;font-weight:700;text-decoration:none">Create Account</a>
+          <a href="/login?next=/signals" style="background:#6366f1;color:#fff;padding:10px 24px;border-radius:9px;font-size:.85rem;font-weight:700;text-decoration:none">Sign In Free &#8594;</a>
+          <a href="/signup" style="background:transparent;color:#94a3b8;border:1px solid #334155;padding:10px 22px;border-radius:9px;font-size:.85rem;font-weight:700;text-decoration:none">Create Account</a>
+        </div>
+        <div style="display:flex;gap:20px;margin-top:2px;flex-wrap:wrap;justify-content:center">
+          <span style="font-size:.72rem;color:#475569">&#10003; Live bot trades</span>
+          <span style="font-size:.72rem;color:#475569">&#10003; P&amp;L per trade</span>
+          <span style="font-size:.72rem;color:#475569">&#10003; Weekly history</span>
         </div>
       </div>
     </div>` : `
