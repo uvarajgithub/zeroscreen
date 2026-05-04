@@ -1554,127 +1554,65 @@ app.get("/", async (req: Request, res: Response) => {
 <body>
   ${nav("home", req)}
 
-  <!-- ── Live Market Strip (full-width ticker) ── -->
-  <div class="market-strip-outer">
-    <div class="market-strip" id="market-strip">
-      <div class="mkt-track" id="mkt-track">
-        <!-- set A -->
-        <div class="mkt-tile" id="mkt-NSEI">
-          <span class="mkt-label"><img src="https://flagcdn.com/16x12/in.png" class="mkt-flag-img" alt="IN"> NIFTY 50</span>
-          <span class="mkt-price">—</span>
-          <span class="mkt-chg">—</span>
-        </div>
-        <div class="mkt-tile" id="mkt-NSEBANK">
-          <span class="mkt-label"><img src="https://flagcdn.com/16x12/in.png" class="mkt-flag-img" alt="IN"> BANK NIFTY</span>
-          <span class="mkt-price">—</span>
-          <span class="mkt-chg">—</span>
-        </div>
-        <div class="mkt-tile" id="mkt-FINNIFTY">
-          <span class="mkt-label"><img src="https://flagcdn.com/16x12/in.png" class="mkt-flag-img" alt="IN"> FIN NIFTY</span>
-          <span class="mkt-price">—</span>
-          <span class="mkt-chg">—</span>
-        </div>
-        <div class="mkt-tile" id="mkt-NIFTYIT">
-          <span class="mkt-label"><img src="https://flagcdn.com/16x12/in.png" class="mkt-flag-img" alt="IN"> NIFTY IT</span>
-          <span class="mkt-price">—</span>
-          <span class="mkt-chg">—</span>
-        </div>
-        <div class="mkt-tile" id="mkt-INDIAVIX">
-          <span class="mkt-label"><img src="https://flagcdn.com/16x12/in.png" class="mkt-flag-img" alt="IN"> INDIA VIX</span>
-          <span class="mkt-price">—</span>
-          <span class="mkt-chg">—</span>
-        </div>
-        <div class="mkt-tile" id="mkt-MIDCAP">
-          <span class="mkt-label"><img src="https://flagcdn.com/16x12/in.png" class="mkt-flag-img" alt="IN"> MIDCAP 100</span>
-          <span class="mkt-price">—</span>
-          <span class="mkt-chg">—</span>
-        </div>
-        <div class="mkt-divider" aria-hidden="true"></div>
-        <div class="mkt-tile" id="mkt-DJI">
-          <span class="mkt-label"><img src="https://flagcdn.com/16x12/us.png" class="mkt-flag-img" alt="US"> DOW JONES</span>
-          <span class="mkt-price">—</span>
-          <span class="mkt-chg">—</span>
-        </div>
-        <div class="mkt-tile" id="mkt-IXIC">
-          <span class="mkt-label"><img src="https://flagcdn.com/16x12/us.png" class="mkt-flag-img" alt="US"> NASDAQ</span>
-          <span class="mkt-price">—</span>
-          <span class="mkt-chg">—</span>
-        </div>
-        <div class="mkt-tile" id="mkt-GSPC">
-          <span class="mkt-label"><img src="https://flagcdn.com/16x12/us.png" class="mkt-flag-img" alt="US"> S&amp;P 500</span>
-          <span class="mkt-price">—</span>
-          <span class="mkt-chg">—</span>
-        </div>
-        <div class="mkt-tile" id="mkt-N225">
-          <span class="mkt-label"><img src="https://flagcdn.com/16x12/jp.png" class="mkt-flag-img" alt="JP"> NIKKEI 225</span>
-          <span class="mkt-price">—</span>
-          <span class="mkt-chg">—</span>
-        </div>
-        <div class="mkt-tile" id="mkt-HSI">
-          <span class="mkt-label"><img src="https://flagcdn.com/16x12/hk.png" class="mkt-flag-img" alt="HK"> HANG SENG</span>
-          <span class="mkt-price">—</span>
-          <span class="mkt-chg">—</span>
-        </div>
-        <!-- set B (duplicate for seamless loop) -->
-        <div class="mkt-tile mkt-clone" data-src="mkt-NSEI">
-          <span class="mkt-label"><img src="https://flagcdn.com/16x12/in.png" class="mkt-flag-img" alt="IN"> NIFTY 50</span>
-          <span class="mkt-price">—</span>
-          <span class="mkt-chg">—</span>
-        </div>
-        <div class="mkt-tile mkt-clone" data-src="mkt-NSEBANK">
-          <span class="mkt-label"><img src="https://flagcdn.com/16x12/in.png" class="mkt-flag-img" alt="IN"> BANK NIFTY</span>
-          <span class="mkt-price">—</span>
-          <span class="mkt-chg">—</span>
-        </div>
-        <div class="mkt-tile mkt-clone" data-src="mkt-FINNIFTY">
-          <span class="mkt-label"><img src="https://flagcdn.com/16x12/in.png" class="mkt-flag-img" alt="IN"> FIN NIFTY</span>
-          <span class="mkt-price">—</span>
-          <span class="mkt-chg">—</span>
-        </div>
-        <div class="mkt-tile mkt-clone" data-src="mkt-NIFTYIT">
-          <span class="mkt-label"><img src="https://flagcdn.com/16x12/in.png" class="mkt-flag-img" alt="IN"> NIFTY IT</span>
-          <span class="mkt-price">—</span>
-          <span class="mkt-chg">—</span>
-        </div>
-        <div class="mkt-tile mkt-clone" data-src="mkt-INDIAVIX">
-          <span class="mkt-label"><img src="https://flagcdn.com/16x12/in.png" class="mkt-flag-img" alt="IN"> INDIA VIX</span>
-          <span class="mkt-price">—</span>
-          <span class="mkt-chg">—</span>
-        </div>
-        <div class="mkt-tile mkt-clone" data-src="mkt-MIDCAP">
-          <span class="mkt-label"><img src="https://flagcdn.com/16x12/in.png" class="mkt-flag-img" alt="IN"> MIDCAP 100</span>
-          <span class="mkt-price">—</span>
-          <span class="mkt-chg">—</span>
-        </div>
-        <div class="mkt-divider" aria-hidden="true"></div>
-        <div class="mkt-tile mkt-clone" data-src="mkt-DJI">
-          <span class="mkt-label"><img src="https://flagcdn.com/16x12/us.png" class="mkt-flag-img" alt="US"> DOW JONES</span>
-          <span class="mkt-price">—</span>
-          <span class="mkt-chg">—</span>
-        </div>
-        <div class="mkt-tile mkt-clone" data-src="mkt-IXIC">
-          <span class="mkt-label"><img src="https://flagcdn.com/16x12/us.png" class="mkt-flag-img" alt="US"> NASDAQ</span>
-          <span class="mkt-price">—</span>
-          <span class="mkt-chg">—</span>
-        </div>
-        <div class="mkt-tile mkt-clone" data-src="mkt-GSPC">
-          <span class="mkt-label"><img src="https://flagcdn.com/16x12/us.png" class="mkt-flag-img" alt="US"> S&amp;P 500</span>
-          <span class="mkt-price">—</span>
-          <span class="mkt-chg">—</span>
-        </div>
-        <div class="mkt-tile mkt-clone" data-src="mkt-N225">
-          <span class="mkt-label"><img src="https://flagcdn.com/16x12/jp.png" class="mkt-flag-img" alt="JP"> NIKKEI 225</span>
-          <span class="mkt-price">—</span>
-          <span class="mkt-chg">—</span>
-        </div>
-        <div class="mkt-tile mkt-clone" data-src="mkt-HSI">
-          <span class="mkt-label"><img src="https://flagcdn.com/16x12/hk.png" class="mkt-flag-img" alt="HK"> HANG SENG</span>
-          <span class="mkt-price">—</span>
-          <span class="mkt-chg">—</span>
-        </div>
+  <!-- ── Compact Index Grid ── -->
+  <div class="idx-grid-outer">
+    <div class="idx-grid" id="idx-grid">
+      <div class="idx-card" id="ic-NSEI">
+        <div class="idx-lbl"><img src="https://flagcdn.com/16x12/in.png" class="mkt-flag-img" alt="IN"> NIFTY 50</div>
+        <div class="idx-price" id="ip-NSEI">—</div>
+        <div class="idx-chg idx-d" id="icc-NSEI">—</div>
+      </div>
+      <div class="idx-card" id="ic-NSEBANK">
+        <div class="idx-lbl"><img src="https://flagcdn.com/16x12/in.png" class="mkt-flag-img" alt="IN"> BANK NIFTY</div>
+        <div class="idx-price" id="ip-NSEBANK">—</div>
+        <div class="idx-chg idx-d" id="icc-NSEBANK">—</div>
+      </div>
+      <div class="idx-card" id="ic-FINNIFTY">
+        <div class="idx-lbl"><img src="https://flagcdn.com/16x12/in.png" class="mkt-flag-img" alt="IN"> FIN NIFTY</div>
+        <div class="idx-price" id="ip-FINNIFTY">—</div>
+        <div class="idx-chg idx-d" id="icc-FINNIFTY">—</div>
+      </div>
+      <div class="idx-card" id="ic-INDIAVIX">
+        <div class="idx-lbl"><img src="https://flagcdn.com/16x12/in.png" class="mkt-flag-img" alt="IN"> INDIA VIX</div>
+        <div class="idx-price" id="ip-INDIAVIX">—</div>
+        <div class="idx-chg idx-d" id="icc-INDIAVIX">—</div>
+      </div>
+      <div class="idx-card" id="ic-MIDCAP">
+        <div class="idx-lbl"><img src="https://flagcdn.com/16x12/in.png" class="mkt-flag-img" alt="IN"> MIDCAP 100</div>
+        <div class="idx-price" id="ip-MIDCAP">—</div>
+        <div class="idx-chg idx-d" id="icc-MIDCAP">—</div>
+      </div>
+      <div class="idx-card" id="ic-NIFTYIT">
+        <div class="idx-lbl"><img src="https://flagcdn.com/16x12/in.png" class="mkt-flag-img" alt="IN"> NIFTY IT</div>
+        <div class="idx-price" id="ip-NIFTYIT">—</div>
+        <div class="idx-chg idx-d" id="icc-NIFTYIT">—</div>
+      </div>
+      <div class="idx-card idx-card-global" id="ic-DJI">
+        <div class="idx-lbl"><img src="https://flagcdn.com/16x12/us.png" class="mkt-flag-img" alt="US"> DOW JONES</div>
+        <div class="idx-price" id="ip-DJI">—</div>
+        <div class="idx-chg idx-d" id="icc-DJI">—</div>
+      </div>
+      <div class="idx-card idx-card-global" id="ic-IXIC">
+        <div class="idx-lbl"><img src="https://flagcdn.com/16x12/us.png" class="mkt-flag-img" alt="US"> NASDAQ</div>
+        <div class="idx-price" id="ip-IXIC">—</div>
+        <div class="idx-chg idx-d" id="icc-IXIC">—</div>
+      </div>
+      <div class="idx-card idx-card-global" id="ic-GSPC">
+        <div class="idx-lbl"><img src="https://flagcdn.com/16x12/us.png" class="mkt-flag-img" alt="US"> S&amp;P 500</div>
+        <div class="idx-price" id="ip-GSPC">—</div>
+        <div class="idx-chg idx-d" id="icc-GSPC">—</div>
+      </div>
+      <div class="idx-card idx-card-global" id="ic-N225">
+        <div class="idx-lbl"><img src="https://flagcdn.com/16x12/jp.png" class="mkt-flag-img" alt="JP"> NIKKEI 225</div>
+        <div class="idx-price" id="ip-N225">—</div>
+        <div class="idx-chg idx-d" id="icc-N225">—</div>
+      </div>
+      <div class="idx-card idx-card-global" id="ic-HSI">
+        <div class="idx-lbl"><img src="https://flagcdn.com/16x12/hk.png" class="mkt-flag-img" alt="HK"> HANG SENG</div>
+        <div class="idx-price" id="ip-HSI">—</div>
+        <div class="idx-chg idx-d" id="icc-HSI">—</div>
       </div>
     </div>
-    <span class="mkt-strip-time" id="mkt-updated">Updating…</span>
   </div>
 
   <div class="container screener-layout">
@@ -2104,28 +2042,28 @@ app.get("/", async (req: Request, res: Response) => {
       try {
         const r = await fetch('/api/markets');
         const quotes = await r.json();
+        const MKT_ID_MAP = {
+          'NIFTY 50':'NSEI','NIFTY BANK':'NSEBANK','NIFTY FIN SERVICE':'FINNIFTY',
+          'NIFTY IT':'NIFTYIT','INDIA VIX':'INDIAVIX','NIFTY MIDCAP 100':'MIDCAP',
+          '^DJI':'DJI','^IXIC':'IXIC','^GSPC':'GSPC','^N225':'N225','^HSI':'HSI'
+        };
         quotes.forEach((q) => {
-          const id = 'mkt-' + (MKT_ID_MAP[q.symbol] || q.symbol.replace(/[^A-Z0-9]/gi,''));
-          const up = (q.changePct || 0) >= 0;
+          const key = MKT_ID_MAP[q.symbol] || q.symbol.replace(/[^A-Z0-9]/gi,'');
+          const up  = (q.changePct || 0) >= 0;
           const isGlobal = q.region === 'global';
           const fmt = (n) => n.toLocaleString(isGlobal ? 'en-US' : 'en-IN', {maximumFractionDigits:2});
-          const newPrice = q.price != null ? fmt(q.price) : '\\u2014';
-          const newChg   = q.changePct != null ? (up?'+':'') + q.changePct.toFixed(2) + '%' : '\\u2014';
-          const tiles = [document.getElementById(id), ...document.querySelectorAll('.mkt-clone[data-src="'+id+'"]')];
-          tiles.forEach(el => {
-            if (!el) return;
-            el.classList.remove('mkt-up','mkt-dn');
-            el.classList.add(up ? 'mkt-up' : 'mkt-dn');
-            const pEl = el.querySelector('.mkt-price');
-            const cEl = el.querySelector('.mkt-chg');
-            if (pEl && pEl.textContent !== newPrice) {
-              pEl.textContent = newPrice;
-              pEl.classList.remove('mkt-flash-up','mkt-flash-dn');
-              void pEl.offsetWidth;
-              pEl.classList.add(up ? 'mkt-flash-up' : 'mkt-flash-dn');
-            }
-            if (cEl) cEl.textContent = newChg;
-          });
+          const newPrice = q.price != null ? fmt(q.price) : '\u2014';
+          const newChg   = q.changePct != null ? (up?'+':'') + q.changePct.toFixed(2) + '%' : '\u2014';
+          const card = document.getElementById('ic-' + key);
+          const priceEl = document.getElementById('ip-' + key);
+          const chgEl   = document.getElementById('icc-' + key);
+          if (!card) return;
+          card.classList.remove('idx-up','idx-dn');
+          if (priceEl) priceEl.textContent = newPrice;
+          if (chgEl) {
+            chgEl.textContent = newChg;
+            chgEl.className = 'idx-chg ' + (up ? 'idx-up' : 'idx-dn');
+          }
         });
         const ts = document.getElementById('mkt-updated');
         if (ts) ts.textContent = 'Updated ' + new Date().toLocaleTimeString('en-IN',{hour:'2-digit',minute:'2-digit'});
@@ -5632,11 +5570,22 @@ app.post("/api/razorpay/verify", requireAuth, async (req: Request, res: Response
 // ── GET /api/bot/status ─────────────────────────────────────────────────────────
 app.get("/api/bot/status", (_req: Request, res: Response) => {
   const state  = readBotJSON("trade-state.json", {});
+  const hb     = readBotJSON("bot-heartbeat.json", null);
   const trades: any[] = readBotJSON("trades.json", []);
   const analytics = computeAnalytics(trades);
+
+  // Determine live bot status from heartbeat
+  const isAlive = hb?.at ? (Date.now() - new Date(hb.at).getTime()) < 3 * 60 * 1000 : false;
+  const botStatus = isAlive ? (hb.status ?? "RUNNING") : (hb ? "STOPPED" : "UNKNOWN");
+  const botColor  = isAlive ? (hb.inTrade ? (hb.direction === "CE" ? "blue" : "red") : "green") : "red";
+
   res.json({
     timestamp: new Date().toLocaleString("en-IN", { timeZone: "Asia/Kolkata" }),
     activeState: state,
+    heartbeat: hb,
+    botStatus,
+    botColor,
+    isAlive,
     ...analytics,
   });
 });
@@ -7354,316 +7303,581 @@ app.get("/dashboard", featureGate("feature_dashboard", "Dashboard"), async (req:
 });
 
 // ── GET /signals ────────────────────────────────────────────────────────────────
-app.get("/signals", featureGate("feature_signals", "Signals"), (req: Request, res: Response) => {
-  const state:  any   = readBotJSON("trade-state.json", {});
-  const trades: any[] = readBotJSON("trades.json", []);
-  const analytics = computeAnalytics(trades);
-  const hasPosition = state && state.position && state.position !== "FLAT";
-  const premium = userIsPremium(req);
-  const loggedIn = !!req.session?.userId;
-  const backtest: any = readBotJSON("5year-backtest-result.json", {});
-  const monthly: Record<string, any> = backtest.monthly || {};
+app.get("/signals", featureGate("feature_signals", "Signals"), (req, res) => {
+    const state = readBotJSON("trade-state.json", {});
+    const trades = readBotJSON("trades.json", []);
+    const analytics = computeAnalytics(trades);
+    const hasPosition = !!(state && (state.activeTrade || state.mainEntryDone));
+    const premium = userIsPremium(req);
+    const loggedIn = !!req.session?.userId;
+    const backtest = readBotJSON("5year-backtest-result.json", {});
+    const monthly = backtest.monthly || {};
+    // Build last 4 months summary (no strategy names exposed)
+    function monthLabel(key) {
+        const [y, m] = key.split("-");
+        return new Date(parseInt(y), parseInt(m) - 1, 1).toLocaleString("en-IN", { month: "short", year: "2-digit" });
+    }
+    const recentMonthKeys = Object.keys(monthly).sort().slice(-4);
+    const recentMonthData = recentMonthKeys.map(k => {
+        const d = monthly[k];
+        const combined = (d.bbTotal ?? 0) + (d.rcTotal ?? 0);
+        const totalTrades = (d.bbTrades ?? 0) + (d.rcTrades ?? 0);
+        const totalWins = (d.bbWins ?? 0) + (d.rcWins ?? 0);
+        const winRate = totalTrades > 0 ? ((totalWins / totalTrades) * 100).toFixed(0) : "—";
+        return { label: monthLabel(k), combined: combined.toFixed(0), winRate, days: d.days ?? 0, profit: combined > 0 };
+    });
+    // ── PREMIUM VIEW (full details) ────────────────────────────────────────────
+    const isAdmin = req.session?.userRole === 'admin';
+    if (premium) {
+        const an2 = computeAnalytics(trades);
+        const hb2 = readBotJSON("bot-heartbeat.json", {});
+        const ep2 = state.entryPrice ?? hb2.entryPrice ?? 0;
+        const dir2 = state.tradeDirection ?? hb2.direction ?? null;
+        const live2 = hb2.livePrice ?? 0;
+        const unreal2 = hb2.unrealisedPnL ?? 0;
+        const sl2 = ep2 > 0 && dir2 ? (dir2 === "CE" ? ep2 - 100 : ep2 + 100) : 0;
+        const sym2 = state.tradeSymbol ?? "";
+        const qty2 = state.mainQty ?? state.earlyQty ?? 0;
+        const entryMs2 = state.entryTime ?? 0;
+        const inTrade2 = !!(hb2.inTrade || state.activeTrade || state.mainEntryDone);
+        const durMin2 = entryMs2 > 0 ? Math.floor((Date.now() - entryMs2) / 60000) : 0;
+        const durStr2 = durMin2 >= 60 ? `${Math.floor(durMin2 / 60)}h ${durMin2 % 60}m` : durMin2 > 0 ? `${durMin2}m` : "";
+        const entryIST2 = entryMs2 > 0 ? new Date(entryMs2).toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata", hour: "2-digit", minute: "2-digit" }) : "";
+        const mode2 = hb2.mode ?? state.mode ?? "PAPER";
+        const todayStr2 = getTodayIST();
+        const todayTradesAll2 = readBotJSON("trades.json", []);
+        const closedToday2 = todayTradesAll2.filter((t) => (t.date || "").startsWith(todayStr2) && t.exitPrice && t.exitPrice > 0);
+        function fmtTime2(iso) {
+            return new Date(iso).toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata", hour: "2-digit", minute: "2-digit" });
+        }
+        function fmtDate2(iso) {
+            const d = new Date(iso);
+            return d.toLocaleDateString("en-IN", { timeZone: "Asia/Kolkata", day: "2-digit", month: "short" })
+                + " " + d.toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata", hour: "2-digit", minute: "2-digit" });
+        }
+        const QTY_MULT2 = 15; // 30 qty × 0.5 delta — option premium ₹ per index pt
+        function pnlCls2(v) { return v >= 0 ? "sig-green" : "sig-red"; }
+        function fmtPts2(v) { return `${v >= 0 ? "+" : ""}${v.toFixed(0)} pts`; }
+        function fmtRs2(v) { const r = Math.round(v * QTY_MULT2); return `${r >= 0 ? "+" : "−"}₹${Math.abs(r).toLocaleString("en-IN")}`; }
+        function fmtBoth2(v) { return `${fmtPts2(v)} <span class="rs-sub">${fmtRs2(v)}</span>`; }
+        function rcCls(r) {
+            if (!r)
+                return "";
+            const rl = r.toLowerCase();
+            if (rl.includes("sl") || rl.includes("stop"))
+                return "rc-sl";
+            if (rl.includes("early") || rl.includes("c1"))
+                return "rc-early";
+            return "rc-eod";
+        }
+        const todayRows2 = [...closedToday2].reverse().map((t) => `
+      <tr>
+        <td class="td-t">${fmtTime2(t.date)}</td>
+        <td><span class="d-b d-${(t.direction || "").toLowerCase()}">${t.direction || "—"}</span></td>
+        <td class="td-m">${(t.entryPrice ?? 0).toFixed(1)} → ${(t.exitPrice ?? 0).toFixed(1)}</td>
+        <td class="td-m ${pnlCls2(t.pnl ?? 0)}" style="font-weight:700">${fmtBoth2(t.pnl ?? 0)}</td>
+        <td>${t.reasonExit ? `<span class="rc-b ${rcCls(t.reasonExit)}">${t.reasonExit}</span>` : "—"}</td>
+        <td class="td-t">${t.duration ? (t.duration < 60 ? t.duration + "s" : Math.round(t.duration / 60) + "m") : "—"}</td>
+      </tr>`).join("");
+        const todayEmpty2 = !todayRows2 && !inTrade2 ? `<tr><td colspan="6" class="td-e">No closed trades today</td></tr>` : "";
+        const recentRows2 = an2.recentTrades.map((t) => `
+      <tr>
+        <td class="td-t">${t.date ? fmtDate2(t.date) : "—"}</td>
+        <td><span class="d-b d-${(t.direction || "").toLowerCase()}">${t.direction || "—"}</span></td>
+        <td class="td-m">${(t.entryPrice ?? 0).toFixed(0)} → ${(t.exitPrice ?? 0).toFixed(0)}</td>
+        <td class="td-m ${pnlCls2(t.pnl ?? 0)}" style="font-weight:700">${fmtBoth2(t.pnl ?? 0)}</td>
+        <td>${t.reasonExit ? `<span class="rc-b ${rcCls(t.reasonExit)}">${t.reasonExit}</span>` : "—"}</td>
+      </tr>`).join("");
+        const monthRows2 = an2.monthly.map((m) => {
+            const [y, mo] = m.month.split("-");
+            const mLabel = new Date(parseInt(y), parseInt(mo) - 1, 1).toLocaleString("en-IN", { month: "short", year: "2-digit" });
+            return `<tr>
+        <td class="td-t">${mLabel}</td>
+        <td class="td-m ${pnlCls2(m.pnl)}" style="font-weight:700">${fmtBoth2(m.pnl)}</td>
+        <td class="td-m">${m.trades}</td>
+        <td class="td-m">${m.wins}W / ${m.losses}L</td>
+        <td class="td-m">${m.trades > 0 ? m.winRate + "%" : "—"}</td>
+      </tr>`;
+        }).join("");
+        res.send(`<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Live Bot Dashboard — ZeroScreen</title>
+  <link rel="stylesheet" href="/public/css/style.css">
+  <style>
+    /* ── Layout ───────────────────────────────────────────────── */
+    .sig3{max-width:980px;margin:0 auto;padding:0 .75rem 3rem}
+    .sig3-hdr{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:.5rem;margin:1rem 0 .85rem}
+    .sig3-title{font-size:1.1rem;font-weight:800;color:var(--text)}
+    .sig3-sub{font-size:.72rem;color:var(--text-muted);margin-top:2px}
+    .sig3-live{display:flex;align-items:center;gap:.4rem;font-size:.72rem;color:var(--text-muted)}
+    .sig3-dot{width:8px;height:8px;border-radius:50%;background:#10b981;box-shadow:0 0 6px #10b98188;animation:sig3p 1.4s infinite}
+    @keyframes sig3p{0%,100%{opacity:1;box-shadow:0 0 6px #10b98188}50%{opacity:.3;box-shadow:none}}
 
-  // Build last 4 months summary (no strategy names exposed)
-  function monthLabel(key: string) {
-    const [y, m] = key.split("-");
-    return new Date(parseInt(y), parseInt(m) - 1, 1).toLocaleString("en-IN", { month: "short", year: "2-digit" });
+    /* ── KPI Cards (matching paper trade style) ───────────────── */
+    .sig3-kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(135px,1fr));gap:10px;margin-bottom:1rem}
+    .sig3-kpi{background:var(--card-bg);border:1px solid var(--border);border-radius:10px;padding:13px 16px}
+    .sig3-kl{font-size:.65rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:.07em;margin-bottom:5px}
+    .sig3-kv{font-size:1.35rem;font-weight:800;font-variant-numeric:tabular-nums;line-height:1.15}
+    .sig3-ks{font-size:.72rem;font-weight:600;margin-top:3px;opacity:.85}
+    .sig3-g{color:#10b981}.sig3-r{color:#ef4444}.sig3-d{color:var(--text-muted)}
+
+    /* ── Active Position Hero Card ────────────────────────────── */
+    .sig3-pos{border-radius:12px;padding:18px 22px;margin-bottom:1rem;border:1.5px solid}
+    .sig3-pos-ce{background:rgba(31,58,95,.2);border-color:rgba(59,130,246,.5)}
+    .sig3-pos-pe{background:rgba(80,18,18,.22);border-color:rgba(239,68,68,.5)}
+    .sig3-pos-flat{background:var(--card-bg);border-color:var(--border)}
+    .sig3-ph{display:flex;align-items:center;gap:.5rem;flex-wrap:wrap;margin-bottom:14px}
+    .sig3-dir-b{font-size:.8rem;font-weight:800;padding:.2rem .55rem;border-radius:5px}
+    .sig3-dir-ce{background:#1f3a5f;color:#60a5fa}
+    .sig3-dir-pe{background:#3b1010;color:#f87171}
+    .sig3-mode-b{font-size:.62rem;background:rgba(255,255,255,.07);color:var(--text-muted);padding:.12rem .42rem;border-radius:4px}
+    .sig3-dur{margin-left:auto;font-size:.68rem;color:var(--text-muted)}
+    /* Big P&L */
+    .sig3-pnl-big{font-size:2.4rem;font-weight:800;letter-spacing:-.5px;line-height:1.1;margin-bottom:3px;font-variant-numeric:tabular-nums}
+    .sig3-pnl-pts{font-size:.88rem;font-weight:600;margin-bottom:16px}
+    /* 6-cell detail grid */
+    .sig3-pg{display:grid;grid-template-columns:repeat(3,1fr);gap:10px 16px}
+    @media(min-width:520px){.sig3-pg{grid-template-columns:repeat(6,1fr)}}
+    .sig3-pl{font-size:.58rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:.05em}
+    .sig3-pv{font-size:.9rem;font-weight:700;margin-top:2px;font-variant-numeric:tabular-nums}
+
+    /* ── Section headers ──────────────────────────────────────── */
+    .sig3-sec{font-size:.67rem;font-weight:700;text-transform:uppercase;letter-spacing:.1em;
+      color:var(--text-muted);border-bottom:1px solid var(--border);
+      padding-bottom:7px;margin:1.4rem 0 .75rem;display:flex;align-items:center;gap:.5rem;flex-wrap:wrap}
+    .sig3-sec-count{font-size:.8rem;font-weight:700;text-transform:none;letter-spacing:0;color:var(--text)}
+
+    /* ── Tables ───────────────────────────────────────────────── */
+    .sig3-tw{overflow-x:auto;border:1px solid var(--border);border-radius:10px;margin-bottom:4px}
+    table.sig3-t{width:100%;border-collapse:collapse;font-size:.85rem}
+    .sig3-t th{text-align:left;padding:9px 11px;font-size:.63rem;text-transform:uppercase;
+      letter-spacing:.06em;color:var(--text-muted);border-bottom:1px solid var(--border);
+      font-weight:600;white-space:nowrap;background:var(--bg2)}
+    .sig3-t td{padding:10px 11px;border-bottom:1px solid var(--border);vertical-align:middle}
+    .sig3-t tr:last-child td{border-bottom:none}
+    .sig3-t tr:hover td{background:var(--hover-bg)}
+    .sig3-te{text-align:center;padding:24px 16px;color:var(--text-muted);font-size:.85rem}
+
+    /* ── Cell styles ──────────────────────────────────────────── */
+    .sig3-ct{font-size:.72rem;color:var(--text-muted);white-space:nowrap}
+    .sig3-db{font-size:.7rem;font-weight:800;padding:.12rem .36rem;border-radius:3px}
+    .sig3-db.ce{background:#1f3a5f;color:#60a5fa}
+    .sig3-db.pe{background:#3b1010;color:#f87171}
+    /* P&L cell: big ₹ on line 1, small pts on line 2 */
+    .sig3-pnl-rs{font-size:1rem;font-weight:800;display:block;font-variant-numeric:tabular-nums;line-height:1.2}
+    .sig3-pnl-spt{font-size:.68rem;display:block;color:var(--text-muted);margin-top:1px}
+    .sig3-rc{font-size:.65rem;padding:.1rem .32rem;border-radius:3px;font-weight:600;white-space:nowrap}
+    .sig3-rc-sl{background:rgba(239,68,68,.12);color:#f87171}
+    .sig3-rc-early{background:rgba(245,158,11,.12);color:#f59e0b}
+    .sig3-rc-eod{background:rgba(99,102,241,.12);color:#818cf8}
+    .sig3-mono{font-family:monospace;font-size:.82rem}
+  </style>
+</head>
+<body class="page-theme-signals">
+  ${nav("signals", req)}
+  <div class="sig3">
+
+    <!-- Header -->
+    <div class="sig3-hdr">
+      <div>
+        <div class="sig3-title">📡 Live Bot Dashboard</div>
+        <div class="sig3-sub">BANKNIFTY &middot; HYBRID_REVERSE &middot; ${mode2.toUpperCase()} &middot; 30 qty &middot; ₹ P&amp;L = index pts &times; 30 qty &times; 0.5 delta = pts &times; 15</div>
+      </div>
+      <div class="sig3-live"><span class="sig3-dot"></span><span id="sig3-upd">Connecting&hellip;</span></div>
+    </div>
+
+    <!-- KPI Stats (paper-trade card style) -->
+    <div class="sig3-kpis">
+      <div class="sig3-kpi">
+        <div class="sig3-kl">Today P&amp;L</div>
+        <div class="sig3-kv ${pnlCls2(an2.today.pnl)}" id="k3-today-rs">${fmtRs2(an2.today.pnl)}</div>
+        <div class="sig3-ks ${pnlCls2(an2.today.pnl)}" id="k3-today-pts">${fmtPts2(an2.today.pnl)}</div>
+      </div>
+      <div class="sig3-kpi">
+        <div class="sig3-kl">Today Trades</div>
+        <div class="sig3-kv" id="k3-trades">${an2.today.trades}${inTrade2 ? '<span style="font-size:.65rem;color:#10b981"> +live</span>' : ""}</div>
+        <div class="sig3-ks sig3-d" id="k3-wl"><span class="sig3-g">${an2.today.wins}W</span> / <span class="sig3-r">${an2.today.losses}L</span></div>
+      </div>
+      <div class="sig3-kpi">
+        <div class="sig3-kl">This Week</div>
+        <div class="sig3-kv ${pnlCls2(an2.weekly.pnl)}" id="k3-wk-rs">${fmtRs2(an2.weekly.pnl)}</div>
+        <div class="sig3-ks ${pnlCls2(an2.weekly.pnl)}" id="k3-wk-pts">${fmtPts2(an2.weekly.pnl)}</div>
+      </div>
+      <div class="sig3-kpi">
+        <div class="sig3-kl">All-Time P&amp;L</div>
+        <div class="sig3-kv ${pnlCls2(an2.allTime.pnl)}">${fmtRs2(an2.allTime.pnl)}</div>
+        <div class="sig3-ks ${pnlCls2(an2.allTime.pnl)}">${fmtPts2(an2.allTime.pnl)}</div>
+      </div>
+      <div class="sig3-kpi">
+        <div class="sig3-kl">Win Rate</div>
+        <div class="sig3-kv" id="k3-wr">${an2.allTime.winRate}%</div>
+        <div class="sig3-ks sig3-d">${an2.allTime.wins}W / ${an2.allTime.losses}L all-time</div>
+      </div>
+      <div class="sig3-kpi">
+        <div class="sig3-kl">Max Risk / Trade</div>
+        <div class="sig3-kv sig3-r">&#8722;&#8377;1,500</div>
+        <div class="sig3-ks sig3-d">100 pts SL &times; 30 qty</div>
+      </div>
+    </div>
+
+    <!-- Active Position Card -->
+    <div id="sig3-pos-wrap">
+      ${inTrade2 && ep2 > 0 ? `
+      <div class="sig3-pos sig3-pos-${(dir2 || "flat").toLowerCase()}">
+        <div class="sig3-ph">
+          <span class="sig3-dot"></span>
+          <span class="sig3-dir-b sig3-dir-${(dir2 || "").toLowerCase()}">${dir2} OPTION</span>
+          <span class="sig3-mono" style="color:var(--text-muted)">${sym2 || "BANKNIFTY"}</span>
+          <span class="sig3-mode-b">${mode2.toUpperCase()}</span>
+          ${durStr2 ? `<span class="sig3-dur">${durStr2} in trade</span>` : ""}
+        </div>
+        <div class="sig3-pnl-big ${pnlCls2(unreal2)}" id="sig3-pnl-rs">${fmtRs2(unreal2)}</div>
+        <div class="sig3-pnl-pts ${pnlCls2(unreal2)}" id="sig3-pnl-pts">${unreal2 >= 0 ? "+" : ""}${unreal2.toFixed(0)} index pts unrealised</div>
+        <div class="sig3-pg">
+          <div>
+            <div class="sig3-pl">Entry Index</div>
+            <div class="sig3-pv sig3-mono">${ep2.toFixed(1)}</div>
+          </div>
+          <div>
+            <div class="sig3-pl">Live Index</div>
+            <div class="sig3-pv sig3-g sig3-mono" id="sig3-live">${live2 > 0 ? live2.toFixed(1) : "&hellip;"}</div>
+          </div>
+          <div>
+            <div class="sig3-pl">Stop Loss</div>
+            <div class="sig3-pv sig3-r sig3-mono">${sl2 > 0 ? sl2.toFixed(1) : "&mdash;"}</div>
+          </div>
+          <div>
+            <div class="sig3-pl">SL Loss (&#8377;)</div>
+            <div class="sig3-pv sig3-r">&#8722;&#8377;1,500</div>
+          </div>
+          <div>
+            <div class="sig3-pl">Qty / Lot</div>
+            <div class="sig3-pv">${qty2 > 0 ? qty2 : 30} / 1</div>
+          </div>
+          <div>
+            <div class="sig3-pl">Entry Time</div>
+            <div class="sig3-pv">${entryIST2 || "&mdash;"}</div>
+          </div>
+        </div>
+      </div>` : `
+      <div class="sig3-pos sig3-pos-flat">
+        <div style="display:flex;align-items:center;gap:.75rem">
+          <span style="font-size:1.6rem">&#9203;</span>
+          <div>
+            <div style="font-weight:700;font-size:.95rem">No Active Position</div>
+            <div style="font-size:.74rem;color:var(--text-muted);margin-top:3px">Bot scanning BANKNIFTY for breakout signal&hellip;</div>
+          </div>
+        </div>
+      </div>`}
+    </div>
+
+    <!-- TODAY'S TRADES -->
+    <div class="sig3-sec">
+      Today &mdash; ${todayStr2}
+      <span class="sig3-sec-count">(${closedToday2.length} closed${inTrade2 ? " + 1 live" : ""})</span>
+    </div>
+    <div class="sig3-tw">
+      <table class="sig3-t">
+        <thead><tr>
+          <th>Time</th><th>Dir</th><th>Entry &#8594; Exit (Index)</th>
+          <th>P&amp;L (&#8377;)</th><th>Reason</th><th>Duration</th>
+        </tr></thead>
+        <tbody id="sig3-today-body">
+          ${[...closedToday2].reverse().map((t) => `<tr>
+            <td class="sig3-ct">${fmtTime2(t.date)}</td>
+            <td><span class="sig3-db ${(t.direction || "").toLowerCase()}">${t.direction || "&mdash;"}</span></td>
+            <td class="sig3-mono">${(t.entryPrice ?? 0).toFixed(1)} &#8594; ${(t.exitPrice ?? 0).toFixed(1)}</td>
+            <td>
+              <span class="sig3-pnl-rs ${pnlCls2(t.pnl ?? 0)}">${fmtRs2(t.pnl ?? 0)}</span>
+              <span class="sig3-pnl-spt">${fmtPts2(t.pnl ?? 0)}</span>
+            </td>
+            <td>${t.reasonExit ? `<span class="sig3-rc ${rcCls(t.reasonExit).replace("rc-", "sig3-rc-")}">${t.reasonExit}</span>` : "&mdash;"}</td>
+            <td class="sig3-ct">${t.duration ? (t.duration < 60 ? t.duration + "s" : Math.round(t.duration / 60) + "m") : "&mdash;"}</td>
+          </tr>`).join("") || `<tr><td colspan="6" class="sig3-te">No closed trades today${inTrade2 ? " &mdash; 1 live position active" : ""}</td></tr>`}
+        </tbody>
+      </table>
+    </div>
+
+    <!-- THIS WEEK (last 7 days) -->
+    <div class="sig3-sec">
+      This Week &mdash; Last 7 Days
+      <span class="sig3-sec-count">(${an2.weekly.trades} trades &nbsp;<span class="${pnlCls2(an2.weekly.pnl)}">${fmtRs2(an2.weekly.pnl)}</span>)</span>
+    </div>
+    <div class="sig3-tw">
+      <table class="sig3-t">
+        <thead><tr>
+          <th>Date / Time</th><th>Dir</th><th>Entry &#8594; Exit (Index)</th>
+          <th>P&amp;L (&#8377;)</th><th>Reason</th>
+        </tr></thead>
+        <tbody>
+          ${(() => {
+            const _now = new Date(new Date().toLocaleString("en-US", { timeZone: "Asia/Kolkata" }));
+            const _wAgo = new Date(_now);
+            _wAgo.setDate(_now.getDate() - 7);
+            const _wk = an2.recentTrades.filter((t) => t.date && new Date(t.date) >= _wAgo);
+            if (!_wk.length)
+                return `<tr><td colspan="5" class="sig3-te">No trades in the past 7 days</td></tr>`;
+            return _wk.map((t) => `<tr>
+              <td class="sig3-ct">${fmtDate2(t.date)}</td>
+              <td><span class="sig3-db ${(t.direction || "").toLowerCase()}">${t.direction || "&mdash;"}</span></td>
+              <td class="sig3-mono">${(t.entryPrice ?? 0).toFixed(0)} &#8594; ${(t.exitPrice ?? 0).toFixed(0)}</td>
+              <td>
+                <span class="sig3-pnl-rs ${pnlCls2(t.pnl ?? 0)}">${fmtRs2(t.pnl ?? 0)}</span>
+                <span class="sig3-pnl-spt">${fmtPts2(t.pnl ?? 0)}</span>
+              </td>
+              <td>${t.reasonExit ? `<span class="sig3-rc ${rcCls(t.reasonExit).replace("rc-", "sig3-rc-")}">${t.reasonExit}</span>` : "&mdash;"}</td>
+            </tr>`).join("");
+        })()}
+        </tbody>
+      </table>
+    </div>
+
+    <!-- MONTH-WISE P&L -->
+    ${an2.monthly.length > 0 ? `
+    <div class="sig3-sec">
+      Month-wise P&amp;L
+      <span class="sig3-sec-count">(${an2.monthly.length} month${an2.monthly.length !== 1 ? "s" : ""})</span>
+    </div>
+    <div class="sig3-tw">
+      <table class="sig3-t">
+        <thead><tr>
+          <th>Month</th><th>P&amp;L (&#8377;)</th><th>P&amp;L (pts)</th><th>Trades</th><th>W / L</th><th>Win %</th>
+        </tr></thead>
+        <tbody>
+          ${an2.monthly.map((m) => {
+            const [_my, _mm] = m.month.split("-");
+            const _ml = new Date(parseInt(_my), parseInt(_mm) - 1, 1)
+                .toLocaleString("en-IN", { month: "long", year: "numeric" });
+            return `<tr>
+              <td style="font-weight:600;white-space:nowrap">${_ml}</td>
+              <td>
+                <span class="sig3-pnl-rs ${pnlCls2(m.pnl)}" style="font-size:.95rem">${fmtRs2(m.pnl)}</span>
+              </td>
+              <td class="sig3-mono" style="font-size:.76rem;color:var(--text-muted)">${fmtPts2(m.pnl)}</td>
+              <td>${m.trades}</td>
+              <td><span class="sig3-g">${m.wins}W</span>&nbsp;/&nbsp;<span class="sig3-r">${m.losses}L</span></td>
+              <td class="${m.winRate >= 55 ? "sig3-g" : m.winRate >= 40 ? "" : "sig3-r"}">${m.trades > 0 ? m.winRate + "%" : "&mdash;"}</td>
+            </tr>`;
+        }).join("")}
+        </tbody>
+      </table>
+    </div>` : ""}
+
+    <footer class="site-footer" style="margin-top:1.5rem">
+      <span>&copy; 2026 ZeroScreen &mdash; Admin View &middot; ${mode2.toUpperCase()} mode &middot; Not SEBI registered.</span>
+    </footer>
+  </div>
+
+  <script>
+  const _QM = 15;
+  function _fR(v){const r=Math.round(v*_QM);return(r>=0?"+":"\u2212")+"\u20B9"+Math.abs(r).toLocaleString("en-IN");}
+  function _fP(v){return(v>=0?"+":"")+v.toFixed(0)+" pts";}
+  function _gc(v){return v>=0?"#10b981":"#ef4444";}
+  function _ge(id){return document.getElementById(id);}
+  async function _sig3Refresh(){
+    try{
+      const r=await fetch("/api/bot/status");const d=await r.json();
+      _ge("sig3-upd").textContent="Updated "+new Date().toLocaleTimeString("en-IN");
+      const inT=d.activeState&&!!(d.activeState.inTrade||d.activeState.activeTrade||d.activeState.mainEntryDone);
+      const tot=parseFloat(((d.today?.pnl||0)+(inT?(d.activeState?.unrealisedPnL||0):0)).toFixed(0));
+      if(_ge("k3-today-rs")){_ge("k3-today-rs").textContent=_fR(tot);_ge("k3-today-rs").style.color=_gc(tot);}
+      if(_ge("k3-today-pts")){_ge("k3-today-pts").textContent=_fP(tot);_ge("k3-today-pts").style.color=_gc(tot);}
+      const tc=d.today?.trades||0;
+      if(_ge("k3-trades"))_ge("k3-trades").innerHTML=tc+(tc!==1?" trades":" trade")+(inT?' <span style="font-size:.65rem;color:#10b981">+live</span>':"");
+      if(_ge("k3-wl")&&d.today)_ge("k3-wl").innerHTML='<span class="sig3-g">'+d.today.wins+'W</span> / <span class="sig3-r">'+d.today.losses+'L</span>';
+      if(_ge("k3-wk-rs")&&d.weekly){_ge("k3-wk-rs").textContent=_fR(d.weekly.pnl);_ge("k3-wk-rs").style.color=_gc(d.weekly.pnl);}
+      if(_ge("k3-wk-pts")&&d.weekly){_ge("k3-wk-pts").textContent=_fP(d.weekly.pnl);_ge("k3-wk-pts").style.color=_gc(d.weekly.pnl);}
+      if(_ge("k3-wr")&&d.allTime)_ge("k3-wr").textContent=d.allTime.winRate+"%";
+      if(inT&&d.activeState?.entryPrice>0){
+        const u=d.activeState?.unrealisedPnL??0;
+        if(_ge("sig3-pnl-rs")){_ge("sig3-pnl-rs").textContent=_fR(u);_ge("sig3-pnl-rs").style.color=_gc(u);}
+        if(_ge("sig3-pnl-pts")){_ge("sig3-pnl-pts").textContent=(u>=0?"+":"")+u.toFixed(0)+" index pts unrealised";_ge("sig3-pnl-pts").style.color=_gc(u);}
+        if(_ge("sig3-live")&&d.activeState?.livePrice)_ge("sig3-live").textContent=parseFloat(d.activeState.livePrice).toFixed(1);
+      }
+    }catch(e){console.error(e);}
   }
-  const recentMonthKeys = Object.keys(monthly).sort().slice(-4);
-  const recentMonthData = recentMonthKeys.map(k => {
-    const d = monthly[k];
-    const combined = (d.bbTotal ?? 0) + (d.rcTotal ?? 0);
-    const totalTrades = (d.bbTrades ?? 0) + (d.rcTrades ?? 0);
-    const totalWins   = (d.bbWins ?? 0) + (d.rcWins ?? 0);
-    const winRate = totalTrades > 0 ? ((totalWins / totalTrades) * 100).toFixed(0) : "—";
-    return { label: monthLabel(k), combined: combined.toFixed(0), winRate, days: d.days ?? 0, profit: combined > 0 };
-  });
-
-  // ── PREMIUM VIEW (full details) ────────────────────────────────────────────
-  const isAdmin = req.session?.userRole === 'admin';
-  if (premium) {
+  _sig3Refresh();setInterval(_sig3Refresh,8000);
+  </script>
+  <script src="/public/js/app.js"></script>
+</body>
+</html>`);
+        return;
+    }
+    // -- GUEST / FREE USER VIEW (P&L only -- no strategy details) --
+    const yesterdayIST = (() => {
+        const d2 = new Date(new Date().toLocaleString("en-US", { timeZone: "Asia/Kolkata" }));
+        d2.setDate(d2.getDate() - 1);
+        return d2.toISOString().split("T")[0];
+    })();
+    const yTrades = trades.filter((t) => (t.date || "").startsWith(yesterdayIST) && t.exitPrice && t.exitPrice > 0);
+    const yPnl = parseFloat(yTrades.reduce((s, t) => s + (t.pnl ?? 0), 0).toFixed(1));
+    const yWins = yTrades.filter((t) => t.pnl > 0).length;
+    const QTY_MULT_G = 15;
+    function fmtRsG(v) { const r = Math.round(v * QTY_MULT_G); return (r >= 0 ? "+" : "\u2212") + "\u20B9" + Math.abs(r).toLocaleString("en-IN"); }
+    function fmtPtsG(v) { return (v >= 0 ? "+" : "") + v.toFixed(0) + " pts"; }
+    function pnlClsG(v) { return v >= 0 ? "#10b981" : "#ef4444"; }
+    const tierLabel = loggedIn ? '\uD83D\uDD14 Member' : '\uD83D\uDC64 Guest';
+    const tierClass = loggedIn ? 'sig-tier-free' : 'sig-tier-guest';
     res.send(`<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>Live Signals — ZeroScreen</title>
+  <title>Live Signals \u2014 ZeroScreen</title>
   <link rel="stylesheet" href="/public/css/style.css">
+  <style>
+    .gv-wrap{max-width:680px;margin:0 auto;padding:0 12px 40px}
+    .gv-hero{background:var(--card-bg,#1e293b);border:1px solid var(--border,#334155);border-radius:14px;padding:22px 20px 18px;margin:18px 0 14px}
+    .gv-hero-top{display:flex;align-items:center;justify-content:space-between;margin-bottom:6px}
+    .gv-title{font-size:1.15rem;font-weight:700;color:var(--text,#f1f5f9)}
+    .gv-sub{font-size:0.78rem;color:var(--text-muted,#94a3b8);margin:0}
+    .gv-badge{font-size:0.68rem;font-weight:700;padding:3px 9px;border-radius:20px;letter-spacing:.3px}
+    .sig-tier-free{background:rgba(16,185,129,.15);color:#34d399;border:1px solid rgba(16,185,129,.3)}
+    .sig-tier-guest{background:rgba(100,116,139,.15);color:#94a3b8;border:1px solid rgba(100,116,139,.3)}
+    .gv-status{display:flex;align-items:center;gap:8px;margin-top:14px;padding:10px 14px;border-radius:10px;background:var(--bg2,#0f172a);border:1px solid var(--border,#334155)}
+    .gv-status-dot{width:9px;height:9px;border-radius:50%;flex-shrink:0}
+    .gv-status-dot.active{background:#10b981;box-shadow:0 0 0 3px rgba(16,185,129,.25);animation:gvpulse 2s infinite}
+    .gv-status-dot.idle{background:#64748b}
+    @keyframes gvpulse{0%,100%{box-shadow:0 0 0 3px rgba(16,185,129,.25)}50%{box-shadow:0 0 0 6px rgba(16,185,129,.08)}}
+    .gv-status-lbl{font-size:.8rem;color:var(--text-muted,#94a3b8)}
+    .gv-status-val{font-size:.85rem;font-weight:700;margin-left:auto}
+    .gv-status-val.active-col{color:#10b981}
+    .gv-status-val.idle-col{color:#64748b}
+    .gv-live-pnl{font-size:1.6rem;font-weight:800;margin:2px 0 0;letter-spacing:-.5px}
+    .gv-live-sub{font-size:.75rem;color:var(--text-muted,#94a3b8);margin-bottom:2px}
+    .gv-kpi-row{display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin:14px 0}
+    .gv-kpi{background:var(--card-bg,#1e293b);border:1px solid var(--border,#334155);border-radius:10px;padding:12px 14px}
+    .gv-kpi-lbl{font-size:.68rem;text-transform:uppercase;letter-spacing:.5px;color:var(--text-muted,#94a3b8);margin-bottom:4px}
+    .gv-kpi-val{font-size:1.05rem;font-weight:800}
+    .gv-kpi-sub{font-size:.67rem;color:var(--text-muted,#94a3b8);margin-top:2px}
+    .gv-sec-title{font-size:.72rem;text-transform:uppercase;letter-spacing:.6px;color:var(--text-muted,#94a3b8);margin:20px 0 10px;font-weight:700}
+    .gv-month-tbl{width:100%;border-collapse:collapse;font-size:.82rem}
+    .gv-month-tbl th{font-size:.65rem;text-transform:uppercase;letter-spacing:.4px;color:var(--text-muted,#94a3b8);font-weight:600;padding:6px 10px;text-align:left;border-bottom:1px solid var(--border,#334155)}
+    .gv-month-tbl td{padding:8px 10px;border-bottom:1px solid rgba(51,65,85,.5)}
+    .gv-month-tbl tr:last-child td{border-bottom:none}
+    .gv-month-tbl .mg{color:#10b981;font-weight:700}
+    .gv-month-tbl .mr{color:#ef4444;font-weight:700}
+    .gv-cta{display:flex;align-items:center;gap:14px;background:linear-gradient(135deg,rgba(124,58,237,.18),rgba(99,102,241,.12));border:1px solid rgba(124,58,237,.35);border-radius:14px;padding:16px 18px;margin:20px 0}
+    .gv-cta-icon{font-size:1.5rem}
+    .gv-cta-body{flex:1}
+    .gv-cta-body strong{font-size:.92rem;color:#f1f5f9}
+    .gv-cta-body p{font-size:.75rem;color:#94a3b8;margin:3px 0 0}
+    .gv-btn{background:linear-gradient(135deg,#7c3aed,#6366f1);color:#fff;border:none;border-radius:8px;padding:8px 16px;font-size:.78rem;font-weight:700;white-space:nowrap;text-decoration:none;cursor:pointer}
+    .gv-upd{font-size:.65rem;color:var(--text-muted,#64748b)}
+    @media(max-width:480px){.gv-kpi-row{grid-template-columns:1fr 1fr}}
+  </style>
 </head>
 <body class="page-theme-signals">
   ${nav("signals", req)}
-  <div class="container" style="max-width:960px">
-    <div class="sig-header">
-      <div>
-        <h1 class="sig-title">📡 Live Signals</h1>
-        <p class="sig-sub">BANKNIFTY Options · Live automated trading · Auto-refreshes every 8 seconds</p>
-        <span class="sig-tier-badge ${isAdmin ? 'sig-tier-admin' : 'sig-tier-premium'}">${isAdmin ? '👑 Admin' : '⚡ Premium'} — Full Access</span>
+  <div class="gv-wrap">
+
+    <div class="gv-hero">
+      <div class="gv-hero-top">
+        <div>
+          <div class="gv-title">Live Signals</div>
+          <p class="gv-sub">BANKNIFTY Options &#xB7; Automated intraday bot</p>
+        </div>
+        <div style="display:flex;flex-direction:column;align-items:flex-end;gap:6px">
+          <span class="gv-badge ${tierClass}">${tierLabel}</span>
+          <span class="gv-upd" id="gv-upd">Connecting&#x2026;</span>
+        </div>
       </div>
-      <div class="sig-refresh-info">
-        <span class="sig-live-dot"></span><span id="sig-last-update">Connecting…</span>
+
+      <div class="gv-status">
+        <span class="gv-status-dot ${hasPosition ? 'active' : 'idle'}" id="gv-dot"></span>
+        <span class="gv-status-lbl" id="gv-status-lbl">Bot ${hasPosition ? 'is running a trade' : 'is idle \u2014 watching market'}</span>
+        <span class="gv-status-val ${hasPosition ? 'active-col' : 'idle-col'}" id="gv-status-val">${hasPosition ? '&#x25CF;&nbsp;ACTIVE' : 'Idle'}</span>
+      </div>
+
+      <div id="gv-live-wrap" style="margin-top:14px;${hasPosition ? '' : 'display:none'}">
+        <div class="gv-live-sub">Live P&amp;L (open position)</div>
+        <div class="gv-live-pnl" id="gv-live-pnl" style="color:#94a3b8">&#x2014;</div>
+        <div class="gv-live-sub" id="gv-live-pts" style="margin-top:2px"></div>
       </div>
     </div>
-    <div class="sig-stats-bar" id="sig-stats-bar">
-      <div class="sig-stat"><span class="sig-stat-label">Today PnL</span><span class="sig-stat-val" id="stat-pnl">${analytics.today.pnl >= 0 ? '+' : ''}${analytics.today.pnl} pts</span></div>
-      <div class="sig-stat"><span class="sig-stat-label">Today Trades</span><span class="sig-stat-val" id="stat-trades">${analytics.today.trades}</span></div>
-      <div class="sig-stat"><span class="sig-stat-label">Wins</span><span class="sig-stat-val" id="stat-wins">${analytics.today.wins}</span></div>
-      <div class="sig-stat"><span class="sig-stat-label">Losses</span><span class="sig-stat-val" id="stat-losses">${analytics.today.losses}</span></div>
-      <div class="sig-stat"><span class="sig-stat-label">Max Drawdown</span><span class="sig-stat-val" id="stat-maxdd">${analytics.today.maxDD} pts</span></div>
-      <div class="sig-stat"><span class="sig-stat-label">All-Time Win Rate</span><span class="sig-stat-val" id="stat-wr">${analytics.allTime.winRate}%</span></div>
+
+    <div class="gv-kpi-row">
+      <div class="gv-kpi">
+        <div class="gv-kpi-lbl">Today</div>
+        <div class="gv-kpi-val" id="gv-today-rs" style="color:${pnlClsG(analytics.today.pnl)}">${fmtRsG(analytics.today.pnl)}</div>
+        <div class="gv-kpi-sub" id="gv-today-pts">${fmtPtsG(analytics.today.pnl)}</div>
+      </div>
+      <div class="gv-kpi">
+        <div class="gv-kpi-lbl">Yesterday</div>
+        <div class="gv-kpi-val" style="color:${pnlClsG(yPnl)}">${fmtRsG(yPnl)}</div>
+        <div class="gv-kpi-sub">${fmtPtsG(yPnl)}${yTrades.length > 0 ? ' &middot; ' + yWins + 'W/' + (yTrades.length - yWins) + 'L' : ' &middot; no trades'}</div>
+      </div>
+      <div class="gv-kpi">
+        <div class="gv-kpi-lbl">This Week</div>
+        <div class="gv-kpi-val" id="gv-wk-rs" style="color:${pnlClsG(analytics.weekly.pnl)}">${fmtRsG(analytics.weekly.pnl)}</div>
+        <div class="gv-kpi-sub" id="gv-wk-pts">${fmtPtsG(analytics.weekly.pnl)}</div>
+      </div>
     </div>
-    <div class="sig-section-title">🔴 Active Position</div>
-    <div id="sig-active-wrap">
-      ${hasPosition ? `
-      <div class="sig-card sig-card-active sig-${(state.direction||'flat').toLowerCase()}">
-        <div class="sig-card-top">
-          <span class="sig-badge sig-badge-${(state.direction||'').toLowerCase()}">${state.direction||'—'}</span>
-          <span class="sig-symbol">BANKNIFTY</span>
-          <span class="sig-status-active">● LIVE TRADE</span>
-        </div>
-        <div class="sig-card-body">
-          <div class="sig-field"><span class="sig-field-label">Strategy</span><span class="sig-field-val">${state.strategy||state.type||'—'}</span></div>
-          <div class="sig-field"><span class="sig-field-label">Entry Price</span><span class="sig-field-val">₹${state.entryPrice??state.entry??'—'}</span></div>
-          <div class="sig-field"><span class="sig-field-label">Stop Loss</span><span class="sig-field-val sig-red">₹${state.sl??state.stopLoss??'—'}</span></div>
-          <div class="sig-field"><span class="sig-field-label">Quantity</span><span class="sig-field-val">${state.qty??state.quantity??'—'}</span></div>
-          <div class="sig-field"><span class="sig-field-label">AI Score</span><span class="sig-field-val sig-green">${state.aiScore!=null?(state.aiScore*100).toFixed(0)+'%':'—'}</span></div>
-        </div>
-      </div>` : `
-      <div class="sig-flat-card"><span class="sig-flat-icon">💤</span>
-        <div><div class="sig-flat-title">No Active Position</div>
-        <div class="sig-flat-sub">Bot is watching the market. A signal will appear here when a trade is entered.</div></div>
-      </div>`}
+
+    <div class="gv-sec-title">Month-wise P&amp;L</div>
+    <div style="background:var(--card-bg,#1e293b);border:1px solid var(--border,#334155);border-radius:12px;overflow:hidden">
+      <table class="gv-month-tbl">
+        <thead><tr><th>Month</th><th>P&amp;L (&#x20B9;)</th><th>P&amp;L (pts)</th><th>Trades</th><th>Win%</th></tr></thead>
+        <tbody>
+          ${analytics.monthly.slice(0, 6).map((m) => `<tr>
+            <td>${new Date(m.month + '-01').toLocaleString('en-IN', { month: 'short', year: '2-digit' })}</td>
+            <td class="${m.pnl >= 0 ? 'mg' : 'mr'}">${fmtRsG(m.pnl)}</td>
+            <td class="${m.pnl >= 0 ? 'mg' : 'mr'}">${fmtPtsG(m.pnl)}</td>
+            <td>${m.trades}</td>
+            <td>${m.winRate}%</td>
+          </tr>`).join("")}
+          ${analytics.monthly.length === 0 ? '<tr><td colspan="5" style="text-align:center;color:#64748b;padding:16px">No historical data yet</td></tr>' : ''}
+        </tbody>
+      </table>
     </div>
-    <div class="sig-section-title">� Recent Monthly Performance (Backtest)</div>
-    <div class="sig-month-grid">
-      ${recentMonthData.map(m => `
-      <div class="sig-month-card ${m.profit ? 'sig-month-profit' : 'sig-month-loss'}">
-        <div class="sig-month-label">${m.label}</div>
-        <div class="sig-month-pnl">${m.profit ? '+' : ''}${m.combined} <span class="sig-month-unit">pts</span></div>
-        <div class="sig-month-meta">
-          <span>${m.winRate}% win rate</span>
-          <span>${m.days} days</span>
-        </div>
-      </div>`).join("")}
+
+    <div class="gv-cta">
+      <div class="gv-cta-icon">&#x26A1;</div>
+      <div class="gv-cta-body">
+        <strong>See every trade in real time</strong>
+        <p>Premium shows live entry &amp; exit, P&amp;L per trade, full history &amp; daily reports.</p>
+      </div>
+      <a href="/premium" class="gv-btn">Upgrade &#x2192;</a>
     </div>
-    <div class="sig-section-title">📋 Recent Trades</div>
-    <div id="sig-trades-wrap" class="sig-trades-list">
-      ${analytics.recentTrades.length === 0 ? (() => {
-        const demoTrades = [
-          { direction:"CE", pnl:42.5, type:"MODEL_A", entryPrice:"328.00", exitPrice:"370.50", duration:1380, reasonExit:"TARGET HIT", date:"2026-04-30T10:17:00+05:30" },
-          { direction:"PE", pnl:38.0, type:"MODEL_B", entryPrice:"412.50", exitPrice:"450.50", duration:960,  reasonExit:"TARGET HIT", date:"2026-04-29T14:22:00+05:30" },
-          { direction:"CE", pnl:-12.0,type:"MODEL_A", entryPrice:"290.00", exitPrice:"278.00", duration:510,  reasonExit:"SL HIT",     date:"2026-04-28T11:45:00+05:30" },
-          { direction:"PE", pnl:55.0, type:"MODEL_B", entryPrice:"380.00", exitPrice:"435.00", duration:2100, reasonExit:"EOD EXIT",   date:"2026-04-25T15:10:00+05:30" },
-          { direction:"CE", pnl:28.5, type:"MODEL_A", entryPrice:"315.00", exitPrice:"343.50", duration:1620, reasonExit:"TARGET HIT", date:"2026-04-24T10:55:00+05:30" },
-          { direction:"PE", pnl:-8.5, type:"MODEL_B", entryPrice:"355.00", exitPrice:"346.50", duration:480,  reasonExit:"SL HIT",     date:"2026-04-23T13:30:00+05:30" },
-        ];
-        const header = `<div style="font-size:0.78rem;color:var(--text-muted);margin-bottom:6px;padding:5px 10px;background:rgba(5,150,105,0.06);border-radius:6px;border:1px solid rgba(5,150,105,0.15)">📊 No live trades yet — sample trades shown for preview</div>`;
-        return header + demoTrades.map((t: any) => {
-          const isWin = t.pnl > 0;
-          const d = new Date(t.date).toLocaleString("en-IN",{timeZone:"Asia/Kolkata",day:"2-digit",month:"short",hour:"2-digit",minute:"2-digit"});
-          const dur = t.duration < 60 ? t.duration+'s' : Math.round(t.duration/60)+'m';
-          const rc = t.reasonExit==='TARGET HIT'?'sig-tr-target':t.reasonExit==='SL HIT'?'sig-tr-sl':'sig-tr-eod';
-          return `<div class="sig-trade-row ${isWin?'win':'loss'} demo">
-            <span class="sig-badge sig-badge-${t.direction.toLowerCase()}">${t.direction}</span>
-            <span class="sig-tr-date">${d}</span>
-            <span class="sig-tr-prices">₹${t.entryPrice} → ₹${t.exitPrice}</span>
-            <span class="sig-tr-pnl ${isWin?'sig-green':'sig-red'}">${isWin?'+':''}${t.pnl.toFixed(1)} pts</span>
-            <span class="sig-tr-dur">${dur}</span>
-            <span class="sig-tr-reason ${rc}">${t.reasonExit}</span>
-          </div>`;
-        }).join("");
-      })() :
-        analytics.recentTrades.map((t: any) => {
-          const isWin = t.pnl > 0;
-          const d = t.date ? new Date(t.date).toLocaleString("en-IN",{timeZone:"Asia/Kolkata",day:"2-digit",month:"short",hour:"2-digit",minute:"2-digit"}) : "—";
-          const dur = t.duration ? (t.duration < 60 ? t.duration + 's' : Math.round(t.duration/60) + 'm') : '—';
-          const rc = t.reasonExit==='TARGET HIT'?'sig-tr-target':t.reasonExit==='SL HIT'?'sig-tr-sl':'sig-tr-eod';
-          return `<div class="sig-trade-row ${isWin?'win':'loss'}">
-            <span class="sig-badge sig-badge-${(t.direction||'').toLowerCase()}">${t.direction||'—'}</span>
-            <span class="sig-tr-date">${d}</span>
-            <span class="sig-tr-prices">₹${t.entryPrice??'—'} → ₹${t.exitPrice??'—'}</span>
-            <span class="sig-tr-pnl ${isWin?'sig-green':'sig-red'}">${isWin?'+':''}${t.pnl?.toFixed(1)??'—'} pts</span>
-            <span class="sig-tr-dur">${dur}</span>
-            <span class="sig-tr-reason ${rc}">${t.reasonExit||'—'}</span>
-          </div>`;
-        }).join("")}
-    </div>
-    <footer class="site-footer"><span>© 2026 ZeroScreen &mdash; Automated signals shown for informational purposes only. Not SEBI registered. Not investment advice. Trading involves substantial risk of loss.</span></footer>
+
+    <footer class="site-footer"><span>&#xA9; 2026 ZeroScreen &#x2014; For informational purposes only. Not SEBI registered. Not investment advice. Trading involves substantial risk.</span></footer>
   </div>
   <script src="/public/js/app.js"></script>
   <script>
-  let _sigTimer;
-  async function loadSignals() {
-    try {
-      const r = await fetch('/api/bot/status');
-      const d = await r.json();
-      document.getElementById('sig-last-update').textContent = 'Updated ' + new Date().toLocaleTimeString('en-IN');
-      const pnl = d.today.pnl;
-      document.getElementById('stat-pnl').textContent = (pnl>=0?'+':'')+pnl+' pts';
-      document.getElementById('stat-pnl').style.color = pnl>=0?'#10b981':'#ef4444';
-      document.getElementById('stat-trades').textContent = d.today.trades;
-      document.getElementById('stat-wins').textContent = d.today.wins;
-      document.getElementById('stat-losses').textContent = d.today.losses;
-      document.getElementById('stat-maxdd').textContent = d.today.maxDD+' pts';
-      document.getElementById('stat-wr').textContent = d.allTime.winRate+'%';
-      const ap = d.activeState;
-      const hasPos = ap && ap.position && ap.position !== 'FLAT';
-      const wrap = document.getElementById('sig-active-wrap');
-      if (hasPos) {
-        const dir = (ap.direction||'').toLowerCase();
-        wrap.innerHTML = '<div class="sig-card sig-card-active sig-'+dir+'"><div class="sig-card-top"><span class="sig-badge sig-badge-'+dir+'">'+(ap.direction||'—')+'</span><span class="sig-symbol">BANKNIFTY</span><span class="sig-status-active">● LIVE TRADE</span></div><div class="sig-card-body"><div class="sig-field"><span class="sig-field-label">Strategy</span><span class="sig-field-val">'+(ap.strategy||ap.type||'—')+'</span></div><div class="sig-field"><span class="sig-field-label">Entry Price</span><span class="sig-field-val">₹'+(ap.entryPrice??ap.entry??'—')+'</span></div><div class="sig-field"><span class="sig-field-label">Stop Loss</span><span class="sig-field-val sig-red">₹'+(ap.sl??ap.stopLoss??'—')+'</span></div><div class="sig-field"><span class="sig-field-label">Quantity</span><span class="sig-field-val">'+(ap.qty??ap.quantity??'—')+'</span></div></div></div>';
-      } else {
-        wrap.innerHTML = '<div class="sig-flat-card"><span class="sig-flat-icon">💤</span><div><div class="sig-flat-title">No Active Position</div><div class="sig-flat-sub">Bot is watching the market. A signal will appear here when a trade is entered.</div></div></div>';
-      }
-      const tw = document.getElementById('sig-trades-wrap');
-      if (!d.recentTrades||!d.recentTrades.length) {
-        var demo=[
-          {direction:'CE',pnl:42.5,type:'MODEL_A',entryPrice:'328.00',exitPrice:'370.50',duration:1380,reasonExit:'TARGET HIT',date:'2026-04-30T10:17:00+05:30'},
-          {direction:'PE',pnl:38.0,type:'MODEL_B',entryPrice:'412.50',exitPrice:'450.50',duration:960, reasonExit:'TARGET HIT',date:'2026-04-29T14:22:00+05:30'},
-          {direction:'CE',pnl:-12.0,type:'MODEL_A',entryPrice:'290.00',exitPrice:'278.00',duration:510, reasonExit:'SL HIT',date:'2026-04-28T11:45:00+05:30'},
-          {direction:'PE',pnl:55.0,type:'MODEL_B',entryPrice:'380.00',exitPrice:'435.00',duration:2100,reasonExit:'EOD EXIT',date:'2026-04-25T15:10:00+05:30'},
-          {direction:'CE',pnl:28.5,type:'MODEL_A',entryPrice:'315.00',exitPrice:'343.50',duration:1620,reasonExit:'TARGET HIT',date:'2026-04-24T10:55:00+05:30'},
-          {direction:'PE',pnl:-8.5,type:'MODEL_B',entryPrice:'355.00',exitPrice:'346.50',duration:480, reasonExit:'SL HIT',date:'2026-04-23T13:30:00+05:30'},
-        ];
-        tw.innerHTML='<div style="grid-column:1/-1;font-size:0.78rem;color:var(--text-muted);margin-bottom:4px;padding:6px 10px;background:rgba(5,150,105,0.06);border-radius:6px;border:1px solid rgba(5,150,105,0.15)">📊 No live trades yet — backtest sample trades shown</div>'
-          +demo.map(function(t){var w=t.pnl>0;var dur=t.duration<60?t.duration+'s':Math.round(t.duration/60)+'m';var dt=new Date(t.date).toLocaleString('en-IN',{timeZone:'Asia/Kolkata',day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit'});return '<div class="sig-card sig-card-trade sig-trade-'+(w?'win':'loss')+'" style="opacity:.72"><div class="sig-card-top"><span class="sig-badge sig-badge-'+t.direction.toLowerCase()+'">'+t.direction+'</span><span class="sig-symbol">BANKNIFTY</span><span class="sig-pnl '+(w?'sig-green':'sig-red')+'">'+(w?'+':'')+t.pnl.toFixed(1)+' pts</span></div><div class="sig-card-body"><div class="sig-field"><span class="sig-field-label">Type</span><span class="sig-field-val">'+t.type+'</span></div><div class="sig-field"><span class="sig-field-label">Entry</span><span class="sig-field-val">₹'+t.entryPrice+'</span></div><div class="sig-field"><span class="sig-field-label">Exit</span><span class="sig-field-val">₹'+t.exitPrice+'</span></div><div class="sig-field"><span class="sig-field-label">Duration</span><span class="sig-field-val">'+dur+'</span></div><div class="sig-field"><span class="sig-field-label">Exit Reason</span><span class="sig-field-val">'+t.reasonExit+'</span></div><div class="sig-field"><span class="sig-field-label">Date</span><span class="sig-field-val">'+dt+'</span></div></div></div>';}).join('');
-        return;
-      }
-      tw.innerHTML = d.recentTrades.map(function(t) {
-        const isWin=t.pnl>0;
-        const dur=t.duration?(t.duration<60?t.duration+'s':Math.round(t.duration/60)+'m'):'—';
-        const dt=t.date?new Date(t.date).toLocaleString('en-IN',{timeZone:'Asia/Kolkata',day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit'}):'—';
-        return '<div class="sig-card sig-card-trade sig-trade-'+(isWin?'win':'loss')+'"><div class="sig-card-top"><span class="sig-badge sig-badge-'+((t.direction||'').toLowerCase())+'">'+(t.direction||'—')+'</span><span class="sig-symbol">BANKNIFTY</span><span class="sig-pnl '+(isWin?'sig-green':'sig-red')+'">'+(isWin?'+':'')+(t.pnl?.toFixed(1)??'—')+' pts</span></div><div class="sig-card-body"><div class="sig-field"><span class="sig-field-label">Type</span><span class="sig-field-val">'+(t.type||'—')+'</span></div><div class="sig-field"><span class="sig-field-label">Entry</span><span class="sig-field-val">₹'+(t.entryPrice??'—')+'</span></div><div class="sig-field"><span class="sig-field-label">Exit</span><span class="sig-field-val">₹'+(t.exitPrice??'—')+'</span></div><div class="sig-field"><span class="sig-field-label">Duration</span><span class="sig-field-val">'+dur+'</span></div><div class="sig-field"><span class="sig-field-label">Exit Reason</span><span class="sig-field-val">'+(t.reasonExit||'—')+'</span></div><div class="sig-field"><span class="sig-field-label">Time</span><span class="sig-field-val">'+dt+'</span></div></div></div>';
-      }).join('');
-    } catch(e) { document.getElementById('sig-last-update').textContent='Connection error'; }
+  const _GQM = 15;
+  function _gfR(v){const r=Math.round(v*_GQM);return(r>=0?"+":"\u2212")+"\u20B9"+Math.abs(r).toLocaleString("en-IN");}
+  function _gfP(v){return(v>=0?"+":"")+v.toFixed(0)+" pts";}
+  function _gc2(v){return v>=0?"#10b981":"#ef4444";}
+  function _ge2(id){return document.getElementById(id);}
+  async function gvRefresh(){
+    try{
+      const d=(await (await fetch("/api/bot/status")).json());
+      if(_ge2("gv-upd"))_ge2("gv-upd").textContent="Updated "+new Date().toLocaleTimeString("en-IN");
+      const inT=!!(d.activeState&&(d.activeState.inTrade||d.activeState.activeTrade||d.activeState.mainEntryDone));
+      const dot=_ge2("gv-dot");
+      if(dot)dot.className="gv-status-dot "+(inT?"active":"idle");
+      if(_ge2("gv-status-lbl"))_ge2("gv-status-lbl").textContent=inT?"Bot is running a trade":"Bot is idle \u2014 watching market";
+      if(_ge2("gv-status-val")){_ge2("gv-status-val").textContent=inT?"\u25CF\u00A0ACTIVE":"Idle";_ge2("gv-status-val").className="gv-status-val "+(inT?"active-col":"idle-col");}
+      const lw=_ge2("gv-live-wrap");
+      if(inT&&d.activeState?.entryPrice>0){
+        const u=d.activeState?.unrealisedPnL??0;
+        if(lw)lw.style.display="";
+        if(_ge2("gv-live-pnl")){_ge2("gv-live-pnl").textContent=_gfR(u);_ge2("gv-live-pnl").style.color=_gc2(u);}
+        if(_ge2("gv-live-pts"))_ge2("gv-live-pts").textContent=_gfP(u)+" unrealised";
+      }else{if(lw)lw.style.display="none";}
+      const tot=(d.today?.pnl??0)+(inT?(d.activeState?.unrealisedPnL??0):0);
+      if(_ge2("gv-today-rs")){_ge2("gv-today-rs").textContent=_gfR(tot);_ge2("gv-today-rs").style.color=_gc2(tot);}
+      if(_ge2("gv-today-pts"))_ge2("gv-today-pts").textContent=_gfP(tot)+(inT?" (incl. live)":"");
+      if(_ge2("gv-wk-rs")&&d.weekly){_ge2("gv-wk-rs").textContent=_gfR(d.weekly.pnl);_ge2("gv-wk-rs").style.color=_gc2(d.weekly.pnl);}
+      if(_ge2("gv-wk-pts")&&d.weekly)_ge2("gv-wk-pts").textContent=_gfP(d.weekly.pnl);
+    }catch(e){}
   }
-  loadSignals();
-  _sigTimer = setInterval(loadSignals, 8000);
-  </script>
-</body>
-</html>`);
-    return;
-  }
-
-  // ── GUEST / FREE USER VIEW (simplified) ────────────────────────────────────
-  const tierLabel = loggedIn ? '🔓 Free User' : '👤 Guest';
-  const tierClass = loggedIn ? 'sig-tier-free' : 'sig-tier-guest';
-  res.send(`<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>Live Signals — ZeroScreen</title>
-  <link rel="stylesheet" href="/public/css/style.css">
-</head>
-<body class="page-theme-signals">
-  ${nav("signals", req)}
-  <div class="container" style="max-width:720px">
-
-    <div class="sig-header">
-      <div>
-        <h1 class="sig-title">📡 Live Signals</h1>
-        <p class="sig-sub">BANKNIFTY Options · Automated intraday trading bot</p>
-        <span class="sig-tier-badge ${tierClass}">${tierLabel} — Limited View</span>
-      </div>
-      <div class="sig-refresh-info">
-        <span class="sig-live-dot"></span>
-        <span id="sig-last-update">Connecting…</span>
-      </div>
-    </div>
-
-    <div class="sig-stats-bar" id="sig-stats-bar">
-      <div class="sig-stat"><span class="sig-stat-label">Today PnL</span><span class="sig-stat-val" id="stat-pnl">${analytics.today.pnl >= 0 ? '+' : ''}${analytics.today.pnl} pts</span></div>
-      <div class="sig-stat"><span class="sig-stat-label">All-Time Win Rate</span><span class="sig-stat-val" id="stat-wr">${analytics.allTime.winRate}%</span></div>
-      <div class="sig-stat"><span class="sig-stat-label">Today Trades</span><span class="sig-stat-val" id="stat-trades">${analytics.today.trades}</span></div>
-      <div class="sig-stat"><span class="sig-stat-label">Bot Status</span><span class="sig-stat-val" id="stat-status">${hasPosition ? '<span class="sig-status-active">● ACTIVE</span>' : '<span class="text-dim">💤 Idle</span>'}</span></div>
-    </div>
-
-    <div class="sig-section-title">🔴 Bot Status</div>
-    <div id="sig-active-wrap">
-      ${hasPosition ? `
-      <div class="sig-card sig-card-active sig-${(state.direction||'flat').toLowerCase()}">
-        <div class="sig-card-top">
-          <span class="sig-badge sig-badge-${(state.direction||'').toLowerCase()}">${state.direction||'—'}</span>
-          <span class="sig-symbol">BANKNIFTY</span>
-          <span class="sig-status-active">● IN TRADE</span>
-        </div>
-        <div class="sig-card-body">
-          <div class="sig-field"><span class="sig-field-label">Direction</span><span class="sig-field-val">${state.direction||'—'}</span></div>
-          <div class="sig-field sig-locked"><span class="sig-field-label">Entry Price</span><span class="sig-field-val sig-lock-icon">🔒</span></div>
-          <div class="sig-field sig-locked"><span class="sig-field-label">Stop Loss</span><span class="sig-field-val sig-lock-icon">🔒</span></div>
-          <div class="sig-field sig-locked"><span class="sig-field-label">AI Score</span><span class="sig-field-val sig-lock-icon">🔒</span></div>
-        </div>
-      </div>` : `
-      <div class="sig-flat-card"><span class="sig-flat-icon">💤</span>
-        <div><div class="sig-flat-title">Bot Idle</div>
-        <div class="sig-flat-sub">Waiting for the right market conditions to enter a trade.</div></div>
-      </div>`}
-    </div>
-
-    <div class="upgrade-banner">
-      <div class="upgrade-banner-icon">⚡</div>
-      <div class="upgrade-banner-content">
-        <strong>Unlock Real-Time Signals</strong>
-        <p>Get entry price, stop loss, AI confidence score and full trade history with Premium.</p>
-      </div>
-      <a href="/premium" class="btn-upgrade">Upgrade — ₹499/mo</a>
-    </div>
-
-    <div class="sig-section-title">� Recent Monthly Performance</div>
-    <div class="sig-month-grid">
-      ${recentMonthData.map(m => `
-      <div class="sig-month-card ${m.profit ? 'sig-month-profit' : 'sig-month-loss'}">
-        <div class="sig-month-label">${m.label}</div>
-        <div class="sig-month-pnl">${m.profit ? '+' : ''}${m.combined} <span class="sig-month-unit">pts</span></div>
-        <div class="sig-month-meta">
-          <span>${m.winRate}% win rate</span>
-          <span>${m.days} days</span>
-        </div>
-      </div>`).join("")}
-    </div>
-
-    <div class="sig-section-title">📋 Recent Trade Results <span style="font-size:10px;font-weight:600;color:#f59e0b;background:rgba(245,158,11,0.1);padding:2px 8px;border-radius:10px;margin-left:6px;">🔒 Prices for Premium</span></div>
-    <div id="sig-trades-wrap" class="sig-trades-list">
-      ${analytics.recentTrades.length === 0 ? `<div class="sig-empty">No trades recorded yet.</div>` :
-        analytics.recentTrades.slice(0, 5).map((t: any) => {
-          const isWin = t.pnl > 0;
-          const rc = t.reasonExit==='TARGET HIT'?'sig-tr-target':t.reasonExit==='SL HIT'?'sig-tr-sl':'sig-tr-eod';
-          return `<div class="sig-trade-row ${isWin?'win':'loss'}">
-            <span class="sig-badge sig-badge-${(t.direction||'').toLowerCase()}">${t.direction||'—'}</span>
-            <span class="sig-tr-prices" style="flex:1">₹🔒 → ₹🔒</span>
-            <span class="sig-tr-pnl ${isWin?'sig-green':'sig-red'}">${isWin?'+':''}${t.pnl?.toFixed(1)??'—'} pts</span>
-            <span class="sig-tr-reason ${rc}">${t.reasonExit||'—'}</span>
-          </div>`;
-        }).join("")}
-      ${analytics.recentTrades.length > 5 ? `
-      <div style="font-size:12px;color:var(--text-muted);padding:6px 10px;text-align:center">
-        +${analytics.recentTrades.length - 5} more trades · <a href="/premium" style="color:var(--accent)">Upgrade for full details →</a>
-      </div>` : ""}
-    </div>
-
-    <footer class="site-footer"><span>© 2026 ZeroScreen &mdash; Automated signals shown for informational purposes only. Not SEBI registered. Not investment advice. Trading involves substantial risk of loss.</span></footer>
-  </div>
-  <script src="/public/js/app.js"></script>
-  <script>
-  async function loadSignalsSummary() {
-    try {
-      const r = await fetch('/api/bot/status');
-      const d = await r.json();
-      document.getElementById('sig-last-update').textContent = 'Updated ' + new Date().toLocaleTimeString('en-IN');
-      const pnl = d.today.pnl;
-      document.getElementById('stat-pnl').textContent = (pnl>=0?'+':'')+pnl+' pts';
-      document.getElementById('stat-pnl').style.color = pnl>=0?'#10b981':'#ef4444';
-      document.getElementById('stat-wr').textContent = d.allTime.winRate+'%';
-      document.getElementById('stat-trades').textContent = d.today.trades;
-      const hasPos = d.activeState&&d.activeState.position&&d.activeState.position!=='FLAT';
-      document.getElementById('stat-status').innerHTML = hasPos ? '<span class="sig-status-active">● ACTIVE</span>' : '<span class="text-dim">💤 Idle</span>';
-    } catch(e) {}
-  }
-  loadSignalsSummary();
-  setInterval(loadSignalsSummary, 15000);
+  gvRefresh();setInterval(gvRefresh,12000);
   </script>
 </body>
 </html>`);
 });
-
 async function ensureAdminEmail() {
   if (!ADMIN_EMAIL) return;
   await dbRun(
