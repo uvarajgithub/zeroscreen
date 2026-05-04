@@ -1540,7 +1540,7 @@ html.dark .landing-auth {
 @media (max-width: 1160px) {
   .nav-hot-link { display: none !important; }
 }
-@media (max-width: 980px) {
+@media (min-width: 769px) and (max-width: 980px) {
   .nav-links a[href="/paper-trade"] { display: none !important; }
   .nav-right .nav-search { display: none; }
 }
@@ -3208,7 +3208,7 @@ html.dark .idx-dn { background:rgba(248,113,113,.1); color:#f87171; }
   .pt2-seg { flex-wrap: wrap; }
   .pt2-seg-btn { font-size: .8rem; padding: 5px 10px; }
   /* Nav: single-line brand */
-  .brand span.brand-wordmark { display: none; }
+  .brand span.brand-wordmark { font-size: 15px; letter-spacing: -0.5px; }
   /* Chat widget smaller */
   .chat-bubble { padding: 9px 14px; font-size: .8rem; }
 }
@@ -3248,3 +3248,106 @@ html.dark .idx-dn { background:rgba(248,113,113,.1); color:#f87171; }
 .pick-locked-body { flex: 1; min-height: 0; }
 .pick-footer { margin-top: auto; padding-top: 8px; border-top: 1px solid var(--border); }
 .pick-sym-locked { color: var(--text-dim); letter-spacing: 3px; opacity: 0.45; font-size: 14px; font-weight: 900; }
+
+
+/* ============================================================
+   Comprehensive UX / Mobile Fixes (patch)
+   ============================================================ */
+
+/* --- 1. Nav: center links on desktop, align Explore with other links --- */
+@media (min-width: 769px) {
+  .topnav { justify-content: space-between; }
+  .nav-links { flex: 1; justify-content: center; margin: 0 8px; }
+  /* Make Explore dropdown button look identical to nav-links a */
+  .nav-more-btn {
+    padding: 6px 10px;
+    border-radius: 9px;
+    font-size: 13.5px;
+    font-weight: 500;
+    color: var(--text-muted);
+    background: none;
+    border: 1.5px solid transparent;
+    height: auto;
+    line-height: inherit;
+    transition: background 0.15s, color 0.15s, border-color 0.15s;
+  }
+  .nav-more-btn:hover {
+    background: var(--bg3);
+    border-color: var(--border);
+    color: var(--text);
+  }
+}
+
+/* --- 2. Ticker & Indices: proper stacking on mobile, no overlap --- */
+@media (max-width: 768px) {
+  .ticker-wrap, .idx-ticker-outer {
+    overflow: hidden;
+    max-width: 100vw;
+    width: 100%;
+    display: flex;
+    position: relative;
+  }
+  .idx-ticker-outer {
+    border-top: 1px solid var(--border);
+    margin-top: 0;
+  }
+}
+
+/* --- 3. Paper trade search dropdown always on top --- */
+.pt2-search-drop { z-index: 600 !important; }
+.pt2-sym-row { position: relative; z-index: 10; }
+
+/* --- 4. Picks page: hero meta centered on mobile --- */
+@media (max-width: 768px) {
+  .picks-hero { flex-direction: column; align-items: flex-start; gap: 12px; }
+  .picks-hero-meta { 
+    display: flex; 
+    flex-direction: row; 
+    align-items: center; 
+    justify-content: space-between; 
+    width: 100%;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  .picks-hero-updated { font-size: 11px; }
+  /* Tier badge centered on mobile pick cards */
+  .sig-tier-badge { display: block; text-align: center; }
+}
+
+/* --- 5. Picks grid: single column on small screens --- */
+@media (max-width: 500px) {
+  .picks-grid { grid-template-columns: 1fr !important; }
+  .pick-card-top { align-items: center; }
+}
+
+/* --- 6. Quick strategy pills: wrap evenly on mobile --- */
+@media (max-width: 600px) {
+  .strategies-grid { 
+    display: flex; 
+    flex-wrap: wrap; 
+    gap: 6px;
+    justify-content: flex-start;
+  }
+  .strategy-card {
+    flex: 0 0 auto;
+    min-width: 0;
+  }
+}
+
+/* --- 7. Nav mobile: ensure hamburger drawer is full featured --- */
+@media (max-width: 768px) {
+  /* Paper Trade should be visible in hamburger drawer */
+  .nav-links.open a[href="/paper-trade"] { display: flex !important; }
+  /* Explore dropdown inside hamburger: left-align text */
+  .nav-links .nav-more-btn { text-align: left; }
+  /* Tier badge inside picks hero - full width row on mobile */
+  .picks-hero-meta .sig-tier-badge { flex-shrink: 0; }
+}
+
+/* --- 8. Ensure news ticker label always visible --- */
+.ticker-label { flex-shrink: 0; }
+
+/* --- 9. pt2 place order button guest (sign-in) state --- */
+.pt2-btn-signin-state {
+  background: linear-gradient(135deg, #3b82f6, #2563eb) !important;
+}

@@ -5837,7 +5837,7 @@ app.get("/admin/trading", requireAdmin, (req: Request, res: Response) => {
         const pnlPct = t.pnlPct ? `(${pnl>=0?"+":""}${t.pnlPct.toFixed(1)}%)` : "";
         return `<tr>
           <td>${t.exitDate||t.entryDate||"-"}</td>
-          <td><span style="font-size:0.75rem;background:#1e293b;padding:2px 6px;border-radius:4px">${t.strategy||"-"}</span></td>
+          <td><span style="font-size:0.75rem;background:#1e293b;padding:2px 6px;border-radius:4px">Bot</span></td>
           <td>${t.symbol||"-"}</td>
           <td><span style="color:${t.direction==="LONG"?"#10b981":"#ef4444"}">${t.direction||"-"}</span></td>
           <td style="color:${pnlColor};font-weight:600">${pnlSign}${pnl.toFixed ? pnl.toFixed(0) : pnl} ${pnlPct}</td>
@@ -6354,14 +6354,14 @@ app.get("/paper-trade", featureGate("feature_paper_trade_bot", "Paper Trade"), a
     .pt2-seg2-btn{padding:5px 14px;border:none;border-radius:6px;font-weight:700;font-size:0.8rem;cursor:pointer;background:transparent;color:var(--text-muted);transition:all .15s}
     .pt2-seg2-btn.active{background:#10b981;color:#fff}
     /* Card body */
-    .pt2-card-body{padding:18px 20px}
+    .pt2-card-body{padding:18px 20px;overflow:visible}
     /* Symbol search row */
     .pt2-sym-row{margin-bottom:14px}
     .pt2-sym-inp-wrap{position:relative;display:flex;align-items:center;gap:10px;flex-wrap:wrap}
     .pt2-sym-inp{flex:1;min-width:160px;background:var(--input-bg,#f4f7fe);border:1.5px solid var(--border);border-radius:10px;padding:10px 14px;color:var(--text);font-size:0.95rem;font-weight:600}
     .pt2-sym-inp:focus{border-color:#10b981;outline:none;box-shadow:0 0 0 3px rgba(16,185,129,0.12)}
     html.dark .pt2-sym-inp{background:#1c2128}
-    .pt2-search-drop{position:absolute;top:calc(100% + 4px);left:0;background:var(--card-bg);border:1px solid var(--border);border-radius:10px;z-index:200;width:280px;box-shadow:0 8px 28px rgba(0,0,0,0.18);max-height:240px;overflow-y:auto}
+    .pt2-search-drop{position:absolute;top:calc(100% + 4px);left:0;background:var(--card-bg);border:1px solid var(--border);border-radius:10px;z-index:600;width:280px;box-shadow:0 8px 28px rgba(0,0,0,0.18);max-height:240px;overflow-y:auto}
     .pt2-search-item{padding:9px 14px;cursor:pointer;font-size:0.88rem}
     .pt2-search-item:hover{background:var(--hover-bg)}
     /* Live price badge */
@@ -6568,7 +6568,10 @@ app.get("/paper-trade", featureGate("feature_paper_trade_bot", "Paper Trade"), a
           <!-- Place order row -->
           <div class="pt2-buy-row">
             <div class="pt2-rr-badge" id="pt2-rr-badge">Select a stock to see R:R</div>
-            <button type="submit" class="pt2-btn-place" ${creditsOut ? 'disabled onclick="window.location=\'/my-paper-trade/upgrade\';return false;"' : ""}>📈 Place Order</button>
+            ${!isLoggedIn
+              ? `<button type="button" class="pt2-btn-place" onclick="showPaperSigninPrompt()" style="background:linear-gradient(135deg,#3b82f6,#2563eb)">🔒 Sign In to Place Order</button>`
+              : `<button type="submit" class="pt2-btn-place" ${creditsOut ? 'disabled onclick="window.location=\'/my-paper-trade/upgrade\';return false;"' : ""}>📋 Place Order</button>`
+            }
           </div>
 
           <!-- OPTIONS PANEL: shown when index symbol detected -->
@@ -6760,6 +6763,27 @@ app.get("/paper-trade", featureGate("feature_paper_trade_bot", "Paper Trade"), a
 
   // ── Search autocomplete ─────────────────────────────────────────────────────
   (function() {
+    function showPaperSigninPrompt() {
+      var d = document.createElement('div');
+      d.setAttribute('data-paper-modal','1');
+      d.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.6);z-index:9999;display:flex;align-items:center;justify-content:center;padding:20px';
+      d.onclick = function(e){ if(e.target===d) d.remove(); };
+      var b = document.createElement('div');
+      b.style.cssText = 'background:var(--card-bg,#fff);border:1px solid var(--border,#e2e8f0);border-radius:16px;padding:32px 28px;max-width:380px;width:100%;text-align:center;box-shadow:0 16px 48px rgba(0,0,0,0.3)';
+      b.innerHTML = '<div style="font-size:2.5rem;margin-bottom:12px">🔒</div>'
+        + '<h3 style="margin:0 0 8px;font-size:1.2rem">Sign In to Place Orders</h3>'
+        + '<p style="color:var(--text-muted,#6b7280);font-size:.9rem;margin-bottom:20px">Create a free account and paper trade with ₹1,00,000 virtual money on real NSE stocks.</p>'
+        + '<div style="display:flex;gap:10px;justify-content:center;flex-wrap:wrap">'
+        + '<a href="/login?next=/paper-trade" style="background:linear-gradient(135deg,#10b981,#059669);color:#fff;padding:11px 26px;border-radius:9px;font-weight:700;text-decoration:none">Sign In →</a>'
+        + '<a href="/signup" style="background:var(--bg3,#f1f5f9);color:var(--text,#1e293b);padding:11px 26px;border-radius:9px;font-weight:700;text-decoration:none;border:1px solid var(--border,#e2e8f0)">Create Account</a>'
+        + '</div>';
+      var cl = document.createElement('button');
+      cl.textContent = '✕ Cancel';
+      cl.style.cssText = 'background:none;border:none;color:var(--text-muted,#6b7280);cursor:pointer;margin:14px auto 0;display:block;font-size:.85rem';
+      cl.onclick = function(){ d.remove(); };
+      b.appendChild(cl); d.appendChild(b); document.body.appendChild(d);
+    }
+
     var inp    = document.getElementById('pt2-stock-search');
     var symVal = document.getElementById('pt2-symbol-val');
     var drop   = document.getElementById('pt2-search-drop');
