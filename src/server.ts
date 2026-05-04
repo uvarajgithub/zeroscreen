@@ -6275,45 +6275,7 @@ app.get("/paper-trade", featureGate("feature_paper_trade_bot", "Paper Trade"), a
       ${isLoggedIn ? `<a href="/my-paper-trade" style="display:inline-flex;align-items:center;gap:8px;background:var(--card-bg);border:1px solid var(--border);border-radius:10px;padding:10px 18px;font-weight:700;font-size:0.88rem;text-decoration:none;color:var(--text)">📊 My Portfolio →</a>` : ""}
     </div>
 
-    ${!isLoggedIn ? `
-    <!-- SIGN-IN GATE -->
-    <!-- SIGN-IN GATE with blurred form background -->
-    <div style="position:relative;margin-bottom:28px">
-      <!-- Blurred mock of trade form -->
-      <div style="filter:blur(7px);opacity:.3;pointer-events:none;user-select:none" aria-hidden="true">
-        <div class="pt2-trade-card">
-          <div class="pt2-card-hdr"><div class="pt2-card-title">💸 New Order</div></div>
-          <div class="pt2-card-body" style="padding:16px">
-            <div style="height:40px;background:var(--bg2);border:1px solid var(--border);border-radius:8px;margin-bottom:12px"></div>
-            <div style="display:flex;gap:12px;margin-bottom:12px">
-              <div style="height:36px;flex:0 0 90px;background:var(--bg2);border:1px solid var(--border);border-radius:8px"></div>
-              <div style="height:36px;flex:0 0 110px;background:var(--bg2);border:1px solid var(--border);border-radius:8px"></div>
-              <div style="height:36px;flex:1;background:var(--bg2);border:1px solid var(--border);border-radius:8px"></div>
-            </div>
-            <div style="display:flex;justify-content:flex-end">
-              <div style="height:44px;width:140px;background:#059669;border-radius:10px;opacity:.6"></div>
-            </div>
-          </div>
-        </div>
-      </div>
-      <!-- Overlay -->
-      <div style="position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;background:linear-gradient(to bottom,rgba(15,23,42,.1) 0%,rgba(15,23,42,.9) 45%);border-radius:14px;padding:28px;text-align:center">
-        <div style="font-size:2.2rem">📏</div>
-        <div style="font-size:1.1rem;font-weight:800;color:#f1f5f9">Paper Trade Any NSE Stock — Free</div>
-        <div style="font-size:.83rem;color:#94a3b8;max-width:320px">₹1,00,000 virtual cash to practise buying &amp; selling any NSE stock. Zero real risk.</div>
-        <div style="display:flex;gap:10px;flex-wrap:wrap;justify-content:center">
-          <a href="/login?next=/paper-trade" style="background:linear-gradient(135deg,#10b981,#059669);color:#fff;padding:11px 28px;border-radius:10px;font-size:.9rem;font-weight:700;text-decoration:none">🔎 Sign In to Start Trading →</a>
-          <a href="/signup" style="background:transparent;color:#94a3b8;border:1px solid #334155;padding:11px 22px;border-radius:10px;font-size:.87rem;font-weight:700;text-decoration:none">Create Free Account</a>
-        </div>
-        <div style="display:flex;gap:24px;flex-wrap:wrap;justify-content:center;margin-top:4px">
-          <span style="font-size:.74rem;color:#475569">✓ ₹1,00,000 Virtual Cash</span>
-          <span style="font-size:.74rem;color:#475569">✓ 1,700+ NSE Stocks</span>
-          <span style="font-size:.74rem;color:#475569">✓ Zero Real Risk</span>
-        </div>
-      </div>
-    </div>
-
-    ` : `
+    ${isLoggedIn ? `
     <!-- LOGGED-IN: CREDITS BAR -->
     <div class="pt2-credits">
       <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
@@ -6328,6 +6290,11 @@ app.get("/paper-trade", featureGate("feature_paper_trade_bot", "Paper Trade"), a
       <span class="${marketOpen ? "pt2-mh-open" : "pt2-mh-closed"}">${marketOpen ? "🟢 Market Open" : "🔴 Market Closed"}</span>
     </div>
 
+    ` : ""}
+
+    <div style="${!isLoggedIn ? 'position:relative' : ''}">
+      <div style="${!isLoggedIn ? 'pointer-events:none;filter:blur(1.5px);opacity:.55;user-select:none' : ''}">
+    
     <!-- RICH TRADE CARD -->
     <div class="pt2-trade-card">
       <div class="pt2-card-hdr">
@@ -6480,7 +6447,25 @@ app.get("/paper-trade", featureGate("feature_paper_trade_bot", "Paper Trade"), a
         </div>` : ""}
       </div>
     </div>
-    `}
+      </div>
+      ${!isLoggedIn ? `
+      <!-- Guest sign-in overlay -->
+      <div style="position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;background:linear-gradient(to bottom,rgba(15,23,42,.05) 0%,rgba(15,23,42,.88) 40%);border-radius:14px;padding:32px 24px;text-align:center;z-index:10">
+        <div style="font-size:2.2rem">📏</div>
+        <div style="font-size:1.1rem;font-weight:800;color:#f1f5f9">Paper Trade Any NSE Stock — Free</div>
+        <div style="font-size:.84rem;color:#94a3b8;max-width:320px">₹1,00,000 virtual cash. Practice buying &amp; selling any NSE stock with zero real risk.</div>
+        <div style="display:flex;gap:10px;flex-wrap:wrap;justify-content:center">
+          <a href="/login?next=/paper-trade" style="background:linear-gradient(135deg,#10b981,#059669);color:#fff;padding:11px 28px;border-radius:10px;font-size:.9rem;font-weight:700;text-decoration:none">🔎 Sign In to Start Trading →</a>
+          <a href="/signup" style="background:transparent;color:#94a3b8;border:1px solid #334155;padding:11px 22px;border-radius:10px;font-size:.87rem;font-weight:700;text-decoration:none">Create Free Account</a>
+        </div>
+        <div style="display:flex;gap:24px;flex-wrap:wrap;justify-content:center;margin-top:2px">
+          <span style="font-size:.75rem;color:#475569">✓ ₹1,00,000 Virtual Cash</span>
+          <span style="font-size:.75rem;color:#475569">✓ 1,700+ NSE Stocks</span>
+          <span style="font-size:.75rem;color:#475569">✓ Zero Real Risk</span>
+        </div>
+      </div>
+      ` : ""}
+    </div>
 
     <!-- BOT PERFORMANCE (social proof / always shown) -->
     <div style="font-size:0.72rem;font-weight:700;text-transform:uppercase;letter-spacing:.1em;color:var(--text-muted);border-bottom:1px solid var(--border);padding-bottom:8px;margin:28px 0 14px">📊 Bot's Paper Trade Performance — Strategy Benchmark</div>
