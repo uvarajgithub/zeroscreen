@@ -8249,15 +8249,21 @@ app.get("/signals", featureGate("feature_signals", "Signals"), (req, res) => {
   <title>Live Signals \u2014 ZeroScreen</title>
   <link rel="stylesheet" href="/public/css/style.css">
   <style>
-    .gv-wrap{max-width:680px;margin:0 auto;padding:0 12px 40px}
-    .gv-hero{background:var(--card-bg,#1e293b);border:1px solid var(--border,#334155);border-radius:14px;padding:22px 20px 18px;margin:18px 0 14px}
-    .gv-hero-top{display:flex;align-items:center;justify-content:space-between;margin-bottom:6px}
-    .gv-title{font-size:1.15rem;font-weight:700;color:var(--text,#f1f5f9)}
-    .gv-sub{font-size:0.78rem;color:var(--text-muted,#94a3b8);margin:0}
-    .gv-badge{font-size:0.68rem;font-weight:700;padding:3px 9px;border-radius:20px;letter-spacing:.3px}
+    /* === Layout === */
+    .gv-wrap{max-width:860px;margin:0 auto;padding:0 1rem 3rem}
+    /* === Header === */
+    .gv-page-hdr{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:.5rem;margin:1.2rem 0 1rem}
+    .gv-page-title{font-size:1.3rem;font-weight:800;color:var(--text,#f1f5f9);margin:0}
+    .gv-badge{font-size:.68rem;font-weight:700;padding:3px 10px;border-radius:20px;letter-spacing:.3px}
     .sig-tier-free{background:rgba(16,185,129,.15);color:#34d399;border:1px solid rgba(16,185,129,.3)}
     .sig-tier-guest{background:rgba(100,116,139,.15);color:#94a3b8;border:1px solid rgba(100,116,139,.3)}
-    .gv-status{display:flex;align-items:center;gap:8px;margin-top:14px;padding:10px 14px;border-radius:10px;background:var(--bg2,#0f172a);border:1px solid var(--border,#334155)}
+    .gv-upd{font-size:.65rem;color:var(--text-muted,#64748b)}
+    /* === Bot live status card === */
+    .gv-hero{background:var(--bg-card,#111827);border:1px solid var(--border,#1e293b);border-radius:12px;padding:18px 20px;margin-bottom:1rem}
+    .gv-hero-top{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap}
+    .gv-title{font-size:1rem;font-weight:700;color:var(--text,#f1f5f9)}
+    .gv-sub{font-size:.76rem;color:var(--text-muted,#94a3b8);margin:2px 0 0}
+    .gv-status{display:flex;align-items:center;gap:8px;margin-top:14px;padding:10px 14px;border-radius:8px;background:rgba(0,0,0,.3);border:1px solid var(--border,#1e293b)}
     .gv-status-dot{width:9px;height:9px;border-radius:50%;flex-shrink:0}
     .gv-status-dot.active{background:#10b981;box-shadow:0 0 0 3px rgba(16,185,129,.25);animation:gvpulse 2s infinite}
     .gv-status-dot.idle{background:#64748b}
@@ -8268,78 +8274,105 @@ app.get("/signals", featureGate("feature_signals", "Signals"), (req, res) => {
     .gv-status-val.idle-col{color:#64748b}
     .gv-live-pnl{font-size:1.6rem;font-weight:800;margin:2px 0 0;letter-spacing:-.5px}
     .gv-live-sub{font-size:.75rem;color:var(--text-muted,#94a3b8);margin-bottom:2px}
-    .gv-kpi-row{display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin:14px 0}
-    .gv-kpi{background:var(--card-bg,#1e293b);border:1px solid var(--border,#334155);border-radius:10px;padding:12px 14px}
-    .gv-kpi-lbl{font-size:.68rem;text-transform:uppercase;letter-spacing:.5px;color:var(--text-muted,#94a3b8);margin-bottom:4px}
-    .gv-kpi-val{font-size:1.05rem;font-weight:800}
-    .gv-kpi-sub{font-size:.67rem;color:var(--text-muted,#94a3b8);margin-top:2px}
-    .gv-sec-title{font-size:.72rem;text-transform:uppercase;letter-spacing:.6px;color:var(--text-muted,#94a3b8);margin:20px 0 10px;font-weight:700}
-    .gv-month-tbl{width:100%;border-collapse:collapse;font-size:.82rem}
-    .gv-month-tbl th{font-size:.65rem;text-transform:uppercase;letter-spacing:.4px;color:var(--text-muted,#94a3b8);font-weight:600;padding:6px 10px;text-align:left;border-bottom:1px solid var(--border,#334155)}
-    .gv-month-tbl td{padding:8px 10px;border-bottom:1px solid rgba(51,65,85,.5)}
-    .gv-month-tbl tr:last-child td{border-bottom:none}
-    .gv-month-tbl .mg{color:#10b981;font-weight:700}
-    .gv-month-tbl .mr{color:#ef4444;font-weight:700}
-    .gv-cta{display:flex;align-items:center;gap:14px;background:linear-gradient(135deg,rgba(124,58,237,.18),rgba(99,102,241,.12));border:1px solid rgba(124,58,237,.35);border-radius:14px;padding:16px 18px;margin:20px 0}
+    /* === Stat card grid (matches admin trading) === */
+    .gv-stat-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:.75rem;margin:1rem 0}
+    .gv-stat-card{background:var(--bg-card,#111827);border:1px solid var(--border,#1e293b);border-radius:10px;padding:1rem 1.1rem}
+    .gv-stat-label{font-size:.68rem;color:var(--text-muted,#64748b);text-transform:uppercase;letter-spacing:.08em;margin-bottom:.3rem}
+    .gv-stat-val{font-size:1.45rem;font-weight:700}
+    .gv-stat-sub{font-size:.68rem;color:var(--text-muted,#64748b);margin-top:.2rem}
+    /* === Section box (matches td-section) === */
+    .gv-section{background:var(--bg-card,#111827);border:1px solid var(--border,#1e293b);border-radius:10px;margin:1rem 0;overflow:hidden}
+    .gv-section-hd{display:flex;align-items:center;justify-content:space-between;padding:.8rem 1.1rem;border-bottom:1px solid var(--border,#1e293b);font-size:.82rem;font-weight:600;color:var(--text-muted,#94a3b8)}
+    .gv-tbl{width:100%;border-collapse:collapse;font-size:.82rem}
+    .gv-tbl th{padding:.5rem .9rem;text-align:left;color:var(--text-muted,#64748b);font-weight:500;border-bottom:1px solid var(--border,#1e293b);font-size:.7rem;text-transform:uppercase;letter-spacing:.04em}
+    .gv-tbl td{padding:.6rem .9rem;border-bottom:1px solid rgba(30,41,59,.8)}
+    .gv-tbl tr:last-child td{border-bottom:none}
+    .gv-tbl .mg{color:#10b981;font-weight:700}
+    .gv-tbl .mr{color:#ef4444;font-weight:700}
+    /* === Upgrade CTA === */
+    .gv-cta{display:flex;align-items:center;gap:14px;background:linear-gradient(135deg,rgba(124,58,237,.18),rgba(99,102,241,.12));border:1px solid rgba(124,58,237,.35);border-radius:12px;padding:16px 18px;margin:1rem 0}
     .gv-cta-icon{font-size:1.5rem}
     .gv-cta-body{flex:1}
-    .gv-cta-body strong{font-size:.92rem;color:#f1f5f9}
-    .gv-cta-body p{font-size:.75rem;color:#94a3b8;margin:3px 0 0}
+    .gv-cta-body strong{font-size:.92rem;color:var(--text,#f1f5f9)}
+    .gv-cta-body p{font-size:.75rem;color:var(--text-muted,#94a3b8);margin:3px 0 0}
     .gv-btn{background:linear-gradient(135deg,#7c3aed,#6366f1);color:#fff;border:none;border-radius:8px;padding:8px 16px;font-size:.78rem;font-weight:700;white-space:nowrap;text-decoration:none;cursor:pointer}
-    .gv-upd{font-size:.65rem;color:var(--text-muted,#64748b)}
-    @media(max-width:480px){.gv-kpi-row{grid-template-columns:1fr 1fr}}
+    /* === Mobile === */
+    @media(max-width:600px){
+      .gv-wrap{padding:0 .6rem 2rem}
+      .gv-stat-grid{grid-template-columns:1fr 1fr}
+      .gv-stat-val{font-size:1.15rem}
+      .gv-hero{padding:14px 14px}
+      .gv-tbl th,.gv-tbl td{padding:.5rem .6rem;font-size:.75rem}
+      .gv-section-hd{padding:.7rem .8rem;font-size:.78rem}
+    }
   </style>
 </head>
 <body class="page-theme-signals">
   ${nav("signals", req)}
   <div class="gv-wrap">
 
+    <!-- Page header -->
+    <div class="gv-page-hdr">
+      <h1 class="gv-page-title">&#x1F4E1; Live Bot Signals</h1>
+      <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+        <span class="gv-badge ${tierClass}">${tierLabel}</span>
+        <span class="gv-upd" id="gv-upd">Connecting&#x2026;</span>
+        <button onclick="location.reload()" style="background:var(--bg-card,#111827);border:1px solid var(--border,#1e293b);color:var(--text-muted,#94a3b8);padding:.25rem .7rem;border-radius:6px;cursor:pointer;font-size:.72rem">&#x21BB; Refresh</button>
+      </div>
+    </div>
+
+    <!-- Bot status card -->
     <div class="gv-hero">
       <div class="gv-hero-top">
         <div>
-          <div class="gv-title">Live Signals</div>
-          <p class="gv-sub">BANKNIFTY Options &#xB7; Automated intraday bot</p>
-        </div>
-        <div style="display:flex;flex-direction:column;align-items:flex-end;gap:6px">
-          <span class="gv-badge ${tierClass}">${tierLabel}</span>
-          <span class="gv-upd" id="gv-upd">Connecting&#x2026;</span>
+          <div class="gv-title">BANKNIFTY Options Bot</div>
+          <div class="gv-sub">Automated intraday trading &middot; Paper mode</div>
         </div>
       </div>
-
-      <div class="gv-status">
+      <div class="gv-status" style="margin-top:12px">
         <span class="gv-status-dot ${hasPosition ? 'active' : 'idle'}" id="gv-dot"></span>
-        <span class="gv-status-lbl" id="gv-status-lbl">Bot ${hasPosition ? 'is running a trade' : 'is idle \u2014 watching market'}</span>
+        <span class="gv-status-lbl" id="gv-status-lbl">Bot ${hasPosition ? 'is running a trade' : 'is idle — watching market'}</span>
         <span class="gv-status-val ${hasPosition ? 'active-col' : 'idle-col'}" id="gv-status-val">${hasPosition ? '&#x25CF;&nbsp;ACTIVE' : 'Idle'}</span>
       </div>
-
-      <div id="gv-live-wrap" style="margin-top:14px;${hasPosition ? '' : 'display:none'}">
+      <div id="gv-live-wrap" style="margin-top:12px;${hasPosition ? '' : 'display:none'}">
         <div class="gv-live-sub">Live P&amp;L (open position)</div>
         <div class="gv-live-pnl" id="gv-live-pnl" style="color:#94a3b8">&#x2014;</div>
         <div class="gv-live-sub" id="gv-live-pts" style="margin-top:2px"></div>
       </div>
     </div>
 
-    <div class="gv-kpi-row">
-      <div class="gv-kpi">
-        <div class="gv-kpi-lbl">Today</div>
-        <div class="gv-kpi-val" id="gv-today-rs" style="color:${pnlClsG(analytics.today.pnl)}">${fmtRsG(analytics.today.pnl)}</div>
-        <div class="gv-kpi-sub" id="gv-today-pts">${fmtPtsG(analytics.today.pnl)}</div>
+    <!-- Stat cards grid (admin trading dashboard style) -->
+    <div class="gv-stat-grid">
+      <div class="gv-stat-card">
+        <div class="gv-stat-label">Today P&amp;L</div>
+        <div class="gv-stat-val" id="gv-today-rs" style="color:${pnlClsG(analytics.today.pnl)}">${fmtRsG(analytics.today.pnl)}</div>
+        <div class="gv-stat-sub" id="gv-today-pts">${fmtPtsG(analytics.today.pnl)}</div>
       </div>
-      <div class="gv-kpi">
-        <div class="gv-kpi-lbl">Yesterday</div>
-        <div class="gv-kpi-val" style="color:${pnlClsG(yPnl)}">${fmtRsG(yPnl)}</div>
-        <div class="gv-kpi-sub">${fmtPtsG(yPnl)}${yTrades.length > 0 ? ' &middot; ' + yWins + 'W/' + (yTrades.length - yWins) + 'L' : ' &middot; no trades'}</div>
+      <div class="gv-stat-card">
+        <div class="gv-stat-label">Yesterday</div>
+        <div class="gv-stat-val" style="color:${pnlClsG(yPnl)}">${fmtRsG(yPnl)}</div>
+        <div class="gv-stat-sub">${fmtPtsG(yPnl)} ${yTrades.length > 0 ? yWins + 'W / ' + (yTrades.length - yWins) + 'L' : 'no trades'}</div>
       </div>
-      <div class="gv-kpi">
-        <div class="gv-kpi-lbl">This Week</div>
-        <div class="gv-kpi-val" id="gv-wk-rs" style="color:${pnlClsG(analytics.weekly.pnl)}">${fmtRsG(analytics.weekly.pnl)}</div>
-        <div class="gv-kpi-sub" id="gv-wk-pts">${fmtPtsG(analytics.weekly.pnl)}</div>
+      <div class="gv-stat-card">
+        <div class="gv-stat-label">This Week</div>
+        <div class="gv-stat-val" id="gv-wk-rs" style="color:${pnlClsG(analytics.weekly.pnl)}">${fmtRsG(analytics.weekly.pnl)}</div>
+        <div class="gv-stat-sub" id="gv-wk-pts">${fmtPtsG(analytics.weekly.pnl)}</div>
+      </div>
+      <div class="gv-stat-card">
+        <div class="gv-stat-label">All Trades</div>
+        <div class="gv-stat-val">${analytics.monthly.reduce((s,m)=>s+m.trades,0)}</div>
+        <div class="gv-stat-sub">Months tracked: ${analytics.monthly.length}</div>
       </div>
     </div>
 
-    <div class="gv-sec-title">Month-wise P&amp;L</div>
-    <div style="background:var(--card-bg,#1e293b);border:1px solid var(--border,#334155);border-radius:12px;overflow:hidden">
-      <table class="gv-month-tbl">
+    <!-- Month-wise table (admin-style section box) -->
+    <div class="gv-section">
+      <div class="gv-section-hd">
+        <span>&#x1F4C5; Month-wise P&amp;L</span>
+        <span style="font-size:.7rem;color:var(--text-muted,#64748b)">Last 6 months</span>
+      </div>
+      <div style="overflow-x:auto">
+      <table class="gv-tbl">
         <thead><tr><th>Month</th><th>P&amp;L (&#x20B9;)</th><th>P&amp;L (pts)</th><th>Trades</th><th>Win%</th></tr></thead>
         <tbody>
           ${analytics.monthly.slice(0, 6).map((m) => `<tr>
@@ -8352,6 +8385,7 @@ app.get("/signals", featureGate("feature_signals", "Signals"), (req, res) => {
           ${analytics.monthly.length === 0 ? '<tr><td colspan="5" style="text-align:center;color:#64748b;padding:16px">No historical data yet</td></tr>' : ''}
         </tbody>
       </table>
+      </div>
     </div>
 
     ${!loggedIn ? `

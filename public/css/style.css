@@ -3128,3 +3128,114 @@ html.dark .idx-dn { background:rgba(248,113,113,.1); color:#f87171; }
 .guest-blur-signup-btn:hover { color:#f1f5f9; border-color:#64748b; }
 /* Admin settings: tier section */
 .setting-row input[type=number] { width:70px; padding:6px 8px; background:var(--card-bg); border:1px solid var(--border); border-radius:6px; color:var(--text-main); font-size:13px; }
+
+
+/* =====================================================
+   COMPREHENSIVE MOBILE FIXES
+   ===================================================== */
+
+/* Fix container overflow on small screens */
+@media (max-width: 768px) {
+  body { overflow-x: hidden; }
+  .container { padding: 12px; max-width: 100%; }
+  * { box-sizing: border-box; min-width: 0; }
+
+  /* Nav: make sure hamburger is properly visible */
+  .topnav { padding: 0 12px; height: auto; min-height: 52px; }
+  .brand-wordmark { font-size: 18px; }
+  .brand-logo { width: 28px; height: 28px; }
+  .brand { margin-right: 8px; }
+
+  /* Admin trading dashboard: stack cards vertically */
+  .td-grid { grid-template-columns: 1fr 1fr !important; gap: .6rem !important; }
+  .td-card { padding: .8rem 1rem !important; }
+  .td-card-val { font-size: 1.25rem !important; }
+
+  /* Tables: horizontal scroll */
+  .td-section { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+  .td-table { min-width: 480px; }
+
+  /* Picks grid: 1 column on small screens */
+  .picks-grid { grid-template-columns: 1fr !important; }
+  .pick-card { padding: 14px !important; }
+  .picks-section .picks-grid { padding: 12px !important; }
+
+  /* Paper trade form: full width fields */
+  .pt2-trade-card { border-radius: 10px; }
+  .pt2-card-hdr { flex-direction: column; align-items: flex-start; gap: 10px; }
+  .pt2-fields-row { flex-direction: column !important; gap: 8px; }
+  .pt2-fld input, .pt2-fld select { width: 100% !important; }
+  .pt2-cost-disp { text-align: left; }
+  .pt2-buy-row { flex-direction: column-reverse !important; align-items: stretch !important; }
+  .pt2-btn-place { text-align: center; width: 100% !important; }
+  .pt2-risk-row { grid-template-columns: 1fr !important; }
+  .pt2-opts-row { flex-direction: column !important; }
+  .pt2-hero { flex-direction: column; align-items: flex-start; }
+
+  /* Signals page stat grid */
+  .gv-stat-grid { grid-template-columns: 1fr 1fr; }
+  .gv-page-hdr { margin: .8rem 0 .7rem; }
+  .gv-page-title { font-size: 1.1rem !important; }
+
+  /* My paper trade portfolio */
+  .mpt-stats-grid { grid-template-columns: 1fr 1fr !important; }
+
+  /* Admin users table */
+  .admin-data-card { overflow-x: auto; }
+
+  /* Today picks page */
+  .picks-tabs { overflow-x: auto; -webkit-overflow-scrolling: touch; white-space: nowrap; }
+  .picks-section .picks-grid { overflow: visible; }
+
+  /* Auth cards */
+  .auth-card { padding: 24px 16px; margin: 0 4px; }
+
+  /* Stock page */
+  .stock-header { flex-direction: column; align-items: flex-start; gap: 12px; }
+  .stock-price-box { text-align: left; }
+}
+
+@media (max-width: 480px) {
+  .container { padding: 8px; }
+  .topnav { padding: 0 8px; }
+  .td-grid { grid-template-columns: 1fr !important; }
+  .gv-stat-grid { grid-template-columns: 1fr 1fr; }
+  .gv-stat-val { font-size: 1.1rem; }
+  .gv-hero { padding: 12px; }
+  .gv-section-hd { flex-direction: column; align-items: flex-start; gap: 4px; }
+  .picks-grid { gap: 8px !important; }
+  .pick-card { padding: 12px !important; }
+  .pt2-seg { flex-wrap: wrap; }
+  .pt2-seg-btn { font-size: .8rem; padding: 5px 10px; }
+  /* Nav: single-line brand */
+  .brand span.brand-wordmark { display: none; }
+  /* Chat widget smaller */
+  .chat-bubble { padding: 9px 14px; font-size: .8rem; }
+}
+
+/* Fix horizontal scroll caused by ticker on mobile */
+@media (max-width: 768px) {
+  .ticker-wrap { overflow: hidden; max-width: 100vw; }
+  .market-strip-outer { overflow: hidden; }
+}
+
+/* Fix nav hamburger drawer: limit height and make scrollable */
+@media (max-width: 768px) {
+  .nav-links.open {
+    max-height: calc(100vh - 56px);
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+  /* Ensure dropdown menus work in mobile nav */
+  .nav-links .nav-more-drop {
+    width: 100% !important;
+    min-width: unset !important;
+  }
+  .nav-tier-drop .nav-tier-section {
+    padding: 4px 0;
+  }
+  .nav-tier-drop .nav-tier-section a {
+    padding: 8px 20px !important;
+    font-size: 13px !important;
+  }
+}
