@@ -7611,13 +7611,15 @@ app.get("/signals", featureGate("feature_signals", "Signals"), (req, res) => {
     <div class="sig3-tw">
       <table class="sig3-t">
         <thead><tr>
-          <th>Time</th><th>Dir</th><th>Entry &#8594; Exit (Index)</th>
+          <th>Time</th><th>Dir</th><th>Symbol</th><th>Premium In&#8594;Out</th><th>Entry &#8594; Exit (Index)</th>
           <th>P&amp;L (&#8377;)</th><th>Reason</th><th>Duration</th>
         </tr></thead>
         <tbody id="sig3-today-body">
           ${[...closedToday2].reverse().map((t) => `<tr>
             <td class="sig3-ct">${fmtTime2(t.date)}</td>
             <td><span class="sig3-db ${(t.direction || "").toLowerCase()}">${t.direction || "&mdash;"}</span></td>
+            <td class="sig3-mono" style="font-size:.72rem;color:var(--text-muted)">${(t as any).symbol || "&mdash;"}</td>
+            <td class="sig3-mono">${(t as any).premiumEntry > 0 ? (t as any).premiumEntry.toFixed(1) : "&mdash;"} &#8594; ${(t as any).premiumExit > 0 ? (t as any).premiumExit.toFixed(1) : "&mdash;"}</td>
             <td class="sig3-mono">${(t.entryPrice ?? 0).toFixed(1)} &#8594; ${(t.exitPrice ?? 0).toFixed(1)}</td>
             <td>
               <span class="sig3-pnl-rs ${pnlCls2(t.pnl ?? 0)}">${fmtRs2(t.pnl ?? 0)}</span>
@@ -7625,7 +7627,7 @@ app.get("/signals", featureGate("feature_signals", "Signals"), (req, res) => {
             </td>
             <td>${t.reasonExit ? `<span class="sig3-rc ${rcCls(t.reasonExit).replace("rc-", "sig3-rc-")}">${t.reasonExit}</span>` : "&mdash;"}</td>
             <td class="sig3-ct">${t.duration ? (t.duration < 60 ? t.duration + "s" : Math.round(t.duration / 60) + "m") : "&mdash;"}</td>
-          </tr>`).join("") || `<tr><td colspan="6" class="sig3-te">No closed trades today${inTrade2 ? " &mdash; 1 live position active" : ""}</td></tr>`}
+          </tr>`).join("") || `<tr><td colspan="8" class="sig3-te">No closed trades today${inTrade2 ? " &mdash; 1 live position active" : ""}</td></tr>`}
         </tbody>
       </table>
     </div>
@@ -7638,7 +7640,7 @@ app.get("/signals", featureGate("feature_signals", "Signals"), (req, res) => {
     <div class="sig3-tw">
       <table class="sig3-t">
         <thead><tr>
-          <th>Date / Time</th><th>Dir</th><th>Entry &#8594; Exit (Index)</th>
+          <th>Date / Time</th><th>Dir</th><th>Symbol</th><th>Premium In&#8594;Out</th><th>Entry &#8594; Exit (Index)</th>
           <th>P&amp;L (&#8377;)</th><th>Reason</th>
         </tr></thead>
         <tbody>
@@ -7648,10 +7650,12 @@ app.get("/signals", featureGate("feature_signals", "Signals"), (req, res) => {
             _wAgo.setDate(_now.getDate() - 7);
             const _wk = an2.recentTrades.filter((t) => t.date && new Date(t.date) >= _wAgo);
             if (!_wk.length)
-                return `<tr><td colspan="5" class="sig3-te">No trades in the past 7 days</td></tr>`;
+                return `<tr><td colspan="7" class="sig3-te">No trades in the past 7 days</td></tr>`;
             return _wk.map((t) => `<tr>
               <td class="sig3-ct">${fmtDate2(t.date)}</td>
               <td><span class="sig3-db ${(t.direction || "").toLowerCase()}">${t.direction || "&mdash;"}</span></td>
+              <td class="sig3-mono" style="font-size:.72rem;color:var(--text-muted)">${(t as any).symbol || "&mdash;"}</td>
+              <td class="sig3-mono">${(t as any).premiumEntry > 0 ? (t as any).premiumEntry.toFixed(1) : "&mdash;"} &#8594; ${(t as any).premiumExit > 0 ? (t as any).premiumExit.toFixed(1) : "&mdash;"}</td>
               <td class="sig3-mono">${(t.entryPrice ?? 0).toFixed(0)} &#8594; ${(t.exitPrice ?? 0).toFixed(0)}</td>
               <td>
                 <span class="sig3-pnl-rs ${pnlCls2(t.pnl ?? 0)}">${fmtRs2(t.pnl ?? 0)}</span>
@@ -7659,7 +7663,7 @@ app.get("/signals", featureGate("feature_signals", "Signals"), (req, res) => {
               </td>
               <td>${t.reasonExit ? `<span class="sig3-rc ${rcCls(t.reasonExit).replace("rc-", "sig3-rc-")}">${t.reasonExit}</span>` : "&mdash;"}</td>
             </tr>`).join("");
-        })()}
+        })()
         </tbody>
       </table>
     </div>
