@@ -493,6 +493,10 @@ function nav(active: string, req?: Request): string {
   return `<nav class="topnav">
     <a href="/" class="brand"><img src="/public/images/logo.svg" class="brand-logo" alt="ZeroScreen"><span class="brand-wordmark">Zero<em>Screen</em></span></a>
     <div class="nav-links" id="nav-links">
+      <div class="nav-mob-drawer-head">
+        <a href="/" class="brand nav-mob-drawer-brand"><img src="/public/images/logo.svg" class="brand-logo" alt="ZeroScreen"><span class="brand-wordmark">Zero<em>Screen</em></span></a>
+        <button class="nav-mob-close" id="nav-mob-close" aria-label="Close menu">&#x2715;</button>
+      </div>
       <a href="/" class="${active === "home" ? "active" : ""}">🔍 Screener</a>
       <a href="/today" class="${active === "today" ? "active" : ""}">🔥 Picks</a>
       <a href="/signals" class="nav-signals-link${active === "signals" ? " active" : ""}"><span class="nav-live-dot"></span>🤖 Live Bot</a>
@@ -514,6 +518,7 @@ function nav(active: string, req?: Request): string {
       <span></span><span></span><span></span>
     </button>
   </nav>
+  <div class="nav-overlay" id="nav-overlay"></div>
   <div class="ticker-wrap" id="ticker-wrap" aria-label="Market news ticker">
     <span class="ticker-label">📰 MARKET</span>
     <div class="ticker-viewport">
@@ -1551,7 +1556,7 @@ app.get("/", async (req: Request, res: Response) => {
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>ZeroScreen — NSE Stock Screener</title>
-  <link rel="stylesheet" href="/public/css/style.css">
+  <link rel="stylesheet" href="/public/css/style.css?v=6">
 </head>
 <body>
   ${nav("home", req)}

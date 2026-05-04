@@ -840,7 +840,7 @@ export async function getAllSubscriptions(): Promise<(SubRow & { user_name: stri
 export interface PaperPosition {
   id: number; user_id: number; symbol: string; company_name: string | null;
   qty: number; avg_price: number; invested: number; entry_date: string;
-  trade_type: string;
+  trade_type: string; sl_price: number | null; target_price: number | null; order_type: string | null;
 }
 
 export interface PaperTrade {
