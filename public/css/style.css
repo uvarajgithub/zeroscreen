@@ -3239,3 +3239,12 @@ html.dark .idx-dn { background:rgba(248,113,113,.1); color:#f87171; }
     font-size: 13px !important;
   }
 }
+
+
+/* ---- Picks grid & card alignment fixes ---- */
+.picks-grid { align-items: stretch; }
+.pick-card { height: 100%; box-sizing: border-box; }
+.pick-reason { flex: 1; min-height: 0; }
+.pick-locked-body { flex: 1; min-height: 0; }
+.pick-footer { margin-top: auto; padding-top: 8px; border-top: 1px solid var(--border); }
+.pick-sym-locked { color: var(--text-dim); letter-spacing: 3px; opacity: 0.45; font-size: 14px; font-weight: 900; }

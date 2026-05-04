@@ -3127,6 +3127,7 @@ app.post("/admin/settings/toggle", requireAdmin, async (req: Request, res: Respo
     // Tier permission settings
     "guest_blur_screener", "guest_screener_preview_rows",
     "guest_blur_picks",
+    "guest_picks_show_symbol", "guest_picks_show_prices", "free_picks_show_prices",
     "free_picks_intraday_prices", "free_picks_swing_visible", "free_picks_swing_prices",
     "premium_picks_longterm", "premium_download_reports", "premium_early_telegram",
     "notify_trade_telegram", "notify_daily_telegram", "notify_picks_telegram",
@@ -3271,6 +3272,7 @@ app.get("/admin/settings", requireAdmin, async (req: Request, res: Response) => 
     "watchlists_premium_only", "alerts_premium_only", "paper_trade_premium_only",
     "guest_blur_screener", "guest_screener_preview_rows",
     "guest_blur_picks",
+    "guest_picks_show_symbol", "guest_picks_show_prices", "free_picks_show_prices",
     "free_picks_intraday_prices", "free_picks_swing_visible", "free_picks_swing_prices",
     "premium_picks_longterm", "premium_download_reports", "premium_early_telegram",
     "notify_trade_telegram", "notify_daily_telegram", "notify_picks_telegram",
@@ -3366,6 +3368,8 @@ app.get("/admin/settings", requireAdmin, async (req: Request, res: Response) => 
     <div class="settings-section">
       <h2>👤 Guest Access <span style="font-size:11px;font-weight:400;color:var(--text-dim)">(Visitors who are not signed in)</span></h2>
       ${toggle("guest_blur_screener", "🔒 Blur Screener for Guests", "Show only a preview of screener results to non-logged-in users. Remaining rows are blurred with a sign-in prompt.")}
+      ${toggle("guest_picks_show_symbol", "🏷️ Guest: Show Stock Symbol", "Guests can see the stock ticker/symbol name. Turn OFF to hide symbols from non-logged-in visitors.")}
+      ${toggle("guest_picks_show_prices", "💰 Guest: Show Pick Prices (Entry/Target/SL)", "Guests can see entry zone, target and stop loss. Turn OFF to gate all price detail behind sign-in.")}
       ${toggle("guest_blur_picks", "🔒 Blur Pick Prices for Guests", "Guests see intraday pick direction only. Entry zone, target and stop loss are locked behind sign-in.")}
       <div class="setting-row">
         <div class="setting-info">
@@ -3382,6 +3386,7 @@ app.get("/admin/settings", requireAdmin, async (req: Request, res: Response) => 
 
     <div class="settings-section">
       <h2>🟢 Free User Tier <span style="font-size:11px;font-weight:400;color:var(--text-dim)">(Signed-in, non-premium)</span></h2>
+      ${toggle("free_picks_show_prices", "💵 Free: Show All Pick Prices", "Free (signed-in) users see entry zone, target and stop loss for all pick types. Turn OFF to require Premium for price details.")}
       ${toggle("free_picks_intraday_prices", "⚡ Free: Show Intraday Pick Prices", "Free users can see entry zone, target and stop loss for intraday picks.")}
       ${toggle("free_picks_swing_visible", "🛶 Free: Show Swing Picks Section", "Free users can see the swing picks section (titles + direction). Prices still locked unless swing_prices also ON.")}
       ${toggle("free_picks_swing_prices", "🔓 Free: Show Swing Pick Prices", "Free users can see entry/target/SL for swing picks. Turn OFF to make swing prices premium-only.")}
@@ -5574,12 +5579,12 @@ app.get("/today", async (req: Request, res: Response) => {
   const swingPicks     = picks.filter(p => p.pick_type === 'swing');
   const longtermPicks  = picks.filter(p => p.pick_type === 'longterm');
 
-  function renderPickCard(p: any, showPrices: boolean): string {
+  function renderPickCard(p: any, showPrices: boolean, showSym: boolean = true): string {
     return `<div class="pick-card pick-card-${p.direction.toLowerCase()}">
       <div class="pick-card-top">
         <div>
-          <span class="pick-symbol">${esc(p.stock_symbol)}</span>
-          ${p.company_name ? `<span class="pick-company">${esc(p.company_name)}</span>` : ""}
+          ${showSym ? `<span class="pick-symbol">${esc(p.stock_symbol)}</span>` : `<span class="pick-symbol pick-sym-locked">&#9608;&#9608;&#9608;</span>`}
+          ${showSym && p.company_name ? `<span class="pick-company">${esc(p.company_name)}</span>` : ""}
         </div>
         <span class="pick-badge-${p.direction.toLowerCase()}">${p.direction === "LONG" ? "▲ LONG" : "▼ SHORT"}</span>
       </div>
@@ -5610,7 +5615,7 @@ app.get("/today", async (req: Request, res: Response) => {
   function renderSection(
     icon: string, title: string, subtitle: string,
     sectionPicks: any[], visible: boolean, showPrices: boolean,
-    requiredTier: string
+    requiredTier: string, showSym: boolean = true
   ): string {
     if (!visible || sectionPicks.length === 0) {
       if (sectionPicks.length === 0 && visible) return "";
@@ -5646,30 +5651,40 @@ app.get("/today", async (req: Request, res: Response) => {
         <span class="picks-section-count">${sectionPicks.length} pick${sectionPicks.length !== 1 ? 's' : ''}</span>
       </div>
       ${!showPrices && !isLoggedIn ? `<div class="picks-prices-locked-bar">🔒 Entry, target &amp; stop loss prices require <a href="/login?next=/today">Sign In</a> or <a href="/premium">Premium</a></div>` : (!showPrices && isLoggedIn ? `<div class="picks-prices-locked-bar">📣 Swing &amp; long-term price details require <a href="/premium">Premium →</a></div>` : "")}
-      <div class="picks-grid">${sectionPicks.map(p => renderPickCard(p, showPrices)).join("")}</div>
+      <div class="picks-grid">${sectionPicks.map(p => renderPickCard(p, showPrices, showSym)).join("")}</div>
     </div>`;
   }
 
   // Determine visibility + price access per tier (admin-configurable)
-  const guestBlurPicks     = (await getSetting("guest_blur_picks")) !== "false";
-  const freeIntradayPrices = (await getSetting("free_picks_intraday_prices")) !== "false";
-  const freeSwingVisible   = (await getSetting("free_picks_swing_visible")) !== "false";
-  const freeSwingPrices    = (await getSetting("free_picks_swing_prices")) !== "false";
-  const premiumLongterm    = (await getSetting("premium_picks_longterm")) !== "false";
-  const intradayVisible  = true;
-  const intradayPrices   = isPremium ? true : (isLoggedIn ? freeIntradayPrices : !guestBlurPicks);
-  const swingVisible     = isLoggedIn ? (isPremium ? true : freeSwingVisible) : false;
-  const swingPrices      = isPremium ? true : (isLoggedIn && freeSwingPrices);
-  const longtermVisible  = true; // Long-term picks visible to all; prices locked per tier
-  const longtermPrices   = isPremium;
+  const guestShowSymbol  = (await getSetting("guest_picks_show_symbol")) !== "false";
+  const guestShowPrices  = (await getSetting("guest_picks_show_prices")) !== "false";
+  const freeShowPrices   = (await getSetting("free_picks_show_prices")) !== "false";
+  const freeSwingVisible = (await getSetting("free_picks_swing_visible")) !== "false";
+  // Symbol: logged-in / premium / admin always see symbol; guests controlled by toggle
+  const showSymbol      = isLoggedIn || isPremium || isAdmin || guestShowSymbol;
+  // Prices: premium/admin = always; free user = freeShowPrices; guest = guestShowPrices
+  const pricesForUser   = isPremium || isAdmin ? true : isLoggedIn ? freeShowPrices : guestShowPrices;
+  const intradayVisible = true;
+  const swingVisible    = isLoggedIn ? (isPremium || isAdmin ? true : freeSwingVisible) : false;
+  const longtermVisible = true;
+  const intradayPrices  = pricesForUser;
+  const swingPrices     = pricesForUser;
+  const longtermPrices  = pricesForUser;
 
-  const intradaySection  = renderSection("⚡", "Intraday Picks", "Same-day entry & exit", intradayPicks, intradayVisible, intradayPrices, "Free");
-  const swingSection     = renderSection("🌊", "Swing Picks", "2–10 day holding period", swingPicks, swingVisible, swingPrices, "Premium");
-  const longtermSection  = renderSection("📈", "Long Term Picks", "Months to years horizon", longtermPicks, longtermVisible, longtermPrices, "Premium");
+  const intradaySection  = renderSection("⚡", "Intraday Picks", "Same-day entry & exit", intradayPicks, intradayVisible, intradayPrices, "Free", showSymbol);
+  const swingSection     = renderSection("🌊", "Swing Picks", "2–10 day holding period", swingPicks, swingVisible, swingPrices, "Premium", showSymbol);
+  const longtermSection  = renderSection("📈", "Long Term Picks", "Months to years horizon", longtermPicks, longtermVisible, longtermPrices, "Premium", showSymbol);
 
   // For locked sections when not logged in or not premium, show teaser cards
   const swingTeaser = !swingVisible ? renderSection("🌊", "Swing Picks", "2–10 day holding period", swingPicks.length > 0 ? swingPicks : [{id:0,stock_symbol:"?",company_name:null,direction:"LONG",pick_type:"swing",entry_low:0,entry_high:0,target:null,stop_loss:null,reason:"",risk_level:"Medium",status:"active",published_at:"",expires_at:null,created_by:null}], false, false, "Free") : "";
   const longtermTeaser = !longtermVisible ? renderSection("📈", "Long Term Picks", "Months to years horizon", longtermPicks.length > 0 ? longtermPicks : [{id:0,stock_symbol:"?",company_name:null,direction:"LONG",pick_type:"longterm",entry_low:0,entry_high:0,target:null,stop_loss:null,reason:"",risk_level:"Low",status:"active",published_at:"",expires_at:null,created_by:null}], false, false, "Premium") : "";
+
+  // Compute the actual last-updated time from picks data
+  const allPublished = picks.map((p: any) => p.published_at).filter(Boolean) as string[];
+  const lastPickUpdate = allPublished.length > 0 ? allPublished.sort().pop()! : null;
+  const lastUpdateTime = lastPickUpdate
+    ? new Date(lastPickUpdate).toLocaleString("en-IN", { hour: "2-digit", minute: "2-digit", day: "2-digit", month: "short", timeZone: "Asia/Kolkata" }) + " IST"
+    : "No picks yet";
 
   const tierLabel = isAdmin ? "👑 Admin" : isPremium ? "⚡ Premium" : isLoggedIn ? "🔓 Free User" : "👤 Guest";
   const tierClass = isAdmin ? "sig-tier-admin" : isPremium ? "sig-tier-premium" : isLoggedIn ? "sig-tier-free" : "sig-tier-guest";
@@ -5693,7 +5708,7 @@ app.get("/today", async (req: Request, res: Response) => {
         <div class="picks-disclaimer-banner">📋 Picks are selected based on <strong>last market close data</strong> — fundamentals, price action &amp; signals analysed post-market. Entry zones are reference prices only. <strong>Not SEBI registered. Not investment advice. Do your own research.</strong></div>
       </div>
       <div class="picks-hero-meta">
-        <span class="picks-hero-updated">⏱ Last refreshed: ${new Date().toLocaleString("en-IN",{day:"2-digit",month:"short",year:"numeric",hour:"2-digit",minute:"2-digit",timeZone:"Asia/Kolkata"})} IST</span>
+        <span class="picks-hero-updated">📅 Picks last updated: ${lastUpdateTime}</span>
         <span class="sig-tier-badge ${tierClass}">${tierLabel}</span>
       </div>
     </div>
