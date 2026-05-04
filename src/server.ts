@@ -24,6 +24,8 @@ import {
   PaperPosition, PaperTrade,
   storePhoneOtp, verifyPhoneOtp, setUserMobile, getUserByMobile, countPaperTrades,
   getPaperTradeConfig, savePaperTradeConfig, PaperTradeConfig,
+  saveBotState, getBotState, saveBotTrade, getBotTrades, BotTrade,
+  getUsersWithAutoPicks, setAutoPaperPicks, getAutoPaperPicks,
 } from "./db";
 import { refreshPrices, refreshFundamentals, startScheduler } from "./scheduler";
 import { fetchFundamentals } from "./scraper";
@@ -5148,8 +5150,12 @@ app.post("/admin/content", requireAdmin, async (req: Request, res: Response) => 
 
 // ── Admin Signal Control ───────────────────────────────────────────────────────
 app.get("/admin/signals", requireAdmin, async (req: Request, res: Response) => {
-  const signalsMode = await getSetting("signals_mode");
-  const msg = req.query.msg as string | undefined;
+  const signalsMode   = await getSetting("signals_mode");
+  const kiteToken     = await getSetting("kite_access_token");
+  const kiteTokenAt   = await getSetting("kite_token_set_at");
+  const msg  = req.query.msg  as string | undefined;
+  const err  = req.query.err  as string | undefined;
+  const tokenMasked = kiteToken ? kiteToken.slice(0, 6) + "••••••••••••••" + kiteToken.slice(-4) : "";
   res.send(`<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -5160,18 +5166,51 @@ app.get("/admin/signals", requireAdmin, async (req: Request, res: Response) => {
 </head>
 <body>
   ${nav("admin-signals", req)}
-  <div class="container" style="max-width:600px">
+  <div class="container" style="max-width:640px">
     <div class="admin-header">
       <div>
         <h1>🤖 Signal Control</h1>
-        <p class="page-sub">Control what guests see on the Signals page</p>
+        <p class="page-sub">Zerodha token · Guest display mode</p>
       </div>
       <a href="/admin" class="btn-secondary">← Overview</a>
     </div>
     ${msg ? `<div class="auth-success" style="margin-bottom:18px">✅ ${esc(msg)}</div>` : ""}
+    ${err ? `<div class="auth-error"   style="margin-bottom:18px">⚠️ ${esc(err)}</div>` : ""}
+
+    <!-- ── Zerodha Token ─────────────────────────────────────────────────── -->
+    <div class="admin-form-card" style="margin-bottom:20px">
+      <h3 style="margin:0 0 6px">🔑 Zerodha Access Token</h3>
+      <p class="text-dim" style="margin-bottom:14px;font-size:13px">
+        1. Login at <a href="https://kite.zerodha.com" target="_blank" rel="noopener" style="color:var(--accent)">kite.zerodha.com</a> →
+        Developer Console → copy your <strong>access_token</strong>.<br>
+        2. Paste it here. The trading bot polls <code>/internal/kite-token</code> and starts automatically.
+      </p>
+      ${kiteToken ? `
+      <div style="background:var(--bg-card);border:1px solid var(--border);border-radius:8px;padding:10px 14px;margin-bottom:12px;font-size:13px;display:flex;align-items:center;gap:10px">
+        <span style="color:#22c55e">●</span>
+        <span>Token set: <code>${esc(tokenMasked)}</code></span>
+        <span class="text-dim" style="margin-left:auto;font-size:12px">${esc(kiteTokenAt)}</span>
+      </div>` : `
+      <div style="background:var(--bg-card);border:1px solid #ef444440;border-radius:8px;padding:10px 14px;margin-bottom:12px;font-size:13px;color:#ef4444">
+        ● No token set — bot cannot authenticate with Zerodha
+      </div>`}
+      <form method="POST" action="/admin/signals/token" style="display:flex;gap:10px;flex-wrap:wrap">
+        <input type="text" name="token" placeholder="Paste access_token here"
+          style="flex:1;min-width:220px;padding:8px 12px;background:var(--bg-input,#1e293b);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:13px"
+          autocomplete="off" spellcheck="false">
+        <button type="submit" class="btn-primary">Save Token</button>
+        ${kiteToken ? `<button type="submit" name="clear" value="1" class="btn-secondary" style="color:#ef4444">Clear</button>` : ""}
+      </form>
+      <p class="text-dim" style="margin-top:10px;font-size:12px">
+        Token is stored in the DB and served only to the bot via a secret-protected endpoint.<br>
+        <strong>Set <code>INTERNAL_BOT_SECRET</code></strong> in your <code>.env</code> — bot must send the same secret in <code>X-Bot-Secret</code> header.
+      </p>
+    </div>
+
+    <!-- ── Guest Display Mode ────────────────────────────────────────────── -->
     <div class="admin-form-card">
-      <h3 style="margin:0 0 12px">Guest Signals Mode</h3>
-      <p class="text-dim" style="margin-bottom:16px">Controls whether guests see live bot status or a generic teaser message.</p>
+      <h3 style="margin:0 0 12px">👁 Guest Signals Display</h3>
+      <p class="text-dim" style="margin-bottom:16px">Controls what guests see on the Signals page.</p>
       <form method="POST" action="/admin/signals" style="display:flex;gap:12px;flex-wrap:wrap">
         <button type="submit" name="mode" value="live"
           class="${signalsMode === "live" ? "btn-primary" : "btn-secondary"}">
@@ -5193,11 +5232,18 @@ app.get("/admin/signals", requireAdmin, async (req: Request, res: Response) => {
 </html>`);
 });
 
-app.post("/admin/signals", requireAdmin, async (req: Request, res: Response) => {
-  const { mode } = req.body;
-  if (!["live", "teaser"].includes(mode)) { res.redirect("/admin/signals?err=Invalid+mode"); return; }
-  await setSetting("signals_mode", mode);
-  res.redirect("/admin/signals?msg=Signal+mode+set+to+" + mode);
+app.post("/admin/signals/token", requireAdmin, async (req: Request, res: Response) => {
+  if (req.body.clear === "1") {
+    await setSetting("kite_access_token", "");
+    await setSetting("kite_token_set_at", "");
+    res.redirect("/admin/signals?msg=Token+cleared");
+    return;
+  }
+  const token = (req.body.token || "").trim();
+  if (!token) { res.redirect("/admin/signals?err=Token+cannot+be+empty"); return; }
+  await setSetting("kite_access_token", token);
+  await setSetting("kite_token_set_at", new Date().toLocaleString("en-IN", { timeZone: "Asia/Kolkata" }));
+  res.redirect("/admin/signals?msg=Zerodha+token+saved.+Bot+will+pick+it+up+on+next+poll.");
 });
 
 // ── GET /today ─────────────────────────────────────────────────────────────────
@@ -5597,16 +5643,31 @@ app.post("/api/razorpay/verify", requireAuth, async (req: Request, res: Response
 });
 
 // ── GET /api/bot/status ─────────────────────────────────────────────────────────
-app.get("/api/bot/status", (_req: Request, res: Response) => {
-  const state  = readBotJSON("trade-state.json", {});
-  const hb     = readBotJSON("bot-heartbeat.json", null);
-  const trades: any[] = readBotJSON("trades.json", []);
+app.get("/api/bot/status", async (_req: Request, res: Response) => {
+  // Primary: DB (pushed by bot via webhook)
+  const dbState: any = await getBotState().catch(() => null);
+  const dbTrades = await getBotTrades(50).catch(() => []);
+
+  // Fallback: JSON files on disk (existing behaviour — never breaks)
+  const fileState  = readBotJSON("trade-state.json", {});
+  const hb         = readBotJSON("bot-heartbeat.json", null);
+  const fileTrades: any[] = readBotJSON("trades.json", []);
+
+  // Prefer DB state if it was updated in the last 10 min, else fall back to files
+  const dbUpdatedAt = dbState?._db_updated_at ? new Date(dbState._db_updated_at).getTime() : 0;
+  const useDb = dbUpdatedAt > 0 && (Date.now() - dbUpdatedAt) < 10 * 60 * 1000;
+
+  const state    = useDb ? dbState    : fileState;
+  const trades   = useDb && dbTrades.length > 0
+    ? dbTrades.map((t: BotTrade) => ({ ...JSON.parse(t.raw_json || "{}"), pnl: t.pnl }))
+    : fileTrades;
+
   const analytics = computeAnalytics(trades);
 
-  // Determine live bot status from heartbeat
-  const isAlive = hb?.at ? (Date.now() - new Date(hb.at).getTime()) < 3 * 60 * 1000 : false;
-  const botStatus = isAlive ? (hb.status ?? "RUNNING") : (hb ? "STOPPED" : "UNKNOWN");
-  const botColor  = isAlive ? (hb.inTrade ? (hb.direction === "CE" ? "blue" : "red") : "green") : "red";
+  const isAlive = hb?.at ? (Date.now() - new Date(hb.at).getTime()) < 3 * 60 * 1000
+                         : (useDb && (Date.now() - dbUpdatedAt) < 3 * 60 * 1000);
+  const botStatus = isAlive ? (hb?.status ?? "RUNNING") : (hb ? "STOPPED" : "UNKNOWN");
+  const botColor  = isAlive ? (hb?.inTrade ? (hb.direction === "CE" ? "blue" : "red") : "green") : "red";
 
   res.json({
     timestamp: new Date().toLocaleString("en-IN", { timeZone: "Asia/Kolkata" }),
@@ -5615,9 +5676,64 @@ app.get("/api/bot/status", (_req: Request, res: Response) => {
     botStatus,
     botColor,
     isAlive,
+    source: useDb ? "db" : "files",
     ...analytics,
   });
 });
+
+// ── POST /internal/bot-update ── bot pushes state + completed trades here ──────
+app.post("/internal/bot-update", async (req: Request, res: Response) => {
+  const secret = req.headers["x-bot-secret"];
+  const expected = process.env.INTERNAL_BOT_SECRET || "";
+  if (!expected || secret !== expected) {
+    res.status(401).json({ ok: false, error: "Unauthorized" });
+    return;
+  }
+
+  const { state, trade } = req.body;
+
+  if (state && typeof state === "object") {
+    await saveBotState(state).catch(() => {});
+  }
+
+  if (trade && typeof trade === "object") {
+    await saveBotTrade({
+      symbol:      trade.symbol      ?? null,
+      direction:   trade.direction   ?? null,
+      entry_price: trade.entry_price ?? trade.entry ?? null,
+      exit_price:  trade.exit_price  ?? trade.exit  ?? null,
+      qty:         trade.qty         ?? null,
+      pnl:         trade.pnl         ?? null,
+      exit_reason: trade.exit_reason ?? trade.reason ?? null,
+      trade_date:  trade.date        ?? new Date().toISOString().slice(0, 10),
+      duration:    trade.duration    ?? null,
+      raw_json:    JSON.stringify(trade),
+    }).catch(() => {});
+  }
+
+  res.json({ ok: true });
+});
+
+// ── GET /internal/kite-token ── bot polls here to get the Zerodha access token ─
+app.get("/internal/kite-token", async (req: Request, res: Response) => {
+  const secret = req.headers["x-bot-secret"] || req.query.secret;
+  const expected = process.env.INTERNAL_BOT_SECRET || "";
+  if (!expected || secret !== expected) {
+    res.status(401).json({ ok: false, error: "Unauthorized" });
+    return;
+  }
+
+  const token = await getSetting("kite_access_token").catch(() => "");
+  const setAt  = await getSetting("kite_token_set_at").catch(() => "");
+
+  if (!token) {
+    res.json({ ok: false, token: null, message: "No token set. Paste it in Admin → Signal Control." });
+    return;
+  }
+
+  res.json({ ok: true, token, set_at: setAt });
+});
+
 
 // ── GET /paper-trade ───────────────────────────────────────────────────────────
 app.get("/paper-trade", featureGate("feature_paper_trade_bot", "Paper Trade"), async (req: Request, res: Response) => {
@@ -6686,7 +6802,10 @@ app.post("/my-paper-trade/reset", requireAuth, async (req: Request, res: Respons
 // ── GET /my-paper-trade/config ────────────────────────────────────────────────
 app.get("/my-paper-trade/config", requireAuth, async (req: Request, res: Response) => {
   const cfg   = await getPaperTradeConfig(req.session.userId!);
+  const autoPicks = await getAutoPaperPicks(req.session.userId!);
   const saved = req.query.saved === "1";
+  const activeSub = await getActiveSubscription(req.session.userId!);
+  const isPremium = !!activeSub || req.session.userRole === "premium" || req.session.userRole === "admin";
   res.send(`<!DOCTYPE html><html lang="en"><head>
   <meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
   <title>Paper Trade Settings — ZeroScreen</title>
@@ -6700,6 +6819,15 @@ app.get("/my-paper-trade/config", requireAuth, async (req: Request, res: Respons
     .cfg-input,.cfg-select{background:var(--input-bg);border:1px solid var(--border);border-radius:7px;padding:8px 12px;color:var(--text);font-size:0.9rem;width:100%;box-sizing:border-box}
     .cfg-btn{background:var(--accent);color:#fff;border:none;border-radius:8px;padding:10px 24px;font-weight:700;cursor:pointer;font-size:0.9rem;margin-top:8px}
     .cfg-ok{background:#10b98122;color:#10b981;border:1px solid #10b98155;border-radius:8px;padding:10px 14px;margin-bottom:16px;font-size:0.88rem}
+    .cfg-toggle-row{display:flex;align-items:center;justify-content:space-between;padding:14px 0;border-top:1px solid var(--border);margin-top:8px}
+    .cfg-toggle-label{font-size:0.9rem;font-weight:600}
+    .cfg-toggle-desc{font-size:0.78rem;color:var(--text-muted);margin-top:2px}
+    .cfg-switch{position:relative;display:inline-block;width:44px;height:24px}
+    .cfg-switch input{opacity:0;width:0;height:0}
+    .cfg-slider{position:absolute;cursor:pointer;top:0;left:0;right:0;bottom:0;background:#374151;border-radius:24px;transition:.3s}
+    .cfg-slider:before{position:absolute;content:"";height:18px;width:18px;left:3px;bottom:3px;background:#fff;border-radius:50%;transition:.3s}
+    input:checked+.cfg-slider{background:#10b981}
+    input:checked+.cfg-slider:before{transform:translateX(20px)}
   </style>
 </head><body>${nav("my-paper-trade", req)}
 <div class="container">
@@ -6731,6 +6859,22 @@ app.get("/my-paper-trade/config", requireAuth, async (req: Request, res: Respons
         <label class="cfg-label">Max Open Positions</label>
         <input class="cfg-input" type="number" name="max_positions" min="1" max="50" value="${cfg.max_positions}">
       </div>
+
+      <!-- ── Auto paper trade from Today's Picks ── -->
+      <div class="cfg-toggle-row">
+        <div>
+          <div class="cfg-toggle-label">🔥 Auto-trade Today's Picks ${!isPremium ? '<span style="font-size:0.72rem;background:#f59e0b22;color:#f59e0b;border:1px solid #f59e0b44;border-radius:8px;padding:2px 8px;margin-left:6px">💎 Premium</span>' : ''}</div>
+          <div class="cfg-toggle-desc">${isPremium ? 'At 9:15 AM after market opens, automatically buy today\'s picks in your paper portfolio at live price with SL &amp; target set.' : 'Upgrade to Premium to enable automatic trading of Today\'s Picks.'}</div>
+        </div>
+        ${isPremium
+          ? `<label class="cfg-switch" style="margin-left:16px;flex-shrink:0">
+          <input type="checkbox" name="auto_paper_picks" value="1" ${autoPicks ? "checked" : ""}>
+          <span class="cfg-slider"></span>
+        </label>`
+          : `<a href="/my-paper-trade/upgrade" style="margin-left:16px;flex-shrink:0;font-size:0.8rem;background:var(--accent);color:#fff;border-radius:8px;padding:6px 14px;text-decoration:none;font-weight:700">🔓 Upgrade</a>`
+        }
+      </div>
+
       <button type="submit" class="cfg-btn">Save Settings</button>
     </form>
     <p style="margin-top:16px"><a href="/my-paper-trade" style="color:var(--text-muted);font-size:0.85rem">← Back to Portfolio</a></p>
@@ -6747,6 +6891,13 @@ app.post("/my-paper-trade/config", requireAuth, async (req: Request, res: Respon
   const default_tgt_pct = Math.max(0.1, Math.min(200, parseFloat(req.body.default_tgt_pct) || 4));
   const max_positions   = Math.max(1, Math.min(50, parseInt(req.body.max_positions, 10) || 10));
   await savePaperTradeConfig(userId, { trade_type, default_qty, default_sl_pct, default_tgt_pct, max_positions });
+  // Only premium/admin can enable auto-trade picks
+  const activeSub = await getActiveSubscription(userId);
+  const isPremium = !!activeSub || req.session.userRole === "premium" || req.session.userRole === "admin";
+  if (isPremium) {
+    const auto_paper_picks = req.body.auto_paper_picks === "1";
+    await setAutoPaperPicks(userId, auto_paper_picks);
+  }
   res.redirect("/my-paper-trade/config?saved=1");
 });
 

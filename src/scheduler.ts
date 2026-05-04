@@ -15,7 +15,7 @@
 import cron from "node-cron";
 import { fetchLatestBhavcopy } from "./nse";
 import { fetchFundamentals }   from "./scraper";
-import { dbRun, dbAll, upsertStock, upsertPrice, getStaleSymbols, getAllSymbols, initDb, screenStocks, getAllActiveAlerts, updateAlertLastSent, createPick } from "./db";
+import { dbRun, dbAll, upsertStock, upsertPrice, getStaleSymbols, getAllSymbols, initDb, screenStocks, getAllActiveAlerts, updateAlertLastSent, createPick, getUsersWithAutoPicks, paperBuy, paperSell, getPaperPositions } from "./db";
 import { sendAlertEmail } from "./mailer";
 
 const FETCH_DELAY_MS = 800;
@@ -337,6 +337,84 @@ export async function generateDailyPicks(): Promise<void> {
   }
 
   console.log(`[Picks] Done — ${intradayCount} intraday, ${swingCount} swing, ${longtermCount} longterm (total ${intradayCount + swingCount + longtermCount})`);
+  // autoPaperTradeFromPicks() runs separately at 9:15 AM IST using live open price
+}
+
+// ── Auto paper trade from today's picks ───────────────────────────────────────
+export async function autoPaperTradeFromPicks(): Promise<void> {
+  const users = await getUsersWithAutoPicks();
+  if (users.length === 0) { console.log("[AutoPaper] No users opted in"); return; }
+
+  // Get today's active picks
+  const picks = await dbAll<any>(
+    `SELECT * FROM picks WHERE status='active' AND date(published_at) = date('now','localtime')`
+  );
+  if (picks.length === 0) { console.log("[AutoPaper] No picks available today"); return; }
+
+  console.log(`[AutoPaper] Auto-buying ${picks.length} picks for ${users.length} user(s)`);
+
+  for (const user of users) {
+    let bought = 0;
+    for (const pick of picks) {
+      // Use live price from prices table (realistic open price), fallback to entry_low
+      const qty   = 1;
+      const priceRow = await dbAll<{ price: number }>(
+        "SELECT price FROM prices WHERE symbol = ?", [pick.stock_symbol]
+      );
+      const price = priceRow[0]?.price && priceRow[0].price > 0 ? priceRow[0].price : pick.entry_low;
+      const tradeType = pick.pick_type === "intraday" ? "INTRADAY" : "HOLDING";
+
+      const result = await paperBuy(
+        user.id,
+        pick.stock_symbol,
+        pick.company_name ?? null,
+        qty,
+        price,
+        tradeType,
+        pick.stop_loss ?? null,
+        pick.target    ?? null,
+        "LIMIT"
+      );
+
+      if (result.ok) {
+        bought++;
+        console.log(`[AutoPaper] ✅ ${user.email} bought ${pick.stock_symbol} @ ₹${price} (${tradeType})`);
+      } else {
+        console.log(`[AutoPaper] ⚠️ ${user.email} skip ${pick.stock_symbol}: ${result.msg}`);
+      }
+    }
+    console.log(`[AutoPaper] ${user.email} — ${bought}/${picks.length} picks executed`);
+  }
+}
+
+// ── Monitor open auto-paper positions for SL / target hits ────────────────────
+export async function monitorAutoPaperPositions(): Promise<void> {
+  const users = await getUsersWithAutoPicks();
+  if (users.length === 0) return;
+
+  for (const user of users) {
+    const positions = await getPaperPositions(user.id);
+    if (positions.length === 0) continue;
+
+    for (const pos of positions) {
+      // Get live price from prices table
+      const priceRow = await dbAll<{ price: number }>(
+        "SELECT price FROM prices WHERE symbol = ?", [pos.symbol]
+      );
+      const livePrice = priceRow[0]?.price;
+      if (!livePrice || livePrice <= 0) continue;
+
+      const hit =
+        (pos.target_price && livePrice >= pos.target_price) ? "TARGET" :
+        (pos.sl_price     && livePrice <= pos.sl_price)     ? "STOPLOSS" :
+        null;
+
+      if (hit) {
+        const result = await paperSell(user.id, pos.symbol, pos.qty, livePrice);
+        console.log(`[AutoPaper] ${hit} hit — ${user.email} sold ${pos.symbol} @ ₹${livePrice} → ${result.msg}`);
+      }
+    }
+  }
 }
 
 // ── Cron ──────────────────────────────────────────────────────────────────────
@@ -363,6 +441,17 @@ export function startScheduler() {
   cron.schedule("15 13 * * 1-5", async () => {
     console.log("[Cron] Daily auto-picks generation");
     await generateDailyPicks();
+  }, { timezone: "UTC" });
+
+  // Auto paper trade buy at market open: 9:15 AM IST (03:45 UTC) — uses live open price
+  cron.schedule("45 3 * * 1-5", async () => {
+    console.log("[Cron] Auto paper trade from picks at market open");
+    await autoPaperTradeFromPicks();
+  }, { timezone: "UTC" });
+
+  // Monitor auto-paper SL/target: every 5 min on weekdays during market hours 9:15–3:30 IST (3:45–10:00 UTC)
+  cron.schedule("*/5 3-10 * * 1-5", async () => {
+    await monitorAutoPaperPositions();
   }, { timezone: "UTC" });
 
   console.log("[Scheduler] Cron jobs registered");

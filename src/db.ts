@@ -266,6 +266,8 @@ export async function initDb(): Promise<void> {
       db.run("ALTER TABLE paper_trades ADD COLUMN trade_type TEXT NOT NULL DEFAULT 'INTRADAY'", () => {});
       db.run("INSERT OR IGNORE INTO app_settings (key,value) VALUES ('paper_free_limit','10')");
       db.run("INSERT OR IGNORE INTO app_settings (key,value) VALUES ('otp_required','true')");
+      // Auto paper picks opt-in (safe migration)
+      db.run("ALTER TABLE users ADD COLUMN auto_paper_picks INTEGER NOT NULL DEFAULT 0", () => {});
       // SL / Target / OrderType on positions (safe migrations)
       db.run("ALTER TABLE paper_positions ADD COLUMN sl_price REAL", () => {});
       db.run("ALTER TABLE paper_positions ADD COLUMN target_price REAL", () => {});
@@ -284,6 +286,28 @@ export async function initDb(): Promise<void> {
       db.run("INSERT OR IGNORE INTO app_settings (key,value) VALUES ('watchlists_premium_only','false')");
       db.run("INSERT OR IGNORE INTO app_settings (key,value) VALUES ('alerts_premium_only','false')");
       db.run("INSERT OR IGNORE INTO app_settings (key,value) VALUES ('paper_trade_premium_only','false')");
+      // ── Bot state / trades (webhook push from trading bot) ───────────────────
+      db.run(`CREATE TABLE IF NOT EXISTS bot_state (
+        id          INTEGER PRIMARY KEY CHECK (id = 1),
+        data_json   TEXT NOT NULL DEFAULT '{}',
+        updated_at  TEXT DEFAULT (datetime('now','localtime'))
+      )`);
+      db.run("INSERT OR IGNORE INTO bot_state (id, data_json) VALUES (1, '{}')");
+      db.run(`CREATE TABLE IF NOT EXISTS bot_trades (
+        id          INTEGER PRIMARY KEY AUTOINCREMENT,
+        symbol      TEXT,
+        direction   TEXT,
+        entry_price REAL,
+        exit_price  REAL,
+        qty         INTEGER,
+        pnl         REAL,
+        exit_reason TEXT,
+        trade_date  TEXT,
+        duration    TEXT,
+        raw_json    TEXT,
+        created_at  TEXT DEFAULT (datetime('now','localtime'))
+      )`);
+      db.run("CREATE INDEX IF NOT EXISTS idx_bot_trades_date ON bot_trades(trade_date)");
       db.run("CREATE INDEX IF NOT EXISTS idx_reset_tokens_user3 ON password_reset_tokens(user_id)", (err) => {
         if (err) resolve(); else resolve();
       });
@@ -965,4 +989,64 @@ export async function savePaperTradeConfig(userId: number, config: Partial<Paper
      VALUES (?,?,?,?,?,?,datetime('now','localtime'))`,
     [userId, m.trade_type, m.default_qty, m.default_sl_pct, m.default_tgt_pct, m.max_positions]
   );
+}
+
+// ── Bot state / trades (webhook storage) ──────────────────────────────────────
+export interface BotTrade {
+  id?: number;
+  symbol: string | null;
+  direction: string | null;
+  entry_price: number | null;
+  exit_price: number | null;
+  qty: number | null;
+  pnl: number | null;
+  exit_reason: string | null;
+  trade_date: string | null;
+  duration: string | null;
+  raw_json: string | null;
+  created_at?: string;
+}
+
+export async function saveBotState(data: object): Promise<void> {
+  await dbRun(
+    `UPDATE bot_state SET data_json=?, updated_at=datetime('now','localtime') WHERE id=1`,
+    [JSON.stringify(data)]
+  );
+}
+
+export async function getBotState(): Promise<object | null> {
+  const row = await dbGet<{ data_json: string; updated_at: string }>("SELECT data_json, updated_at FROM bot_state WHERE id=1");
+  if (!row) return null;
+  try { return { ...JSON.parse(row.data_json), _db_updated_at: row.updated_at }; } catch { return null; }
+}
+
+export async function saveBotTrade(t: Omit<BotTrade, 'id' | 'created_at'>): Promise<void> {
+  await dbRun(
+    `INSERT INTO bot_trades (symbol,direction,entry_price,exit_price,qty,pnl,exit_reason,trade_date,duration,raw_json)
+     VALUES (?,?,?,?,?,?,?,?,?,?)`,
+    [t.symbol, t.direction, t.entry_price, t.exit_price, t.qty, t.pnl, t.exit_reason, t.trade_date, t.duration, t.raw_json]
+  );
+}
+
+export async function getBotTrades(limit = 50): Promise<BotTrade[]> {
+  return dbAll<BotTrade>(
+    "SELECT * FROM bot_trades ORDER BY id DESC LIMIT ?",
+    [limit]
+  );
+}
+
+// ── Auto paper picks helpers ───────────────────────────────────────────────────
+export async function getUsersWithAutoPicks(): Promise<{ id: number; name: string; email: string }[]> {
+  return dbAll<{ id: number; name: string; email: string }>(
+    "SELECT id, name, email FROM users WHERE auto_paper_picks = 1"
+  );
+}
+
+export async function setAutoPaperPicks(userId: number, enabled: boolean): Promise<void> {
+  await dbRun("UPDATE users SET auto_paper_picks = ? WHERE id = ?", [enabled ? 1 : 0, userId]);
+}
+
+export async function getAutoPaperPicks(userId: number): Promise<boolean> {
+  const row = await dbGet<{ auto_paper_picks: number }>("SELECT auto_paper_picks FROM users WHERE id = ?", [userId]);
+  return row?.auto_paper_picks === 1;
 }

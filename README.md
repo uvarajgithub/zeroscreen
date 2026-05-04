@@ -160,7 +160,7 @@ Personal paper trading portfolio for every registered user. No broker account ne
 
 ### 9. Paper Trade Settings — `http://139.59.18.52:4000/my-paper-trade/config`
 
-**Login required**
+**Login required** (Auto-trade toggle requires Premium or Admin)
 
 Configure default parameters for new paper trades:
 
@@ -169,6 +169,7 @@ Configure default parameters for new paper trades:
 - **Default Stop Loss %** — reference for risk management (stored, not auto-enforced)
 - **Default Target %** — reference for profit target
 - **Max Open Positions** — user-defined limit (stored as preference)
+- **🔥 Auto-trade Today's Picks** _(Premium/Admin only)_ — when enabled, automatically buys all of today's picks at market open (9:15 AM IST) at live price with SL & target set. Positions are auto-sold when SL or target is hit.
 
 Settings are saved per-user and pre-fill the buy form on the portfolio page.
 
@@ -426,6 +427,7 @@ paper-engine  → /home/ubuntu/trading-bot/paper-records.json  (monthly summary)
 | `RAZORPAY_KEY_ID` | Razorpay payment gateway |
 | `RAZORPAY_KEY_SECRET` | Razorpay secret for payment verification |
 | `FAST2SMS_API_KEY` | Fast2SMS API for mobile OTP delivery |
+| `INTERNAL_BOT_SECRET` | Shared secret for bot webhook endpoints (`/internal/bot-update`, `/internal/kite-token`) |
 
 ---
 
@@ -442,12 +444,15 @@ Compress-Archive -Path src,public,package.json,package-lock.json,tsconfig.json -
 .\plink.exe -pw "PASSWORD" -batch root@139.59.18.52 "cd /root/zeroscreen && unzip -o /root/zeroscreen-deploy.zip > /dev/null && npx tsc 2>&1 | tail -5 && pm2 restart 9 && echo DONE"
 ```
 
-**PM2 processes:**
+**PM2 processes (actual IDs on VPS):**
 | ID | Name | Purpose |
 |----|------|---------|
-| 9  | zeroscreen | Main Express server (port 4000) — restart this one |
-| 10 | zeroscreen | ts-node scheduler (price + fundamentals cron jobs) |
-| 4  | paper-trade-engine | Bot paper trade simulation (nightly) |
+| 8  | zeroscreen | Main Express server (port 4000) — restart this one |
+| 13 | trading-bot | BANKNIFTY options bot |
+| 2  | equity-scanner | Equity scanner (waiting outside market hours) |
+| 3  | equity-strategy | Equity strategy engine (waiting) |
+| 6  | penny-scanner | Penny stock scanner (waiting) |
+| 7  | core-scanner | Core watchlist scanner (waiting) |
 | 1  | token-server | Trading bot token refresh |
 | 5  | daily-reminder | Daily email digest |
 | 0  | trading-bot | BANKNIFTY options bot |
@@ -739,6 +744,10 @@ paper-engine  → /home/ubuntu/trading-bot/paper-records.json  (monthly summary)
 | `SMTP_*` | Nodemailer config for email alerts and password reset |
 | `TELEGRAM_BOT_TOKEN` | Telegram notifications on new signups |
 | `TELEGRAM_CHAT_ID` | Telegram chat for notifications |
+| `RAZORPAY_KEY_ID` | Razorpay payment gateway |
+| `RAZORPAY_KEY_SECRET` | Razorpay secret for payment verification |
+| `FAST2SMS_API_KEY` | Fast2SMS API for mobile OTP delivery |
+| `INTERNAL_BOT_SECRET` | Shared secret for bot webhook endpoints (`/internal/bot-update`, `/internal/kite-token`) |
 
 ---
 
@@ -756,7 +765,15 @@ Compress-Archive -Path src,public,package.json,package-lock.json,tsconfig.json -
 .\plink.exe -pw "..." -batch root@139.59.18.52 "unzip -o /root/zeroscreen-deploy.zip -d /root/zeroscreen/ ; cd /root/zeroscreen && npx tsc ; pm2 restart zeroscreen --update-env"
 ```
 
-**PM2 processes:** zeroscreen (ids 9 + 10) · trading-bot (0) · paper-trade-engine (4) · token-server (1) · daily-reminder (5)
+**PM2 processes (actual IDs on VPS):**
+| ID | Name | Purpose |
+|----|------|---------|
+| 8  | zeroscreen | Main Express server (port 4000) — restart this one |
+| 13 | trading-bot | BANKNIFTY options bot |
+| 2  | equity-scanner | Equity scanner (waiting outside market hours) |
+| 3  | equity-strategy | Equity strategy engine (waiting) |
+| 6  | penny-scanner | Penny stock scanner (waiting) |
+| 7  | core-scanner | Core watchlist scanner (waiting) |
 
 ---
 
@@ -913,7 +930,18 @@ npx tsc
 pm2 restart zeroscreen
 ```
 
-**VPS:** DigitalOcean Ubuntu, port 4000, managed with PM2 (two instances: id 9 = main server, id 10 = scheduler)
+**VPS:** DigitalOcean Ubuntu, port 4000, managed with PM2 (id 8 = zeroscreen server, id 13 = trading-bot)
+
+## Scheduled Jobs (Cron)
+
+| Time (IST) | Days | Job | Notes |
+|---|---|---|---|
+| **6:30 PM** | Mon–Fri | Price refresh | Fetches NSE bhavcopy → updates all prices |
+| **6:45 PM** | Mon–Fri | Auto picks generation | Generates intraday/swing/longterm picks |
+| **9:15 AM** | Mon–Fri | Auto paper trade buy | Buys today's picks at live open price for opted-in Premium users |
+| **Every 5 min** (9:15–4 PM) | Mon–Fri | SL/Target monitor | Auto-sells paper positions on SL or target hit |
+| **7:30 AM** | Mon–Fri | Alert digest | Emails users when saved alert filters match |
+| **2:00 AM** | Saturday | Fundamentals refresh | Scrapes screener.in for stale stocks |
 
 ---
 
