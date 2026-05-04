@@ -2035,7 +2035,7 @@ app.get("/", async (req: Request, res: Response) => {
         const r = await fetch('/api/markets');
         const quotes = await r.json();
         const MKT_ID_MAP = {
-          'NIFTY 50':'NSEI','NIFTY BANK':'NSEBANK','NIFTY FIN SERVICE':'FINNIFTY',
+          'NIFTY 50':'NSEI','NIFTY BANK':'NSEBANK','NIFTY FIN SERVICE':'FINNIFTY','NIFTY FINANCIAL SERVICES':'FINNIFTY',
           'NIFTY IT':'NIFTYIT','INDIA VIX':'INDIAVIX','NIFTY MIDCAP 100':'MIDCAP',
           '^DJI':'DJI','^IXIC':'IXIC','^GSPC':'GSPC','^N225':'N225','^HSI':'HSI'
         };
