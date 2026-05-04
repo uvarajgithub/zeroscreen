@@ -1630,6 +1630,7 @@ app.get("/", async (req: Request, res: Response) => {
           <h1>NSE Stock Screener</h1>
           <p class="screener-hero-sub">Filter 1,700+ stocks by ROCE, D/E, P/E, promoter % and more — free forever</p>
           ${priceAsOf ? `<span class="data-freshness-badge">📅 Prices as of ${priceAsOf} · NSE EOD · Fundamentals updated weekly</span>` : ""}
+          <span class="data-freshness-badge" style="background:rgba(99,102,241,0.12);border-color:rgba(99,102,241,0.3);color:#818cf8">⏱ Page refreshed: ${new Date().toLocaleString("en-IN",{hour:"2-digit",minute:"2-digit",day:"2-digit",month:"short",timeZone:"Asia/Kolkata"})} IST</span>
         </div>
         <div class="screener-hero-stats">
           <div class="sh-stat"><strong>1,700+</strong><span>NSE Stocks</span></div>
@@ -2851,6 +2852,7 @@ app.get("/admin/users", requireAdmin, async (req: Request, res: Response) => {
   const msgParam = req.query.msg ? `<div class="au-msg au-msg-ok">✓ ${esc(req.query.msg as string)}</div>` : "";
   const errParam = req.query.err ? `<div class="au-msg au-msg-err">✕ ${esc(req.query.err as string)}</div>` : "";
 
+  const premiums = users.filter(u => u.role === "premium").length;
   const rows = users.map((u, i) => {
     const isCurrentAdmin = req.session.userId === u.id;
     const balFmt = (u.paper_balance ?? 0) > 0 ? `₹${(u.paper_balance as number).toLocaleString("en-IN", { maximumFractionDigits: 0 })}` : `—`;
@@ -2874,6 +2876,13 @@ app.get("/admin/users", requireAdmin, async (req: Request, res: Response) => {
         </form>
       </td>
       <td style="white-space:nowrap">
+        ${u.role !== "premium" && u.role !== "admin" ? `
+          <form method="POST" action="/admin/users/${u.id}/make-premium" style="display:inline">
+            <button class="au-btn au-btn-premium" onclick="return confirm('Grant Premium to ${u.name}?')">&#9733; Premium</button>
+          </form>` : (u.role === "premium" ? `
+          <form method="POST" action="/admin/users/${u.id}/remove-premium" style="display:inline">
+            <button class="au-btn au-btn-muted" onclick="return confirm('Remove Premium from ${u.name}?')">Revoke</button>
+          </form>` : "")}
         ${u.role !== "admin" ? `
           <form method="POST" action="/admin/users/${u.id}/make-admin" style="display:inline">
             <button class="au-btn au-btn-sec" onclick="return confirm('Make ${u.name} admin?')">Admin</button>
@@ -2925,12 +2934,15 @@ app.get("/admin/users", requireAdmin, async (req: Request, res: Response) => {
       .au-btn-warn{background:#f59e0b20;color:#f59e0b;border:1px solid #f59e0b40}
       .au-btn-ok{background:#10b98120;color:#10b981;border:1px solid #10b98140}
       .au-btn-danger{background:#ef444420;color:#ef4444;border:1px solid #ef444440}
+      .au-btn-premium{background:#a855f720;color:#a855f7;border:1px solid #a855f740}
+      .au-btn-muted{background:rgba(100,116,139,.15);color:#94a3b8;border:1px solid rgba(100,116,139,.3)}
     </style>
     <div class="admin-stats-row">
       <div class="admin-stat-card"><div class="admin-stat-num">${total}</div><div class="admin-stat-label">Total Users</div></div>
       <div class="admin-stat-card"><div class="admin-stat-num">${admins}</div><div class="admin-stat-label">Admins</div></div>
       <div class="admin-stat-card"><div class="admin-stat-num green">${todayCount}</div><div class="admin-stat-label">Joined Today</div></div>
-      <div class="admin-stat-card"><div class="admin-stat-num">${total - admins}</div><div class="admin-stat-label">Regular Users</div></div>
+      <div class="admin-stat-card"><div class="admin-stat-num" style="color:#a855f7">${premiums}</div><div class="admin-stat-label">Premium</div></div>
+      <div class="admin-stat-card"><div class="admin-stat-num">${total - admins - premiums}</div><div class="admin-stat-label">Free Users</div></div>
       <div class="admin-stat-card"><div class="admin-stat-num" style="color:#ef4444">${blocked}</div><div class="admin-stat-label">Blocked</div></div>
     </div>
 
@@ -2953,6 +2965,20 @@ app.post("/admin/users/:id/make-admin", requireAdmin, async (req: Request, res: 
   if (!Number.isInteger(id) || id <= 0) { res.status(400).send("Invalid id"); return; }
   await dbRun("UPDATE users SET role = 'admin' WHERE id = ?", [id]);
   res.redirect("/admin/users?msg=User+promoted+to+admin");
+});
+
+app.post("/admin/users/:id/make-premium", requireAdmin, async (req: Request, res: Response) => {
+  const id = parseInt(req.params.id, 10);
+  if (!Number.isInteger(id) || id <= 0) { res.status(400).send("Invalid id"); return; }
+  await dbRun("UPDATE users SET role = 'premium' WHERE id = ?", [id]);
+  res.redirect("/admin/users?msg=Premium+access+granted");
+});
+
+app.post("/admin/users/:id/remove-premium", requireAdmin, async (req: Request, res: Response) => {
+  const id = parseInt(req.params.id, 10);
+  if (!Number.isInteger(id) || id <= 0) { res.status(400).send("Invalid id"); return; }
+  await dbRun("UPDATE users SET role = 'user' WHERE id = ?", [id]);
+  res.redirect("/admin/users?msg=Premium+access+removed");
 });
 
 app.post("/admin/users/:id/block", requireAdmin, async (req: Request, res: Response) => {
@@ -3101,6 +3127,7 @@ app.post("/admin/settings/toggle", requireAdmin, async (req: Request, res: Respo
     "guest_blur_picks",
     "free_picks_intraday_prices", "free_picks_swing_visible", "free_picks_swing_prices",
     "premium_picks_longterm", "premium_download_reports", "premium_early_telegram",
+    "notify_trade_telegram", "notify_daily_telegram", "notify_picks_telegram",
   ];
   const { key, value } = req.body as { key: string; value: string };
   if (!allowed.includes(key) || !["true", "false"].includes(value)) {
@@ -3124,6 +3151,7 @@ app.get("/admin/settings", requireAdmin, async (req: Request, res: Response) => 
     "guest_blur_picks",
     "free_picks_intraday_prices", "free_picks_swing_visible", "free_picks_swing_prices",
     "premium_picks_longterm", "premium_download_reports", "premium_early_telegram",
+    "notify_trade_telegram", "notify_daily_telegram", "notify_picks_telegram",
   ];
   await Promise.all(keys.map(async k => { s[k] = await getSetting(k); }));
 
@@ -3242,6 +3270,13 @@ app.get("/admin/settings", requireAdmin, async (req: Request, res: Response) => 
       ${toggle("premium_picks_longterm", "📅 Premium: Long-term Picks", "Premium users get access to long-term picks (months-to-years horizon).")}
       ${toggle("premium_download_reports", "⬇ Premium: Download Reports", "Premium users can download paper trade history, portfolio summary and picks as CSV.")}
       ${toggle("premium_early_telegram", "📱 Premium: Early Telegram Alerts", "Show Telegram channel link to premium users prominently as an early-access perk.")}
+    </div>
+
+    <div class="settings-section">
+      <h2>📲 Telegram Notifications <span style="font-size:11px;font-weight:400;color:var(--text-dim)">(Bot alerts via Telegram)</span></h2>
+      ${toggle("notify_trade_telegram", "📊 Notify: Trade Open/Close", "Send Telegram message when bot opens or closes a paper trade.")}
+      ${toggle("notify_daily_telegram", "📅 Notify: Daily Summary", "Send daily P&L summary to Telegram at market close (4:00 PM IST).")}
+      ${toggle("notify_picks_telegram", "🎯 Notify: New Picks Alert", "Send Telegram alert when today's picks list is updated.")}
     </div>
   </div>
 
@@ -5494,7 +5529,7 @@ app.get("/today", async (req: Request, res: Response) => {
   const intradayPrices   = isPremium ? true : (isLoggedIn ? freeIntradayPrices : !guestBlurPicks);
   const swingVisible     = isLoggedIn ? (isPremium ? true : freeSwingVisible) : false;
   const swingPrices      = isPremium ? true : (isLoggedIn && freeSwingPrices);
-  const longtermVisible  = !premiumLongterm ? isLoggedIn : isPremium;
+  const longtermVisible  = true; // Long-term picks visible to all; prices locked per tier
   const longtermPrices   = isPremium;
 
   const intradaySection  = renderSection("⚡", "Intraday Picks", "Same-day entry & exit", intradayPicks, intradayVisible, intradayPrices, "Free");
@@ -5527,7 +5562,7 @@ app.get("/today", async (req: Request, res: Response) => {
         <div class="picks-disclaimer-banner">📋 Picks are selected based on <strong>last market close data</strong> — fundamentals, price action &amp; signals analysed post-market. Entry zones are reference prices only. <strong>Not SEBI registered. Not investment advice. Do your own research.</strong></div>
       </div>
       <div class="picks-hero-meta">
-        <span class="picks-hero-updated">🕐 ${new Date().toLocaleDateString("en-IN",{day:"2-digit",month:"short",year:"numeric"})}</span>
+        <span class="picks-hero-updated">⏱ Last refreshed: ${new Date().toLocaleString("en-IN",{day:"2-digit",month:"short",year:"numeric",hour:"2-digit",minute:"2-digit",timeZone:"Asia/Kolkata"})} IST</span>
         <span class="sig-tier-badge ${tierClass}">${tierLabel}</span>
       </div>
     </div>
@@ -6492,7 +6527,7 @@ app.get("/paper-trade", featureGate("feature_paper_trade_bot", "Paper Trade"), a
       </div>
     </div>
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
-      <a href="/paper-trade/bot-stats" style="font-size:0.8rem;color:var(--text-muted)">View full bot history →</a>
+      <a href="/signals" style="font-size:0.8rem;color:var(--text-muted)">View full bot history →</a>
       ${userIsPremium(req) && (await getSetting("premium_download_reports")) !== "false" ? `
       <a href="/my-paper-trade/export.csv" style="font-size:0.8rem;color:#6366f1;display:inline-flex;align-items:center;gap:4px;background:rgba(99,102,241,0.1);border:1px solid rgba(99,102,241,0.3);padding:4px 10px;border-radius:6px;text-decoration:none">
         ⬇ Download CSV</a>` : 
