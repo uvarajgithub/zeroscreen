@@ -516,6 +516,7 @@ function nav(active: string, req?: Request): string {
       <span></span><span></span><span></span>
     </button>
   </nav>
+  <div class="nav-mob-backdrop" id="nav-mob-backdrop" aria-hidden="true"></div>
   <div class="ticker-wrap" id="ticker-wrap" aria-label="Market news ticker">
     <span class="ticker-label">📰 MARKET</span>
     <div class="ticker-viewport">
