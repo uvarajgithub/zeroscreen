@@ -1490,6 +1490,12 @@ app.get("/", async (req: Request, res: Response) => {
   const rawStocks = await screenStocks(f);
   const hasNextPage = rawStocks.length > PAGE_SIZE;
   const stocks = hasNextPage ? rawStocks.slice(0, PAGE_SIZE) : rawStocks;
+  // Guest blur: limit visible rows for non-logged-in users
+  const isGuest = !req.session?.userId;
+  const guestBlurOn = (await getSetting("guest_blur_screener")) !== "false";
+  const guestPreviewRows = parseInt((await getSetting("guest_screener_preview_rows")) || "10", 10);
+  const visibleStocks = (isGuest && guestBlurOn) ? stocks.slice(0, guestPreviewRows) : stocks;
+  const guestHiddenCount = (isGuest && guestBlurOn) ? Math.max(0, stocks.length - guestPreviewRows) : 0;
   const sectors = await getSectors();
   const todayPicks = await getActivePicks();
   const activeStrategy = req.query.strategy as string | undefined;
@@ -1503,7 +1509,7 @@ app.get("/", async (req: Request, res: Response) => {
   const prevPageQ = new URLSearchParams(paginationQ); prevPageQ.set("page", String(page - 1));
   const nextPageQ = new URLSearchParams(paginationQ); nextPageQ.set("page", String(page + 1));
 
-  const rows = stocks.map(s => {
+  const rows = visibleStocks.map(s => {
     const chgPill = s.change_pct != null
       ? `<span class="${s.change_pct >= 0 ? "pill-up" : "pill-dn"}">${s.change_pct >= 0 ? "+" : ""}${fmt(s.change_pct, 2)}%</span>`
       : "—";
@@ -1984,6 +1990,27 @@ app.get("/", async (req: Request, res: Response) => {
           </thead>
           <tbody>${rows || '<tr><td colspan="12" class="no-data">No results. Try a strategy above or adjust filters.</td></tr>'}</tbody>
         </table>
+        ${guestHiddenCount > 0 ? `
+        <div class="guest-blur-gate">
+          <div class="guest-blur-rows">
+            ${Array.from({length: Math.min(guestHiddenCount, 5)}).map(() => `
+            <div class="guest-blur-row-stub">
+              <span></span><span></span><span></span><span></span>
+              <span></span><span></span><span></span><span></span>
+            </div>`).join("")}
+          </div>
+          <div class="guest-blur-overlay">
+            <div class="guest-blur-cta">
+              <div class="guest-blur-icon">🔒</div>
+              <h3>${guestHiddenCount} more stocks hidden</h3>
+              <p>Sign in free to unlock all ${stocks.length} screener results with full financial data</p>
+              <div style="display:flex;gap:10px;justify-content:center;flex-wrap:wrap">
+                <a href="/login?next=/" class="guest-blur-signin-btn">Sign In Free →</a>
+                <a href="/signup" class="guest-blur-signup-btn">Create Account</a>
+              </div>
+            </div>
+          </div>
+        </div>` : ""}
       </div>
 
       <!-- Pagination -->
@@ -3069,6 +3096,11 @@ app.post("/admin/settings/toggle", requireAdmin, async (req: Request, res: Respo
     "feature_watchlists", "feature_alerts", "feature_compare",
     "feature_strategy_builder", "feature_contact",
     "watchlists_premium_only", "alerts_premium_only", "paper_trade_premium_only",
+    // Tier permission settings
+    "guest_blur_screener", "guest_screener_preview_rows",
+    "guest_blur_picks",
+    "free_picks_intraday_prices", "free_picks_swing_visible", "free_picks_swing_prices",
+    "premium_picks_longterm", "premium_download_reports", "premium_early_telegram",
   ];
   const { key, value } = req.body as { key: string; value: string };
   if (!allowed.includes(key) || !["true", "false"].includes(value)) {
@@ -3088,6 +3120,10 @@ app.get("/admin/settings", requireAdmin, async (req: Request, res: Response) => 
     "feature_watchlists", "feature_alerts", "feature_compare",
     "feature_strategy_builder", "feature_contact",
     "watchlists_premium_only", "alerts_premium_only", "paper_trade_premium_only",
+    "guest_blur_screener", "guest_screener_preview_rows",
+    "guest_blur_picks",
+    "free_picks_intraday_prices", "free_picks_swing_visible", "free_picks_swing_prices",
+    "premium_picks_longterm", "premium_download_reports", "premium_early_telegram",
   ];
   await Promise.all(keys.map(async k => { s[k] = await getSetting(k); }));
 
@@ -3175,6 +3211,37 @@ app.get("/admin/settings", requireAdmin, async (req: Request, res: Response) => 
       ${toggle("watchlists_premium_only", "⭐ Watchlists — Premium Only", "Restrict Watchlists to Premium subscribers and admins.")}
       ${toggle("alerts_premium_only", "🔔 Alerts — Premium Only", "Restrict Alerts to Premium subscribers and admins.")}
       ${toggle("paper_trade_premium_only", "👤 My Paper Trade — Premium Only", "Restrict personal Paper Trading to Premium subscribers and admins.", "Users on the free plan will be redirected to the upgrade page.")}
+
+
+    <div class="settings-section">
+      <h2>👤 Guest Access <span style="font-size:11px;font-weight:400;color:var(--text-dim)">(Visitors who are not signed in)</span></h2>
+      ${toggle("guest_blur_screener", "🔒 Blur Screener for Guests", "Show only a preview of screener results to non-logged-in users. Remaining rows are blurred with a sign-in prompt.")}
+      ${toggle("guest_blur_picks", "🔒 Blur Pick Prices for Guests", "Guests see intraday pick direction only. Entry zone, target and stop loss are locked behind sign-in.")}
+      <div class="setting-row">
+        <div class="setting-info">
+          <div class="setting-title">🔢 Guest Screener Preview Rows</div>
+          <div class="setting-desc">Number of screener rows visible to guests before blur kicks in. Default: 10.</div>
+        </div>
+        <div class="toggle-wrap">
+          <input type="number" id="inp-guest_screener_preview_rows" value="${s['guest_screener_preview_rows'] || '10'}"
+            min="0" max="50" style="width:70px;padding:6px 8px;background:var(--card-bg);border:1px solid var(--border);border-radius:6px;color:var(--text-main);font-size:13px"
+            onchange="saveVal('guest_screener_preview_rows', this.value)">
+        </div>
+      </div>
+    </div>
+
+    <div class="settings-section">
+      <h2>🟢 Free User Tier <span style="font-size:11px;font-weight:400;color:var(--text-dim)">(Signed-in, non-premium)</span></h2>
+      ${toggle("free_picks_intraday_prices", "⚡ Free: Show Intraday Pick Prices", "Free users can see entry zone, target and stop loss for intraday picks.")}
+      ${toggle("free_picks_swing_visible", "🛶 Free: Show Swing Picks Section", "Free users can see the swing picks section (titles + direction). Prices still locked unless swing_prices also ON.")}
+      ${toggle("free_picks_swing_prices", "🔓 Free: Show Swing Prices", "Free users can also see entry/target/SL for swing picks. Normally OFF — keep as premium perk.")}
+    </div>
+
+    <div class="settings-section">
+      <h2>📣 Premium Features <span style="font-size:11px;font-weight:400;color:var(--text-dim)">(Premium subscribers only)</span></h2>
+      ${toggle("premium_picks_longterm", "📅 Premium: Long-term Picks", "Premium users get access to long-term picks (months-to-years horizon).")}
+      ${toggle("premium_download_reports", "⬇ Premium: Download Reports", "Premium users can download paper trade history, portfolio summary and picks as CSV.")}
+      ${toggle("premium_early_telegram", "📱 Premium: Early Telegram Alerts", "Show Telegram channel link to premium users prominently as an early-access perk.")}
     </div>
   </div>
 
@@ -3202,6 +3269,17 @@ app.get("/admin/settings", requireAdmin, async (req: Request, res: Response) => 
         chk.checked = !value;
         showToast('⚠️ Network error');
       }
+    }
+    async function saveVal(key, value) {
+      try {
+        const r = await fetch('/admin/settings/set', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ key, value: String(value) })
+        });
+        if (r.ok) { showToast('✅ Saved'); }
+        else { showToast('⚠️ Failed to save'); }
+      } catch(e) { showToast('⚠️ Network error'); }
     }
     function showToast(msg) {
       const t = document.getElementById('toast');
@@ -5406,15 +5484,17 @@ app.get("/today", async (req: Request, res: Response) => {
     </div>`;
   }
 
-  // Determine visibility + price access per tier
-  // Guest:   intraday visible (prices locked), swing+longterm locked
-  // Free:    intraday visible (prices shown), swing visible (prices locked), longterm locked
-  // Premium/Admin: all visible, all prices shown
+  // Determine visibility + price access per tier (admin-configurable)
+  const guestBlurPicks     = (await getSetting("guest_blur_picks")) !== "false";
+  const freeIntradayPrices = (await getSetting("free_picks_intraday_prices")) !== "false";
+  const freeSwingVisible   = (await getSetting("free_picks_swing_visible")) !== "false";
+  const freeSwingPrices    = (await getSetting("free_picks_swing_prices")) === "true";
+  const premiumLongterm    = (await getSetting("premium_picks_longterm")) !== "false";
   const intradayVisible  = true;
-  const intradayPrices   = isLoggedIn || isPremium;
-  const swingVisible     = isLoggedIn || isPremium;
-  const swingPrices      = isPremium;
-  const longtermVisible  = isPremium;
+  const intradayPrices   = isPremium ? true : (isLoggedIn ? freeIntradayPrices : !guestBlurPicks);
+  const swingVisible     = isLoggedIn ? (isPremium ? true : freeSwingVisible) : false;
+  const swingPrices      = isPremium ? true : (isLoggedIn && freeSwingPrices);
+  const longtermVisible  = !premiumLongterm ? isLoggedIn : isPremium;
   const longtermPrices   = isPremium;
 
   const intradaySection  = renderSection("⚡", "Intraday Picks", "Same-day entry & exit", intradayPicks, intradayVisible, intradayPrices, "Free");
@@ -5723,6 +5803,20 @@ app.get("/admin/trading", requireAdmin, (req: Request, res: Response) => {
 });
 
 
+
+// -- Admin Settings: Set text/number value -----------------------------------
+app.post("/admin/settings/set", requireAdmin, async (req: Request, res: Response) => {
+  const { key, value } = req.body || {};
+  if (!key || typeof key !== "string") { res.status(400).json({ error: "bad key" }); return; }
+  // Whitelist of settable text/number keys
+  const allowed = [
+    "guest_screener_preview_rows", "paper_free_limit",
+    "home_headline", "banner_text", "telegram_link",
+  ];
+  if (!allowed.includes(key)) { res.status(400).json({ error: "key not allowed" }); return; }
+  await setSetting(key, String(value ?? ""));
+  res.json({ ok: true });
+});
 
 // -- Admin Trading: Set Mode -------------------------------------------------
 app.post("/admin/trading/set-mode", requireAdmin, (req: Request, res: Response) => {
@@ -6391,7 +6485,14 @@ app.get("/paper-trade", featureGate("feature_paper_trade_bot", "Paper Trade"), a
         <div class="pt2-stat-val pt2-yellow">${openCount}</div>
       </div>
     </div>
-    <div style="text-align:right;margin-bottom:8px"><a href="/paper-trade/bot-stats" style="font-size:0.8rem;color:var(--text-muted)">View full bot history →</a></div>
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+      <a href="/paper-trade/bot-stats" style="font-size:0.8rem;color:var(--text-muted)">View full bot history →</a>
+      ${userIsPremium(req) && (await getSetting("premium_download_reports")) !== "false" ? `
+      <a href="/my-paper-trade/export.csv" style="font-size:0.8rem;color:#6366f1;display:inline-flex;align-items:center;gap:4px;background:rgba(99,102,241,0.1);border:1px solid rgba(99,102,241,0.3);padding:4px 10px;border-radius:6px;text-decoration:none">
+        ⬇ Download CSV</a>` : 
+      `<a href="/premium" style="font-size:0.8rem;color:#f59e0b;display:inline-flex;align-items:center;gap:4px">
+        🔒 Premium: Download Report</a>`}
+    </div>
 
     <footer class="site-footer"><span>© 2026 ZeroScreen · Paper trading uses virtual money — no real capital at risk · Prices from NSE data updated periodically</span></footer>
   </div>
@@ -7109,6 +7210,30 @@ app.post("/my-paper-trade/config", requireAuth, async (req: Request, res: Respon
 });
 
 // ── GET /my-paper-trade/upgrade ───────────────────────────────────────────────
+// -- My Paper Trade: Download CSV (premium/admin only) ---------------------
+app.get("/my-paper-trade/export.csv", requireAuth, async (req: Request, res: Response) => {
+  const canDownload = userIsPremium(req);
+  const downloadEnabled = (await getSetting("premium_download_reports")) !== "false";
+  if (!canDownload || !downloadEnabled) {
+    res.status(403).send("Premium subscription required to download reports.");
+    return;
+  }
+  const userId = req.session!.userId;
+  const trades = await getPaperTrades(userId, 9999);
+  const header = "Date,Symbol,Company,Action,Qty,Price,Total,PnL,PnL%,Balance After,Type,Traded At\n";
+  const csvRows = trades.map((t) => [
+    (t.traded_at||"").slice(0,10),
+    t.symbol,
+    (t.company_name||"").replace(/,/g,""),
+    t.action, t.qty, t.price, t.total,
+    t.pnl ?? "", t.pnl_pct ?? "",
+    t.balance_after, t.trade_type, t.traded_at
+  ].join(",")).join("\n");
+  res.setHeader("Content-Type", "text/csv");
+  res.setHeader("Content-Disposition", "attachment; filename=paper-trades.csv");
+  res.send(header + csvRows);
+});
+
 app.get("/my-paper-trade/upgrade", requireAuth, async (req: Request, res: Response) => {
   const err       = esc(req.query.err as string || "");
   const activeSub = await getActiveSubscription(req.session.userId!);

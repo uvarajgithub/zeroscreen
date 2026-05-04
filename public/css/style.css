@@ -3109,3 +3109,22 @@ html.dark .about-card { background: var(--bg-card); border-color: var(--border);
 html.dark .idx-ticker-outer { background:var(--bg-card); }
 html.dark .idx-up { background:rgba(52,211,153,.12); color:#34d399; }
 html.dark .idx-dn { background:rgba(248,113,113,.1); color:#f87171; }
+
+/* -- Guest Blur Gate ------------------------------------------------------- */
+.guest-blur-gate { position:relative; margin-top:-4px; border-radius:0 0 12px 12px; overflow:hidden; min-height:140px; }
+.guest-blur-rows { display:flex; flex-direction:column; gap:4px; padding:8px 0; filter:blur(4px); opacity:.35; pointer-events:none; user-select:none; }
+.guest-blur-row-stub { display:flex; gap:12px; padding:10px 16px; background:var(--card-bg); border:1px solid var(--border); border-radius:6px; }
+.guest-blur-row-stub span { background:var(--border); border-radius:4px; height:14px; flex:1; }
+.guest-blur-row-stub span:first-child { flex:0 0 60px; }
+.guest-blur-row-stub span:nth-child(2) { flex:0 0 140px; }
+.guest-blur-overlay { position:absolute; inset:0; display:flex; align-items:center; justify-content:center; background:linear-gradient(to bottom, rgba(15,23,42,.3) 0%, rgba(15,23,42,.97) 55%); z-index:10; }
+.guest-blur-cta { text-align:center; padding:1.5rem 2rem; }
+.guest-blur-icon { font-size:2rem; margin-bottom:.5rem; }
+.guest-blur-cta h3 { font-size:1.1rem; font-weight:700; color:var(--text-main,#f1f5f9); margin:0 0 .5rem; }
+.guest-blur-cta p { font-size:.85rem; color:#94a3b8; margin:0 0 1.2rem; }
+.guest-blur-signin-btn { background:#6366f1; color:#fff; padding:.55rem 1.3rem; border-radius:8px; font-size:.85rem; font-weight:600; text-decoration:none; }
+.guest-blur-signin-btn:hover { background:#4f46e5; }
+.guest-blur-signup-btn { background:transparent; color:#94a3b8; border:1px solid #334155; padding:.55rem 1.3rem; border-radius:8px; font-size:.85rem; font-weight:600; text-decoration:none; }
+.guest-blur-signup-btn:hover { color:#f1f5f9; border-color:#64748b; }
+/* Admin settings: tier section */
+.setting-row input[type=number] { width:70px; padding:6px 8px; background:var(--card-bg); border:1px solid var(--border); border-radius:6px; color:var(--text-main); font-size:13px; }
