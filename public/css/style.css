@@ -2656,7 +2656,7 @@ html.dark .dash-locked-overlay { background: rgba(0,0,0,0.55); }
   border-bottom: 1px solid var(--border); margin-bottom: 8px;
 }
 html.dark .picks-data-note { color: #64748b; border-color: var(--border); }
-.picks-grid { display: grid; grid-template-columns: repeat(auto-fill,minmax(180px,1fr)); gap: 10px; padding-bottom: 40px; }
+.picks-grid { display: grid; grid-template-columns: repeat(auto-fill,minmax(240px,1fr)); gap: 14px; padding-bottom: 40px; }
 .picks-empty {
   text-align: center; padding: 72px 20px; color: var(--text-muted);
   background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius-xl);
@@ -2665,8 +2665,8 @@ html.dark .picks-data-note { color: #64748b; border-color: var(--border); }
 .picks-empty span { font-size: 48px; display: block; margin-bottom: 14px; }
 .picks-empty p { font-size: 15px; }
 .pick-card {
-  background: var(--bg-card); border: 1px solid var(--border); border-radius: 10px;
-  padding: 10px; display: flex; flex-direction: column; gap: 6px;
+  background: var(--bg-card); border: 1px solid var(--border); border-radius: 12px;
+  padding: 16px; display: flex; flex-direction: column; gap: 8px;
   box-shadow: 0 2px 8px rgba(0,0,0,0.05); transition: box-shadow 0.2s, transform 0.15s;
   border-top: 3px solid var(--border);
 }
@@ -2676,7 +2676,7 @@ html.dark .pick-card-long  { background: linear-gradient(180deg, rgba(16,185,129
 html.dark .pick-card-short { background: linear-gradient(180deg, rgba(239,68,68,0.07) 0%, var(--bg-card) 40%); }
 .pick-card:hover { box-shadow: 0 8px 28px rgba(0,0,0,0.12); transform: translateY(-3px); }
 .pick-card-top { display: flex; justify-content: space-between; align-items: flex-start; }
-.pick-symbol { font-size: 14px; font-weight: 900; letter-spacing: -0.2px; }
+.pick-symbol { font-size: 15px; font-weight: 900; letter-spacing: -0.3px; }
 .pick-company { display: block; font-size: 12px; color: var(--text-muted); margin-top: 2px; }
 .pick-badge-long {
   background: rgba(16,185,129,0.12); color: #059669; font-size: 12px; font-weight: 800;
@@ -2690,13 +2690,13 @@ html.dark .pick-card-short { background: linear-gradient(180deg, rgba(239,68,68,
 }
 .pick-entry-zone {
   display: flex; justify-content: space-between; align-items: center;
-  padding: 6px 10px; background: linear-gradient(135deg, rgba(234,88,12,0.07), rgba(249,115,22,0.04));
+  padding: 9px 12px; background: linear-gradient(135deg, rgba(234,88,12,0.07), rgba(249,115,22,0.04));
   border-radius: 8px; border: 1px solid rgba(234,88,12,0.15);
 }
 html.dark .pick-entry-zone { background: rgba(234,88,12,0.1); border-color: rgba(234,88,12,0.2); }
 .pick-entry-label { font-size: 9px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.6px; font-weight: 700; }
-.pick-entry-val { font-size: 13px; font-weight: 900; color: var(--text); }
-.pick-tp, .pick-sl { display: flex; justify-content: space-between; align-items: center; font-size: 12px; padding: 3px 8px; border-radius: 6px; }
+.pick-entry-val { font-size: 14px; font-weight: 900; color: var(--text); }
+.pick-tp, .pick-sl { display: flex; justify-content: space-between; align-items: center; font-size: 12px; padding: 5px 10px; border-radius: 6px; }
 .pick-tp { background: rgba(16,185,129,0.06); }
 .pick-sl { background: rgba(239,68,68,0.06); }
 .pick-tp-label { color: #059669; font-weight: 600; font-size: 11px; }
@@ -2747,7 +2747,7 @@ html.dark .pick-entry-zone { background: rgba(234,88,12,0.1); border-color: rgba
 }
 .picks-section .picks-grid {
   border: 1px solid rgba(234,88,12,0.12); border-top: none;
-  border-radius: 0 0 14px 14px; padding: 16px; background: var(--bg-card);
+  border-radius: 0 0 14px 14px; padding: 20px; background: var(--bg-card);
 }
 html.dark .picks-section .picks-grid {
   background: var(--bg2);

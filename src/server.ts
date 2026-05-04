@@ -3234,7 +3234,7 @@ app.get("/admin/settings", requireAdmin, async (req: Request, res: Response) => 
       <h2>🟢 Free User Tier <span style="font-size:11px;font-weight:400;color:var(--text-dim)">(Signed-in, non-premium)</span></h2>
       ${toggle("free_picks_intraday_prices", "⚡ Free: Show Intraday Pick Prices", "Free users can see entry zone, target and stop loss for intraday picks.")}
       ${toggle("free_picks_swing_visible", "🛶 Free: Show Swing Picks Section", "Free users can see the swing picks section (titles + direction). Prices still locked unless swing_prices also ON.")}
-      ${toggle("free_picks_swing_prices", "🔓 Free: Show Swing Prices", "Free users can also see entry/target/SL for swing picks. Normally OFF — keep as premium perk.")}
+      ${toggle("free_picks_swing_prices", "🔓 Free: Show Swing Pick Prices", "Free users can see entry/target/SL for swing picks. Turn OFF to make swing prices premium-only.")}
     </div>
 
     <div class="settings-section">
@@ -5479,7 +5479,7 @@ app.get("/today", async (req: Request, res: Response) => {
         </div>
         <span class="picks-section-count">${sectionPicks.length} pick${sectionPicks.length !== 1 ? 's' : ''}</span>
       </div>
-      ${!showPrices ? `<div class="picks-prices-locked-bar">🔒 Entry, target &amp; stop loss prices require <a href="/premium">Premium</a></div>` : ""}
+      ${!showPrices && !isLoggedIn ? `<div class="picks-prices-locked-bar">🔒 Entry, target &amp; stop loss prices require <a href="/login?next=/today">Sign In</a> or <a href="/premium">Premium</a></div>` : (!showPrices && isLoggedIn ? `<div class="picks-prices-locked-bar">📣 Swing &amp; long-term price details require <a href="/premium">Premium →</a></div>` : "")}
       <div class="picks-grid">${sectionPicks.map(p => renderPickCard(p, showPrices)).join("")}</div>
     </div>`;
   }
@@ -5488,7 +5488,7 @@ app.get("/today", async (req: Request, res: Response) => {
   const guestBlurPicks     = (await getSetting("guest_blur_picks")) !== "false";
   const freeIntradayPrices = (await getSetting("free_picks_intraday_prices")) !== "false";
   const freeSwingVisible   = (await getSetting("free_picks_swing_visible")) !== "false";
-  const freeSwingPrices    = (await getSetting("free_picks_swing_prices")) === "true";
+  const freeSwingPrices    = (await getSetting("free_picks_swing_prices")) !== "false";
   const premiumLongterm    = (await getSetting("premium_picks_longterm")) !== "false";
   const intradayVisible  = true;
   const intradayPrices   = isPremium ? true : (isLoggedIn ? freeIntradayPrices : !guestBlurPicks);
@@ -6277,19 +6277,40 @@ app.get("/paper-trade", featureGate("feature_paper_trade_bot", "Paper Trade"), a
 
     ${!isLoggedIn ? `
     <!-- SIGN-IN GATE -->
-    <div class="pt2-gate">
-      <div class="pt2-gate-icon">📋</div>
-      <div class="pt2-gate-title">Paper Trade Any NSE Stock — Free</div>
-      <div class="pt2-gate-sub">Create a free account to get ₹1,00,000 virtual cash and start practising trades with zero real risk.</div>
-      <a href="/login?next=/paper-trade" class="pt2-gate-btn">🔑 Sign In to Start Trading →</a>
-      <div style="margin-top:12px"><a href="/signup" style="font-size:0.85rem;color:var(--text-muted)">No account? Sign up free →</a></div>
-    </div>
-
-    <div class="pt2-features">
-      <div class="pt2-feat"><div class="pt2-feat-icon">💰</div><div class="pt2-feat-label">₹1,00,000 Virtual Cash</div><div class="pt2-feat-desc">Start with real-scale capital</div></div>
-      <div class="pt2-feat"><div class="pt2-feat-icon">📈</div><div class="pt2-feat-label">1,700+ NSE Stocks</div><div class="pt2-feat-desc">Trade any NSE-listed stock</div></div>
-      <div class="pt2-feat"><div class="pt2-feat-icon">🕐</div><div class="pt2-feat-label">Intraday & Holding</div><div class="pt2-feat-desc">Both trade types supported</div></div>
-      <div class="pt2-feat"><div class="pt2-feat-icon">📊</div><div class="pt2-feat-label">Live P&L Tracking</div><div class="pt2-feat-desc">Real NSE prices from DB</div></div>
+    <!-- SIGN-IN GATE with blurred form background -->
+    <div style="position:relative;margin-bottom:28px">
+      <!-- Blurred mock of trade form -->
+      <div style="filter:blur(7px);opacity:.3;pointer-events:none;user-select:none" aria-hidden="true">
+        <div class="pt2-trade-card">
+          <div class="pt2-card-hdr"><div class="pt2-card-title">💸 New Order</div></div>
+          <div class="pt2-card-body" style="padding:16px">
+            <div style="height:40px;background:var(--bg2);border:1px solid var(--border);border-radius:8px;margin-bottom:12px"></div>
+            <div style="display:flex;gap:12px;margin-bottom:12px">
+              <div style="height:36px;flex:0 0 90px;background:var(--bg2);border:1px solid var(--border);border-radius:8px"></div>
+              <div style="height:36px;flex:0 0 110px;background:var(--bg2);border:1px solid var(--border);border-radius:8px"></div>
+              <div style="height:36px;flex:1;background:var(--bg2);border:1px solid var(--border);border-radius:8px"></div>
+            </div>
+            <div style="display:flex;justify-content:flex-end">
+              <div style="height:44px;width:140px;background:#059669;border-radius:10px;opacity:.6"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <!-- Overlay -->
+      <div style="position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;background:linear-gradient(to bottom,rgba(15,23,42,.1) 0%,rgba(15,23,42,.9) 45%);border-radius:14px;padding:28px;text-align:center">
+        <div style="font-size:2.2rem">📏</div>
+        <div style="font-size:1.1rem;font-weight:800;color:#f1f5f9">Paper Trade Any NSE Stock — Free</div>
+        <div style="font-size:.83rem;color:#94a3b8;max-width:320px">₹1,00,000 virtual cash to practise buying &amp; selling any NSE stock. Zero real risk.</div>
+        <div style="display:flex;gap:10px;flex-wrap:wrap;justify-content:center">
+          <a href="/login?next=/paper-trade" style="background:linear-gradient(135deg,#10b981,#059669);color:#fff;padding:11px 28px;border-radius:10px;font-size:.9rem;font-weight:700;text-decoration:none">🔎 Sign In to Start Trading →</a>
+          <a href="/signup" style="background:transparent;color:#94a3b8;border:1px solid #334155;padding:11px 22px;border-radius:10px;font-size:.87rem;font-weight:700;text-decoration:none">Create Free Account</a>
+        </div>
+        <div style="display:flex;gap:24px;flex-wrap:wrap;justify-content:center;margin-top:4px">
+          <span style="font-size:.74rem;color:#475569">✓ ₹1,00,000 Virtual Cash</span>
+          <span style="font-size:.74rem;color:#475569">✓ 1,700+ NSE Stocks</span>
+          <span style="font-size:.74rem;color:#475569">✓ Zero Real Risk</span>
+        </div>
+      </div>
     </div>
 
     ` : `
@@ -8348,6 +8369,26 @@ app.get("/signals", featureGate("feature_signals", "Signals"), (req, res) => {
       </table>
     </div>
 
+    ${!loggedIn ? `
+    <!-- GUEST: blur overlay signin gate -->
+    <div style="position:relative;margin:20px 0;border-radius:14px;overflow:hidden">
+      <div style="filter:blur(5px);opacity:.35;pointer-events:none;padding:20px;background:var(--card-bg,#1e293b);border:1px solid var(--border,#334155);border-radius:14px">
+        <div style="height:13px;background:#334155;border-radius:6px;margin-bottom:10px;width:55%"></div>
+        <div style="height:11px;background:#334155;border-radius:6px;margin-bottom:8px;width:75%"></div>
+        <div style="height:11px;background:#334155;border-radius:6px;margin-bottom:8px;width:65%"></div>
+        <div style="height:11px;background:#334155;border-radius:6px;width:45%"></div>
+      </div>
+      <div style="position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;background:linear-gradient(to bottom,rgba(15,23,42,.3),rgba(15,23,42,.93));border-radius:14px;padding:24px;text-align:center">
+        <div style="font-size:1.7rem">🔒</div>
+        <div style="font-size:.95rem;font-weight:700;color:#f1f5f9">Sign in to see full live trade history</div>
+        <div style="font-size:.77rem;color:#94a3b8;max-width:280px">Entry/exit prices, P&amp;L per trade, today's performance &amp; weekly history</div>
+        <div style="display:flex;gap:10px;flex-wrap:wrap;justify-content:center">
+          <a href="/login?next=/signals" style="background:#6366f1;color:#fff;padding:9px 22px;border-radius:9px;font-size:.82rem;font-weight:700;text-decoration:none">Sign In Free →</a>
+          <a href="/signup" style="background:transparent;color:#94a3b8;border:1px solid #334155;padding:9px 20px;border-radius:9px;font-size:.82rem;font-weight:700;text-decoration:none">Create Account</a>
+        </div>
+      </div>
+    </div>` : `
+    <!-- LOGGED-IN: Upgrade CTA -->
     <div class="gv-cta">
       <div class="gv-cta-icon">&#x26A1;</div>
       <div class="gv-cta-body">
@@ -8355,7 +8396,7 @@ app.get("/signals", featureGate("feature_signals", "Signals"), (req, res) => {
         <p>Premium shows live entry &amp; exit, P&amp;L per trade, full history &amp; daily reports.</p>
       </div>
       <a href="/premium" class="gv-btn">Upgrade &#x2192;</a>
-    </div>
+    </div>`}
 
     <footer class="site-footer"><span>&#xA9; 2026 ZeroScreen &#x2014; For informational purposes only. Not SEBI registered. Not investment advice. Trading involves substantial risk.</span></footer>
   </div>
