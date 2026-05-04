@@ -3427,10 +3427,8 @@ body.nav-drawer-open { overflow: hidden; }
   display: none;
   position: fixed;
   inset: 0;
-  z-index: 998;
+  z-index: 1100;
   background: rgba(0, 0, 0, 0.55);
-  backdrop-filter: blur(3px);
-  -webkit-backdrop-filter: blur(3px);
   animation: none;
 }
 .nav-mob-backdrop.open {
@@ -3452,7 +3450,7 @@ body.nav-drawer-open { overflow: hidden; }
     width: min(300px, 82vw) !important;
     height: 100dvh !important;
     min-height: 100vh !important;
-    z-index: 999 !important;
+    z-index: 1200 !important;
     background: var(--bg, #fff) !important;
     border-right: 1px solid var(--border) !important;
     border-top: none !important;
@@ -3598,7 +3596,7 @@ body.nav-drawer-open { overflow: hidden; }
   }
 
   /* ── Hamburger becomes X when open ── */
-  .hamburger { z-index: 1000; }
+  .hamburger { z-index: 1300; }
 }
 
 /* ── Dark mode drawer ── */
@@ -3610,7 +3608,7 @@ html.dark .nav-links .nav-more-btn { background: var(--bg3) !important; }
 html.dark .nav-links .nav-more-drop { background: var(--bg3) !important; }
 
 /* ── News ticker: hide on small mobile (show only indices) ── */
-@media (max-width: 600px) {
+@media (max-width: 768px) {
   .ticker-wrap { display: none !important; }
 }
 
