@@ -7663,7 +7663,7 @@ app.get("/signals", featureGate("feature_signals", "Signals"), (req, res) => {
               </td>
               <td>${t.reasonExit ? `<span class="sig3-rc ${rcCls(t.reasonExit).replace("rc-", "sig3-rc-")}">${t.reasonExit}</span>` : "&mdash;"}</td>
             </tr>`).join("");
-        })()
+        })()}
         </tbody>
       </table>
     </div>
