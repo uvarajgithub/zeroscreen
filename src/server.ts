@@ -3928,6 +3928,29 @@ function computeAnalytics(trades: any[]) {
     if (dd > todayMaxDD) todayMaxDD = dd;
   }
 
+  // Weekly P&L (last 7 days)
+  const nowIST = new Date(new Date().toLocaleString("en-US", { timeZone: "Asia/Kolkata" }));
+  const wkAgo = new Date(nowIST); wkAgo.setDate(nowIST.getDate() - 7);
+  const wkTrades = trades.filter((t: any) => t.date && new Date(t.date) >= wkAgo);
+  const wkWins = wkTrades.filter((t: any) => t.pnl > 0).length;
+  const wkPnl = parseFloat(wkTrades.reduce((s: number, t: any) => s + (t.pnl ?? 0), 0).toFixed(1));
+
+  // Monthly breakdown
+  const monthMap: Record<string, { trades: number; wins: number; losses: number; pnl: number }> = {};
+  for (const t of trades) {
+    if (!t.date) continue;
+    const mk = t.date.slice(0, 7);
+    if (!monthMap[mk]) monthMap[mk] = { trades: 0, wins: 0, losses: 0, pnl: 0 };
+    monthMap[mk].trades++;
+    monthMap[mk].pnl = parseFloat((monthMap[mk].pnl + (t.pnl ?? 0)).toFixed(1));
+    if ((t.pnl ?? 0) > 0) monthMap[mk].wins++; else monthMap[mk].losses++;
+  }
+  const monthly = Object.keys(monthMap).sort().map(month => ({
+    month,
+    ...monthMap[month],
+    winRate: monthMap[month].trades > 0 ? parseFloat(((monthMap[month].wins / monthMap[month].trades) * 100).toFixed(1)) : 0,
+  }));
+
   return {
     today: {
       trades: todayTrades.length,
@@ -3936,6 +3959,13 @@ function computeAnalytics(trades: any[]) {
       pnl: parseFloat(todayEq.toFixed(1)),
       maxDD: parseFloat(todayMaxDD.toFixed(1)),
     },
+    weekly: {
+      trades: wkTrades.length,
+      wins: wkWins,
+      losses: wkTrades.length - wkWins,
+      pnl: wkPnl,
+    },
+    monthly,
     allTime: {
       trades: allTotal,
       wins: allWins,
