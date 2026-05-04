@@ -248,7 +248,7 @@ function requireAuth(req: Request, res: Response, next: NextFunction) {
 
 function requireAdmin(req: Request, res: Response, next: NextFunction) {
   if (!req.session.userId) { res.redirect("/login?next=" + encodeURIComponent(req.path)); return; }
-  if (req.session.userRole !== "admin") { res.status(403).send(`<!DOCTYPE html><html><head><title>Access Denied</title><link rel="stylesheet" href="/public/css/style.css"></head><body>${nav("", req)}<div class="container"><div class="admin-denied"><h2>🔒 Admin Only</h2><p>You don't have permission to view this page.</p><a href="/" class="btn-primary">Back to Screener</a></div></div></body></html>`); return; }
+  if (req.session.userRole !== "admin") { res.status(403).send(`<!DOCTYPE html><html><head><title>Access Denied</title><link rel="stylesheet" href="/public/css/style.css?v=5"></head><body>${nav("", req)}<div class="container"><div class="admin-denied"><h2>🔒 Admin Only</h2><p>You don't have permission to view this page.</p><a href="/" class="btn-primary">Back to Screener</a></div></div></body></html>`); return; }
   next();
 }
 
@@ -261,7 +261,7 @@ function featureGate(settingKey: string, featureName: string) {
 <html lang="en"><head>
   <meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
   <title>${featureName} Unavailable — ZeroScreen</title>
-  <link rel="stylesheet" href="/public/css/style.css">
+  <link rel="stylesheet" href="/public/css/style.css?v=5">
 </head><body>
   ${nav("", req)}
   <div class="container" style="text-align:center;padding:80px 20px">
@@ -270,7 +270,7 @@ function featureGate(settingKey: string, featureName: string) {
     <p style="color:var(--text-dim);margin-bottom:24px">This feature is currently disabled by the administrator.</p>
     <a href="/" class="btn-primary">← Back to Screener</a>
   </div>
-  <script src="/public/js/app.js"></script>
+  <script src="/public/js/app.js?v=5"></script>
 </body></html>`);
       return;
     }
@@ -561,7 +561,7 @@ function authLayout(title: string, content: string): string {
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>${title} — ZeroScreen</title>
-  <link rel="stylesheet" href="/public/css/style.css">
+  <link rel="stylesheet" href="/public/css/style.css?v=5">
 </head>
 <body class="auth-body">
   <div class="auth-wrapper">
@@ -600,7 +600,7 @@ app.get("/signup", featureGate("registration_open", "New Registrations"), (req: 
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>Create Account — ZeroScreen</title>
-  <link rel="stylesheet" href="/public/css/style.css">
+  <link rel="stylesheet" href="/public/css/style.css?v=5">
   <style>
     /* ── Tier Score Dots ── */
     .tier-scores { display:flex; flex-direction:column; gap:10px; margin:24px 0; }
@@ -894,7 +894,7 @@ app.get("/login", (req: Request, res: Response) => {
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>Sign In — ZeroScreen</title>
-  <link rel="stylesheet" href="/public/css/style.css">
+  <link rel="stylesheet" href="/public/css/style.css?v=5">
   <style>
     /* ── Live status cards ── */
     .login-live-cards { display: flex; flex-direction: column; gap: 10px; margin: 24px 0 20px; }
@@ -1246,7 +1246,7 @@ app.get("/profile", requireAuth, async (req: Request, res: Response) => {
 <head>
   <meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
   <title>Profile — ZeroScreen</title>
-  <link rel="stylesheet" href="/public/css/style.css">
+  <link rel="stylesheet" href="/public/css/style.css?v=5">
 </head>
 <body>
   ${nav("profile", req)}
@@ -1296,7 +1296,7 @@ app.get("/profile", requireAuth, async (req: Request, res: Response) => {
       <div class="profile-info-row"><span>Member since</span><strong>${new Date(user.created_at).toLocaleDateString("en-IN", { day: "2-digit", month: "long", year: "numeric" })}</strong></div>
     </div>
   </div>
-  <script src="/public/js/app.js"></script>
+  <script src="/public/js/app.js?v=5"></script>
 </body>
 </html>`);
 });
@@ -1333,7 +1333,7 @@ app.get("/verify-mobile", requireAuth, (req: Request, res: Response) => {
   res.send(`<!DOCTYPE html><html lang="en"><head>
   <meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
   <title>Verify Mobile — ZeroScreen</title>
-  <link rel="stylesheet" href="/public/css/style.css">
+  <link rel="stylesheet" href="/public/css/style.css?v=5">
   <style>
     .vm-card{max-width:420px;margin:60px auto;background:var(--card-bg);border:1px solid var(--border);border-radius:16px;padding:32px 36px}
     .vm-title{font-size:1.4rem;font-weight:800;margin-bottom:6px}
@@ -1370,7 +1370,7 @@ app.get("/verify-mobile", requireAuth, (req: Request, res: Response) => {
     <div class="vm-note"><a href="/verify-mobile">Resend OTP</a></div>`}
   </div>
 </div>
-<script src="/public/js/app.js"></script></body></html>`);
+<script src="/public/js/app.js?v=5"></script></body></html>`);
 });
 
 // POST /verify-mobile/send — generate & send OTP
@@ -1566,7 +1566,7 @@ app.get("/", async (req: Request, res: Response) => {
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>ZeroScreen — NSE Stock Screener</title>
-  <link rel="stylesheet" href="/public/css/style.css">
+  <link rel="stylesheet" href="/public/css/style.css?v=5">
 </head>
 <body>
   ${nav("home", req)}
@@ -2223,7 +2223,7 @@ app.get("/", async (req: Request, res: Response) => {
     <span>© 2026 ZeroScreen &mdash; For informational purposes only. Not SEBI registered. Not investment advice. Past data does not guarantee future returns. Invest at your own risk.</span>
   </footer>
 
-  <script src="/public/js/app.js"></script>
+  <script src="/public/js/app.js?v=5"></script>
 </body>
 </html>`);
 });
@@ -2235,7 +2235,7 @@ app.get("/stock/:symbol", async (req: Request, res: Response) => {
 
   if (!s) {
     res.status(404).send(`<!DOCTYPE html><html><head><title>Not Found</title>
-    <link rel="stylesheet" href="/public/css/style.css"></head><body>
+    <link rel="stylesheet" href="/public/css/style.css?v=5"></head><body>
     ${nav("", req)}<div class="container"><h2>Stock "${symbol}" not found in database.</h2>
     <p><a href="/">Back to Screener</a></p></div></body></html>`);
     return;
@@ -2269,7 +2269,7 @@ app.get("/stock/:symbol", async (req: Request, res: Response) => {
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>${symbol} — ${s.company_name || "Stock"} — ZeroScreen</title>
-  <link rel="stylesheet" href="/public/css/style.css">
+  <link rel="stylesheet" href="/public/css/style.css?v=5">
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.2/dist/chart.umd.min.js"></script>
 </head>
 <body>
@@ -2598,7 +2598,7 @@ app.get("/stock/:symbol", async (req: Request, res: Response) => {
     loadStockNews();
   })();
   </script>
-  <script src="/public/js/app.js"></script>
+  <script src="/public/js/app.js?v=5"></script>
 </body>
 </html>`);
 });
@@ -2622,7 +2622,7 @@ app.get("/watchlists", requireAuth, featureGate("feature_watchlists", "Watchlist
 <head>
   <meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
   <title>Watchlists — ZeroScreen</title>
-  <link rel="stylesheet" href="/public/css/style.css">
+  <link rel="stylesheet" href="/public/css/style.css?v=5">
 </head>
 <body>
   ${nav("watchlists", req)}
@@ -2661,7 +2661,7 @@ app.get("/watchlists", requireAuth, featureGate("feature_watchlists", "Watchlist
       if (r.ok) location.reload(); else alert('Error');
     }
   </script>
-  <script src="/public/js/app.js"></script>
+  <script src="/public/js/app.js?v=5"></script>
 </body>
 </html>`);
 });
@@ -2689,7 +2689,7 @@ app.get("/watchlists/:id", requireAuth, async (req: Request, res: Response) => {
 <head>
   <meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
   <title>${wl.name} — ZeroScreen</title>
-  <link rel="stylesheet" href="/public/css/style.css">
+  <link rel="stylesheet" href="/public/css/style.css?v=5">
 </head>
 <body>
   ${nav("watchlists", req)}
@@ -2720,7 +2720,7 @@ app.get("/watchlists/:id", requireAuth, async (req: Request, res: Response) => {
       if (r.ok) location.reload(); else alert('Error');
     }
   </script>
-  <script src="/public/js/app.js"></script>
+  <script src="/public/js/app.js?v=5"></script>
 </body>
 </html>`);
 });
@@ -2778,7 +2778,7 @@ app.get("/admin", requireAdmin, async (req: Request, res: Response) => {
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>Admin Overview — ZeroScreen</title>
-  <link rel="stylesheet" href="/public/css/style.css">
+  <link rel="stylesheet" href="/public/css/style.css?v=5">
 </head>
 <body>
   ${nav("admin", req)}
@@ -2840,7 +2840,7 @@ app.get("/admin", requireAdmin, async (req: Request, res: Response) => {
       </div>
     </div>
   </div>
-  <script src="/public/js/app.js"></script>
+  <script src="/public/js/app.js?v=5"></script>
 </body>
 </html>`);
 });
@@ -2908,7 +2908,7 @@ app.get("/admin/users", requireAdmin, async (req: Request, res: Response) => {
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>Users — ZeroScreen Admin</title>
-  <link rel="stylesheet" href="/public/css/style.css">
+  <link rel="stylesheet" href="/public/css/style.css?v=5">
 </head>
 <body>
   ${nav("admin-users", req)}
@@ -2958,7 +2958,7 @@ app.get("/admin/users", requireAdmin, async (req: Request, res: Response) => {
       </table>
     </div>
   </div>
-  <script src="/public/js/app.js"></script>
+  <script src="/public/js/app.js?v=5"></script>
 </body>
 </html>`);
 });
@@ -3027,7 +3027,7 @@ app.get("/admin/data", requireAdmin, async (req: Request, res: Response) => {
 <head>
   <meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
   <title>Data Control — ZeroScreen Admin</title>
-  <link rel="stylesheet" href="/public/css/style.css">
+  <link rel="stylesheet" href="/public/css/style.css?v=5">
   <style>
     .settings-section { margin-top:32px; }
     .settings-section h2 { font-size:16px; font-weight:600; margin-bottom:16px; color:var(--text-main); }
@@ -3110,7 +3110,7 @@ app.get("/admin/data", requireAdmin, async (req: Request, res: Response) => {
 
 
   </script>
-  <script src="/public/js/app.js"></script>
+  <script src="/public/js/app.js?v=5"></script>
 </body>
 </html>`);
 });
@@ -3191,7 +3191,7 @@ app.get("/admin/support", requireAdmin, async (req: Request, res: Response) => {
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>Support Inbox — ZeroScreen Admin</title>
-  <link rel="stylesheet" href="/public/css/style.css">
+  <link rel="stylesheet" href="/public/css/style.css?v=5">
 </head>
 <body>
   \${nav("admin-support", req)}
@@ -3243,7 +3243,7 @@ app.get("/admin/support", requireAdmin, async (req: Request, res: Response) => {
     }
   });
   </script>
-  <script src="/public/js/app.js"></script>
+  <script src="/public/js/app.js?v=5"></script>
 </body>
 </html>`);
 });
@@ -3306,7 +3306,7 @@ app.get("/admin/settings", requireAdmin, async (req: Request, res: Response) => 
 <head>
   <meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
   <title>Feature Settings — ZeroScreen Admin</title>
-  <link rel="stylesheet" href="/public/css/style.css">
+  <link rel="stylesheet" href="/public/css/style.css?v=5">
   <style>
     .settings-section { margin-top:28px; }
     .settings-section h2 { font-size:15px; font-weight:700; margin-bottom:14px; color:var(--text-main); padding-bottom:8px; border-bottom:1px solid var(--border); }
@@ -3451,7 +3451,7 @@ app.get("/admin/settings", requireAdmin, async (req: Request, res: Response) => 
       setTimeout(() => t.classList.remove('show'), 2200);
     }
   </script>
-  <script src="/public/js/app.js"></script>
+  <script src="/public/js/app.js?v=5"></script>
 </body>
 </html>`);
 });
@@ -3515,7 +3515,7 @@ app.get("/compare", featureGate("feature_compare", "Compare"), async (req: Reque
 <head>
   <meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
   <title>Compare Stocks — ZeroScreen</title>
-  <link rel="stylesheet" href="/public/css/style.css">
+  <link rel="stylesheet" href="/public/css/style.css?v=5">
 </head>
 <body>
   ${nav("compare", req)}
@@ -3590,7 +3590,7 @@ app.get("/compare", featureGate("feature_compare", "Compare"), async (req: Reque
       });
     });
   </script>
-  <script src="/public/js/app.js"></script>
+  <script src="/public/js/app.js?v=5"></script>
 </body>
 </html>`);
     return;
@@ -3639,7 +3639,7 @@ app.get("/compare", featureGate("feature_compare", "Compare"), async (req: Reque
 <head>
   <meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
   <title>Compare: ${symbolList} — ZeroScreen</title>
-  <link rel="stylesheet" href="/public/css/style.css">
+  <link rel="stylesheet" href="/public/css/style.css?v=5">
 </head>
 <body>
   ${nav("compare", req)}
@@ -3683,7 +3683,7 @@ app.get("/compare", featureGate("feature_compare", "Compare"), async (req: Reque
       location.reload();
     }
   </script>
-  <script src="/public/js/app.js"></script>
+  <script src="/public/js/app.js?v=5"></script>
 </body>
 </html>`);
 });
@@ -3720,7 +3720,7 @@ app.get("/alerts", requireAuth, featureGate("feature_alerts", "Alerts"), premium
 <head>
   <meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
   <title>Alerts — ZeroScreen</title>
-  <link rel="stylesheet" href="/public/css/style.css">
+  <link rel="stylesheet" href="/public/css/style.css?v=5">
 </head>
 <body>
   ${nav("alerts", req)}
@@ -3749,7 +3749,7 @@ app.get("/alerts", requireAuth, featureGate("feature_alerts", "Alerts"), premium
       if (r.ok) location.reload(); else alert('Error deleting alert');
     }
   </script>
-  <script src="/public/js/app.js"></script>
+  <script src="/public/js/app.js?v=5"></script>
 </body>
 </html>`);
 });
@@ -4024,7 +4024,7 @@ app.get("/contact", featureGate("feature_contact", "Contact"), (req: Request, re
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>Contact Us — ZeroScreen</title>
-  <link rel="stylesheet" href="/public/css/style.css">
+  <link rel="stylesheet" href="/public/css/style.css?v=5">
 </head>
 <body>
   ${nav("contact", req)}
@@ -4099,7 +4099,7 @@ app.get("/contact", featureGate("feature_contact", "Contact"), (req: Request, re
       </div>
     </div>
   </div>
-  <script src="/public/js/app.js"></script>
+  <script src="/public/js/app.js?v=5"></script>
 </body>
 </html>`);
 });
@@ -4131,7 +4131,7 @@ app.get("/about", (req: Request, res: Response) => {
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>About ZeroScreen — Who We Are</title>
-  <link rel="stylesheet" href="/public/css/style.css">
+  <link rel="stylesheet" href="/public/css/style.css?v=5">
 </head>
 <body>
   ${nav("about", req)}
@@ -4241,7 +4241,7 @@ app.get("/about", (req: Request, res: Response) => {
       © 2026 ZeroScreen — For educational and informational purposes only. Not SEBI registered. Not investment advice. Past data does not guarantee future returns. Trade at your own risk.
     </footer>
   </div>
-  <script src="/public/js/app.js"></script>
+  <script src="/public/js/app.js?v=5"></script>
 </body>
 </html>`);
 });
@@ -4699,7 +4699,7 @@ app.get("/strategy-builder", featureGate("feature_strategy_builder", "Strategy B
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>Strategy Builder — ZeroScreen</title>
-  <link rel="stylesheet" href="/public/css/style.css">
+  <link rel="stylesheet" href="/public/css/style.css?v=5">
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.2/dist/chart.umd.min.js"></script>
   <style>
     .sb-hero { background: linear-gradient(135deg,#7c3aed 0%,#4f46e5 60%,#059669 100%); padding: 56px 24px 48px; text-align:center; color:#fff; }
@@ -4880,7 +4880,7 @@ app.get("/strategy-builder", featureGate("feature_strategy_builder", "Strategy B
       <div id="ind-error" style="display:none" class="ind-error"></div>
     </div>
   </div>
-  <script src="/public/js/app.js"></script>
+  <script src="/public/js/app.js?v=5"></script>
   <script>
   // ── Indicator descriptions ────────────────────────────────────────────────────
   var IND_DESCS = {
@@ -5203,7 +5203,7 @@ app.get("/admin/analytics", requireAdmin, async (req: Request, res: Response) =>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>Analytics — ZeroScreen</title>
-  <link rel="stylesheet" href="/public/css/style.css">
+  <link rel="stylesheet" href="/public/css/style.css?v=5">
 </head>
 <body>
   ${nav("admin-analytics", req)}
@@ -5272,7 +5272,7 @@ app.get("/admin/analytics", requireAdmin, async (req: Request, res: Response) =>
     </div>
     <div style="margin-top:16px"><a href="/admin" style="color:var(--text-muted);font-size:13px">← Back to Admin</a></div>
   </div>
-  <script src="/public/js/app.js"></script>
+  <script src="/public/js/app.js?v=5"></script>
 </body>
 </html>`);
 });
@@ -5315,7 +5315,7 @@ app.get("/admin/picks", requireAdmin, async (req: Request, res: Response) => {
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>Picks Manager — ZeroScreen Admin</title>
-  <link rel="stylesheet" href="/public/css/style.css">
+  <link rel="stylesheet" href="/public/css/style.css?v=5">
 </head>
 <body>
   ${nav("admin-picks", req)}
@@ -5405,7 +5405,7 @@ app.get("/admin/picks", requireAdmin, async (req: Request, res: Response) => {
       </table>
     </div>
   </div>
-  <script src="/public/js/app.js"></script>
+  <script src="/public/js/app.js?v=5"></script>
 </body>
 </html>`);
 });
@@ -5463,7 +5463,7 @@ app.get("/admin/content", requireAdmin, async (req: Request, res: Response) => {
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>Content — ZeroScreen Admin</title>
-  <link rel="stylesheet" href="/public/css/style.css">
+  <link rel="stylesheet" href="/public/css/style.css?v=5">
 </head>
 <body>
   ${nav("admin-content", req)}
@@ -5492,7 +5492,7 @@ app.get("/admin/content", requireAdmin, async (req: Request, res: Response) => {
       <button type="submit" class="btn-primary">Save Changes</button>
     </form>
   </div>
-  <script src="/public/js/app.js"></script>
+  <script src="/public/js/app.js?v=5"></script>
 </body>
 </html>`);
 });
@@ -5517,7 +5517,7 @@ app.get("/admin/signals", requireAdmin, async (req: Request, res: Response) => {
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>Signal Control — ZeroScreen Admin</title>
-  <link rel="stylesheet" href="/public/css/style.css">
+  <link rel="stylesheet" href="/public/css/style.css?v=5">
 </head>
 <body>
   ${nav("admin-signals", req)}
@@ -5549,7 +5549,7 @@ app.get("/admin/signals", requireAdmin, async (req: Request, res: Response) => {
       </div>
     </div>
   </div>
-  <script src="/public/js/app.js"></script>
+  <script src="/public/js/app.js?v=5"></script>
 </body>
 </html>`);
 });
@@ -5686,7 +5686,7 @@ app.get("/today", async (req: Request, res: Response) => {
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>Today's Picks — ZeroScreen</title>
-  <link rel="stylesheet" href="/public/css/style.css">
+  <link rel="stylesheet" href="/public/css/style.css?v=5">
 </head>
 <body class="page-theme-picks">
   ${nav("today", req)}
@@ -5710,7 +5710,7 @@ app.get("/today", async (req: Request, res: Response) => {
 
     <footer class="site-footer"><span>© 2026 ZeroScreen &mdash; Picks are for educational &amp; informational purposes only. Not SEBI registered. Not investment advice. Invest at your own risk.</span></footer>
   </div>
-  <script src="/public/js/app.js"></script>
+  <script src="/public/js/app.js?v=5"></script>
 </body>
 </html>`);
 });
@@ -5734,7 +5734,7 @@ app.get("/admin/subs", requireAdmin, async (req: Request, res: Response) => {
 <head>
   <meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
   <title>Subscriptions — ZeroScreen Admin</title>
-  <link rel="stylesheet" href="/public/css/style.css">
+  <link rel="stylesheet" href="/public/css/style.css?v=5">
 </head>
 <body>
   ${nav("admin-subs", req)}
@@ -5755,7 +5755,7 @@ app.get("/admin/subs", requireAdmin, async (req: Request, res: Response) => {
       </table>
     </div>
   </div>
-  <script src="/public/js/app.js"></script>
+  <script src="/public/js/app.js?v=5"></script>
 </body>
 </html>`);
 });
@@ -5842,7 +5842,7 @@ app.get("/admin/trading", requireAdmin, (req: Request, res: Response) => {
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>Trading Dashboard — Admin</title>
-  <link rel="stylesheet" href="/public/css/style.css">
+  <link rel="stylesheet" href="/public/css/style.css?v=5">
   <style>
     .td-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(160px,1fr)); gap:1rem; margin:1.5rem 0; }
     .td-card { background:#111827; border:1px solid #1e293b; border-radius:10px; padding:1.2rem 1.5rem; }
@@ -5966,7 +5966,7 @@ app.get("/admin/trading", requireAdmin, (req: Request, res: Response) => {
         <a href="/admin/support" style="background:#1e293b;border:1px solid #334155;color:#94a3b8;padding:.5rem 1rem;border-radius:8px;text-decoration:none;font-size:.82rem">&#128140; Support Inbox</a>
     </div>
   </div>
-  <script src="/public/js/app.js"></script>
+  <script src="/public/js/app.js?v=5"></script>
   <script>
     // Auto-refresh every 30s
     setTimeout(() => location.reload(), 30000);
@@ -6032,7 +6032,7 @@ app.get("/premium", async (req: Request, res: Response) => {
 <head>
   <meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
   <title>Premium — ZeroScreen</title>
-  <link rel="stylesheet" href="/public/css/style.css">
+  <link rel="stylesheet" href="/public/css/style.css?v=5">
   ${razorpayEnabled ? `<script src="https://checkout.razorpay.com/v1/checkout.js"></script>` : ""}
 </head>
 <body class="page-theme-premium">
@@ -6116,7 +6116,7 @@ app.get("/premium", async (req: Request, res: Response) => {
     `}
     <footer class="site-footer"><span>© 2026 ZeroScreen · Secure payment via Razorpay · Cancel anytime</span></footer>
   </div>
-  <script src="/public/js/app.js"></script>
+  <script src="/public/js/app.js?v=5"></script>
   ${isLoggedIn && razorpayEnabled ? `<script>
   async function startPayment() {
     const btn = document.getElementById('pay-btn');
@@ -6312,7 +6312,7 @@ app.get("/paper-trade", featureGate("feature_paper_trade_bot", "Paper Trade"), a
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>Paper Trade — ZeroScreen</title>
-  <link rel="stylesheet" href="/public/css/style.css">
+  <link rel="stylesheet" href="/public/css/style.css?v=5">
   <style>
     /* ── Layout ── */
     .pt2-hero{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;flex-wrap:wrap;margin-bottom:24px}
@@ -6672,7 +6672,7 @@ app.get("/paper-trade", featureGate("feature_paper_trade_bot", "Paper Trade"), a
 
     <footer class="site-footer"><span>© 2026 ZeroScreen · Paper trading uses virtual money — no real capital at risk · Prices from NSE data updated periodically</span></footer>
   </div>
-  <script src="/public/js/app.js"></script>
+  <script src="/public/js/app.js?v=5"></script>
   <script>
   // ── Trade form interaction ──────────────────────────────────────────────────
   function pt2SetType(t) {
@@ -7044,7 +7044,7 @@ app.get("/my-paper-trade", requireAuth, featureGate("feature_my_paper_trade", "P
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>My Paper Trade — ZeroScreen</title>
-  <link rel="stylesheet" href="/public/css/style.css">
+  <link rel="stylesheet" href="/public/css/style.css?v=5">
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.2/dist/chart.umd.min.js"></script>
   <style>
     .mpt-hero { background: var(--card-bg); border: 1px solid var(--border); border-radius: 14px; padding: 24px 28px; margin-bottom: 24px; display:flex; align-items:center; justify-content:space-between; gap:16px; flex-wrap:wrap; }
@@ -7259,7 +7259,7 @@ app.get("/my-paper-trade", requireAuth, featureGate("feature_my_paper_trade", "P
     <footer class="site-footer" style="margin-top:24px"><span>© 2026 ZeroScreen · Paper trading simulation · no real capital at risk</span></footer>
   </div>
 
-  <script src="/public/js/app.js"></script>
+  <script src="/public/js/app.js?v=5"></script>
   <script>
   ${eqData.length >= 2 ? `
   (function() {
@@ -7346,7 +7346,7 @@ app.get("/my-paper-trade/config", requireAuth, async (req: Request, res: Respons
   res.send(`<!DOCTYPE html><html lang="en"><head>
   <meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
   <title>Paper Trade Settings — ZeroScreen</title>
-  <link rel="stylesheet" href="/public/css/style.css">
+  <link rel="stylesheet" href="/public/css/style.css?v=5">
   <style>
     .cfg-card{max-width:480px;margin:40px auto;background:var(--card-bg);border:1px solid var(--border);border-radius:14px;padding:28px 32px}
     .cfg-title{font-size:1.25rem;font-weight:800;margin-bottom:4px}
@@ -7392,7 +7392,7 @@ app.get("/my-paper-trade/config", requireAuth, async (req: Request, res: Respons
     <p style="margin-top:16px"><a href="/my-paper-trade" style="color:var(--text-muted);font-size:0.85rem">← Back to Portfolio</a></p>
   </div>
 </div>
-<script src="/public/js/app.js"></script></body></html>`);
+<script src="/public/js/app.js?v=5"></script></body></html>`);
 });
 
 app.post("/my-paper-trade/config", requireAuth, async (req: Request, res: Response) => {
@@ -7439,7 +7439,7 @@ app.get("/my-paper-trade/upgrade", requireAuth, async (req: Request, res: Respon
   res.send(`<!DOCTYPE html><html lang="en"><head>
   <meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
   <title>Upgrade — Paper Trade Premium</title>
-  <link rel="stylesheet" href="/public/css/style.css">
+  <link rel="stylesheet" href="/public/css/style.css?v=5">
   <style>
     .upg-card{max-width:520px;margin:40px auto;background:var(--card-bg);border:1px solid var(--border);border-radius:16px;padding:32px 36px;text-align:center}
     .upg-icon{font-size:2.5rem;margin-bottom:12px}
@@ -7476,7 +7476,7 @@ app.get("/my-paper-trade/upgrade", requireAuth, async (req: Request, res: Respon
     <p style="font-size:0.82rem;color:var(--text-muted);margin-top:16px">Have questions? <a href="/contact">Contact us</a></p>
   </div>
 </div>
-<script src="/public/js/app.js"></script></body></html>`);
+<script src="/public/js/app.js?v=5"></script></body></html>`);
 });
 
 // ── GET /api/price/:symbol ─ live price for paper trade buy form ──────────────
@@ -7512,7 +7512,7 @@ app.get("/strategies", featureGate("feature_strategies", "Strategies"), (req: Re
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>Strategies — ZeroScreen</title>
-  <link rel="stylesheet" href="/public/css/style.css">
+  <link rel="stylesheet" href="/public/css/style.css?v=5">
 </head>
 <body class="page-theme-strategies">
   ${nav("strategies", req)}
@@ -7639,7 +7639,7 @@ app.get("/strategies", featureGate("feature_strategies", "Strategies"), (req: Re
 
     <footer class="site-footer"><span>© 2026 ZeroScreen · Strategy logic is proprietary · Past backtest performance does not guarantee future results</span></footer>
   </div>
-  <script src="/public/js/app.js"></script>
+  <script src="/public/js/app.js?v=5"></script>
 </body>
 </html>`);
 });
@@ -7687,7 +7687,7 @@ app.get("/dashboard", featureGate("feature_dashboard", "Dashboard"), async (req:
 <head>
   <meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
   <title>Dashboard — ZeroScreen</title>
-  <link rel="stylesheet" href="/public/css/style.css">
+  <link rel="stylesheet" href="/public/css/style.css?v=5">
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.2/dist/chart.umd.min.js"></script>
 </head>
 <body class="page-theme-dashboard">
@@ -7744,7 +7744,7 @@ app.get("/dashboard", featureGate("feature_dashboard", "Dashboard"), async (req:
       </div>
     </div>
   </div>
-  <script src="/public/js/app.js"></script>
+  <script src="/public/js/app.js?v=5"></script>
   ${analytics.equityCurve.length > 0 ? `<script>
   (function(){
     const ctx = document.getElementById('eqChart').getContext('2d');
@@ -7769,7 +7769,7 @@ app.get("/dashboard", featureGate("feature_dashboard", "Dashboard"), async (req:
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>Dashboard — ZeroScreen</title>
-  <link rel="stylesheet" href="/public/css/style.css">
+  <link rel="stylesheet" href="/public/css/style.css?v=5">
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.2/dist/chart.umd.min.js"></script>
 </head>
 <body class="page-theme-dashboard">
@@ -7915,7 +7915,7 @@ app.get("/dashboard", featureGate("feature_dashboard", "Dashboard"), async (req:
     <footer class="site-footer"><span>© 2026 ZeroScreen &mdash; Backtest results are hypothetical &amp; for informational purposes only. Not SEBI registered. Not investment advice. Past performance is not indicative of future results.</span></footer>
   </div>
 
-  <script src="/public/js/app.js"></script>
+  <script src="/public/js/app.js?v=5"></script>
   <script>
   // Chart defaults
   Chart.defaults.color = document.documentElement.classList.contains('dark') ? '#a1a1aa' : '#6b7280';
@@ -8113,7 +8113,7 @@ app.get("/signals", featureGate("feature_signals", "Signals"), (req, res) => {
 <head>
   <meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
   <title>Live Bot Dashboard — ZeroScreen</title>
-  <link rel="stylesheet" href="/public/css/style.css">
+  <link rel="stylesheet" href="/public/css/style.css?v=5">
   <style>
     /* ── Layout ───────────────────────────────────────────────── */
     .sig3{max-width:980px;margin:0 auto;padding:0 .75rem 3rem}
@@ -8413,7 +8413,7 @@ app.get("/signals", featureGate("feature_signals", "Signals"), (req, res) => {
   }
   _sig3Refresh();setInterval(_sig3Refresh,8000);
   </script>
-  <script src="/public/js/app.js"></script>
+  <script src="/public/js/app.js?v=5"></script>
 </body>
 </html>`);
         return;
@@ -8438,7 +8438,7 @@ app.get("/signals", featureGate("feature_signals", "Signals"), (req, res) => {
 <head>
   <meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
   <title>Live Signals \u2014 ZeroScreen</title>
-  <link rel="stylesheet" href="/public/css/style.css">
+  <link rel="stylesheet" href="/public/css/style.css?v=5">
   <style>
     /* === Layout === */
     .gv-wrap{max-width:860px;margin:0 auto;padding:0 1rem 3rem}
@@ -8638,7 +8638,7 @@ app.get("/signals", featureGate("feature_signals", "Signals"), (req, res) => {
 
     <footer class="site-footer"><span>&#xA9; 2026 ZeroScreen &#x2014; For informational purposes only. Not SEBI registered. Not investment advice. Trading involves substantial risk.</span></footer>
   </div>
-  <script src="/public/js/app.js"></script>
+  <script src="/public/js/app.js?v=5"></script>
   <script>
   const _GQM = 15;
   function _gfR(v){const r=Math.round(v*_GQM);return(r>=0?"+":"\u2212")+"\u20B9"+Math.abs(r).toLocaleString("en-IN");}

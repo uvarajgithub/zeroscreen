@@ -3664,3 +3664,17 @@ html.dark .nav-links .nav-more-drop { background: var(--bg3) !important; }
   /* Remove picks-hero-meta right-align on very small screens */
   .picks-hero-meta { justify-content: flex-start !important; }
 }
+
+/* ↑↑ Topnav: remove backdrop-filter on mobile (prevents nav-links drawer blur)
+   backdrop-filter creates a containing block for position:fixed children,
+   causing the slide-in drawer to render inside the compositing layer and appear blurred */
+@media (max-width: 768px) {
+  .topnav {
+    backdrop-filter: none !important;
+    -webkit-backdrop-filter: none !important;
+    background: rgba(255,255,255,0.98) !important;
+  }
+  html.dark .topnav {
+    background: rgba(22,27,34,0.98) !important;
+  }
+}
