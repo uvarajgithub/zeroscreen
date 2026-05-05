@@ -1559,6 +1559,9 @@ html.dark .landing-auth {
 /* ── Admin dropdown right-aligned ───────────────────────────────────────── */
 .nav-more-drop-right { left: auto !important; right: 0; }
 
+/* ── Drawer header: hidden on desktop, flex inside drawer ────────────────── */
+.nav-mob-drawer-head { display: none; }
+
 /* ── Mobile nav footer (profile + signout inside hamburger drawer) ────────── */
 .nav-mobile-footer {
   display: none; flex-direction: column; gap: 2px;
@@ -1741,7 +1744,7 @@ html.dark .nav-search-input:focus { background: var(--bg3) !important; border-co
   .nav-overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.45); z-index: 9989; backdrop-filter: blur(2px); -webkit-backdrop-filter: blur(2px); cursor: pointer; }
   .nav-overlay.open { display: block; }
   .nav-mob-drawer-head {
-    display: flex; align-items: center; justify-content: space-between;
+    display: flex !important; align-items: center; justify-content: space-between;
     padding: 16px 16px 14px; border-bottom: 1px solid var(--border);
     flex-shrink: 0; position: sticky; top: 0; background: var(--bg-card); z-index: 1;
   }

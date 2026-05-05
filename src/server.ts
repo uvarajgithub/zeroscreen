@@ -7672,6 +7672,12 @@ app.get("/signals", featureGate("feature_signals", "Signals"), (req, res) => {
       </div>
       <div class="sig3-live"><span class="sig3-dot"></span><span id="sig3-upd">Connecting&hellip;</span></div>
     </div>
+    <!-- Bot Status Bar (same as guest view) -->
+    <div class="gv-status" id="sig3-bot-status" style="margin-bottom:1rem;padding:10px 16px;border-radius:10px;background:var(--card-bg,#1e293b);border:1px solid var(--border);display:flex;align-items:center;gap:10px">
+      <span class="gv-status-dot ${inTrade2 ? 'active' : 'idle'}" id="sig3-status-dot"></span>
+      <span style="font-size:.82rem;color:var(--text-muted)" id="sig3-status-lbl">${inTrade2 ? 'Bot is running a trade' : 'Bot is idle \u2014 watching market'}</span>
+      <span style="font-size:.82rem;font-weight:700;margin-left:auto" class="${inTrade2 ? 'sig3-g' : 'sig3-d'}" id="sig3-status-val">${inTrade2 ? '&#x25CF;&nbsp;ACTIVE' : 'Idle'}</span>
+    </div>
 
     <!-- KPI Stats (paper-trade card style) -->
     <div class="sig3-kpis">
@@ -7885,6 +7891,10 @@ app.get("/signals", featureGate("feature_signals", "Signals"), (req, res) => {
         if(_ge("sig3-pnl-pts")){_ge("sig3-pnl-pts").textContent=(u>=0?"+":"")+u.toFixed(0)+" index pts unrealised";_ge("sig3-pnl-pts").style.color=_gc(u);}
         if(_ge("sig3-live")&&d.activeState?.livePrice)_ge("sig3-live").textContent=parseFloat(d.activeState.livePrice).toFixed(1);
       }
+      // update bot status bar
+      const dot=_ge("sig3-status-dot");if(dot)dot.className="gv-status-dot "+(inT?"active":"idle");
+      if(_ge("sig3-status-lbl"))_ge("sig3-status-lbl").textContent=inT?"Bot is running a trade":"Bot is idle \u2014 watching market";
+      if(_ge("sig3-status-val")){_ge("sig3-status-val").textContent=inT?"\u25CF\u00A0ACTIVE":"Idle";_ge("sig3-status-val").className=inT?"sig3-g":"sig3-d";}
     }catch(e){console.error(e);}
   }
   _sig3Refresh();setInterval(_sig3Refresh,8000);
