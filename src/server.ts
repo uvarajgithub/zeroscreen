@@ -7508,8 +7508,18 @@ app.get("/signals", featureGate("feature_signals", "Signals"), (req, res) => {
       if (hbStatusGuest.includes("WAIT") || hbStatusGuest.includes("9:25")) return "Waiting";
       return "Scanning";
     }
-    function guestDotCls() { return !isAliveGuest ? "offline" : hasPosition ? "active" : "idle"; }
-    function guestValCls() { return !isAliveGuest ? "offline-col" : hasPosition ? "active-col" : "idle-col"; }
+    function guestDotCls() {
+      if (!isAliveGuest) return "offline";
+      if (hasPosition) return "active";
+      if (hbStatusGuest.includes("WAIT") || hbStatusGuest.includes("9:25")) return "waiting";
+      return "scanning";
+    }
+    function guestValCls() {
+      if (!isAliveGuest) return "offline-col";
+      if (hasPosition) return "active-col";
+      if (hbStatusGuest.includes("WAIT") || hbStatusGuest.includes("9:25")) return "waiting-col";
+      return "scanning-col";
+    }
     const premium = userIsPremium(req);
     const loggedIn = !!req.session?.userId;
     const backtest = readBotJSON("5year-backtest-result.json", {});
@@ -7533,6 +7543,7 @@ app.get("/signals", featureGate("feature_signals", "Signals"), (req, res) => {
     if (premium) {
         const an2 = computeAnalytics(trades);
         const hb2 = readBotJSON("bot-heartbeat.json", {});
+        const isAlive2 = hb2?.at ? (Date.now() - new Date(hb2.at).getTime()) < 3 * 60 * 1000 : false;
         const ep2 = state.entryPrice ?? hb2.entryPrice ?? 0;
         const dir2 = state.tradeDirection ?? hb2.direction ?? null;
         const live2 = hb2.livePrice ?? 0;
@@ -7691,7 +7702,7 @@ app.get("/signals", featureGate("feature_signals", "Signals"), (req, res) => {
     </div>
     <!-- Bot Status Bar (same as guest view) -->
     <div class="gv-status" id="sig3-bot-status" style="margin-bottom:1rem;padding:10px 16px;border-radius:10px;background:var(--card-bg,#1e293b);border:1px solid var(--border);display:flex;align-items:center;gap:10px">
-      <span class="gv-status-dot ${!inTrade2 ? (hb2?.status?.toUpperCase().includes('WAIT') ? 'idle' : 'idle') : 'active'}" id="sig3-status-dot"></span>
+      <span class="gv-status-dot ${!isAlive2 ? 'offline' : inTrade2 ? 'active' : (hb2?.status?.toUpperCase().includes('WAIT') || hb2?.status?.toUpperCase().includes('9:25') ? 'waiting' : 'scanning')}" id="sig3-status-dot"></span>
       <span style="font-size:.82rem;color:var(--text-muted)" id="sig3-status-lbl">${inTrade2 ? 'Bot is running a trade' : hb2?.status?.toUpperCase().includes('WAIT') ? 'Bot alive \u2014 waiting for market hours (opens 9:25 IST)' : 'Bot alive \u2014 scanning BANKNIFTY for signal'}</span>
       <span style="font-size:.82rem;font-weight:700;margin-left:auto" class="${inTrade2 ? 'sig3-g' : 'sig3-d'}" id="sig3-status-val">${inTrade2 ? '&#x25CF;&nbsp;ACTIVE' : hb2?.status?.toUpperCase().includes('WAIT') ? 'Waiting' : 'Scanning'}</span>
     </div>
@@ -7912,13 +7923,13 @@ app.get("/signals", featureGate("feature_signals", "Signals"), (req, res) => {
       const alive2=d.isAlive!==false;
       const hbSt2=(d.botStatus||"").toUpperCase();
       const isWait2=!inT&&alive2&&(hbSt2.includes("WAIT")||hbSt2.includes("9:25")||hbSt2.includes("MARKET"));
-      const dotCls2=!alive2?"offline":inT?"active":"idle";
+      const dotCls2=!alive2?"offline":inT?"active":isWait2?"waiting":"scanning";
       const lbl2=!alive2?"Bot offline \u2014 not responding":inT?"Bot is running a trade \u2014 "+((d.heartbeat?.direction||"")+" OPTION").trim():(isWait2?"Bot alive \u2014 waiting for market hours (opens 9:25 IST)":"Bot alive \u2014 scanning BANKNIFTY for signal");
       const val2=!alive2?"Offline":inT?"\u25CF\u00A0ACTIVE":(isWait2?"Waiting":"Scanning");
-      const valCol2=!alive2?"sig3-r":inT?"sig3-g":"sig3-d";
+      const valCol2=!alive2?"offline-col":inT?"active-col":isWait2?"waiting-col":"scanning-col";
       const dot2=_ge("sig3-status-dot");if(dot2)dot2.className="gv-status-dot "+dotCls2;
       if(_ge("sig3-status-lbl"))_ge("sig3-status-lbl").textContent=lbl2;
-      if(_ge("sig3-status-val")){_ge("sig3-status-val").textContent=val2;_ge("sig3-status-val").className=valCol2;}
+      if(_ge("sig3-status-val")){_ge("sig3-status-val").textContent=val2;_ge("sig3-status-val").className="gv-status-val "+valCol2;}
     }catch(e){console.error(e);}
   }
   _sig3Refresh();setInterval(_sig3Refresh,8000);
@@ -7960,15 +7971,19 @@ app.get("/signals", featureGate("feature_signals", "Signals"), (req, res) => {
     .sig-tier-guest{background:rgba(100,116,139,.15);color:#94a3b8;border:1px solid rgba(100,116,139,.3)}
     .gv-status{display:flex;align-items:center;gap:8px;margin-top:14px;padding:10px 14px;border-radius:10px;background:var(--bg2,#0f172a);border:1px solid var(--border,#334155)}
     .gv-status-dot{width:9px;height:9px;border-radius:50%;flex-shrink:0}
-    .gv-status-dot.active{background:#10b981;box-shadow:0 0 0 3px rgba(16,185,129,.25);animation:gvpulse 2s infinite}
-    .gv-status-dot.idle{background:#64748b}
-    @keyframes gvpulse{0%,100%{box-shadow:0 0 0 3px rgba(16,185,129,.25)}50%{box-shadow:0 0 0 6px rgba(16,185,129,.08)}}
+    .gv-status-dot.active{background:#10b981;box-shadow:0 0 0 3px rgba(16,185,129,.3);animation:gvpulse-green 1.6s ease-in-out infinite}
+    .gv-status-dot.scanning{background:#3b82f6;box-shadow:0 0 0 3px rgba(59,130,246,.25);animation:gvpulse-blue 2.2s ease-in-out infinite}
+    .gv-status-dot.waiting{background:#f59e0b;box-shadow:0 0 0 3px rgba(245,158,11,.2);animation:gvpulse-amber 2.8s ease-in-out infinite}
+    .gv-status-dot.offline{background:#ef4444;box-shadow:none}
+    @keyframes gvpulse-green{0%,100%{box-shadow:0 0 0 3px rgba(16,185,129,.3)}50%{box-shadow:0 0 0 7px rgba(16,185,129,.07)}}
+    @keyframes gvpulse-blue{0%,100%{box-shadow:0 0 0 3px rgba(59,130,246,.25)}50%{box-shadow:0 0 0 6px rgba(59,130,246,.06)}}
+    @keyframes gvpulse-amber{0%,100%{box-shadow:0 0 0 3px rgba(245,158,11,.2)}50%{box-shadow:0 0 0 5px rgba(245,158,11,.05)}}
     .gv-status-lbl{font-size:.8rem;color:var(--text-muted,#94a3b8)}
     .gv-status-val{font-size:.85rem;font-weight:700;margin-left:auto}
     .gv-status-val.active-col{color:#10b981}
-    .gv-status-val.idle-col{color:#64748b}
+    .gv-status-val.scanning-col{color:#3b82f6}
+    .gv-status-val.waiting-col{color:#f59e0b}
     .gv-status-val.offline-col{color:#ef4444}
-    .gv-status-dot.offline{background:#ef4444;box-shadow:none}
     .gv-live-pnl{font-size:1.6rem;font-weight:800;margin:2px 0 0;letter-spacing:-.5px}
     .gv-live-sub{font-size:.75rem;color:var(--text-muted,#94a3b8);margin-bottom:2px}
     .gv-kpi-row{display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin:14px 0}
@@ -8083,10 +8098,10 @@ app.get("/signals", featureGate("feature_signals", "Signals"), (req, res) => {
       const alive=d.isAlive!==false;
       const hbStatus=(d.botStatus||"").toUpperCase();
       const isWaiting=!inT&&alive&&(hbStatus.includes("WAIT")||hbStatus.includes("9:25")||hbStatus.includes("MARKET"));
-      const dotCls=!alive?"offline":inT?"active":"idle";
+      const dotCls=!alive?"offline":inT?"active":isWaiting?"waiting":"scanning";
       const lblTxt=!alive?"Bot offline \u2014 not responding":inT?"Bot is running a trade \u2014 "+((d.heartbeat?.direction||"")+" OPTION").trim():(isWaiting?"Bot alive \u2014 waiting for market hours (opens 9:25 IST)":"Bot alive \u2014 scanning BANKNIFTY for signal");
       const valTxt=!alive?"Offline":inT?"\u25CF\u00A0ACTIVE":(isWaiting?"Waiting":"Scanning");
-      const valCls=!alive?"offline-col":inT?"active-col":"idle-col";
+      const valCls=!alive?"offline-col":inT?"active-col":isWaiting?"waiting-col":"scanning-col";
       const dot=_ge2("gv-dot");
       if(dot)dot.className="gv-status-dot "+dotCls;
       if(_ge2("gv-status-lbl"))_ge2("gv-status-lbl").textContent=lblTxt;
