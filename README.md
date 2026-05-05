@@ -399,12 +399,76 @@ zeroscreen/
 ZeroScreen reads files written by the trading bot — no API calls, no changes to bot code:
 
 ```
+trading-bot   → /root/trading-bot/bot-heartbeat.json   (every 15s — alive/dead detection)
 trading-bot   → /root/trading-bot/trades.json          (every completed trade)
 trading-bot   → /root/trading-bot/trade-state.json     (current active position)
 trading-bot   → /root/trading-bot/5year-backtest-result.json
 paper-engine  → /home/ubuntu/trading-bot/paper-trades.json   (nightly 7:36 PM IST)
 paper-engine  → /home/ubuntu/trading-bot/paper-records.json  (monthly summary)
 ```
+
+### Bot Alive / Dead Detection
+
+ZeroScreen determines bot status by reading `bot-heartbeat.json` and checking the `at` (timestamp) field:
+
+```
+isAlive = Date.now() - new Date(heartbeat.at).getTime() < 3 minutes
+```
+
+- **Bot running** → writes heartbeat every 15 s → `isAlive = true`
+- **Bot stops / crashes** → stops writing → after 3 min ZeroScreen marks it offline
+- **No action needed** — detection is fully automatic, no manual trigger
+
+### Bot Status Dot (Signals Page)
+
+| Dot | State | Condition |
+|-----|-------|-----------|
+| 🔴 Red (solid) | **Offline** | Heartbeat older than 3 min |
+| 🟡 Amber (slow pulse) | **Waiting** | Alive, heartbeat status contains "WAIT" or "9:25" |
+| 🔵 Blue (medium pulse) | **Scanning** | Alive, market hours, no active trade |
+| 🟢 Green (fast pulse) | **Active trade** | Alive, `inTrade = true` in heartbeat |
+
+The dot and label update automatically every 8 s (admin view) or 12 s (guest view) via `/api/bot/status`.
+
+### Morning Startup Sequence (Daily)
+
+Every trading morning, when you submit the new Zerodha access token via the token-server form, this is the exact sequence:
+
+```
+Overnight
+─────────────────────────────────────────────────────────────
+  trading-bot (PM2 id 13) — RUNNING 24/7
+  Writes bot-heartbeat.json every 15 s → ZeroScreen dot = 🔵 Scanning / 🟡 Waiting
+
+~8:30 AM — You submit Zerodha token via token-server
+─────────────────────────────────────────────────────────────
+  1. token-server writes new ACCESS_TOKEN to /home/ubuntu/trading-bot/.env
+  2. PM2 sends SIGTERM to trading-bot process
+  3. Bot catches SIGTERM → gracefulShutdown()
+       → sends Telegram: "🔴 Bot Stopped — Reason: Process terminated (SIGTERM)"
+       → process exits
+  4. Heartbeat stops being written
+  5. After 3 min: ZeroScreen dot turns 🔴 red (offline)
+
+~8:30 AM + a few seconds — PM2 auto-restarts trading-bot
+─────────────────────────────────────────────────────────────
+  6. Bot loads fresh .env (new ACCESS_TOKEN)
+  7. Syncs broker state (checks open positions via Kite API)
+  8. setInterval(15 s) starts → immediately writes bot-heartbeat.json
+  9. ZeroScreen dot turns back to 🔵 / 🟡 within one refresh cycle
+ 10. Sends Telegram: "🟢 BANKNIFTY Bot Started — Mode: LIVE ..."
+
+Normal day flow
+─────────────────────────────────────────────────────────────
+ 9:25 AM  → bot starts scanning for BANKNIFTY signal → dot = 🔵 Scanning
+ Signal found → bot enters trade → dot = 🟢 Active trade (pulsing)
+ Trade exits → bot returns to scanning → dot = 🔵 Scanning
+ 3:15-3:20 PM → EOD exit / max trades → bot stops for day
+           → sends Telegram: "🔴 Bot Stopped — Reason: EOD exit"
+           → heartbeat still written (process running) → dot stays 🔵
+```
+
+**Note:** The "Bot Stopped" Telegram you receive every morning is the PM2 restart caused by the token update — **not a crash**. The bot is back online within seconds. This is expected and correct behaviour.
 
 ---
 
