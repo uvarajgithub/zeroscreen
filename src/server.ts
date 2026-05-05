@@ -7627,7 +7627,19 @@ app.get("/signals", featureGate("feature_signals", "Signals"), (req, res) => {
     .sig3-live{display:flex;align-items:center;gap:.4rem;font-size:.72rem;color:var(--text-muted)}
     .sig3-dot{width:8px;height:8px;border-radius:50%;background:#10b981;box-shadow:0 0 6px #10b98188;animation:sig3p 1.4s infinite}
     @keyframes sig3p{0%,100%{opacity:1;box-shadow:0 0 6px #10b98188}50%{opacity:.3;box-shadow:none}}
-
+    /* ── Bot status dot ───────────────────────────────────────── */
+    .gv-status-dot{width:9px;height:9px;border-radius:50%;flex-shrink:0}
+    .gv-status-dot.active{background:#10b981;box-shadow:0 0 0 3px rgba(16,185,129,.3);animation:gvpulse-green 1.6s ease-in-out infinite}
+    .gv-status-dot.scanning{background:#3b82f6;box-shadow:0 0 0 3px rgba(59,130,246,.25);animation:gvpulse-blue 2.2s ease-in-out infinite}
+    .gv-status-dot.waiting{background:#f59e0b;box-shadow:0 0 0 3px rgba(245,158,11,.2);animation:gvpulse-amber 2.8s ease-in-out infinite}
+    .gv-status-dot.offline{background:#ef4444;box-shadow:none}
+    @keyframes gvpulse-green{0%,100%{box-shadow:0 0 0 3px rgba(16,185,129,.3)}50%{box-shadow:0 0 0 7px rgba(16,185,129,.07)}}
+    @keyframes gvpulse-blue{0%,100%{box-shadow:0 0 0 3px rgba(59,130,246,.25)}50%{box-shadow:0 0 0 6px rgba(59,130,246,.06)}}
+    @keyframes gvpulse-amber{0%,100%{box-shadow:0 0 0 3px rgba(245,158,11,.2)}50%{box-shadow:0 0 0 5px rgba(245,158,11,.05)}}
+    .gv-status-val.active-col{color:#10b981}
+    .gv-status-val.scanning-col{color:#3b82f6}
+    .gv-status-val.waiting-col{color:#f59e0b}
+    .gv-status-val.offline-col{color:#ef4444}
     /* ── KPI Cards (matching paper trade style) ───────────────── */
     .sig3-kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(135px,1fr));gap:10px;margin-bottom:1rem}
     .sig3-kpi{background:var(--card-bg);border:1px solid var(--border);border-radius:10px;padding:13px 16px}
