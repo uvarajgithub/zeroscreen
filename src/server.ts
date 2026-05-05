@@ -7491,8 +7491,25 @@ app.get("/dashboard", featureGate("feature_dashboard", "Dashboard"), async (req:
 app.get("/signals", featureGate("feature_signals", "Signals"), (req, res) => {
     const state = readBotJSON("trade-state.json", {});
     const trades = readBotJSON("trades.json", []);
+    const hbGuest = readBotJSON("bot-heartbeat.json", null);
     const analytics = computeAnalytics(trades);
     const hasPosition = !!(state && (state.activeTrade || state.mainEntryDone));
+    const isAliveGuest = hbGuest?.at ? (Date.now() - new Date(hbGuest.at).getTime()) < 3 * 60 * 1000 : false;
+    const hbStatusGuest = (hbGuest?.status || "").toUpperCase();
+    function guestBotLabel() {
+      if (!isAliveGuest) return "Bot offline \u2014 not responding";
+      if (hasPosition) return "Bot is running a trade";
+      if (hbStatusGuest.includes("WAIT") || hbStatusGuest.includes("9:25")) return "Bot alive \u2014 waiting for market hours (opens 9:25 IST)";
+      return "Bot alive \u2014 scanning BANKNIFTY for signal";
+    }
+    function guestBotVal() {
+      if (!isAliveGuest) return "Offline";
+      if (hasPosition) return "\u25CF\u00A0ACTIVE";
+      if (hbStatusGuest.includes("WAIT") || hbStatusGuest.includes("9:25")) return "Waiting";
+      return "Scanning";
+    }
+    function guestDotCls() { return !isAliveGuest ? "offline" : hasPosition ? "active" : "idle"; }
+    function guestValCls() { return !isAliveGuest ? "offline-col" : hasPosition ? "active-col" : "idle-col"; }
     const premium = userIsPremium(req);
     const loggedIn = !!req.session?.userId;
     const backtest = readBotJSON("5year-backtest-result.json", {});
@@ -7674,9 +7691,9 @@ app.get("/signals", featureGate("feature_signals", "Signals"), (req, res) => {
     </div>
     <!-- Bot Status Bar (same as guest view) -->
     <div class="gv-status" id="sig3-bot-status" style="margin-bottom:1rem;padding:10px 16px;border-radius:10px;background:var(--card-bg,#1e293b);border:1px solid var(--border);display:flex;align-items:center;gap:10px">
-      <span class="gv-status-dot ${inTrade2 ? 'active' : 'idle'}" id="sig3-status-dot"></span>
-      <span style="font-size:.82rem;color:var(--text-muted)" id="sig3-status-lbl">${inTrade2 ? 'Bot is running a trade' : 'Bot is idle \u2014 watching market'}</span>
-      <span style="font-size:.82rem;font-weight:700;margin-left:auto" class="${inTrade2 ? 'sig3-g' : 'sig3-d'}" id="sig3-status-val">${inTrade2 ? '&#x25CF;&nbsp;ACTIVE' : 'Idle'}</span>
+      <span class="gv-status-dot ${!inTrade2 ? (hb2?.status?.toUpperCase().includes('WAIT') ? 'idle' : 'idle') : 'active'}" id="sig3-status-dot"></span>
+      <span style="font-size:.82rem;color:var(--text-muted)" id="sig3-status-lbl">${inTrade2 ? 'Bot is running a trade' : hb2?.status?.toUpperCase().includes('WAIT') ? 'Bot alive \u2014 waiting for market hours (opens 9:25 IST)' : 'Bot alive \u2014 scanning BANKNIFTY for signal'}</span>
+      <span style="font-size:.82rem;font-weight:700;margin-left:auto" class="${inTrade2 ? 'sig3-g' : 'sig3-d'}" id="sig3-status-val">${inTrade2 ? '&#x25CF;&nbsp;ACTIVE' : hb2?.status?.toUpperCase().includes('WAIT') ? 'Waiting' : 'Scanning'}</span>
     </div>
 
     <!-- KPI Stats (paper-trade card style) -->
@@ -7892,9 +7909,16 @@ app.get("/signals", featureGate("feature_signals", "Signals"), (req, res) => {
         if(_ge("sig3-live")&&d.activeState?.livePrice)_ge("sig3-live").textContent=parseFloat(d.activeState.livePrice).toFixed(1);
       }
       // update bot status bar
-      const dot=_ge("sig3-status-dot");if(dot)dot.className="gv-status-dot "+(inT?"active":"idle");
-      if(_ge("sig3-status-lbl"))_ge("sig3-status-lbl").textContent=inT?"Bot is running a trade":"Bot is idle \u2014 watching market";
-      if(_ge("sig3-status-val")){_ge("sig3-status-val").textContent=inT?"\u25CF\u00A0ACTIVE":"Idle";_ge("sig3-status-val").className=inT?"sig3-g":"sig3-d";}
+      const alive2=d.isAlive!==false;
+      const hbSt2=(d.botStatus||"").toUpperCase();
+      const isWait2=!inT&&alive2&&(hbSt2.includes("WAIT")||hbSt2.includes("9:25")||hbSt2.includes("MARKET"));
+      const dotCls2=!alive2?"offline":inT?"active":"idle";
+      const lbl2=!alive2?"Bot offline \u2014 not responding":inT?"Bot is running a trade \u2014 "+((d.heartbeat?.direction||"")+" OPTION").trim():(isWait2?"Bot alive \u2014 waiting for market hours (opens 9:25 IST)":"Bot alive \u2014 scanning BANKNIFTY for signal");
+      const val2=!alive2?"Offline":inT?"\u25CF\u00A0ACTIVE":(isWait2?"Waiting":"Scanning");
+      const valCol2=!alive2?"sig3-r":inT?"sig3-g":"sig3-d";
+      const dot2=_ge("sig3-status-dot");if(dot2)dot2.className="gv-status-dot "+dotCls2;
+      if(_ge("sig3-status-lbl"))_ge("sig3-status-lbl").textContent=lbl2;
+      if(_ge("sig3-status-val")){_ge("sig3-status-val").textContent=val2;_ge("sig3-status-val").className=valCol2;}
     }catch(e){console.error(e);}
   }
   _sig3Refresh();setInterval(_sig3Refresh,8000);
@@ -7943,6 +7967,8 @@ app.get("/signals", featureGate("feature_signals", "Signals"), (req, res) => {
     .gv-status-val{font-size:.85rem;font-weight:700;margin-left:auto}
     .gv-status-val.active-col{color:#10b981}
     .gv-status-val.idle-col{color:#64748b}
+    .gv-status-val.offline-col{color:#ef4444}
+    .gv-status-dot.offline{background:#ef4444;box-shadow:none}
     .gv-live-pnl{font-size:1.6rem;font-weight:800;margin:2px 0 0;letter-spacing:-.5px}
     .gv-live-sub{font-size:.75rem;color:var(--text-muted,#94a3b8);margin-bottom:2px}
     .gv-kpi-row{display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin:14px 0}
@@ -7984,9 +8010,9 @@ app.get("/signals", featureGate("feature_signals", "Signals"), (req, res) => {
       </div>
 
       <div class="gv-status">
-        <span class="gv-status-dot ${hasPosition ? 'active' : 'idle'}" id="gv-dot"></span>
-        <span class="gv-status-lbl" id="gv-status-lbl">Bot ${hasPosition ? 'is running a trade' : 'is idle \u2014 watching market'}</span>
-        <span class="gv-status-val ${hasPosition ? 'active-col' : 'idle-col'}" id="gv-status-val">${hasPosition ? '&#x25CF;&nbsp;ACTIVE' : 'Idle'}</span>
+        <span class="gv-status-dot ${guestDotCls()}" id="gv-dot"></span>
+        <span class="gv-status-lbl" id="gv-status-lbl">${guestBotLabel()}</span>
+        <span class="gv-status-val ${guestValCls()}" id="gv-status-val">${guestBotVal()}</span>
       </div>
 
       <div id="gv-live-wrap" style="margin-top:14px;${hasPosition ? '' : 'display:none'}">
@@ -8054,10 +8080,17 @@ app.get("/signals", featureGate("feature_signals", "Signals"), (req, res) => {
       const d=(await (await fetch("/api/bot/status")).json());
       if(_ge2("gv-upd"))_ge2("gv-upd").textContent="Updated "+new Date().toLocaleTimeString("en-IN");
       const inT=!!(d.activeState&&(d.activeState.inTrade||d.activeState.activeTrade||d.activeState.mainEntryDone));
+      const alive=d.isAlive!==false;
+      const hbStatus=(d.botStatus||"").toUpperCase();
+      const isWaiting=!inT&&alive&&(hbStatus.includes("WAIT")||hbStatus.includes("9:25")||hbStatus.includes("MARKET"));
+      const dotCls=!alive?"offline":inT?"active":"idle";
+      const lblTxt=!alive?"Bot offline \u2014 not responding":inT?"Bot is running a trade \u2014 "+((d.heartbeat?.direction||"")+" OPTION").trim():(isWaiting?"Bot alive \u2014 waiting for market hours (opens 9:25 IST)":"Bot alive \u2014 scanning BANKNIFTY for signal");
+      const valTxt=!alive?"Offline":inT?"\u25CF\u00A0ACTIVE":(isWaiting?"Waiting":"Scanning");
+      const valCls=!alive?"offline-col":inT?"active-col":"idle-col";
       const dot=_ge2("gv-dot");
-      if(dot)dot.className="gv-status-dot "+(inT?"active":"idle");
-      if(_ge2("gv-status-lbl"))_ge2("gv-status-lbl").textContent=inT?"Bot is running a trade":"Bot is idle \u2014 watching market";
-      if(_ge2("gv-status-val")){_ge2("gv-status-val").textContent=inT?"\u25CF\u00A0ACTIVE":"Idle";_ge2("gv-status-val").className="gv-status-val "+(inT?"active-col":"idle-col");}
+      if(dot)dot.className="gv-status-dot "+dotCls;
+      if(_ge2("gv-status-lbl"))_ge2("gv-status-lbl").textContent=lblTxt;
+      if(_ge2("gv-status-val")){_ge2("gv-status-val").textContent=valTxt;_ge2("gv-status-val").className="gv-status-val "+valCls;}
       const lw=_ge2("gv-live-wrap");
       if(inT&&d.activeState?.entryPrice>0){
         const u=d.activeState?.unrealisedPnL??0;
