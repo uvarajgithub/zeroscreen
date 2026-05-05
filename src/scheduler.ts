@@ -356,12 +356,15 @@ export async function autoPaperTradeFromPicks(): Promise<void> {
   for (const user of users) {
     let bought = 0;
     for (const pick of picks) {
-      // Use live price from prices table (realistic open price), fallback to entry_low
       const qty   = 1;
+      // Use midpoint of pick's entry zone — this IS yesterday's close ± 0.3% buffer,
+      // the intended entry price. Far more meaningful than raw prices table at 9:15 AM.
+      const entryMid = parseFloat(((pick.entry_low + pick.entry_high) / 2).toFixed(2));
+      // Fallback: live price from prices table (same data, but use midpoint first)
       const priceRow = await dbAll<{ price: number }>(
         "SELECT price FROM prices WHERE symbol = ?", [pick.stock_symbol]
       );
-      const price = priceRow[0]?.price && priceRow[0].price > 0 ? priceRow[0].price : pick.entry_low;
+      const price = entryMid > 0 ? entryMid : (priceRow[0]?.price && priceRow[0].price > 0 ? priceRow[0].price : pick.entry_low);
       const tradeType = pick.pick_type === "intraday" ? "INTRADAY" : "HOLDING";
 
       const result = await paperBuy(

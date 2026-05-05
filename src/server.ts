@@ -5257,6 +5257,12 @@ app.get("/today", async (req: Request, res: Response) => {
   const isPremium = userIsPremium(req);
   const isLoggedIn = !!req.session?.userId;
   const isAdmin = req.session?.userRole === 'admin';
+  const autoPicks = isLoggedIn ? await getAutoPaperPicks(req.session.userId!) : false;
+
+  // Last generated: use the most recent pick's published_at
+  const lastGenerated = picks.length > 0 ? picks[0].published_at?.slice(0, 10) : null;
+  // Determine "based on" close date (picks generated at 6:45 PM from same-day close)
+  const basedOnDate = lastGenerated ?? new Date().toISOString().slice(0, 10);
 
   // Access tiers:
   // Guest       → intraday direction only (prices locked), swing/longterm fully locked
@@ -5375,6 +5381,23 @@ app.get("/today", async (req: Request, res: Response) => {
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>Today's Picks — ZeroScreen</title>
   <link rel="stylesheet" href="/public/css/style.css">
+  <meta http-equiv="refresh" content="300">
+  <style>
+    .auto-paper-panel{display:flex;align-items:center;gap:14px;background:var(--card-bg);border:1px solid var(--border);border-radius:12px;padding:14px 18px;margin-bottom:1.25rem;flex-wrap:wrap}
+    .auto-paper-icon{font-size:1.4rem;flex-shrink:0}
+    .auto-paper-body{flex:1;min-width:0}
+    .auto-paper-title{font-size:.9rem;font-weight:700;color:var(--text)}
+    .auto-paper-desc{font-size:.75rem;color:var(--text-muted);margin-top:2px}
+    .auto-paper-toggle{display:flex;align-items:center;gap:10px;flex-shrink:0}
+    .atp-switch{position:relative;display:inline-block;width:46px;height:26px;cursor:pointer}
+    .atp-switch input{opacity:0;width:0;height:0}
+    .atp-knob{position:absolute;top:0;left:0;right:0;bottom:0;background:#374151;border-radius:26px;transition:.3s}
+    .atp-knob:before{position:absolute;content:"";height:20px;width:20px;left:3px;bottom:3px;background:#fff;border-radius:50%;transition:.3s}
+    input:checked+.atp-knob{background:#10b981}
+    input:checked+.atp-knob:before{transform:translateX(20px)}
+    .atp-label{font-size:.78rem;font-weight:600;color:var(--text-muted);min-width:44px}
+    .picks-close-badge{display:inline-flex;align-items:center;gap:5px;font-size:.74rem;background:var(--bg2,#0f172a);border:1px solid var(--border);border-radius:8px;padding:4px 10px;color:var(--text-muted);margin-left:8px}
+  </style>
 </head>
 <body class="page-theme-picks">
   ${nav("today", req)}
@@ -5382,15 +5405,46 @@ app.get("/today", async (req: Request, res: Response) => {
     <div class="picks-hero">
       <div class="picks-hero-left">
         <h1 class="picks-hero-title">🔥 Today's Picks</h1>
-        <p class="picks-hero-sub">Curated trading opportunities across 3 horizons · Updated daily</p>
+        <p class="picks-hero-sub">Curated trading opportunities across 3 horizons · Updated daily
+          <span class="picks-close-badge">📊 Based on ${basedOnDate} market close</span>
+        </p>
         ${picks.length > 0 ? `<div class="picks-hero-count">🎯 ${picks.length} active pick${picks.length !== 1 ? "s" : ""} today</div>` : ""}
-        <div class="picks-disclaimer-banner">📋 Picks are selected based on <strong>last market close data</strong> — fundamentals, price action &amp; signals analysed post-market. Entry zones are reference prices only. <strong>Not SEBI registered. Not investment advice. Do your own research.</strong></div>
+        <div class="picks-disclaimer-banner">📋 Picks are generated every weekday at <strong>6:45 PM IST</strong> from the day's closing data — fundamentals, price action &amp; signals. Entry zones are reference prices only. <strong>Not SEBI registered. Not investment advice. Do your own research.</strong></div>
       </div>
       <div class="picks-hero-meta">
         <span class="picks-hero-updated">🕐 ${new Date().toLocaleDateString("en-IN",{day:"2-digit",month:"short",year:"numeric"})}</span>
         <span class="sig-tier-badge ${tierClass}">${tierLabel}</span>
       </div>
     </div>
+
+    ${/* ── Auto Paper Trade panel (logged-in users) ── */ ""}
+    ${isLoggedIn ? `
+    <div class="auto-paper-panel">
+      <div class="auto-paper-icon">🤖</div>
+      <div class="auto-paper-body">
+        <div class="auto-paper-title">Auto Paper Trade Today's Picks ${!isPremium ? '<span style="font-size:.7rem;background:#f59e0b22;color:#f59e0b;border:1px solid #f59e0b44;border-radius:6px;padding:1px 7px;margin-left:6px">💎 Premium</span>' : ''}</div>
+        <div class="auto-paper-desc">${isPremium
+          ? `At <strong>9:15 AM IST</strong> after market opens, all today's picks are automatically paper-traded in your portfolio at the entry zone midpoint price with SL &amp; target set.`
+          : `Upgrade to Premium — picks will be auto-bought in your paper portfolio at 9:15 AM IST every trading day.`
+        }</div>
+      </div>
+      <div class="auto-paper-toggle">
+        ${isPremium ? `
+        <span class="atp-label" id="atp-lbl">${autoPicks ? "ON" : "OFF"}</span>
+        <label class="atp-switch">
+          <input type="checkbox" id="atp-chk" ${autoPicks ? "checked" : ""} onchange="toggleAutoPaper(this.checked)">
+          <span class="atp-knob"></span>
+        </label>` : `
+        <a href="/my-paper-trade/upgrade" style="font-size:.8rem;background:var(--accent);color:#fff;border-radius:8px;padding:7px 14px;text-decoration:none;font-weight:700;white-space:nowrap">🔓 Upgrade</a>`}
+      </div>
+    </div>` : `
+    <div class="auto-paper-panel" style="justify-content:space-between">
+      <div style="display:flex;align-items:center;gap:12px">
+        <span style="font-size:1.3rem">🤖</span>
+        <div><div class="auto-paper-title">Auto Paper Trade Today's Picks</div><div class="auto-paper-desc">Sign in to auto-buy these picks in your paper portfolio at 9:15 AM IST daily.</div></div>
+      </div>
+      <a href="/login?next=/today" style="font-size:.8rem;background:var(--accent);color:#fff;border-radius:8px;padding:7px 14px;text-decoration:none;font-weight:700;white-space:nowrap">Sign In Free →</a>
+    </div>`}
 
     ${intradaySection}
     ${swingSection || swingTeaser}
@@ -5399,6 +5453,21 @@ app.get("/today", async (req: Request, res: Response) => {
     <footer class="site-footer"><span>© 2026 ZeroScreen &mdash; Picks are for educational &amp; informational purposes only. Not SEBI registered. Not investment advice. Invest at your own risk.</span></footer>
   </div>
   <script src="/public/js/app.js"></script>
+  ${isPremium ? `<script>
+  async function toggleAutoPaper(enabled) {
+    const lbl = document.getElementById('atp-lbl');
+    if (lbl) lbl.textContent = enabled ? 'ON' : 'OFF';
+    try {
+      const r = await fetch('/api/auto-paper-picks/toggle', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ enabled })
+      });
+      const d = await r.json();
+      if (!d.ok) { alert(d.msg || 'Failed to update'); if (lbl) lbl.textContent = enabled ? 'OFF' : 'ON'; }
+    } catch (e) { console.error(e); }
+  }
+  </script>` : ""}
 </body>
 </html>`);
 });
@@ -6904,6 +6973,17 @@ app.post("/my-paper-trade/config", requireAuth, async (req: Request, res: Respon
     await setAutoPaperPicks(userId, auto_paper_picks);
   }
   res.redirect("/my-paper-trade/config?saved=1");
+});
+
+// ── POST /api/auto-paper-picks/toggle  (AJAX, requires login) ─────────────────
+app.post("/api/auto-paper-picks/toggle", requireAuth, async (req: Request, res: Response) => {
+  const userId = req.session.userId!;
+  const activeSub = await getActiveSubscription(userId);
+  const isPremium = !!activeSub || req.session.userRole === "premium" || req.session.userRole === "admin";
+  if (!isPremium) { res.json({ ok: false, msg: "Premium required" }); return; }
+  const enabled = req.body.enabled === true || req.body.enabled === "true" || req.body.enabled === 1;
+  await setAutoPaperPicks(userId, enabled);
+  res.json({ ok: true, enabled });
 });
 
 // ── GET /my-paper-trade/upgrade ───────────────────────────────────────────────
