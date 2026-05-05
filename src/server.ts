@@ -8031,21 +8031,23 @@ app.get("/signals", featureGate("feature_signals", "Signals"), (req, res) => {
 </html>`);
         return;
     }
-    // -- GUEST / FREE USER VIEW (P&L only -- no strategy details) --
+    // -- GUEST / FREE USER VIEW (matches admin sig3 design) --
     const yesterdayIST = (() => {
         const d2 = new Date(new Date().toLocaleString("en-US", { timeZone: "Asia/Kolkata" }));
         d2.setDate(d2.getDate() - 1);
         return d2.toISOString().split("T")[0];
     })();
+    const todayStrG = new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" });
     const yTrades = trades.filter((t) => (t.date || "").startsWith(yesterdayIST) && t.exitPrice && t.exitPrice > 0);
     const yPnl = parseFloat(yTrades.reduce((s, t) => s + (t.pnl ?? 0), 0).toFixed(1));
     const yWins = yTrades.filter((t) => t.pnl > 0).length;
+    const closedTodayG = trades.filter((t) => (t.date || "").startsWith(todayStrG) && t.exitPrice && t.exitPrice > 0);
     const QTY_MULT_G = 15;
     function fmtRsG(v) { const r = Math.round(v * QTY_MULT_G); return (r >= 0 ? "+" : "\u2212") + "\u20B9" + Math.abs(r).toLocaleString("en-IN"); }
     function fmtPtsG(v) { return (v >= 0 ? "+" : "") + v.toFixed(0) + " pts"; }
-    function pnlClsG(v) { return v >= 0 ? "#10b981" : "#ef4444"; }
-    const tierLabel = loggedIn ? '\uD83D\uDD14 Member' : '\uD83D\uDC64 Guest';
-    const tierClass = loggedIn ? 'sig-tier-free' : 'sig-tier-guest';
+    const tierLabel = loggedIn ? "\uD83D\uDD14 Member" : "\uD83D\uDC64 Guest";
+    const tierClass = loggedIn ? "sig-tier-free" : "sig-tier-guest";
+    const dirG = (hbGuest?.direction || "").toUpperCase();
     res.send(`<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -8053,15 +8055,13 @@ app.get("/signals", featureGate("feature_signals", "Signals"), (req, res) => {
   <title>Live Signals \u2014 ZeroScreen</title>
   <link rel="stylesheet" href="/public/css/style.css">
   <style>
-    .gv-wrap{max-width:680px;margin:0 auto;padding:0 12px 40px}
-    .gv-hero{background:var(--card-bg,#1e293b);border:1px solid var(--border,#334155);border-radius:14px;padding:22px 20px 18px;margin:18px 0 14px}
-    .gv-hero-top{display:flex;align-items:center;justify-content:space-between;margin-bottom:6px}
-    .gv-title{font-size:1.15rem;font-weight:700;color:var(--text,#f1f5f9)}
-    .gv-sub{font-size:0.78rem;color:var(--text-muted,#94a3b8);margin:0}
-    .gv-badge{font-size:0.68rem;font-weight:700;padding:3px 9px;border-radius:20px;letter-spacing:.3px}
-    .sig-tier-free{background:rgba(16,185,129,.15);color:#34d399;border:1px solid rgba(16,185,129,.3)}
-    .sig-tier-guest{background:rgba(100,116,139,.15);color:#94a3b8;border:1px solid rgba(100,116,139,.3)}
-    .gv-status{display:flex;align-items:center;gap:8px;margin-top:14px;padding:10px 14px;border-radius:10px;background:var(--bg2,#0f172a);border:1px solid var(--border,#334155)}
+    .sig3{max-width:980px;margin:0 auto;padding:0 .75rem 3rem}
+    .sig3-hdr{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:.5rem;margin:1rem 0 .85rem}
+    .sig3-title{font-size:1.1rem;font-weight:800;color:var(--text)}
+    .sig3-sub{font-size:.72rem;color:var(--text-muted);margin-top:2px}
+    .sig3-live{display:flex;align-items:center;gap:.4rem;font-size:.72rem;color:var(--text-muted)}
+    .sig3-dot{width:8px;height:8px;border-radius:50%;background:#10b981;box-shadow:0 0 6px #10b98188;animation:sig3p 1.4s infinite}
+    @keyframes sig3p{0%,100%{opacity:1;box-shadow:0 0 6px #10b98188}50%{opacity:.3;box-shadow:none}}
     .gv-status-dot{width:9px;height:9px;border-radius:50%;flex-shrink:0}
     .gv-status-dot.active{background:#10b981;box-shadow:0 0 0 3px rgba(16,185,129,.3);animation:gvpulse-green 1.6s ease-in-out infinite}
     .gv-status-dot.scanning{background:#3b82f6;box-shadow:0 0 0 3px rgba(59,130,246,.25);animation:gvpulse-blue 2.2s ease-in-out infinite}
@@ -8070,96 +8070,187 @@ app.get("/signals", featureGate("feature_signals", "Signals"), (req, res) => {
     @keyframes gvpulse-green{0%,100%{box-shadow:0 0 0 3px rgba(16,185,129,.3)}50%{box-shadow:0 0 0 7px rgba(16,185,129,.07)}}
     @keyframes gvpulse-blue{0%,100%{box-shadow:0 0 0 3px rgba(59,130,246,.25)}50%{box-shadow:0 0 0 6px rgba(59,130,246,.06)}}
     @keyframes gvpulse-amber{0%,100%{box-shadow:0 0 0 3px rgba(245,158,11,.2)}50%{box-shadow:0 0 0 5px rgba(245,158,11,.05)}}
-    .gv-status-lbl{font-size:.8rem;color:var(--text-muted,#94a3b8)}
-    .gv-status-val{font-size:.85rem;font-weight:700;margin-left:auto}
-    .gv-status-val.active-col{color:#10b981}
-    .gv-status-val.scanning-col{color:#3b82f6}
-    .gv-status-val.waiting-col{color:#f59e0b}
-    .gv-status-val.offline-col{color:#ef4444}
-    .gv-live-pnl{font-size:1.6rem;font-weight:800;margin:2px 0 0;letter-spacing:-.5px}
-    .gv-live-sub{font-size:.75rem;color:var(--text-muted,#94a3b8);margin-bottom:2px}
-    .gv-kpi-row{display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin:14px 0}
-    .gv-kpi{background:var(--card-bg,#1e293b);border:1px solid var(--border,#334155);border-radius:10px;padding:12px 14px}
-    .gv-kpi-lbl{font-size:.68rem;text-transform:uppercase;letter-spacing:.5px;color:var(--text-muted,#94a3b8);margin-bottom:4px}
-    .gv-kpi-val{font-size:1.05rem;font-weight:800}
-    .gv-kpi-sub{font-size:.67rem;color:var(--text-muted,#94a3b8);margin-top:2px}
-    .gv-sec-title{font-size:.72rem;text-transform:uppercase;letter-spacing:.6px;color:var(--text-muted,#94a3b8);margin:20px 0 10px;font-weight:700}
-    .gv-month-tbl{width:100%;border-collapse:collapse;font-size:.82rem}
-    .gv-month-tbl th{font-size:.65rem;text-transform:uppercase;letter-spacing:.4px;color:var(--text-muted,#94a3b8);font-weight:600;padding:6px 10px;text-align:left;border-bottom:1px solid var(--border,#334155)}
-    .gv-month-tbl td{padding:8px 10px;border-bottom:1px solid rgba(51,65,85,.5)}
-    .gv-month-tbl tr:last-child td{border-bottom:none}
-    .gv-month-tbl .mg{color:#10b981;font-weight:700}
-    .gv-month-tbl .mr{color:#ef4444;font-weight:700}
+    .gv-status-val.active-col{color:#10b981}.gv-status-val.scanning-col{color:#3b82f6}
+    .gv-status-val.waiting-col{color:#f59e0b}.gv-status-val.offline-col{color:#ef4444}
+    .sig3-kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(135px,1fr));gap:10px;margin-bottom:1rem}
+    .sig3-kpi{background:var(--card-bg);border:1px solid var(--border);border-radius:10px;padding:13px 16px}
+    .sig3-kl{font-size:.65rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:.07em;margin-bottom:5px}
+    .sig3-kv{font-size:1.35rem;font-weight:800;font-variant-numeric:tabular-nums;line-height:1.15}
+    .sig3-ks{font-size:.72rem;font-weight:600;margin-top:3px;opacity:.85}
+    .sig3-g{color:#10b981}.sig3-r{color:#ef4444}.sig3-d{color:var(--text-muted)}
+    .sig3-pos{border-radius:12px;padding:18px 22px;margin-bottom:1rem;border:1.5px solid}
+    .sig3-pos-ce{background:rgba(31,58,95,.2);border-color:rgba(59,130,246,.5)}
+    .sig3-pos-pe{background:rgba(80,18,18,.22);border-color:rgba(239,68,68,.5)}
+    .sig3-pos-flat{background:var(--card-bg);border-color:var(--border)}
+    .sig3-ph{display:flex;align-items:center;gap:.5rem;flex-wrap:wrap;margin-bottom:14px}
+    .sig3-dir-b{font-size:.8rem;font-weight:800;padding:.2rem .55rem;border-radius:5px}
+    .sig3-dir-ce{background:#1f3a5f;color:#60a5fa}.sig3-dir-pe{background:#3b1010;color:#f87171}
+    .sig3-pnl-big{font-size:2.4rem;font-weight:800;letter-spacing:-.5px;line-height:1.1;margin-bottom:3px;font-variant-numeric:tabular-nums}
+    .sig3-pnl-pts{font-size:.88rem;font-weight:600;margin-bottom:12px}
+    .sig3-sec{font-size:.67rem;font-weight:700;text-transform:uppercase;letter-spacing:.1em;color:var(--text-muted);border-bottom:1px solid var(--border);padding-bottom:7px;margin:1.4rem 0 .75rem;display:flex;align-items:center;gap:.5rem;flex-wrap:wrap}
+    .sig3-sec-count{font-size:.8rem;font-weight:700;text-transform:none;letter-spacing:0;color:var(--text)}
+    .sig3-tw{overflow-x:auto;border:1px solid var(--border);border-radius:10px;margin-bottom:4px}
+    table.sig3-t{width:100%;border-collapse:collapse;font-size:.85rem}
+    .sig3-t th{text-align:left;padding:9px 11px;font-size:.63rem;text-transform:uppercase;letter-spacing:.06em;color:var(--text-muted);border-bottom:1px solid var(--border);font-weight:600;white-space:nowrap;background:var(--bg2)}
+    .sig3-t td{padding:10px 11px;border-bottom:1px solid var(--border);vertical-align:middle}
+    .sig3-t tr:last-child td{border-bottom:none}
+    .sig3-t tr:hover td{background:var(--hover-bg)}
+    .sig3-te{text-align:center;padding:24px 16px;color:var(--text-muted);font-size:.85rem}
+    .sig3-ct{font-size:.72rem;color:var(--text-muted);white-space:nowrap}
+    .sig3-db{font-size:.7rem;font-weight:800;padding:.12rem .36rem;border-radius:3px}
+    .sig3-db.ce{background:#1f3a5f;color:#60a5fa}.sig3-db.pe{background:#3b1010;color:#f87171}
+    .sig3-pnl-rs{font-size:1rem;font-weight:800;display:block;font-variant-numeric:tabular-nums;line-height:1.2}
+    .sig3-pnl-spt{font-size:.68rem;display:block;color:var(--text-muted);margin-top:1px}
+    .sig3-rc{font-size:.65rem;padding:.1rem .32rem;border-radius:3px;font-weight:600;white-space:nowrap}
+    .sig3-rc-sl{background:rgba(239,68,68,.12);color:#f87171}
+    .sig3-rc-early{background:rgba(245,158,11,.12);color:#f59e0b}
+    .sig3-rc-eod{background:rgba(99,102,241,.12);color:#818cf8}
+    .sig3-mono{font-family:monospace;font-size:.82rem}
     .gv-cta{display:flex;align-items:center;gap:14px;background:linear-gradient(135deg,rgba(124,58,237,.18),rgba(99,102,241,.12));border:1px solid rgba(124,58,237,.35);border-radius:14px;padding:16px 18px;margin:20px 0}
-    .gv-cta-icon{font-size:1.5rem}
-    .gv-cta-body{flex:1}
+    .gv-cta-icon{font-size:1.5rem}.gv-cta-body{flex:1}
     .gv-cta-body strong{font-size:.92rem;color:#f1f5f9}
     .gv-cta-body p{font-size:.75rem;color:#94a3b8;margin:3px 0 0}
     .gv-btn{background:linear-gradient(135deg,#7c3aed,#6366f1);color:#fff;border:none;border-radius:8px;padding:8px 16px;font-size:.78rem;font-weight:700;white-space:nowrap;text-decoration:none;cursor:pointer}
-    .gv-upd{font-size:.65rem;color:var(--text-muted,#64748b)}
-    @media(max-width:480px){.gv-kpi-row{grid-template-columns:1fr 1fr}}
+    .sig-tier-free{background:rgba(16,185,129,.15);color:#34d399;border:1px solid rgba(16,185,129,.3)}
+    .sig-tier-guest{background:rgba(100,116,139,.15);color:#94a3b8;border:1px solid rgba(100,116,139,.3)}
+    .gv-badge{font-size:.68rem;font-weight:700;padding:3px 9px;border-radius:20px;letter-spacing:.3px;border:1px solid transparent}
+    .gv-upd{font-size:.65rem;color:var(--text-muted)}
   </style>
 </head>
 <body class="page-theme-signals">
   ${nav("signals", req)}
-  <div class="gv-wrap">
+  <div class="sig3">
 
-    <div class="gv-hero">
-      <div class="gv-hero-top">
-        <div>
-          <div class="gv-title">Live Signals</div>
-          <p class="gv-sub">BANKNIFTY Options &#xB7; Automated intraday bot</p>
-        </div>
-        <div style="display:flex;flex-direction:column;align-items:flex-end;gap:6px">
-          <span class="gv-badge ${tierClass}">${tierLabel}</span>
-          <span class="gv-upd" id="gv-upd">Connecting&#x2026;</span>
-        </div>
+    <!-- Header -->
+    <div class="sig3-hdr">
+      <div>
+        <div class="sig3-title">&#x1F4E1; Live Signals</div>
+        <div class="sig3-sub">BANKNIFTY Options &middot; Automated intraday bot &middot; &#x20B9; P&amp;L = index pts &times; 15</div>
       </div>
-
-      <div class="gv-status">
-        <span class="gv-status-dot ${guestDotCls()}" id="gv-dot"></span>
-        <span class="gv-status-lbl" id="gv-status-lbl">${guestBotLabel()}</span>
-        <span class="gv-status-val ${guestValCls()}" id="gv-status-val">${guestBotVal()}</span>
-      </div>
-
-      <div id="gv-live-wrap" style="margin-top:14px;${hasPosition ? '' : 'display:none'}">
-        <div class="gv-live-sub">Live P&amp;L (open position)</div>
-        <div class="gv-live-pnl" id="gv-live-pnl" style="color:#94a3b8">&#x2014;</div>
-        <div class="gv-live-sub" id="gv-live-pts" style="margin-top:2px"></div>
+      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+        <span class="gv-badge ${tierClass}">${tierLabel}</span>
+        <div class="sig3-live"><span class="sig3-dot"></span><span class="gv-upd" id="gv-upd">Connecting&hellip;</span></div>
       </div>
     </div>
 
-    <div class="gv-kpi-row">
-      <div class="gv-kpi">
-        <div class="gv-kpi-lbl">Today</div>
-        <div class="gv-kpi-val" id="gv-today-rs" style="color:${pnlClsG(analytics.today.pnl)}">${fmtRsG(analytics.today.pnl)}</div>
-        <div class="gv-kpi-sub" id="gv-today-pts">${fmtPtsG(analytics.today.pnl)}</div>
+    <!-- Bot Status Bar -->
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:1rem;padding:10px 16px;border-radius:10px;background:var(--card-bg,#1e293b);border:1px solid var(--border)">
+      <span class="gv-status-dot ${guestDotCls()}" id="gv-dot"></span>
+      <span style="font-size:.82rem;color:var(--text-muted);flex:1" id="gv-status-lbl">${guestBotLabel()}</span>
+      <span style="font-size:.82rem;font-weight:700" class="gv-status-val ${guestValCls()}" id="gv-status-val">${guestBotVal()}</span>
+    </div>
+
+    <!-- 6 KPI Cards -->
+    <div class="sig3-kpis">
+      <div class="sig3-kpi">
+        <div class="sig3-kl">Today P&amp;L</div>
+        <div class="sig3-kv ${analytics.today.pnl >= 0 ? 'sig3-g' : 'sig3-r'}" id="gv-today-rs">${fmtRsG(analytics.today.pnl)}</div>
+        <div class="sig3-ks sig3-d" id="gv-today-pts">${fmtPtsG(analytics.today.pnl)}</div>
       </div>
-      <div class="gv-kpi">
-        <div class="gv-kpi-lbl">Yesterday</div>
-        <div class="gv-kpi-val" style="color:${pnlClsG(yPnl)}">${fmtRsG(yPnl)}</div>
-        <div class="gv-kpi-sub">${fmtPtsG(yPnl)}${yTrades.length > 0 ? ' &middot; ' + yWins + 'W/' + (yTrades.length - yWins) + 'L' : ' &middot; no trades'}</div>
+      <div class="sig3-kpi">
+        <div class="sig3-kl">Today Trades</div>
+        <div class="sig3-kv" id="gv-trades">${analytics.today.trades}${hasPosition ? '<span style="font-size:.65rem;color:#10b981"> +live</span>' : ""}</div>
+        <div class="sig3-ks sig3-d" id="gv-wl"><span class="sig3-g">${analytics.today.wins}W</span> / <span class="sig3-r">${analytics.today.losses}L</span></div>
       </div>
-      <div class="gv-kpi">
-        <div class="gv-kpi-lbl">This Week</div>
-        <div class="gv-kpi-val" id="gv-wk-rs" style="color:${pnlClsG(analytics.weekly.pnl)}">${fmtRsG(analytics.weekly.pnl)}</div>
-        <div class="gv-kpi-sub" id="gv-wk-pts">${fmtPtsG(analytics.weekly.pnl)}</div>
+      <div class="sig3-kpi">
+        <div class="sig3-kl">This Week</div>
+        <div class="sig3-kv ${analytics.weekly.pnl >= 0 ? 'sig3-g' : 'sig3-r'}" id="gv-wk-rs">${fmtRsG(analytics.weekly.pnl)}</div>
+        <div class="sig3-ks sig3-d" id="gv-wk-pts">${fmtPtsG(analytics.weekly.pnl)}</div>
+      </div>
+      <div class="sig3-kpi">
+        <div class="sig3-kl">All-Time P&amp;L</div>
+        <div class="sig3-kv ${analytics.allTime.pnl >= 0 ? 'sig3-g' : 'sig3-r'}">${fmtRsG(analytics.allTime.pnl)}</div>
+        <div class="sig3-ks sig3-d">${fmtPtsG(analytics.allTime.pnl)}</div>
+      </div>
+      <div class="sig3-kpi">
+        <div class="sig3-kl">Win Rate</div>
+        <div class="sig3-kv">${analytics.allTime.winRate}%</div>
+        <div class="sig3-ks sig3-d">${analytics.allTime.wins}W / ${analytics.allTime.losses}L all-time</div>
+      </div>
+      <div class="sig3-kpi">
+        <div class="sig3-kl">Yesterday</div>
+        <div class="sig3-kv ${yPnl >= 0 ? 'sig3-g' : 'sig3-r'}">${fmtRsG(yPnl)}</div>
+        <div class="sig3-ks sig3-d">${fmtPtsG(yPnl)}${yTrades.length > 0 ? " &middot; " + yWins + "W/" + (yTrades.length - yWins) + "L" : ""}</div>
       </div>
     </div>
 
-    <div class="gv-sec-title">Month-wise P&amp;L</div>
-    <div style="background:var(--card-bg,#1e293b);border:1px solid var(--border,#334155);border-radius:12px;overflow:hidden">
-      <table class="gv-month-tbl">
-        <thead><tr><th>Month</th><th>P&amp;L (&#x20B9;)</th><th>P&amp;L (pts)</th><th>Trades</th><th>Win%</th></tr></thead>
+    <!-- Position Card -->
+    <div id="gv-pos-wrap">
+      ${hasPosition ? `
+      <div class="sig3-pos sig3-pos-${dirG ? dirG.toLowerCase() : 'ce'}" id="gv-pos-card">
+        <div class="sig3-ph">
+          <span class="sig3-dot"></span>
+          <span class="sig3-dir-b sig3-dir-${dirG ? dirG.toLowerCase() : 'ce'}" id="gv-pos-dir">${dirG ? dirG + ' OPTION' : 'IN TRADE'}</span>
+          <span class="sig3-mono" style="color:var(--text-muted)">BANKNIFTY</span>
+        </div>
+        <div class="sig3-pnl-big sig3-d" id="gv-live-pnl">&mdash;</div>
+        <div class="sig3-pnl-pts sig3-d" id="gv-live-pts">live P&amp;L updating&hellip;</div>
+        <div style="padding:10px 14px;background:rgba(15,23,42,.5);border-radius:8px;display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+          <span style="font-size:.95rem">&#x1F512;</span>
+          <div style="flex:1">
+            <div style="font-size:.8rem;font-weight:700;color:var(--text)">Entry price &middot; Stop Loss &middot; Index level</div>
+            <div style="font-size:.72rem;color:var(--text-muted);margin-top:2px">Unlock live trade details in Premium</div>
+          </div>
+          <a href="/premium" style="background:linear-gradient(135deg,#7c3aed,#6366f1);color:#fff;border-radius:7px;padding:6px 12px;font-size:.75rem;font-weight:700;text-decoration:none;white-space:nowrap">Upgrade &#x2192;</a>
+        </div>
+      </div>` : `
+      <div class="sig3-pos sig3-pos-flat">
+        <div style="display:flex;align-items:center;gap:.75rem">
+          <span style="font-size:1.6rem">&#9203;</span>
+          <div>
+            <div style="font-weight:700;font-size:.95rem">No Active Position</div>
+            <div style="font-size:.74rem;color:var(--text-muted);margin-top:3px">Bot scanning BANKNIFTY for breakout signal&hellip;</div>
+          </div>
+        </div>
+      </div>`}
+    </div>
+
+    <!-- TODAY'S TRADES -->
+    <div class="sig3-sec">
+      Today &mdash; ${todayStrG}
+      <span class="sig3-sec-count">(${closedTodayG.length} closed${hasPosition ? " + 1 live" : ""})</span>
+    </div>
+    <div class="sig3-tw">
+      <table class="sig3-t">
+        <thead><tr>
+          <th>Time</th><th>Dir</th><th>P&amp;L (&#8377;)</th><th>P&amp;L (pts)</th><th>Reason</th><th>Duration</th>
+        </tr></thead>
         <tbody>
-          ${analytics.monthly.slice(0, 6).map((m) => `<tr>
-            <td>${new Date(m.month + '-01').toLocaleString('en-IN', { month: 'short', year: '2-digit' })}</td>
-            <td class="${m.pnl >= 0 ? 'mg' : 'mr'}">${fmtRsG(m.pnl)}</td>
-            <td class="${m.pnl >= 0 ? 'mg' : 'mr'}">${fmtPtsG(m.pnl)}</td>
-            <td>${m.trades}</td>
-            <td>${m.winRate}%</td>
-          </tr>`).join("")}
-          ${analytics.monthly.length === 0 ? '<tr><td colspan="5" style="text-align:center;color:#64748b;padding:16px">No historical data yet</td></tr>' : ''}
+          ${[...closedTodayG].reverse().map((t) => {
+            const d3 = (t.direction || "").toLowerCase();
+            const rcRaw = (t.reasonExit || "").toLowerCase();
+            const rcCls = rcRaw.includes("sl") || rcRaw.includes("stop") ? "sig3-rc-sl" : rcRaw.includes("target") ? "" : rcRaw.includes("eod") ? "sig3-rc-eod" : "sig3-rc-early";
+            const dur = t.duration ? (t.duration < 60 ? t.duration + "s" : Math.round(t.duration / 60) + "m") : "\u2014";
+            const tStr = t.date ? new Date(t.date).toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata", hour: "2-digit", minute: "2-digit" }) : "\u2014";
+            return `<tr>
+              <td class="sig3-ct">${tStr}</td>
+              <td>${d3 ? `<span class="sig3-db ${d3}">${(t.direction || "").toUpperCase()}</span>` : "\u2014"}</td>
+              <td><span class="sig3-pnl-rs ${(t.pnl ?? 0) >= 0 ? "sig3-g" : "sig3-r"}">${fmtRsG(t.pnl ?? 0)}</span></td>
+              <td class="sig3-mono" style="font-size:.76rem;color:var(--text-muted)">${fmtPtsG(t.pnl ?? 0)}</td>
+              <td>${t.reasonExit ? `<span class="sig3-rc ${rcCls}">${t.reasonExit}</span>` : "\u2014"}</td>
+              <td class="sig3-ct">${dur}</td>
+            </tr>`;
+          }).join("") || `<tr><td colspan="6" class="sig3-te">No closed trades today${hasPosition ? " \u2014 1 live position active" : ""}</td></tr>`}
+        </tbody>
+      </table>
+    </div>
+
+    <!-- MONTHLY P&L -->
+    <div class="sig3-sec">Month-wise P&amp;L</div>
+    <div class="sig3-tw">
+      <table class="sig3-t">
+        <thead><tr><th>Month</th><th>P&amp;L (&#8377;)</th><th>P&amp;L (pts)</th><th>Trades</th><th>Win%</th></tr></thead>
+        <tbody>
+          ${analytics.monthly.slice(0, 6).map((m) => {
+            const ml = new Date(m.month + "-01").toLocaleString("en-IN", { month: "short", year: "2-digit" });
+            return `<tr>
+              <td style="font-weight:600">${ml}</td>
+              <td><span class="sig3-pnl-rs ${m.pnl >= 0 ? "sig3-g" : "sig3-r"}" style="font-size:.95rem">${fmtRsG(m.pnl)}</span></td>
+              <td class="sig3-mono" style="font-size:.76rem;color:var(--text-muted)">${fmtPtsG(m.pnl)}</td>
+              <td>${m.trades}</td>
+              <td class="${m.winRate >= 55 ? "sig3-g" : m.winRate >= 40 ? "" : "sig3-r"}">${m.trades > 0 ? m.winRate + "%" : "\u2014"}</td>
+            </tr>`;
+          }).join("") || '<tr><td colspan="5" class="sig3-te">No historical data yet</td></tr>'}
         </tbody>
       </table>
     </div>
@@ -8168,12 +8259,12 @@ app.get("/signals", featureGate("feature_signals", "Signals"), (req, res) => {
       <div class="gv-cta-icon">&#x26A1;</div>
       <div class="gv-cta-body">
         <strong>See every trade in real time</strong>
-        <p>Premium shows live entry &amp; exit, P&amp;L per trade, full history &amp; daily reports.</p>
+        <p>Premium unlocks live entry price, stop loss level, exact P&amp;L per trade &amp; instant Telegram alerts.</p>
       </div>
       <a href="/premium" class="gv-btn">Upgrade &#x2192;</a>
     </div>
 
-    <footer class="site-footer"><span>&#xA9; 2026 ZeroScreen &#x2014; For informational purposes only. Not SEBI registered. Not investment advice. Trading involves substantial risk.</span></footer>
+    <footer class="site-footer"><span>&#xA9; 2026 ZeroScreen &mdash; For informational purposes only. Not SEBI registered. Not investment advice.</span></footer>
   </div>
   <script src="/public/js/app.js"></script>
   <script>
@@ -8194,22 +8285,24 @@ app.get("/signals", featureGate("feature_signals", "Signals"), (req, res) => {
       const lblTxt=!alive?"Bot offline \u2014 not responding":inT?"Bot is running a trade \u2014 "+((d.heartbeat?.direction||"")+" OPTION").trim():(isWaiting?"Bot alive \u2014 waiting for market hours (opens 9:25 IST)":"Bot alive \u2014 scanning BANKNIFTY for signal");
       const valTxt=!alive?"Offline":inT?"\u25CF\u00A0ACTIVE":(isWaiting?"Waiting":"Scanning");
       const valCls=!alive?"offline-col":inT?"active-col":isWaiting?"waiting-col":"scanning-col";
-      const dot=_ge2("gv-dot");
-      if(dot)dot.className="gv-status-dot "+dotCls;
+      const dot=_ge2("gv-dot");if(dot)dot.className="gv-status-dot "+dotCls;
       if(_ge2("gv-status-lbl"))_ge2("gv-status-lbl").textContent=lblTxt;
       if(_ge2("gv-status-val")){_ge2("gv-status-val").textContent=valTxt;_ge2("gv-status-val").className="gv-status-val "+valCls;}
-      const lw=_ge2("gv-live-wrap");
-      if(inT&&d.activeState?.entryPrice>0){
-        const u=d.activeState?.unrealisedPnL??0;
-        if(lw)lw.style.display="";
-        if(_ge2("gv-live-pnl")){_ge2("gv-live-pnl").textContent=_gfR(u);_ge2("gv-live-pnl").style.color=_gc2(u);}
-        if(_ge2("gv-live-pts"))_ge2("gv-live-pts").textContent=_gfP(u)+" unrealised";
-      }else{if(lw)lw.style.display="none";}
       const tot=(d.today?.pnl??0)+(inT?(d.activeState?.unrealisedPnL??0):0);
       if(_ge2("gv-today-rs")){_ge2("gv-today-rs").textContent=_gfR(tot);_ge2("gv-today-rs").style.color=_gc2(tot);}
       if(_ge2("gv-today-pts"))_ge2("gv-today-pts").textContent=_gfP(tot)+(inT?" (incl. live)":"");
+      const tc=d.today?.trades||0;
+      if(_ge2("gv-trades"))_ge2("gv-trades").innerHTML=tc+(tc!==1?" trades":" trade")+(inT?' <span style="font-size:.65rem;color:#10b981">+live</span>':"");
+      if(_ge2("gv-wl")&&d.today)_ge2("gv-wl").innerHTML='<span class="sig3-g">'+d.today.wins+'W</span> / <span class="sig3-r">'+d.today.losses+'L</span>';
       if(_ge2("gv-wk-rs")&&d.weekly){_ge2("gv-wk-rs").textContent=_gfR(d.weekly.pnl);_ge2("gv-wk-rs").style.color=_gc2(d.weekly.pnl);}
       if(_ge2("gv-wk-pts")&&d.weekly)_ge2("gv-wk-pts").textContent=_gfP(d.weekly.pnl);
+      if(inT&&d.activeState?.entryPrice>0){
+        const u=d.activeState?.unrealisedPnL??0;
+        const dirLive=(d.heartbeat?.direction||"").toUpperCase();
+        if(_ge2("gv-live-pnl")){_ge2("gv-live-pnl").textContent=_gfR(u);_ge2("gv-live-pnl").style.color=_gc2(u);}
+        if(_ge2("gv-live-pts")){_ge2("gv-live-pts").textContent=_gfP(u)+" unrealised";_ge2("gv-live-pts").style.color=_gc2(u);}
+        if(_ge2("gv-pos-dir")&&dirLive)_ge2("gv-pos-dir").textContent=dirLive+" OPTION";
+      }
     }catch(e){}
   }
   gvRefresh();setInterval(gvRefresh,12000);
