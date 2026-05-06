@@ -887,16 +887,15 @@ app.get("/login", (req: Request, res: Response) => {
   const error = req.query.error as string | undefined;
   const next  = req.query.next as string | undefined;
   const googleBtn = GOOGLE_CLIENT_ID
-    ? `<a href="/auth/google" class="btn-google">
-         <svg width="18" height="18" viewBox="0 0 18 18" xmlns="http://www.w3.org/2000/svg" style="flex-shrink:0">
+    ? `<a href="/auth/google" class="zl-google">
+         <svg width="20" height="20" viewBox="0 0 18 18" xmlns="http://www.w3.org/2000/svg" style="flex-shrink:0">
            <path fill="#4285F4" d="M17.64 9.2c0-.637-.057-1.251-.164-1.84H9v3.481h4.844c-.209 1.125-.843 2.078-1.796 2.717v2.258h2.908c1.702-1.567 2.684-3.875 2.684-6.615z"/>
            <path fill="#34A853" d="M9 18c2.43 0 4.467-.806 5.956-2.18l-2.908-2.259c-.806.54-1.837.86-3.048.86-2.344 0-4.328-1.584-5.036-3.711H.957v2.332A8.997 8.997 0 0 0 9 18z"/>
            <path fill="#FBBC05" d="M3.964 10.71A5.41 5.41 0 0 1 3.682 9c0-.593.102-1.17.282-1.71V4.958H.957A8.996 8.996 0 0 0 0 9c0 1.452.348 2.827.957 4.042l3.007-2.332z"/>
            <path fill="#EA4335" d="M9 3.58c1.321 0 2.508.454 3.44 1.345l2.582-2.58C13.463.891 11.426 0 9 0A8.997 8.997 0 0 0 .957 4.958L3.964 7.29C4.672 5.163 6.656 3.58 9 3.58z"/>
          </svg>
          Continue with Google
-       </a>
-       <div class="auth-divider"><span>or sign in with email</span></div>`
+       </a>`
     : "";
   res.send(`<!DOCTYPE html>
 <html lang="en">
@@ -906,143 +905,354 @@ app.get("/login", (req: Request, res: Response) => {
   <title>Sign In — ZeroScreen</title>
   <link rel="stylesheet" href="/public/css/style.css">
   <style>
-    /* ── Live status cards ── */
-    .login-live-cards { display: flex; flex-direction: column; gap: 10px; margin: 24px 0 20px; }
-    .llc {
-      display: flex; align-items: center; gap: 14px;
-      padding: 14px 16px; border-radius: 14px;
-      border: 1px solid rgba(255,255,255,0.08); position: relative; overflow: hidden;
-      text-decoration: none; transition: transform 0.15s;
-    }
-    .llc:hover { transform: translateX(4px); }
-    .llc-signals { background: linear-gradient(90deg,rgba(16,185,129,0.18) 0%,rgba(16,185,129,0.04) 100%); border-color: rgba(16,185,129,0.3); }
-    .llc-trade   { background: linear-gradient(90deg,rgba(239,68,68,0.15) 0%,rgba(239,68,68,0.03) 100%);  border-color: rgba(239,68,68,0.3); }
-    .llc-screen  { background: linear-gradient(90deg,rgba(59,130,246,0.15) 0%,rgba(59,130,246,0.03) 100%); border-color: rgba(59,130,246,0.3); }
-    .llc-dash    { background: linear-gradient(90deg,rgba(139,92,246,0.15) 0%,rgba(139,92,246,0.03) 100%); border-color: rgba(139,92,246,0.3); }
-    .llc-icon { font-size: 2rem; flex-shrink: 0; line-height: 1; }
-    .llc-body { flex: 1; min-width: 0; }
-    .llc-title { font-size: 13.5px; font-weight: 700; color: #f1f5f9; margin-bottom: 3px; }
-    .llc-desc  { font-size: 12px; color: rgba(255,255,255,0.5); line-height: 1.45; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-    .llc-status {
-      flex-shrink: 0; display: flex; align-items: center; gap: 5px;
-      font-size: 10px; font-weight: 700; padding: 3px 9px; border-radius: 20px;
-      letter-spacing: 0.4px;
-    }
-    .llc-status.live   { background: rgba(16,185,129,0.25); color: #34d399; }
-    .llc-status.hot    { background: rgba(239,68,68,0.25); color: #f87171; }
-    .llc-status.free   { background: rgba(59,130,246,0.22); color: #93c5fd; }
-    .llc-status.data   { background: rgba(139,92,246,0.22); color: #c4b5fd; }
-    .llc-pulse { width: 7px; height: 7px; border-radius: 50%; background: currentColor; animation: liveP 1.5s ease-in-out infinite; }
-    @keyframes liveP { 0%,100%{opacity:1} 50%{opacity:0.3} }
+    *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+    body{min-height:100vh;background:#020617;overflow-x:hidden}
 
-    /* ── Quick stats bar ── */
-    .login-stats { display: flex; gap: 0; border: 1px solid rgba(255,255,255,0.1); border-radius: 12px; overflow: hidden; margin-top: 4px; }
-    .login-stat { flex: 1; padding: 12px 8px; text-align: center; border-right: 1px solid rgba(255,255,255,0.1); }
-    .login-stat:last-child { border-right: none; }
-    .login-stat strong { display: block; font-size: 1.15rem; font-weight: 900; color: #fff; letter-spacing: -0.5px; }
-    .login-stat span { font-size: 10px; color: rgba(255,255,255,0.5); font-weight: 600; letter-spacing: 0.3px; margin-top: 2px; display: block; }
+    /* ── Full-screen canvas BG ── */
+    #zl-canvas{position:fixed;inset:0;z-index:0;pointer-events:none;opacity:0.5}
 
-    /* ── Tier pills at bottom ── */
-    .login-tier-row { display: flex; align-items: center; gap: 8px; margin-top: 18px; flex-wrap: wrap; }
-    .login-tier-pill {
-      display: inline-flex; align-items: center; gap: 5px; font-size: 11px; font-weight: 700;
-      padding: 5px 12px; border-radius: 20px; letter-spacing: 0.3px;
+    /* ── Animated orbs ── */
+    .zl-orb{position:fixed;border-radius:50%;filter:blur(90px);pointer-events:none;z-index:1;animation:orbFloat 14s ease-in-out infinite}
+    .zl-orb1{width:520px;height:520px;background:radial-gradient(circle,rgba(99,102,241,0.3),transparent 70%);top:-150px;left:-120px;animation-delay:0s}
+    .zl-orb2{width:420px;height:420px;background:radial-gradient(circle,rgba(16,185,129,0.22),transparent 70%);bottom:-100px;right:-60px;animation-delay:-5s}
+    .zl-orb3{width:320px;height:320px;background:radial-gradient(circle,rgba(236,72,153,0.16),transparent 70%);top:35%;left:50%;animation-delay:-9s}
+    @keyframes orbFloat{0%,100%{transform:translate(0,0) scale(1)}33%{transform:translate(28px,-36px) scale(1.07)}66%{transform:translate(-18px,28px) scale(0.93)}}
+
+    /* ── Layout ── */
+    .zl-page{position:relative;z-index:2;min-height:100vh;display:flex;align-items:stretch}
+
+    /* ── LEFT PANEL ── */
+    .zl-left{flex:1.2;display:flex;flex-direction:column;justify-content:center;padding:60px 56px;position:relative;overflow:hidden}
+    /* Financial numbers rising canvas — full left panel */
+    #zl-fin-canvas{position:absolute;inset:0;width:100%;height:100%;pointer-events:none;z-index:0}
+    .zl-left-inner{position:relative;z-index:1}
+    .zl-logo{display:inline-flex;align-items:center;gap:12px;text-decoration:none;margin-bottom:40px}
+    .zl-logo-img{width:44px;height:44px;border-radius:12px;box-shadow:0 0 0 1px rgba(255,255,255,0.12),0 8px 32px rgba(99,102,241,0.5)}
+    .zl-logo-text{font-size:26px;font-weight:900;letter-spacing:-1px;background:linear-gradient(135deg,#818cf8,#34d399);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text}
+    .zl-badge{display:inline-flex;align-items:center;gap:6px;background:rgba(99,102,241,0.15);border:1px solid rgba(99,102,241,0.35);color:#a5b4fc;font-size:11px;font-weight:700;letter-spacing:.5px;padding:5px 14px;border-radius:20px;margin-bottom:28px}
+    .zl-headline{font-size:clamp(28px,3.5vw,46px);font-weight:900;line-height:1.15;letter-spacing:-1.5px;color:#f1f5f9;margin-bottom:10px}
+    .zl-headline .grad{background:linear-gradient(135deg,#34d399 0%,#60a5fa 50%,#a78bfa 100%);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text}
+    .zl-sub{font-size:15px;color:#64748b;margin-bottom:40px;line-height:1.6}
+
+    /* ── Ticker tape ── */
+    .zl-ticker{overflow:hidden;white-space:nowrap;margin-bottom:36px;mask-image:linear-gradient(90deg,transparent,black 8%,black 92%,transparent)}
+    .zl-ticker-inner{display:inline-flex;gap:0;animation:tickerRun 22s linear infinite}
+    .zl-tick{display:inline-flex;align-items:center;gap:6px;padding:7px 18px;border-right:1px solid rgba(255,255,255,0.06);font-size:12px;font-weight:700;color:rgba(255,255,255,0.55);white-space:nowrap}
+    .zl-tick .sym{color:#94a3b8;font-size:10px;font-family:monospace}
+    .zl-tick .val{color:#34d399}
+    .zl-tick .dn{color:#f87171}
+    @keyframes tickerRun{0%{transform:translateX(0)}100%{transform:translateX(-50%)}}
+
+    /* ── Feature cards ── */
+    .zl-cards{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:36px}
+    .zl-card{display:flex;align-items:flex-start;gap:12px;padding:16px 18px;border-radius:16px;border:1px solid rgba(255,255,255,0.07);backdrop-filter:blur(8px);text-decoration:none;transition:all .2s;position:relative;overflow:hidden;background:rgba(10,18,36,0.6)}
+    .zl-card::before{content:'';position:absolute;inset:0;background:linear-gradient(135deg,rgba(255,255,255,0.04),transparent);pointer-events:none}
+    .zl-card:hover{transform:translateY(-3px);border-color:rgba(255,255,255,0.18);box-shadow:0 12px 40px rgba(0,0,0,0.5)}
+    .zl-card-signals{border-color:rgba(16,185,129,0.25)}.zl-card-trade{border-color:rgba(239,68,68,0.2)}.zl-card-screen{border-color:rgba(59,130,246,0.2)}.zl-card-dash{border-color:rgba(139,92,246,0.2)}
+    .zl-card-icon{font-size:22px;flex-shrink:0;margin-top:1px}
+    .zl-card-title{font-size:12.5px;font-weight:800;color:#e2e8f0;margin-bottom:3px}
+    .zl-card-desc{font-size:11px;color:#475569;line-height:1.4}
+    .zl-card-pill{display:inline-flex;align-items:center;gap:4px;font-size:9.5px;font-weight:700;padding:2px 8px;border-radius:10px;margin-top:5px}
+    .pill-live{background:rgba(16,185,129,0.2);color:#34d399}.pill-hot{background:rgba(239,68,68,0.2);color:#f87171}.pill-free{background:rgba(59,130,246,0.2);color:#93c5fd}.pill-data{background:rgba(139,92,246,0.2);color:#c4b5fd}
+    .pill-dot{width:5px;height:5px;border-radius:50%;background:currentColor;animation:pd 1.4s ease-in-out infinite}
+    @keyframes pd{0%,100%{opacity:1}50%{opacity:.3}}
+
+    /* ── Stats row ── */
+    .zl-stats{display:flex;gap:0;border:1px solid rgba(255,255,255,0.08);border-radius:14px;overflow:hidden;background:rgba(10,18,36,0.5);backdrop-filter:blur(8px)}
+    .zl-stat{flex:1;padding:14px 10px;text-align:center;border-right:1px solid rgba(255,255,255,0.07)}
+    .zl-stat:last-child{border-right:none}
+    .zl-stat strong{display:block;font-size:1.2rem;font-weight:900;background:linear-gradient(135deg,#60a5fa,#a78bfa);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;letter-spacing:-.5px}
+    .zl-stat span{font-size:10px;color:#475569;font-weight:600;letter-spacing:.3px;margin-top:2px;display:block}
+
+    /* ── RIGHT PANEL ── */
+    .zl-right{width:480px;flex-shrink:0;display:flex;align-items:center;justify-content:center;padding:40px 36px;position:relative;background:rgba(6,12,26,0.88);border-left:1px solid rgba(255,255,255,0.07)}
+    .zl-form-wrap{width:100%;max-width:390px}
+
+    /* ── Animated gradient border wrapper ── */
+    .zl-card-glow{border-radius:26px;padding:1.5px;background:linear-gradient(135deg,#6366f1,#34d399,#818cf8,#6366f1);background-size:400% 400%;animation:glowShift 5s ease infinite;box-shadow:0 0 50px rgba(99,102,241,0.3),0 0 100px rgba(52,211,153,0.1)}
+    @keyframes glowShift{0%{background-position:0% 50%}50%{background-position:100% 50%}100%{background-position:0% 50%}}
+
+    /* form card inner */
+    .zl-form-card{background:#080f1e;border-radius:24px;padding:36px 32px}
+    .zl-form-title{font-size:22px;font-weight:900;color:#f1f5f9;letter-spacing:-.8px;margin-bottom:3px}
+    .zl-form-sub{font-size:13px;color:#475569;margin-bottom:24px}
+
+    /* guest btn */
+    .zl-guest{display:flex;align-items:center;justify-content:center;gap:8px;padding:11px 20px;border-radius:12px;border:1px solid rgba(255,255,255,0.1);background:rgba(255,255,255,0.04);color:#94a3b8;font-size:13px;font-weight:600;text-decoration:none;margin-bottom:18px;transition:all .2s}
+    .zl-guest:hover{background:rgba(255,255,255,0.08);border-color:rgba(255,255,255,0.18);color:#e2e8f0;transform:translateY(-1px)}
+
+    /* divider */
+    .zl-div{display:flex;align-items:center;gap:12px;margin-bottom:16px;font-size:11px;color:#2d3a52;font-weight:600;letter-spacing:.5px}
+    .zl-div::before,.zl-div::after{content:'';flex:1;height:1px;background:rgba(255,255,255,0.07)}
+
+    /* Google btn */
+    .zl-google{display:flex;align-items:center;justify-content:center;gap:10px;padding:12px 20px;border-radius:12px;border:1px solid rgba(255,255,255,0.12);background:rgba(255,255,255,0.05);color:#e2e8f0;font-size:14px;font-weight:700;text-decoration:none;margin-bottom:18px;transition:all .2s}
+    .zl-google:hover{background:rgba(255,255,255,0.09);border-color:rgba(255,255,255,0.2);transform:translateY(-1px);box-shadow:0 6px 20px rgba(0,0,0,0.35)}
+
+    /* inputs with icons */
+    .zl-field{margin-bottom:14px;transition:transform .15s}
+    .zl-field label{display:block;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.9px;color:#3d526e;margin-bottom:6px}
+    .zl-input-wrap{position:relative;display:flex;align-items:center}
+    .zl-inp-icon{position:absolute;left:14px;color:#3d526e;pointer-events:none;transition:color .2s;display:flex;align-items:center}
+    .zl-field input{width:100%;background:rgba(255,255,255,0.04);border:1.5px solid rgba(255,255,255,0.08);color:#f1f5f9;padding:12px 16px 12px 42px;border-radius:12px;font-size:14px;font-family:inherit;outline:none;transition:all .2s;caret-color:#34d399}
+    .zl-field input::placeholder{color:#2a3a55}
+    .zl-field input:focus{border-color:#34d399;background:rgba(52,211,153,0.04);box-shadow:0 0 0 3px rgba(52,211,153,0.1)}
+    .zl-input-wrap:focus-within .zl-inp-icon{color:#34d399}
+
+    /* submit */
+    .zl-submit{width:100%;padding:14px;border-radius:12px;border:none;cursor:pointer;font-size:15px;font-weight:800;font-family:inherit;letter-spacing:-.2px;position:relative;overflow:hidden;margin-top:8px;transition:transform .2s,box-shadow .2s;background:linear-gradient(135deg,#6366f1 0%,#34d399 100%);color:#fff;box-shadow:0 8px 30px rgba(99,102,241,0.45)}
+    .zl-submit::after{content:'';position:absolute;top:0;left:-100%;width:60%;height:100%;background:linear-gradient(90deg,transparent,rgba(255,255,255,0.18),transparent);transform:skewX(-20deg);transition:left .5s}
+    .zl-submit:hover{transform:translateY(-2px);box-shadow:0 14px 40px rgba(99,102,241,0.6)}
+    .zl-submit:hover::after{left:140%}
+    .zl-submit:active{transform:translateY(0)}
+
+    /* error */
+    .zl-error{background:rgba(239,68,68,0.1);border:1px solid rgba(239,68,68,0.25);color:#fca5a5;padding:10px 14px;border-radius:10px;font-size:13px;margin-bottom:16px}
+
+    /* links */
+    .zl-links{display:flex;justify-content:space-between;margin-top:16px;font-size:12px;color:#3d526e}
+    .zl-links a{color:#6d7fd4;text-decoration:none;font-weight:600;transition:color .15s}
+    .zl-links a:hover{color:#a5b4fc}
+
+    /* unlocks box */
+    .zl-unlocks{margin-top:16px;padding:12px 14px;background:linear-gradient(135deg,rgba(52,211,153,0.05),rgba(99,102,241,0.05));border:1px solid rgba(52,211,153,0.12);border-radius:10px;font-size:11.5px;color:#3d526e;line-height:1.8}
+    .zl-unlocks strong{color:#546480;display:block;margin-bottom:2px}
+
+    /* secure badge */
+    .zl-secure{display:flex;align-items:center;justify-content:center;gap:6px;margin-top:14px;font-size:10.5px;color:#2a3a55;font-weight:600;letter-spacing:.3px}
+
+    /* responsive */
+    @media(max-width:900px){
+      .zl-page{flex-direction:column}
+      .zl-right{order:-1;width:100%;padding:28px 20px 24px;border-left:none;border-bottom:1px solid rgba(255,255,255,0.07);background:rgba(6,12,26,0.95)}
+      .zl-left{padding:28px 20px 44px}
+      .zl-cards{grid-template-columns:1fr 1fr}
+      .zl-form-card{padding:26px 20px}
     }
-    .login-tier-pill.green  { background: rgba(16,185,129,0.18); color: #34d399; border: 1px solid rgba(16,185,129,0.3); }
-    .login-tier-pill.yellow { background: rgba(245,158,11,0.18);  color: #fbbf24; border: 1px solid rgba(245,158,11,0.3); }
-    .login-tier-pill.red    { background: rgba(239,68,68,0.18);   color: #f87171; border: 1px solid rgba(239,68,68,0.3); }
-    .login-tier-label { font-size: 11px; color: rgba(255,255,255,0.4); width: 100%; margin-top: 2px; }
-
-    @media(max-width:600px){ .llc-desc { display:none; } }
+    @media(max-width:480px){
+      .zl-cards{grid-template-columns:1fr}
+      .zl-headline{font-size:26px}
+    }
   </style>
 </head>
-<body class="auth-body landing-page">
-  <div class="landing-split">
+<body>
+  <canvas id="zl-canvas"></canvas>
+  <div class="zl-orb zl-orb1"></div>
+  <div class="zl-orb zl-orb2"></div>
+  <div class="zl-orb zl-orb3"></div>
 
-    <!-- LEFT: 3-slide auto-carousel -->
-    <div class="landing-hero">
-      <div class="landing-hero-inner">
-        <a href="/" class="landing-logo"><img src="/public/images/logo.svg" class="landing-logo-img" alt="ZeroScreen"><span class="landing-logo-text">Zero<em>Screen</em></span></a>
-        <div class="landing-badge">🇮🇳 Built for Indian Markets · Free Forever</div>
-        <h1 class="landing-headline">Welcome back.<br>Your market edge<br><span>is waiting.</span></h1>
+  <div class="zl-page">
+    <!-- ── LEFT ── -->
+    <div class="zl-left">
+      <canvas id="zl-fin-canvas"></canvas>
+      <div class="zl-left-inner">
+        <a href="/" class="zl-logo">
+          <img src="/public/images/logo.svg" class="zl-logo-img" alt="ZeroScreen">
+          <span class="zl-logo-text">Zero<em style="font-style:normal">Screen</em></span>
+        </a>
+        <div class="zl-badge">🇮🇳 Built for Indian Markets · Free Forever</div>
+        <h1 class="zl-headline">Your edge in<br>Indian markets<br><span class="grad">starts here.</span></h1>
+        <p class="zl-sub">Real-time BANKNIFTY signals · NSE stock screener · Paper trading<br>Everything a retail trader needs — free, forever.</p>
 
-        <!-- Live feature status cards for returning users -->
-        <div class="login-live-cards">
-          <a href="/signals" class="llc llc-signals">
-            <div class="llc-icon">📡</div>
-            <div class="llc-body">
-              <div class="llc-title">Live BANKNIFTY Bot</div>
-              <div class="llc-desc">Real CE/PE signals · AI confidence · refreshes every 8s</div>
-            </div>
-            <div class="llc-status live"><span class="llc-pulse"></span> LIVE</div>
+        <div class="zl-ticker">
+          <div class="zl-ticker-inner">
+            <span class="zl-tick"><span class="sym">BANKNIFTY</span><span class="val">+1.24%</span></span>
+            <span class="zl-tick"><span class="sym">RELIANCE</span><span class="val">+0.87%</span></span>
+            <span class="zl-tick"><span class="sym">TCS</span><span class="dn">-0.31%</span></span>
+            <span class="zl-tick"><span class="sym">INFY</span><span class="val">+1.05%</span></span>
+            <span class="zl-tick"><span class="sym">HDFCBANK</span><span class="dn">-0.14%</span></span>
+            <span class="zl-tick"><span class="sym">NIFTY 50</span><span class="val">+0.62%</span></span>
+            <span class="zl-tick"><span class="sym">WIPRO</span><span class="val">+2.18%</span></span>
+            <span class="zl-tick"><span class="sym">SBIN</span><span class="dn">-0.45%</span></span>
+            <span class="zl-tick"><span class="sym">TATAMOTORS</span><span class="val">+3.21%</span></span>
+            <span class="zl-tick"><span class="sym">ITC</span><span class="val">+0.39%</span></span>
+            <span class="zl-tick"><span class="sym">BANKNIFTY</span><span class="val">+1.24%</span></span>
+            <span class="zl-tick"><span class="sym">RELIANCE</span><span class="val">+0.87%</span></span>
+            <span class="zl-tick"><span class="sym">TCS</span><span class="dn">-0.31%</span></span>
+            <span class="zl-tick"><span class="sym">INFY</span><span class="val">+1.05%</span></span>
+            <span class="zl-tick"><span class="sym">HDFCBANK</span><span class="dn">-0.14%</span></span>
+            <span class="zl-tick"><span class="sym">NIFTY 50</span><span class="val">+0.62%</span></span>
+            <span class="zl-tick"><span class="sym">WIPRO</span><span class="val">+2.18%</span></span>
+            <span class="zl-tick"><span class="sym">SBIN</span><span class="dn">-0.45%</span></span>
+            <span class="zl-tick"><span class="sym">TATAMOTORS</span><span class="val">+3.21%</span></span>
+            <span class="zl-tick"><span class="sym">ITC</span><span class="val">+0.39%</span></span>
+          </div>
+        </div>
+
+        <div class="zl-cards">
+          <a href="/signals" class="zl-card zl-card-signals">
+            <div class="zl-card-icon">📡</div>
+            <div><div class="zl-card-title">Live Bot Signals</div><div class="zl-card-desc">BANKNIFTY CE/PE · AI confidence</div><div class="zl-card-pill pill-live"><span class="pill-dot"></span> LIVE</div></div>
           </a>
-          <a href="/my-paper-trade" class="llc llc-trade">
-            <div class="llc-icon">📋</div>
-            <div class="llc-body">
-              <div class="llc-title">My Paper Trade</div>
-              <div class="llc-desc">₹1,00,000 virtual portfolio · trade any NSE stock</div>
-            </div>
-            <div class="llc-status hot">🔥 HOT</div>
+          <a href="/my-paper-trade" class="zl-card zl-card-trade">
+            <div class="zl-card-icon">💰</div>
+            <div><div class="zl-card-title">Paper Trading</div><div class="zl-card-desc">₹1L virtual · any NSE stock</div><div class="zl-card-pill pill-hot">🔥 HOT</div></div>
           </a>
-          <a href="/" class="llc llc-screen">
-            <div class="llc-icon">🔍</div>
-            <div class="llc-body">
-              <div class="llc-title">NSE Screener</div>
-              <div class="llc-desc">1,700+ stocks · 14 strategies · ROCE, ROE, D/E filters</div>
-            </div>
-            <div class="llc-status free">FREE</div>
+          <a href="/" class="zl-card zl-card-screen">
+            <div class="zl-card-icon">🔍</div>
+            <div><div class="zl-card-title">NSE Screener</div><div class="zl-card-desc">1,700+ stocks · 14 strategies</div><div class="zl-card-pill pill-free">✦ FREE</div></div>
           </a>
-          <a href="/dashboard" class="llc llc-dash">
-            <div class="llc-icon">📊</div>
-            <div class="llc-body">
-              <div class="llc-title">Bot Analytics</div>
-              <div class="llc-desc">5-year backtest · 68.4% win rate · monthly P&amp;L charts</div>
-            </div>
-            <div class="llc-status data">5-YR DATA</div>
+          <a href="/dashboard" class="zl-card zl-card-dash">
+            <div class="zl-card-icon">📊</div>
+            <div><div class="zl-card-title">Bot Analytics</div><div class="zl-card-desc">5-year backtest · 68% win rate</div><div class="zl-card-pill pill-data">5-YR DATA</div></div>
           </a>
         </div>
 
-        <div class="login-stats">
-          <div class="login-stat"><strong>1,700+</strong><span>NSE Stocks</span></div>
-          <div class="login-stat"><strong>14</strong><span>Strategies</span></div>
-          <div class="login-stat"><strong>5-Year</strong><span>Backtest</span></div>
-          <div class="login-stat"><strong>Free</strong><span>Forever</span></div>
+        <div class="zl-stats">
+          <div class="zl-stat"><strong>1,700+</strong><span>NSE Stocks</span></div>
+          <div class="zl-stat"><strong>14</strong><span>Strategies</span></div>
+          <div class="zl-stat"><strong>68%</strong><span>Win Rate</span></div>
+          <div class="zl-stat"><strong>Free</strong><span>Forever</span></div>
         </div>
       </div>
     </div>
 
-    <!-- RIGHT: Auth form -->
-    <div class="landing-auth">
-      <div class="auth-card">
-        <h2>Welcome back</h2>
-        <p class="auth-sub">Sign in to access your portfolio &amp; alerts</p>
-        ${error ? `<div class="auth-error">${esc(error)}</div>` : ""}
-        <a href="/?guest=1" class="btn-guest">👀 Continue as Guest — Browse freely</a>
-        <div class="auth-divider"><span>or sign in for full access</span></div>
-        ${googleBtn}
-        <form class="auth-form" method="POST" action="/login">
-          <input type="hidden" name="next" value="${esc(next) || "/"}">
-          <div class="form-group">
-            <label>Email address</label>
-            <input type="email" name="email" placeholder="you@example.com" required autocomplete="email">
+    <!-- ── RIGHT ── -->
+    <div class="zl-right">
+      <div class="zl-form-wrap">
+        <div class="zl-card-glow">
+          <div class="zl-form-card">
+            <div class="zl-form-title">Welcome back 👋</div>
+            <div class="zl-form-sub">Sign in to access your portfolio &amp; signals</div>
+
+            ${error ? `<div class="zl-error">⚠️ ${esc(error)}</div>` : ""}
+
+            <a href="/?guest=1" class="zl-guest">👀 Browse as Guest — no account needed</a>
+
+            ${GOOGLE_CLIENT_ID ? `
+            <div class="zl-div">or continue with</div>
+            ${googleBtn}
+            <div class="zl-div">or use email</div>` : `<div class="zl-div">sign in with email</div>`}
+
+            <form method="POST" action="/login">
+              <input type="hidden" name="next" value="${esc(next) || "/"}">
+              <div class="zl-field">
+                <label>Email address</label>
+                <div class="zl-input-wrap">
+                  <span class="zl-inp-icon"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"/></svg></span>
+                  <input type="email" name="email" placeholder="you@example.com" required autocomplete="email">
+                </div>
+              </div>
+              <div class="zl-field">
+                <label>Password</label>
+                <div class="zl-input-wrap">
+                  <span class="zl-inp-icon"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg></span>
+                  <input type="password" name="password" placeholder="••••••••" required autocomplete="current-password">
+                </div>
+              </div>
+              <button type="submit" class="zl-submit">Sign In →</button>
+            </form>
+
+            <div class="zl-links">
+              <a href="/forgot-password">Forgot password?</a>
+              <a href="/signup">Create free account →</a>
+            </div>
+
+            <div class="zl-unlocks">
+              <strong>🔒 Signing in unlocks:</strong>
+              📋 Paper portfolio &nbsp;·&nbsp; ⭐ Watchlists &nbsp;·&nbsp; 🔔 Alerts &nbsp;·&nbsp; 📡 Live signals
+            </div>
+
+            <div class="zl-secure">
+              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+              256-bit encrypted · Your data is safe
+            </div>
           </div>
-          <div class="form-group">
-            <label>Password</label>
-            <input type="password" name="password" placeholder="••••••••" required autocomplete="current-password">
-          </div>
-          <button type="submit" class="btn-auth">Sign In →</button>
-        </form>
-        <p class="auth-switch"><a href="/forgot-password">Forgot password?</a></p>
-        <p class="auth-switch">New here? <a href="/signup">Create a free account →</a></p>
-        <div style="margin-top:18px;padding:12px 16px;background:linear-gradient(135deg,rgba(16,185,129,0.07),rgba(59,130,246,0.07));border:1px solid rgba(16,185,129,0.15);border-radius:10px;font-size:0.78rem;color:var(--text-muted);line-height:1.7">
-          🔒 <strong style="color:var(--text)">Signing in unlocks:</strong><br>
-          📋 Personal paper trade portfolio &nbsp;·&nbsp; ⭐ Saved watchlists<br>
-          🔔 Email alerts on custom filters &nbsp;·&nbsp; 📊 Full bot analytics
         </div>
       </div>
     </div>
-
   </div>
+
+<script>
+(function(){
+  /* ── 1. Ambient particle canvas (full page) ── */
+  var cv = document.getElementById('zl-canvas');
+  if(cv){
+    var ctx=cv.getContext('2d'), pts=[], W, H;
+    function rsz(){ W=cv.width=window.innerWidth; H=cv.height=window.innerHeight; }
+    rsz(); window.addEventListener('resize',rsz);
+    for(var i=0;i<70;i++) pts.push({x:Math.random()*W||Math.random()*1400,y:Math.random()*H||Math.random()*900,vx:(Math.random()-.5)*.28,vy:(Math.random()-.5)*.28,r:Math.random()*1.4+.3,a:Math.random()});
+    (function loop(){
+      ctx.clearRect(0,0,W,H);
+      for(var i=0;i<pts.length;i++){
+        for(var j=i+1;j<pts.length;j++){
+          var dx=pts[i].x-pts[j].x,dy=pts[i].y-pts[j].y,d=Math.sqrt(dx*dx+dy*dy);
+          if(d<170){ctx.beginPath();ctx.moveTo(pts[i].x,pts[i].y);ctx.lineTo(pts[j].x,pts[j].y);ctx.strokeStyle='rgba(99,102,241,'+(1-d/170)*.1+')';ctx.lineWidth=.7;ctx.stroke();}
+        }
+        var p=pts[i];
+        ctx.beginPath();ctx.arc(p.x,p.y,p.r,0,Math.PI*2);ctx.fillStyle='rgba(129,140,248,'+(p.a*.55+.1)+')';ctx.fill();
+        p.x+=p.vx;p.y+=p.vy;if(p.x<0||p.x>W)p.vx*=-1;if(p.y<0||p.y>H)p.vy*=-1;
+      }
+      requestAnimationFrame(loop);
+    })();
+  }
+
+  /* ── 2. Financial numbers rising on the left panel ── */
+  var fc = document.getElementById('zl-fin-canvas');
+  var leftEl = document.querySelector('.zl-left');
+  if(fc && leftEl){
+    var fctx=fc.getContext('2d');
+    function rszF(){ fc.width=leftEl.offsetWidth; fc.height=leftEl.offsetHeight; }
+    rszF(); window.addEventListener('resize',rszF);
+
+    var DATA = [
+      {t:'+₹12,450',c:'#34d399'},{t:'BANKNIFTY ↑ 1.24%',c:'#60a5fa'},
+      {t:'BUY CE',c:'#34d399'},{t:'-₹3,200',c:'#f87171'},
+      {t:'Win Rate 68%',c:'#a78bfa'},{t:'RELIANCE ↑ 0.87%',c:'#34d399'},
+      {t:'NIFTY ↑ 0.62%',c:'#60a5fa'},{t:'SELL PE',c:'#f87171'},
+      {t:'+₹8,900',c:'#34d399'},{t:'TCS ↓ 0.31%',c:'#f87171'},
+      {t:'P&L +₹42,100',c:'#34d399'},{t:'INFY ↑ 1.05%',c:'#34d399'},
+      {t:'-₹1,800',c:'#f87171'},{t:'Signal: BUY',c:'#34d399'},
+      {t:'+₹5,670',c:'#34d399'},{t:'52W HIGH ↑',c:'#fbbf24'},
+      {t:'+₹21,300',c:'#34d399'},{t:'WIPRO ↑ 2.18%',c:'#34d399'},
+      {t:'-₹4,500',c:'#f87171'},{t:'BREAKOUT!',c:'#fbbf24'},
+      {t:'TATAMOTORS ↑ 3.21%',c:'#34d399'},{t:'Profit ₹68,200',c:'#34d399'},
+      {t:'SBIN ↓ 0.45%',c:'#f87171'},{t:'+₹9,850',c:'#34d399'},
+      {t:'RSI Breakout',c:'#a78bfa'},{t:'Paper WIN',c:'#34d399'},
+      {t:'-₹2,100',c:'#f87171'},{t:'Momentum BUY',c:'#60a5fa'},
+      {t:'ITC +0.39%',c:'#34d399'},{t:'-₹700',c:'#f87171'}
+    ];
+
+    function mkF(i){
+      var d=DATA[i%DATA.length];
+      return {text:d.t,color:d.c,x:18+Math.random()*Math.max(60,fc.width-220),y:fc.height+10+Math.random()*fc.height,speed:0.35+Math.random()*0.65,sz:9+Math.random()*7,op:0};
+    }
+    var fl=[];
+    for(var i=0;i<32;i++) fl.push(mkF(i));
+
+    (function loopF(){
+      fctx.clearRect(0,0,fc.width,fc.height);
+      for(var i=0;i<fl.length;i++){
+        var f=fl[i];
+        f.y-=f.speed;
+        var p=f.y/fc.height; // 1=bottom 0=top
+        if(p>0.85) f.op=(1-p)/0.15;
+        else if(p<0.12) f.op=p/0.12;
+        else f.op=1;
+        f.op=Math.max(0,Math.min(1,f.op));
+        if(f.y<-30){fl[i]=mkF(i);continue;}
+        fctx.save();
+        fctx.globalAlpha=f.op*0.5;
+        fctx.font='bold '+Math.round(f.sz)+'px Inter,system-ui,sans-serif';
+        fctx.fillStyle=f.color;
+        fctx.fillText(f.text,f.x,f.y);
+        fctx.restore();
+      }
+      requestAnimationFrame(loopF);
+    })();
+  }
+
+  /* ── 3. Input focus scale ── */
+  document.querySelectorAll('.zl-field input').forEach(function(inp){
+    inp.addEventListener('focus',function(){ this.closest('.zl-field').style.transform='scale(1.015)'; });
+    inp.addEventListener('blur',function(){ this.closest('.zl-field').style.transform=''; });
+  });
+
+  /* ── 4. Submit shimmer ── */
+  var btn=document.querySelector('.zl-submit');
+  if(btn) btn.addEventListener('click',function(){ this.textContent='Signing in…'; this.style.opacity='.8'; });
+})();
+</script>
 </body>
 </html>`);
 });
