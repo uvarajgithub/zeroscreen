@@ -342,3 +342,247 @@ setInterval(loadTicker, 5 * 60 * 1000);
   });
 })();
 
+// ── Guest Soft-Gate Modal ─────────────────────────────────────────────────────
+(function () {
+  var nav = document.querySelector('.topnav');
+  if (!nav || nav.getAttribute('data-auth') === 'member') return;
+
+  // Links that require login — intercept guest clicks
+  var gatedHrefs = ['/watchlists', '/alerts', '/my-paper-trade', '/paper-trade/config', '/profile'];
+  var gatedSelectors = gatedHrefs.map(function(h){ return 'a[href="' + h + '"]'; }).join(',');
+
+  // Also intercept links that start with these paths
+  function isGated(href) {
+    return gatedHrefs.some(function(g){ return href === g || href.startsWith(g + '/'); });
+  }
+
+  function showGateModal(icon, title, sub) {
+    if (document.querySelector('.sg-overlay')) return; // already shown
+    var overlay = document.createElement('div');
+    overlay.className = 'sg-overlay';
+    overlay.setAttribute('role', 'dialog');
+    overlay.setAttribute('aria-modal', 'true');
+    overlay.innerHTML = [
+      '<div class="sg-sheet" style="position:relative">',
+        '<div class="sg-pill"></div>',
+        '<div class="sg-icon">' + icon + '</div>',
+        '<div class="sg-title">' + title + '</div>',
+        '<div class="sg-sub">' + sub + '</div>',
+        '<div class="sg-perks">',
+          '<span class="sg-perk">📋 ₹1L Paper Trade</span>',
+          '<span class="sg-perk">⭐ Watchlists</span>',
+          '<span class="sg-perk">🔔 Email Alerts</span>',
+          '<span class="sg-perk">📬 Daily Picks</span>',
+        '</div>',
+        '<div class="sg-btns">',
+          '<a href="/signup" class="sg-btn-primary">⚡ Create Free Account</a>',
+          '<a href="/login" class="sg-btn-secondary">Already have an account? Sign in</a>',
+        '</div>',
+        '<button class="sg-close" aria-label="Close">✕</button>',
+      '</div>',
+    ].join('');
+
+    overlay.querySelector('.sg-close').addEventListener('click', function(){ overlay.remove(); });
+    overlay.addEventListener('click', function(e){ if (e.target === overlay) overlay.remove(); });
+    document.body.appendChild(overlay);
+  }
+
+  document.addEventListener('click', function(e) {
+    var link = e.target.closest('a[href]');
+    if (!link) return;
+    var href = link.getAttribute('href');
+    if (isGated(href)) {
+      e.preventDefault();
+      var map = {
+        '/watchlists':   ['⭐', 'Save stocks to Watchlist', 'Create a free account to build and manage unlimited watchlists.'],
+        '/alerts':       ['🔔', 'Get Stock Alerts', 'Sign up free to set email alerts on your custom screener filters.'],
+        '/my-paper-trade': ['📋', 'Start Paper Trading', 'Create a free account to get ₹1,00,000 virtual money and trade any NSE stock risk-free.'],
+      };
+      var key = Object.keys(map).find(function(k){ return href.startsWith(k); });
+      var m = key ? map[key] : ['🔐', 'Sign in required', 'Create a free account to access this feature.'];
+      showGateModal(m[0], m[1], m[2]);
+    }
+  }, true);
+})();
+
+// ── Site Footer (injected on all pages) ───────────────────────────────────────
+(function () {
+  // Skip auth/landing pages (no nav = no footer needed)
+  if (!document.querySelector('.topnav')) return;
+
+  var footer = document.createElement('footer');
+  footer.className = 'site-footer';
+  footer.innerHTML = [
+    '<div class="sf-inner">',
+
+      // ── Stats bar ──────────────────────────────────────────────────────────
+      '<div class="sf-stats">',
+        '<div class="sf-stat"><strong>1,700+</strong><span>NSE Stocks</span></div>',
+        '<div class="sf-stat"><strong>14</strong><span>Strategies</span></div>',
+        '<div class="sf-stat"><strong>5 Yrs</strong><span>Backtest Data</span></div>',
+        '<div class="sf-stat"><strong>8s</strong><span>Bot Refresh</span></div>',
+        '<div class="sf-stat"><strong>Free</strong><span>Core Features</span></div>',
+      '</div>',
+
+      '<div class="sf-divider-thin"></div>',
+
+      // ── Main footer grid ───────────────────────────────────────────────────
+      '<div class="sf-top">',
+
+        // Brand column
+        '<div class="sf-brand">',
+          '<div class="sf-brand-name">Zero<em>Screen</em></div>',
+          '<p class="sf-brand-desc">India\'s sharpest NSE stock screener &amp; BANKNIFTY trading platform. Built by traders, for Indian retail investors.</p>',
+          '<a href="mailto:support@zeroscreen.in" class="sf-email">✉ support@zeroscreen.in</a>',
+          '<div class="sf-social">',
+            '<a href="https://twitter.com/zeroscreen_in" target="_blank" rel="noopener" class="sf-soc" title="Twitter/X">𝕏</a>',
+            '<a href="https://t.me/zeroscreen" target="_blank" rel="noopener" class="sf-soc" title="Telegram">✈</a>',
+            '<a href="https://youtube.com/@zeroscreen" target="_blank" rel="noopener" class="sf-soc" title="YouTube">▶</a>',
+          '</div>',
+        '</div>',
+
+        // Platform links
+        '<div class="sf-col">',
+          '<div class="sf-col-title">Platform</div>',
+          '<a href="/">🔍 NSE Screener</a>',
+          '<a href="/today">🔥 Today\'s Picks</a>',
+          '<a href="/signals">🤖 Live Bot</a>',
+          '<a href="/paper-trade">📋 Paper Trade</a>',
+          '<a href="/strategies">⚙️ Strategies</a>',
+        '</div>',
+
+        // Tools links
+        '<div class="sf-col">',
+          '<div class="sf-col-title">Tools</div>',
+          '<a href="/compare">⚖️ Compare Stocks</a>',
+          '<a href="/dashboard">📊 Bot Analytics</a>',
+          '<a href="/strategy-builder">🔨 Strategy Builder</a>',
+          '<a href="/my-paper-trade">💼 My Portfolio</a>',
+          '<a href="/watchlists">⭐ Watchlists</a>',
+        '</div>',
+
+        // Company links
+        '<div class="sf-col">',
+          '<div class="sf-col-title">Company</div>',
+          '<a href="/about">ℹ️ About Us</a>',
+          '<a href="/contact">📬 Contact</a>',
+          '<a href="/premium">⚡ Premium Plans</a>',
+          '<a href="/privacy">🔒 Privacy Policy</a>',
+          '<a href="/terms">📄 Terms of Use</a>',
+        '</div>',
+
+      '</div>',
+
+      '<div class="sf-divider"></div>',
+
+      // ── Disclaimer ─────────────────────────────────────────────────────────
+      '<div class="sf-disclaimer">',
+        '<span class="sf-disc-badge">⚠️ Disclaimer</span>',
+        '<span>ZeroScreen is <strong>not SEBI registered</strong>. All content is for <strong>educational &amp; informational purposes only</strong> and does not constitute investment advice. Paper trading uses <strong>virtual money — no real capital at risk</strong>. Prices are from NSE data and updated periodically. Past performance is not indicative of future results. Trading in derivatives and equities involves substantial risk of loss. Please consult a qualified financial advisor before making any investment decisions.</span>',
+      '</div>',
+
+      // ── Bottom bar ─────────────────────────────────────────────────────────
+      '<div class="sf-bottom">',
+        '<span class="sf-copy">© 2026 ZeroScreen · All rights reserved · Built with ❤️ in India 🇮🇳</span>',
+        '<div class="sf-bottom-links">',
+          '<a href="/privacy">Privacy</a>',
+          '<a href="/terms">Terms</a>',
+          '<a href="/sitemap">Sitemap</a>',
+          '<a href="/contact">Contact</a>',
+        '</div>',
+      '</div>',
+
+    '</div>',
+  ].join('');
+
+  var existing = document.querySelector('.site-footer');
+  if (existing) {
+    existing.replaceWith(footer);
+  } else {
+    document.body.appendChild(footer);
+  }
+})();
+
+// ── Onboarding Checklist ───────────────────────────────────────────────────────
+(function () {
+  // Only show when logged in (server injects window._zsUid via nav())
+  var userId = (typeof window._zsUid !== 'undefined') ? String(window._zsUid) : '';
+  var userRole = (typeof window._zsRole !== 'undefined') ? String(window._zsRole) : 'guest';
+  if (!userId) return;
+
+  var KEY      = 'zs-onboard-done-' + userId;
+  var HIDE_KEY = 'zs-onboard-hidden-' + userId;
+
+  // Define steps: { id, label, done: fn() -> bool, href }
+  var steps = [
+    { id: 'signup',  label: 'Create your account',       done: function() { return true; },                                      href: null },
+    { id: 'trade',   label: 'Make your first paper trade', done: function() { return localStorage.getItem('zs-did-trade-'+userId)==='1'; }, href: '/my-paper-trade' },
+    { id: 'watch',   label: 'Add a stock to watchlist',   done: function() { return localStorage.getItem('zs-did-watch-'+userId)==='1'; }, href: '/watchlists' },
+    { id: 'invite',  label: 'Invite a friend (earn ₹10k)', done: function() { return localStorage.getItem('zs-did-invite-'+userId)==='1'; }, href: '/my-referrals' },
+    { id: 'premium', label: 'Try Premium →',              done: function() { return userRole==='premium'||userRole==='admin'; }, href: '/premium' },
+  ];
+
+  function allDone() { return steps.every(function(s) { return s.done(); }); }
+
+  if (localStorage.getItem(HIDE_KEY) === '1') return;
+
+  var doneCount = steps.filter(function(s) { return s.done(); }).length;
+
+  if (doneCount >= steps.length) {
+    localStorage.setItem(HIDE_KEY, '1');
+    return;
+  }
+
+  if (window.location.pathname.startsWith('/admin')) return;
+
+  var widget = document.createElement('div');
+  widget.id  = 'onboard-widget';
+  widget.className = 'onboard-widget';
+  widget.setAttribute('role', 'complementary');
+  widget.setAttribute('aria-label', 'Getting started checklist');
+
+  var progressPct = Math.round((doneCount / steps.length) * 100);
+
+  widget.innerHTML = [
+    '<div class="onb-header">',
+      '<div>',
+        '<div class="onb-title">🚀 Getting Started</div>',
+        '<div class="onb-sub">' + doneCount + ' of ' + steps.length + ' done</div>',
+      '</div>',
+      '<button class="onb-close" onclick="document.getElementById(\'onboard-widget\').remove();localStorage.setItem(\''+HIDE_KEY+'\',\'1\')" aria-label="Dismiss checklist">✕</button>',
+    '</div>',
+    '<div class="onb-progress-bar"><div class="onb-progress-fill" style="width:'+progressPct+'%"></div></div>',
+    '<ul class="onb-steps">',
+      steps.map(function(s) {
+        var done = s.done();
+        return [
+          '<li class="onb-step' + (done ? ' done' : '') + '">',
+            '<span class="onb-check">' + (done ? '✓' : '') + '</span>',
+            s.href && !done
+              ? '<a class="onb-label" href="' + s.href + '">' + s.label + '</a>'
+              : '<span class="onb-label">' + s.label + '</span>',
+          '</li>',
+        ].join('');
+      }).join(''),
+    '</ul>',
+  ].join('');
+
+  document.body.appendChild(widget);
+
+  setTimeout(function() {
+    if (allDone()) { widget.remove(); localStorage.setItem(HIDE_KEY, '1'); }
+  }, 1000);
+})();
+
+// ── Mark paper-trade done (called by my-paper-trade page) ─────────────────────
+function zsMarkTradeDone() {
+  if (typeof window._zsUid !== 'undefined') localStorage.setItem('zs-did-trade-' + window._zsUid, '1');
+}
+function zsMarkWatchDone() {
+  if (typeof window._zsUid !== 'undefined') localStorage.setItem('zs-did-watch-' + window._zsUid, '1');
+}
+function zsMarkInviteDone() {
+  if (typeof window._zsUid !== 'undefined') localStorage.setItem('zs-did-invite-' + window._zsUid, '1');
+}
+
+

@@ -114,6 +114,29 @@ export async function initDb(): Promise<void> {
         created_at   TEXT DEFAULT (datetime('now'))
       )`);
       db.run("CREATE INDEX IF NOT EXISTS idx_alerts_user ON alerts(user_id)");
+      // ── Price Alerts ──────────────────────────────────────────────────────────
+      db.run(`CREATE TABLE IF NOT EXISTS price_alerts (
+        id           INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id      INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        symbol       TEXT NOT NULL,
+        target_price REAL NOT NULL,
+        direction    TEXT NOT NULL DEFAULT 'above',
+        note         TEXT,
+        active       INTEGER NOT NULL DEFAULT 1,
+        triggered_at TEXT,
+        created_at   TEXT DEFAULT (datetime('now','localtime'))
+      )`);
+      db.run("CREATE INDEX IF NOT EXISTS idx_price_alerts_user ON price_alerts(user_id, active)");
+      // ── Stock Notes ───────────────────────────────────────────────────────────
+      db.run(`CREATE TABLE IF NOT EXISTS stock_notes (
+        id         INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        symbol     TEXT NOT NULL,
+        content    TEXT NOT NULL DEFAULT '',
+        updated_at TEXT DEFAULT (datetime('now','localtime')),
+        UNIQUE(user_id, symbol)
+      )`);
+      db.run("CREATE INDEX IF NOT EXISTS idx_stock_notes_user ON stock_notes(user_id)");
       db.run(`CREATE TABLE IF NOT EXISTS password_reset_tokens (
         token      TEXT PRIMARY KEY,
         user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -268,6 +291,13 @@ export async function initDb(): Promise<void> {
       db.run("INSERT OR IGNORE INTO app_settings (key,value) VALUES ('otp_required','true')");
       // Auto paper picks opt-in (safe migration)
       db.run("ALTER TABLE users ADD COLUMN auto_paper_picks INTEGER NOT NULL DEFAULT 0", () => {});
+      // Daily picks email notification opt-in (safe migration)
+      db.run("ALTER TABLE users ADD COLUMN notify_picks INTEGER NOT NULL DEFAULT 1", () => {});
+      // Auto paper mode & custom stocks (safe migration)
+      db.run("ALTER TABLE paper_trade_config ADD COLUMN auto_paper_mode TEXT NOT NULL DEFAULT 'picks'", () => {});
+      db.run("ALTER TABLE paper_trade_config ADD COLUMN auto_paper_stocks TEXT NOT NULL DEFAULT '[]'", () => {});
+      // Telegram chat ID for premium signal alerts (safe migration)
+      db.run("ALTER TABLE users ADD COLUMN telegram_chat_id TEXT", () => {});
       // SL / Target / OrderType on positions (safe migrations)
       db.run("ALTER TABLE paper_positions ADD COLUMN sl_price REAL", () => {});
       db.run("ALTER TABLE paper_positions ADD COLUMN target_price REAL", () => {});
@@ -308,6 +338,46 @@ export async function initDb(): Promise<void> {
         created_at  TEXT DEFAULT (datetime('now','localtime'))
       )`);
       db.run("CREATE INDEX IF NOT EXISTS idx_bot_trades_date ON bot_trades(trade_date)");
+      // ── Blog posts ────────────────────────────────────────────────────────────
+      db.run(`CREATE TABLE IF NOT EXISTS blog_posts (
+        id           INTEGER PRIMARY KEY AUTOINCREMENT,
+        slug         TEXT UNIQUE NOT NULL,
+        title        TEXT NOT NULL,
+        excerpt      TEXT,
+        content      TEXT NOT NULL DEFAULT '',
+        published    INTEGER NOT NULL DEFAULT 0,
+        published_at TEXT,
+        author_id    INTEGER REFERENCES users(id) ON DELETE SET NULL,
+        created_at   TEXT DEFAULT (datetime('now','localtime'))
+      )`);
+      db.run("CREATE INDEX IF NOT EXISTS idx_blog_slug ON blog_posts(slug)");
+      db.run("CREATE INDEX IF NOT EXISTS idx_blog_pub ON blog_posts(published, published_at)");
+      // ── Shareable paper trade reports ─────────────────────────────────────────
+      db.run(`CREATE TABLE IF NOT EXISTS paper_reports (
+        id         INTEGER PRIMARY KEY AUTOINCREMENT,
+        report_id  TEXT UNIQUE NOT NULL,
+        user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        created_at TEXT DEFAULT (datetime('now','localtime'))
+      )`);
+      db.run("CREATE INDEX IF NOT EXISTS idx_paper_report_id ON paper_reports(report_id)");
+      // ── Premium Strategy Picks ────────────────────────────────────────────────
+      db.run(`CREATE TABLE IF NOT EXISTS premium_picks (
+        id           INTEGER PRIMARY KEY AUTOINCREMENT,
+        symbol       TEXT NOT NULL,
+        company_name TEXT,
+        strategy     TEXT NOT NULL DEFAULT 'Swing',
+        entry_low    REAL NOT NULL,
+        entry_high   REAL NOT NULL,
+        target       REAL,
+        stop_loss    REAL,
+        timeframe    TEXT NOT NULL DEFAULT 'Short-term',
+        thesis       TEXT NOT NULL DEFAULT '',
+        published    INTEGER NOT NULL DEFAULT 0,
+        published_at TEXT,
+        created_by   INTEGER REFERENCES users(id) ON DELETE SET NULL,
+        created_at   TEXT DEFAULT (datetime('now','localtime'))
+      )`);
+      db.run("CREATE INDEX IF NOT EXISTS idx_pp_published ON premium_picks(published, published_at)");
       db.run("CREATE INDEX IF NOT EXISTS idx_reset_tokens_user3 ON password_reset_tokens(user_id)", (err) => {
         if (err) resolve(); else resolve();
       });
@@ -599,6 +669,10 @@ export interface UserRow {
   password: string;
   role: string;
   created_at: string;
+  notify_picks?: number;
+  telegram_chat_id?: string | null;
+  referral_code?: string | null;
+  referred_by?: string | null;
 }
 
 export async function createUser(name: string, email: string, hashedPassword: string): Promise<number> {
@@ -609,6 +683,14 @@ export async function createUser(name: string, email: string, hashedPassword: st
       function (err) { if (err) reject(err); else resolve(this.lastID); }
     );
   });
+}
+
+// Creates paper_portfolio row for new user (idempotent — safe to call multiple times)
+export async function initPaperPortfolio(userId: number): Promise<void> {
+  await dbRun(
+    "INSERT OR IGNORE INTO paper_portfolio (user_id, balance) VALUES (?, 100000)",
+    [userId]
+  );
 }
 
 export async function getUserByEmail(email: string): Promise<UserRow | null> {
@@ -627,6 +709,68 @@ export async function countUsers(): Promise<number> {
 export async function getAllUsers(): Promise<Omit<UserRow, "password">[]> {
   return dbAll<Omit<UserRow, "password">>(
     "SELECT id, name, email, role, created_at FROM users ORDER BY created_at DESC"
+  );
+}
+
+export async function updateUserNotifyPicks(userId: number, value: number): Promise<void> {
+  await dbRun("UPDATE users SET notify_picks = ? WHERE id = ?", [value, userId]);
+}
+
+export async function setPaperBalance(userId: number, amount: number): Promise<void> {
+  await dbRun(
+    "INSERT INTO paper_portfolio (user_id, balance) VALUES (?, ?) ON CONFLICT(user_id) DO UPDATE SET balance = excluded.balance",
+    [userId, amount]
+  );
+}
+
+export async function setTelegramChatId(userId: number, chatId: string): Promise<void> {
+  await dbRun("UPDATE users SET telegram_chat_id = ? WHERE id = ?", [chatId || null, userId]);
+}
+
+export async function getTelegramSubscribers(): Promise<{ id: number; name: string; telegram_chat_id: string }[]> {
+  return dbAll<{ id: number; name: string; telegram_chat_id: string }>(
+    "SELECT id, name, telegram_chat_id FROM users WHERE role IN ('premium','admin') AND telegram_chat_id IS NOT NULL AND telegram_chat_id != ''"
+  );
+}
+
+// ── Referral helpers ──────────────────────────────────────────────────────────
+export async function getOrCreateReferralCode(userId: number): Promise<string> {
+  const row = await dbGet<{ referral_code: string | null }>("SELECT referral_code FROM users WHERE id=?", [userId]);
+  if (row?.referral_code) return row.referral_code;
+  const code = require("crypto").randomBytes(4).toString("hex").toUpperCase(); // 8-char
+  await dbRun("UPDATE users SET referral_code=? WHERE id=?", [code, userId]);
+  return code;
+}
+
+export async function getUserByReferralCode(code: string): Promise<{ id: number; name: string } | null> {
+  return dbGet<{ id: number; name: string }>(
+    "SELECT id, name FROM users WHERE referral_code=?", [code]
+  );
+}
+
+export async function applyReferral(newUserId: number, referrerCode: string): Promise<void> {
+  // Set referred_by on new user
+  await dbRun("UPDATE users SET referred_by=? WHERE id=?", [referrerCode, newUserId]);
+  // Give referrer a ₹10,000 bonus in paper portfolio
+  const referrer = await getUserByReferralCode(referrerCode);
+  if (referrer) {
+    await dbRun(
+      "UPDATE paper_portfolio SET balance = balance + 10000 WHERE user_id=?",
+      [referrer.id]
+    );
+  }
+}
+
+export async function getReferralStats(userId: number): Promise<{ code: string; count: number; bonusEarned: number }> {
+  const code = await getOrCreateReferralCode(userId);
+  const rows = await dbAll<{ id: number }>("SELECT id FROM users WHERE referred_by=?", [code]);
+  return { code, count: rows.length, bonusEarned: rows.length * 10000 };
+}
+
+// Returns users who opted in to daily picks emails
+export async function getPicksEmailSubscribers(): Promise<{ name: string; email: string }[]> {
+  return dbAll<{ name: string; email: string }>(
+    "SELECT name, email FROM users WHERE notify_picks = 1"
   );
 }
 
@@ -727,6 +871,8 @@ export interface PickRow {
   target: number | null; stop_loss: number | null;
   reason: string; risk_level: string; status: string;
   published_at: string; expires_at: string | null; created_by: number | null;
+  result: string | null; result_price: number | null; result_at: string | null;
+  entry_price: number | null; entry_at: string | null;
 }
 
 export async function getActivePicks(): Promise<PickRow[]> {
@@ -752,6 +898,24 @@ export async function createPick(p: {
 
 export async function updatePickStatus(id: number, status: string): Promise<void> {
   await dbRun("UPDATE picks SET status=? WHERE id=?", [status, id]);
+}
+
+export async function updatePickResult(id: number, result: string, resultPrice: number): Promise<void> {
+  const now = new Date().toISOString();
+  await dbRun("UPDATE picks SET result=?, result_price=?, result_at=? WHERE id=?", [result, resultPrice, now, id]);
+}
+
+export async function updatePickEntry(id: number, entryPrice: number): Promise<void> {
+  const now = new Date().toISOString();
+  await dbRun("UPDATE picks SET result='entry_triggered', entry_price=?, entry_at=? WHERE id=?", [entryPrice, now, id]);
+}
+
+export async function triggerPickNow(id: number, entryPrice: number, newTarget: number, newSl: number): Promise<void> {
+  const now = new Date().toISOString();
+  await dbRun(
+    "UPDATE picks SET result='entry_triggered', entry_price=?, entry_at=?, target=?, stop_loss=? WHERE id=?",
+    [entryPrice, now, parseFloat(newTarget.toFixed(2)), parseFloat(newSl.toFixed(2)), id]
+  );
 }
 
 export async function deletePick(id: number): Promise<void> {
@@ -853,6 +1017,8 @@ export interface PaperTrade {
 export interface PaperTradeConfig {
   user_id: number; trade_type: string; default_qty: number;
   default_sl_pct: number; default_tgt_pct: number; max_positions: number;
+  auto_paper_mode?: string;   // 'picks' | 'custom'
+  auto_paper_stocks?: string; // JSON array of symbols
 }
 
 export async function getPaperPortfolio(userId: number): Promise<{ balance: number }> {
@@ -967,17 +1133,44 @@ export async function countPaperTrades(userId: number): Promise<number> {
   return r?.c ?? 0;
 }
 
+export async function countTodayPaperBuys(userId: number): Promise<number> {
+  const today = new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" }); // YYYY-MM-DD in IST
+  const r = await dbGet<{ c: number }>(
+    "SELECT COUNT(*) as c FROM paper_trades WHERE user_id=? AND action='BUY' AND DATE(traded_at)=?",
+    [userId, today]
+  );
+  return r?.c ?? 0;
+}
+
+export async function getPaperTradeStats(userId: number): Promise<{ total: number; wins: number; losses: number; winRate: number }> {
+  const r = await dbGet<{ total: number; wins: number }>(
+    `SELECT COUNT(*) as total,
+            SUM(CASE WHEN action='SELL' AND pnl > 0 THEN 1 ELSE 0 END) as wins
+     FROM paper_trades WHERE user_id=?`,
+    [userId]
+  );
+  const total  = r?.total ?? 0;
+  const sells  = await dbGet<{ c: number }>("SELECT COUNT(*) as c FROM paper_trades WHERE user_id=? AND action='SELL'", [userId]);
+  const sellCount = sells?.c ?? 0;
+  const wins   = r?.wins ?? 0;
+  const losses = sellCount - wins;
+  const winRate = sellCount > 0 ? parseFloat(((wins / sellCount) * 100).toFixed(1)) : 0;
+  return { total, wins, losses, winRate };
+}
+
 // ── Paper Trade Config ─────────────────────────────────────────────────────────
 export async function getPaperTradeConfig(userId: number): Promise<PaperTradeConfig> {
   const row = await dbGet<PaperTradeConfig>("SELECT * FROM paper_trade_config WHERE user_id=?", [userId]);
   if (!row) {
-    const def: PaperTradeConfig = { user_id: userId, trade_type: 'INTRADAY', default_qty: 1, default_sl_pct: 2.0, default_tgt_pct: 4.0, max_positions: 10 };
+    const def: PaperTradeConfig = { user_id: userId, trade_type: 'INTRADAY', default_qty: 1, default_sl_pct: 2.0, default_tgt_pct: 4.0, max_positions: 10, auto_paper_mode: 'picks', auto_paper_stocks: '[]' };
     await dbRun(
-      "INSERT OR IGNORE INTO paper_trade_config (user_id,trade_type,default_qty,default_sl_pct,default_tgt_pct,max_positions) VALUES (?,?,?,?,?,?)",
-      [userId, def.trade_type, def.default_qty, def.default_sl_pct, def.default_tgt_pct, def.max_positions]
+      "INSERT OR IGNORE INTO paper_trade_config (user_id,trade_type,default_qty,default_sl_pct,default_tgt_pct,max_positions,auto_paper_mode,auto_paper_stocks) VALUES (?,?,?,?,?,?,?,?)",
+      [userId, def.trade_type, def.default_qty, def.default_sl_pct, def.default_tgt_pct, def.max_positions, def.auto_paper_mode, def.auto_paper_stocks]
     );
     return def;
   }
+  row.auto_paper_mode = row.auto_paper_mode || 'picks';
+  row.auto_paper_stocks = row.auto_paper_stocks || '[]';
   return row;
 }
 
@@ -985,9 +1178,9 @@ export async function savePaperTradeConfig(userId: number, config: Partial<Paper
   const cur = await getPaperTradeConfig(userId);
   const m = { ...cur, ...config };
   await dbRun(
-    `INSERT OR REPLACE INTO paper_trade_config (user_id,trade_type,default_qty,default_sl_pct,default_tgt_pct,max_positions,updated_at)
-     VALUES (?,?,?,?,?,?,datetime('now','localtime'))`,
-    [userId, m.trade_type, m.default_qty, m.default_sl_pct, m.default_tgt_pct, m.max_positions]
+    `INSERT OR REPLACE INTO paper_trade_config (user_id,trade_type,default_qty,default_sl_pct,default_tgt_pct,max_positions,auto_paper_mode,auto_paper_stocks,updated_at)
+     VALUES (?,?,?,?,?,?,?,?,datetime('now','localtime'))`,
+    [userId, m.trade_type, m.default_qty, m.default_sl_pct, m.default_tgt_pct, m.max_positions, m.auto_paper_mode ?? 'picks', m.auto_paper_stocks ?? '[]']
   );
 }
 
@@ -1049,4 +1242,283 @@ export async function setAutoPaperPicks(userId: number, enabled: boolean): Promi
 export async function getAutoPaperPicks(userId: number): Promise<boolean> {
   const row = await dbGet<{ auto_paper_picks: number }>("SELECT auto_paper_picks FROM users WHERE id = ?", [userId]);
   return row?.auto_paper_picks === 1;
+}
+
+// ── Blog ──────────────────────────────────────────────────────────────────────
+export interface BlogPost {
+  id: number; slug: string; title: string; excerpt: string | null;
+  content: string; published: number; published_at: string | null;
+  author_id: number | null; created_at: string;
+}
+
+export async function getPublishedPosts(limit = 20): Promise<BlogPost[]> {
+  return dbAll<BlogPost>(
+    "SELECT * FROM blog_posts WHERE published=1 ORDER BY published_at DESC LIMIT ?", [limit]
+  );
+}
+
+export async function getAllBlogPosts(): Promise<BlogPost[]> {
+  return dbAll<BlogPost>("SELECT * FROM blog_posts ORDER BY created_at DESC LIMIT 100");
+}
+
+export async function getBlogPost(slug: string): Promise<BlogPost | null> {
+  return dbGet<BlogPost>("SELECT * FROM blog_posts WHERE slug=?", [slug]);
+}
+
+export async function createBlogPost(p: { slug: string; title: string; excerpt?: string; content: string; author_id?: number }): Promise<void> {
+  await dbRun(
+    "INSERT INTO blog_posts (slug,title,excerpt,content,author_id) VALUES (?,?,?,?,?)",
+    [p.slug, p.title, p.excerpt ?? null, p.content, p.author_id ?? null]
+  );
+}
+
+export async function updateBlogPost(id: number, p: { title?: string; excerpt?: string; content?: string }): Promise<void> {
+  const fields: string[] = [];
+  const vals: unknown[] = [];
+  if (p.title   !== undefined) { fields.push("title=?");   vals.push(p.title); }
+  if (p.excerpt !== undefined) { fields.push("excerpt=?"); vals.push(p.excerpt); }
+  if (p.content !== undefined) { fields.push("content=?"); vals.push(p.content); }
+  if (!fields.length) return;
+  vals.push(id);
+  await dbRun(`UPDATE blog_posts SET ${fields.join(",")} WHERE id=?`, vals);
+}
+
+export async function publishBlogPost(id: number): Promise<void> {
+  await dbRun(
+    "UPDATE blog_posts SET published=1, published_at=datetime('now','localtime') WHERE id=?", [id]
+  );
+}
+
+export async function unpublishBlogPost(id: number): Promise<void> {
+  await dbRun("UPDATE blog_posts SET published=0 WHERE id=?", [id]);
+}
+
+export async function deleteBlogPost(id: number): Promise<void> {
+  await dbRun("DELETE FROM blog_posts WHERE id=?", [id]);
+}
+
+// ── Shareable paper trade reports ─────────────────────────────────────────────
+export async function getOrCreateReport(userId: number): Promise<string> {
+  const existing = await dbGet<{ report_id: string }>(
+    "SELECT report_id FROM paper_reports WHERE user_id=?", [userId]
+  );
+  if (existing) return existing.report_id;
+  const reportId = require("crypto").randomBytes(12).toString("hex");
+  await dbRun("INSERT INTO paper_reports (report_id, user_id) VALUES (?,?)", [reportId, userId]);
+  return reportId;
+}
+
+export async function getReportOwner(reportId: string): Promise<{ user_id: number; created_at: string } | null> {
+  return dbGet<{ user_id: number; created_at: string }>(
+    "SELECT user_id, created_at FROM paper_reports WHERE report_id=?", [reportId]
+  );
+}
+
+// ── Premium Strategy Picks ────────────────────────────────────────────────────
+export interface PremiumPick {
+  id: number; symbol: string; company_name: string | null;
+  strategy: string; entry_low: number; entry_high: number;
+  target: number | null; stop_loss: number | null; timeframe: string;
+  thesis: string; published: number; published_at: string | null;
+  created_by: number | null; created_at: string;
+}
+
+export async function getPublishedPremiumPicks(): Promise<PremiumPick[]> {
+  return dbAll<PremiumPick>(
+    "SELECT * FROM premium_picks WHERE published=1 ORDER BY published_at DESC LIMIT 20"
+  );
+}
+
+export async function getAllPremiumPicks(): Promise<PremiumPick[]> {
+  return dbAll<PremiumPick>(
+    "SELECT * FROM premium_picks ORDER BY created_at DESC LIMIT 100"
+  );
+}
+
+export async function createPremiumPick(p: {
+  symbol: string; company_name?: string; strategy?: string;
+  entry_low: number; entry_high: number; target?: number; stop_loss?: number;
+  timeframe?: string; thesis: string; created_by?: number;
+}): Promise<void> {
+  await dbRun(
+    `INSERT INTO premium_picks (symbol,company_name,strategy,entry_low,entry_high,target,stop_loss,timeframe,thesis,created_by)
+     VALUES (?,?,?,?,?,?,?,?,?,?)`,
+    [p.symbol, p.company_name ?? null, p.strategy ?? "Swing",
+     p.entry_low, p.entry_high, p.target ?? null, p.stop_loss ?? null,
+     p.timeframe ?? "Short-term", p.thesis, p.created_by ?? null]
+  );
+}
+
+export async function updatePremiumPick(id: number, p: {
+  symbol?: string; company_name?: string; strategy?: string;
+  entry_low?: number; entry_high?: number; target?: number; stop_loss?: number;
+  timeframe?: string; thesis?: string;
+}): Promise<void> {
+  const fields: string[] = [];
+  const vals: unknown[] = [];
+  const set = (col: string, v: unknown) => { fields.push(`${col}=?`); vals.push(v); };
+  if (p.symbol       !== undefined) set("symbol", p.symbol);
+  if (p.company_name !== undefined) set("company_name", p.company_name);
+  if (p.strategy     !== undefined) set("strategy", p.strategy);
+  if (p.entry_low    !== undefined) set("entry_low", p.entry_low);
+  if (p.entry_high   !== undefined) set("entry_high", p.entry_high);
+  if (p.target       !== undefined) set("target", p.target);
+  if (p.stop_loss    !== undefined) set("stop_loss", p.stop_loss);
+  if (p.timeframe    !== undefined) set("timeframe", p.timeframe);
+  if (p.thesis       !== undefined) set("thesis", p.thesis);
+  if (!fields.length) return;
+  vals.push(id);
+  await dbRun(`UPDATE premium_picks SET ${fields.join(",")} WHERE id=?`, vals);
+}
+
+export async function publishPremiumPick(id: number): Promise<void> {
+  await dbRun(
+    "UPDATE premium_picks SET published=1, published_at=datetime('now','localtime') WHERE id=?", [id]
+  );
+}
+
+export async function unpublishPremiumPick(id: number): Promise<void> {
+  await dbRun("UPDATE premium_picks SET published=0 WHERE id=?", [id]);
+}
+
+export async function deletePremiumPick(id: number): Promise<void> {
+  await dbRun("DELETE FROM premium_picks WHERE id=?", [id]);
+}
+
+// ── Paper Trade Leaderboard ───────────────────────────────────────────────────
+export interface LeaderboardEntry {
+  rank: number;
+  display_name: string; // anonymised: "Arjun S." style
+  balance: number;
+  net_pnl: number;
+  net_pct: number;
+  trade_count: number;
+  win_count: number;
+}
+
+export async function getPaperLeaderboard(limit = 20): Promise<LeaderboardEntry[]> {
+  // Compute leaderboard from paper_portfolio joined with paper_trades
+  const rows = await dbAll<{
+    user_id: number; name: string; role: string;
+    balance: number; trade_count: number; win_count: number;
+  }>(`
+    SELECT pp.user_id, u.name, u.role,
+           pp.balance,
+           COUNT(pt.id) AS trade_count,
+           SUM(CASE WHEN pt.pnl > 0 THEN 1 ELSE 0 END) AS win_count
+    FROM paper_portfolio pp
+    JOIN users u ON u.id = pp.user_id
+    LEFT JOIN paper_trades pt ON pt.user_id = pp.user_id AND pt.action = 'SELL'
+    WHERE u.role IN ('user','premium','admin')
+    GROUP BY pp.user_id
+    HAVING trade_count >= 3
+    ORDER BY pp.balance DESC
+    LIMIT ?
+  `, [limit]);
+
+  return rows.map((r, i) => {
+    // Anonymise: show first name + last initial
+    const parts = (r.name || "Member").trim().split(/\s+/);
+    const first = parts[0] || "Member";
+    const lastInit = parts.length > 1 ? parts[parts.length - 1].charAt(0).toUpperCase() + "." : "";
+    const displayName = first + (lastInit ? " " + lastInit : "");
+
+    const startBal = r.role === "premium" || r.role === "admin" ? 1000000 : 100000;
+    const netPnl = r.balance - startBal;
+    const netPct = (netPnl / startBal) * 100;
+
+    return {
+      rank: i + 1,
+      display_name: displayName,
+      balance: r.balance,
+      net_pnl: netPnl,
+      net_pct: netPct,
+      trade_count: r.trade_count,
+      win_count: r.win_count ?? 0,
+    };
+  });
+}
+
+// ── Price Alerts ──────────────────────────────────────────────────────────────
+export interface PriceAlert {
+  id: number;
+  user_id: number;
+  symbol: string;
+  target_price: number;
+  direction: "above" | "below";
+  note: string | null;
+  active: number;
+  triggered_at: string | null;
+  created_at: string;
+}
+
+export async function getUserPriceAlerts(userId: number): Promise<PriceAlert[]> {
+  return dbAll<PriceAlert>(
+    "SELECT * FROM price_alerts WHERE user_id = ? ORDER BY active DESC, created_at DESC LIMIT 50",
+    [userId]
+  );
+}
+
+export async function createPriceAlert(
+  userId: number, symbol: string, targetPrice: number, direction: "above" | "below", note?: string
+): Promise<void> {
+  await dbRun(
+    "INSERT INTO price_alerts (user_id, symbol, target_price, direction, note) VALUES (?,?,?,?,?)",
+    [userId, symbol.toUpperCase(), targetPrice, direction, note ?? null]
+  );
+}
+
+export async function deletePriceAlert(id: number, userId: number): Promise<void> {
+  await dbRun("DELETE FROM price_alerts WHERE id = ? AND user_id = ?", [id, userId]);
+}
+
+export async function triggerPriceAlert(id: number): Promise<void> {
+  await dbRun(
+    "UPDATE price_alerts SET active = 0, triggered_at = datetime('now','localtime') WHERE id = ?",
+    [id]
+  );
+}
+
+export async function getAllActivePriceAlerts(): Promise<(PriceAlert & { user_email: string; user_name: string; current_price: number | null })[]> {
+  return dbAll(`
+    SELECT pa.*, u.email as user_email, u.name as user_name, p.price as current_price
+    FROM price_alerts pa
+    JOIN users u ON u.id = pa.user_id
+    LEFT JOIN prices p ON p.symbol = pa.symbol
+    WHERE pa.active = 1
+  `);
+}
+
+// ── Stock Notes ───────────────────────────────────────────────────────────────
+export interface StockNote {
+  id: number;
+  user_id: number;
+  symbol: string;
+  content: string;
+  updated_at: string;
+}
+
+export async function getStockNote(userId: number, symbol: string): Promise<StockNote | null> {
+  const rows = await dbAll<StockNote>(
+    "SELECT * FROM stock_notes WHERE user_id = ? AND symbol = ?",
+    [userId, symbol.toUpperCase()]
+  );
+  return rows[0] ?? null;
+}
+
+export async function saveStockNote(userId: number, symbol: string, content: string): Promise<void> {
+  await dbRun(`
+    INSERT INTO stock_notes (user_id, symbol, content, updated_at)
+    VALUES (?, ?, ?, datetime('now','localtime'))
+    ON CONFLICT(user_id, symbol) DO UPDATE SET
+      content    = excluded.content,
+      updated_at = excluded.updated_at
+  `, [userId, symbol.toUpperCase(), content.substring(0, 2000)]);
+}
+
+export async function getAllStockNotes(userId: number): Promise<StockNote[]> {
+  return dbAll<StockNote>(
+    "SELECT * FROM stock_notes WHERE user_id = ? AND content != '' ORDER BY updated_at DESC",
+    [userId]
+  );
 }

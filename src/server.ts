@@ -492,6 +492,14 @@ function nav(active: string, req?: Request): string {
 
   return `<nav class="topnav">
     <a href="/" class="brand"><img src="/public/images/logo.svg" class="brand-logo" alt="ZeroScreen"><span class="brand-wordmark">Zero<em>Screen</em></span></a>
+    <div class="nav-desktop-links">
+      <a href="/" class="${active === "home" ? "active" : ""}">🔍 Screener</a>
+      <a href="/today" class="${active === "today" ? "active" : ""}">🔥 Picks</a>
+      <a href="/signals" class="nav-signals-link${active === "signals" ? " active" : ""}"><span class="nav-live-dot"></span>🤖 Live Bot</a>
+      <a href="/paper-trade" class="${active === "paper-trade" ? "active" : ""}">📋 Paper Trade</a>
+      ${isLoggedIn ? `<a href="${isAdmin ? '/my-paper-trade' : '/my-portfolio'}" class="nav-hot-link${active === 'my-paper-trade' || active === 'my-portfolio' ? ' active' : ''}">💼 My Trade <span class="nav-hot-badge">HOT</span></a>` : ""}
+      ${exploreDropHtml}
+    </div>
     <div class="nav-links" id="nav-links">
       <div class="nav-mob-drawer-head">
         <a href="/" class="brand nav-mob-drawer-brand"><img src="/public/images/logo.svg" class="brand-logo" alt="ZeroScreen"><span class="brand-wordmark">Zero<em>Screen</em></span></a>
@@ -501,7 +509,7 @@ function nav(active: string, req?: Request): string {
       <a href="/today" class="${active === "today" ? "active" : ""}">🔥 Picks</a>
       <a href="/signals" class="nav-signals-link${active === "signals" ? " active" : ""}"><span class="nav-live-dot"></span>🤖 Live Bot</a>
       <a href="/paper-trade" class="${active === "paper-trade" ? "active" : ""}">📋 Paper Trade</a>
-      ${isLoggedIn ? `<a href="/my-paper-trade" class="nav-hot-link${active === "my-paper-trade" ? " active" : ""}">💼 My Trade <span class="nav-hot-badge">HOT</span></a>` : ""}
+      ${isLoggedIn ? `<a href="${isAdmin ? '/my-paper-trade' : '/my-portfolio'}" class="nav-hot-link${active === 'my-paper-trade' || active === 'my-portfolio' ? ' active' : ''}">💼 My Trade <span class="nav-hot-badge">HOT</span></a>` : ""}
       ${exploreDropHtml}
       ${mobileMobFooter}
     </div>
@@ -6507,8 +6515,8 @@ app.get("/paper-trade", featureGate("feature_paper_trade_bot", "Paper Trade"), a
 </html>`);
 });
 
-// ── GET /my-paper-trade ─ Personal paper trading portfolio ──────────────────
-app.get("/my-paper-trade", requireAuth, featureGate("feature_my_paper_trade", "Paper Trading"), premiumGate("paper_trade_premium_only", "Paper Trading"), async (req: Request, res: Response) => {
+// ── GET /my-paper-trade + /my-portfolio — Paper trading portfolio dashboard ───
+async function paperPortfolioPage(req: Request, res: Response) {
   const userId   = req.session.userId!;
   const userName = req.session.userName || "Trader";
 
@@ -6523,13 +6531,14 @@ app.get("/my-paper-trade", requireAuth, featureGate("feature_my_paper_trade", "P
     }
   }
 
-  const [port, positions, trades, tradeCount, ptConfig, activeSub] = await Promise.all([
+  const [port, positions, trades, tradeCount, ptConfig, activeSub, allPicksForTrade] = await Promise.all([
     getPaperPortfolio(userId),
     getPaperPositions(userId),
     getPaperTrades(userId, 60),
     countPaperTrades(userId),
     getPaperTradeConfig(userId),
     getActiveSubscription(userId),
+    getAllPicks(),
   ]);
 
   // ── Credits ─────────────────────────────────────────────────────────────────
@@ -6548,6 +6557,34 @@ app.get("/my-paper-trade", requireAuth, featureGate("feature_my_paper_trade", "P
     : [];
   const priceMap: Record<string, number> = {};
   for (const r of dbPrices) if (r.price != null) priceMap[r.symbol] = r.price;
+
+  // ── Picks tracker — extend priceMap with picks symbols ─────────────────────
+  const pickSymbols = [...new Set([
+    ...allPicksForTrade.filter(p => !p.result || p.result === 'entry_triggered').map(p => p.stock_symbol),
+  ])].filter(s => !priceMap[s]);
+  if (pickSymbols.length > 0) {
+    const pickPrices = await dbAll<{ symbol: string; price: number | null }>(
+      `SELECT symbol, price FROM prices WHERE symbol IN (${pickSymbols.map(() => "?").join(",")})`,
+      pickSymbols
+    );
+    for (const r of pickPrices) if (r.price != null) priceMap[r.symbol] = r.price;
+  }
+
+  // ── Picks tracker data ──────────────────────────────────────────────────────
+  const inPositionSymbols = new Set([
+    ...allPicksForTrade.filter(p => p.result === 'entry_triggered').map(p => p.stock_symbol.toUpperCase()),
+    ...positions.map(p => p.symbol.toUpperCase()),
+  ]);
+  const inPosition = allPicksForTrade.filter(p => p.result === 'entry_triggered');
+  const latestPendingDate = allPicksForTrade
+    .filter(p => !p.result)
+    .sort((a, b) => (b.published_at || '').localeCompare(a.published_at || ''))[0]
+    ?.published_at?.slice(0, 10);
+  const pendingOrders = latestPendingDate
+    ? allPicksForTrade.filter(p => !p.result && (p.published_at || '').slice(0, 10) === latestPendingDate)
+    : [];
+  const pendingNonDupe = pendingOrders.filter(p => !inPositionSymbols.has(p.stock_symbol.toUpperCase()));
+  const resolved = allPicksForTrade.filter(p => p.result === 'target_hit' || p.result === 'sl_hit');
 
   const posRows = positions.map(p => {
     const livePrice = priceMap[p.symbol] ?? p.avg_price;
@@ -6569,17 +6606,32 @@ app.get("/my-paper-trade", requireAuth, featureGate("feature_my_paper_trade", "P
   const losses         = sellTrades.filter(t => (t.pnl ?? 0) <= 0).length;
   const winRate        = sellTrades.length > 0 ? ((wins / sellTrades.length) * 100).toFixed(1) : "—";
 
+  // Monthly P&L rollup (last 6 months)
+  const monthPnlMap: Record<string, number> = {};
+  for (const t of sellTrades) {
+    const mo = t.traded_at.slice(0, 7);
+    monthPnlMap[mo] = (monthPnlMap[mo] || 0) + (t.pnl ?? 0);
+  }
+  const monthKeys   = Object.keys(monthPnlMap).sort().slice(-6);
+  const monthValues = monthKeys.map(k => parseFloat(monthPnlMap[k].toFixed(2)));
+  const monthLabels = monthKeys.map(k => {
+    const [y, m] = k.split("-");
+    return new Date(parseInt(y), parseInt(m) - 1, 1).toLocaleString("en-IN", { month: "short", year: "2-digit" });
+  });
+
   // Equity curve from sell trades
   let eq = 0;
   const eqData   = sellTrades.slice().reverse().map(t => { eq += t.pnl ?? 0; return parseFloat(eq.toFixed(2)); });
   const eqLabels = sellTrades.slice().reverse().map(t => t.traded_at.slice(5, 10));
+
+  const pageTitle = req.session.userRole === "admin" ? "My Paper Trade" : "My Portfolio";
 
   res.send(`<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>My Paper Trade — ZeroScreen</title>
+  <title>${pageTitle} — ZeroScreen</title>
   <link rel="stylesheet" href="/public/css/style.css">
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.2/dist/chart.umd.min.js"></script>
   <style>
@@ -6636,16 +6688,35 @@ app.get("/my-paper-trade", requireAuth, featureGate("feature_my_paper_trade", "P
     .mpt-type-intra { background:#3b82f622; color:#3b82f6; border:1px solid #3b82f655; border-radius:4px; padding:2px 7px; font-size:0.73rem; font-weight:700; }
     .mpt-type-hold  { background:#a855f722; color:#a855f7; border:1px solid #a855f755; border-radius:4px; padding:2px 7px; font-size:0.73rem; font-weight:700; }
     @media (max-width:600px) { .mpt-form-row { flex-direction: column; } .mpt-form-group input, .mpt-form-group select { width: 100%; } }
+    /* ── Picks Tracker ──────────────────────────────────────────────────────── */
+    .mpt-topbar2{display:flex;align-items:center;gap:10px;flex-wrap:wrap;background:var(--card-bg);border:1px solid var(--border);border-radius:12px;padding:14px 18px;margin-bottom:16px}
+    .mpt-topbar2-stat{display:flex;flex-direction:column;align-items:center;min-width:80px;padding:0 12px;border-right:1px solid var(--border)}
+    .mpt-topbar2-stat:last-child{border-right:none}
+    .mpt-topbar2-stat-lbl{font-size:.68rem;text-transform:uppercase;letter-spacing:.07em;color:var(--text-muted);margin-bottom:2px}
+    .mpt-topbar2-stat-val{font-size:1.3rem;font-weight:800;font-variant-numeric:tabular-nums}
+    .mpt-tab2-row{display:flex;gap:6px;margin-bottom:14px;flex-wrap:wrap}
+    .mpt-tab2{padding:7px 16px;border-radius:20px;border:1px solid var(--border);background:var(--input-bg);color:var(--text-muted);font-size:.83rem;font-weight:600;cursor:pointer;transition:.2s}
+    .mpt-tab2.t2-active{background:var(--accent);color:#fff;border-color:var(--accent)}
+    .mpt-tab2-badge{display:inline-block;min-width:20px;height:18px;line-height:18px;border-radius:9px;text-align:center;font-size:.72rem;font-weight:800;padding:0 5px;margin-left:5px;background:var(--bg2);color:var(--text-muted)}
+    .mpt-picks-panel{display:none}
+    .mpt-picks-panel.t2p-active{display:block}
+    .mpt-picks-tbl{width:100%;border-collapse:collapse;font-size:.86rem}
+    .mpt-picks-tbl th{text-align:left;padding:8px 10px;border-bottom:2px solid var(--border);font-size:.72rem;text-transform:uppercase;color:var(--text-muted)}
+    .mpt-picks-tbl td{padding:9px 10px;border-bottom:1px solid var(--border);vertical-align:middle}
+    .mpt-picks-tbl tr:hover td{background:var(--hover-bg)}
+    .pb-bullish{background:#10b98122;color:#10b981;border:1px solid #10b98144;border-radius:4px;padding:2px 8px;font-size:.72rem;font-weight:700}
+    .pb-bearish{background:#ef444422;color:#ef4444;border:1px solid #ef444444;border-radius:4px;padding:2px 8px;font-size:.72rem;font-weight:700}
+    .dim{color:var(--text-muted)}
   </style>
 </head>
 <body>
-  ${nav("my-paper-trade", req)}
+  ${nav(req.session.userRole === "admin" ? "my-paper-trade" : "my-portfolio", req)}
   <div class="container" style="max-width:1060px">
 
     <!-- HERO -->
     <div class="mpt-hero">
       <div>
-        <div class="mpt-hero-title">� My Portfolio</div>
+        <div class="mpt-hero-title">💼 My Portfolio</div>
         <div class="mpt-hero-sub">Virtual trading dashboard · ₹1,00,000 starting capital · Zero real risk</div>
       </div>
       <div style="text-align:right;display:flex;flex-direction:column;align-items:flex-end;gap:10px">
@@ -6786,6 +6857,120 @@ app.get("/my-paper-trade", requireAuth, featureGate("feature_my_paper_trade", "P
       <span style="font-size:0.8rem; color:var(--text-muted)">Hi ${esc(userName.split(" ")[0])} · Your portfolio is saved to your account</span>
     </div>
 
+    <!-- ── PICKS TRACKER ──────────────────────────────────────────────────── -->
+    <div class="mpt-section" style="margin-top:32px">Today's Picks Tracker</div>
+
+    <!-- Topbar stats -->
+    <div class="mpt-topbar2">
+      <div class="mpt-topbar2-stat">
+        <div class="mpt-topbar2-stat-lbl">In Position</div>
+        <div class="mpt-topbar2-stat-val" style="color:#10b981" id="pt-stat-inpos">${inPosition.length || '—'}</div>
+      </div>
+      <div class="mpt-topbar2-stat">
+        <div class="mpt-topbar2-stat-lbl">Pending</div>
+        <div class="mpt-topbar2-stat-val" style="color:#a78bfa" id="pt-stat-pend">${pendingNonDupe.length || '—'}</div>
+      </div>
+      <div class="mpt-topbar2-stat">
+        <div class="mpt-topbar2-stat-lbl">Executed</div>
+        <div class="mpt-topbar2-stat-val" style="color:#f59e0b" id="pt-stat-exec">${resolved.length || '—'}</div>
+      </div>
+      <div style="margin-left:auto;font-size:.75rem;color:var(--text-muted)" id="pt-refresh-ts">Showing SSR snapshot · live refresh every 30s</div>
+    </div>
+
+    <!-- Tab buttons -->
+    <div class="mpt-tab2-row">
+      <div class="mpt-tab2 t2-active" id="pt-tab-inpos" onclick="_switchPicksTab('inpos',this)">
+        🟢 In Position <span class="mpt-tab2-badge" id="mpt-inpos-count" style="background:rgba(16,185,129,.15);color:#10b981">${inPosition.length}</span>
+      </div>
+      <div class="mpt-tab2 t2-pending" id="pt-tab-pend" onclick="_switchPicksTab('pend',this)">
+        ⏳ Pending <span class="mpt-tab2-badge" id="mpt-pending-count" style="${pendingNonDupe.length ? 'background:rgba(167,139,250,.15);color:#a78bfa' : ''}">${pendingNonDupe.length}</span>
+      </div>
+      <div class="mpt-tab2 t2-exec" id="pt-tab-exec" onclick="_switchPicksTab('exec',this)">
+        ✅ Executed <span class="mpt-tab2-badge" id="mpt-exec-count" style="${resolved.length ? 'background:rgba(245,158,11,.15);color:#f59e0b' : ''}">${resolved.length}</span>
+      </div>
+    </div>
+
+    <!-- In Position panel -->
+    <div class="mpt-picks-panel t2p-active" id="pt-panel-inpos">
+      ${inPosition.length === 0
+        ? `<div class="mpt-empty">No picks currently in position.</div>`
+        : `<div style="overflow-x:auto"><table class="mpt-picks-tbl">
+          <thead><tr><th>Symbol</th><th>Direction</th><th>Entry Zone</th><th>Target</th><th>SL</th><th>CMP</th><th>Entry At</th></tr></thead>
+          <tbody id="mpt-inpos-body">
+            ${inPosition.map(p => {
+              const lp = priceMap[p.stock_symbol];
+              return `<tr>
+                <td><strong style="color:var(--accent)">${esc(p.stock_symbol)}</strong>${p.company_name ? `<br><span class="dim" style="font-size:.64rem">${esc(p.company_name)}</span>` : ''}</td>
+                <td><span class="${p.direction === 'BULLISH' ? 'pb-bullish' : 'pb-bearish'}">${p.direction}</span></td>
+                <td class="dim" style="font-size:.74rem">₹${p.entry_low}–${p.entry_high}</td>
+                <td style="color:#10b981;font-size:.74rem">${p.target ? '₹' + p.target : '—'}</td>
+                <td style="color:#ef4444;font-size:.74rem">${p.stop_loss ? '₹' + p.stop_loss : '—'}</td>
+                <td style="font-weight:700;color:${lp ? '#3b82f6' : 'var(--text-muted)'}">${lp ? '₹' + lp.toFixed(2) : '—'}</td>
+                <td class="dim" style="font-size:.72rem">${p.entry_at ? p.entry_at.slice(0,16).replace('T',' ') : '—'}</td>
+              </tr>`;
+            }).join('')}
+          </tbody>
+        </table></div>`
+      }
+    </div>
+
+    <!-- Pending panel -->
+    <div class="mpt-picks-panel" id="pt-panel-pend">
+      ${pendingNonDupe.length === 0
+        ? `<div class="mpt-empty">No pending picks for today${pendingOrders.length > pendingNonDupe.length ? ` (${pendingOrders.length - pendingNonDupe.length} already in position)` : ''}.</div>`
+        : `<div style="overflow-x:auto"><table class="mpt-picks-tbl">
+          <thead><tr><th>Symbol</th><th>Type</th><th>Direction</th><th>Entry Zone</th><th>Target</th><th>SL</th><th>CMP</th></tr></thead>
+          <tbody id="mpt-picks-body">
+            ${pendingNonDupe.map(p => {
+              const lp = priceMap[p.stock_symbol];
+              const inZone = lp && lp >= p.entry_low && lp <= p.entry_high;
+              const aboveZone = lp && lp > p.entry_high;
+              return `<tr>
+                <td><strong>${esc(p.stock_symbol)}</strong>${p.company_name ? `<br><span class="dim" style="font-size:.64rem">${esc(p.company_name)}</span>` : ''}</td>
+                <td style="font-size:.72rem">${(p.pick_type || 'intraday').toUpperCase()}</td>
+                <td><span class="${p.direction === 'BULLISH' ? 'pb-bullish' : 'pb-bearish'}">${p.direction}</span></td>
+                <td class="dim" style="font-size:.74rem;white-space:nowrap">₹${p.entry_low}–${p.entry_high}</td>
+                <td style="color:#10b981;font-size:.74rem">${p.target ? '₹' + p.target : '—'}</td>
+                <td style="color:#ef4444;font-size:.74rem">${p.stop_loss ? '₹' + p.stop_loss : '—'}</td>
+                <td style="font-weight:700;color:${lp ? (inZone ? '#f59e0b' : aboveZone ? '#10b981' : '#94a3b8') : 'var(--text-muted)'};white-space:nowrap">
+                  ${lp ? '₹' + lp.toFixed(2) + (inZone ? ' 🔔' : '') : '—'}
+                </td>
+              </tr>`;
+            }).join('')}
+          </tbody>
+        </table></div>`
+      }
+    </div>
+
+    <!-- Executed panel -->
+    <div class="mpt-picks-panel" id="pt-panel-exec">
+      ${resolved.length === 0
+        ? `<div class="mpt-empty">No executed picks yet.</div>`
+        : `<div style="overflow-x:auto"><table class="mpt-picks-tbl">
+          <thead><tr><th>Symbol</th><th>Direction</th><th>Result</th><th>Entry</th><th>Result Price</th><th>Date</th></tr></thead>
+          <tbody>
+            ${resolved.slice(0, 30).map(p => {
+              const isWin = p.result === 'target_hit';
+              return `<tr>
+                <td><strong style="color:var(--accent)">${esc(p.stock_symbol)}</strong>${p.company_name ? `<br><span class="dim" style="font-size:.64rem">${esc(p.company_name)}</span>` : ''}</td>
+                <td><span class="${p.direction === 'BULLISH' ? 'pb-bullish' : 'pb-bearish'}">${p.direction}</span></td>
+                <td><span style="background:${isWin ? '#10b98122' : '#ef444422'};color:${isWin ? '#10b981' : '#ef4444'};border:1px solid ${isWin ? '#10b98144' : '#ef444444'};border-radius:4px;padding:2px 8px;font-size:.72rem;font-weight:700">${isWin ? '✅ Target Hit' : '⛔ SL Hit'}</span></td>
+                <td class="dim" style="font-size:.74rem">${p.entry_price ? '₹' + p.entry_price : '—'}</td>
+                <td style="font-weight:700">${p.result_price ? '₹' + p.result_price : '—'}</td>
+                <td class="dim" style="font-size:.72rem">${p.result_at ? p.result_at.slice(0,10) : '—'}</td>
+              </tr>`;
+            }).join('')}
+          </tbody>
+        </table></div>`
+      }
+    </div>
+
+    <!-- Monthly P&L chart -->
+    ${monthValues.length >= 1 ? `<div class="mpt-chart-wrap" style="margin-top:16px">
+      <div style="font-size:.72rem;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--text-muted);margin-bottom:12px">📅 Monthly P&L</div>
+      <canvas id="mptMonthChart" height="120"></canvas>
+    </div>` : ''}
+
     <div class="mpt-disclaimer">
       ⚠️ <strong>Disclaimer:</strong> Paper trading uses simulated virtual money — no real funds are at risk.
       Prices used for buy/sell are from the ZeroScreen DB (NSE data, updated periodically) and may not reflect the exact live market price.
@@ -6797,6 +6982,32 @@ app.get("/my-paper-trade", requireAuth, featureGate("feature_my_paper_trade", "P
 
   <script src="/public/js/app.js"></script>
   <script>
+  // Picks tracker tab switching
+  function _switchPicksTab(tab, el) {
+    document.querySelectorAll('.mpt-tab2').forEach(t => t.classList.remove('t2-active'));
+    document.querySelectorAll('.mpt-picks-panel').forEach(p => p.classList.remove('t2p-active'));
+    el.classList.add('t2-active');
+    var panel = document.getElementById('pt-panel-' + tab);
+    if (panel) panel.classList.add('t2p-active');
+  }
+
+  // Live refresh every 30s
+  function _refreshPicksTracker() {
+    fetch('/api/picks/live').then(r => r.ok ? r.json() : null).then(function(data) {
+      if (!data) return;
+      var ts = document.getElementById('pt-refresh-ts');
+      if (ts) ts.textContent = 'Updated ' + new Date().toLocaleTimeString('en-IN', {hour:'2-digit',minute:'2-digit'});
+      // Update counts
+      var ic = document.getElementById('mpt-inpos-count'); if (ic) { ic.textContent = data.inPosition || '0'; }
+      var pc = document.getElementById('mpt-pending-count'); if (pc) { pc.textContent = data.pending || '0'; pc.style.background = data.pending ? 'rgba(167,139,250,.15)' : 'var(--bg2)'; pc.style.color = data.pending ? '#a78bfa' : 'var(--text-muted)'; }
+      var ec = document.getElementById('mpt-exec-count'); if (ec) { ec.textContent = data.executed || '0'; ec.style.background = data.executed ? 'rgba(245,158,11,.15)' : 'var(--bg2)'; ec.style.color = data.executed ? '#f59e0b' : 'var(--text-muted)'; }
+      var si = document.getElementById('pt-stat-inpos'); if (si) si.textContent = data.inPosition || '—';
+      var sp = document.getElementById('pt-stat-pend'); if (sp) sp.textContent = data.pending || '—';
+      var se = document.getElementById('pt-stat-exec'); if (se) se.textContent = data.executed || '—';
+    }).catch(function(){});
+  }
+  setInterval(_refreshPicksTracker, 30000);
+
   ${eqData.length >= 2 ? `
   (function() {
     var labels = ${JSON.stringify(eqLabels)};
@@ -6811,9 +7022,36 @@ app.get("/my-paper-trade", requireAuth, featureGate("feature_my_paper_trade", "P
         scales:{x:{display:data.length<=60,ticks:{maxTicksLimit:10}},y:{ticks:{callback:v=>'₹'+v}}} }
     });
   })();` : ""}
+
+  ${monthValues.length >= 1 ? `
+  (function() {
+    var labels = ${JSON.stringify(monthLabels)};
+    var data   = ${JSON.stringify(monthValues)};
+    var colors = data.map(function(v){ return v >= 0 ? 'rgba(16,185,129,0.7)' : 'rgba(239,68,68,0.7)'; });
+    new Chart(document.getElementById('mptMonthChart').getContext('2d'), {
+      type: 'bar',
+      data: { labels, datasets: [{ data, backgroundColor: colors, borderRadius: 4 }] },
+      options: { responsive:true, plugins:{legend:{display:false},tooltip:{callbacks:{label:ctx=>'₹'+ctx.raw}}},
+        scales:{y:{ticks:{callback:v=>'₹'+v}}} }
+    });
+  })();` : ""}
   </script>
 </body>
 </html>`);
+}
+
+// ── Route registrations for portfolio page ─────────────────────────────────────
+app.get("/my-paper-trade", requireAdmin, paperPortfolioPage);
+app.get("/my-portfolio",   requireAuth, featureGate("feature_my_paper_trade", "Paper Trading"), premiumGate("paper_trade_premium_only", "Paper Trading"), paperPortfolioPage);
+
+// ── GET /api/picks/live — quick counts for JS refresh ─────────────────────────
+app.get("/api/picks/live", requireAuth, async (_req: Request, res: Response) => {
+  const all = await getAllPicks();
+  const inPos = all.filter(p => p.result === 'entry_triggered').length;
+  const latestDate = all.filter(p => !p.result).sort((a, b) => (b.published_at||'').localeCompare(a.published_at||''))[0]?.published_at?.slice(0,10);
+  const pend = latestDate ? all.filter(p => !p.result && (p.published_at||'').slice(0,10) === latestDate).length : 0;
+  const exec = all.filter(p => p.result === 'target_hit' || p.result === 'sl_hit').length;
+  res.json({ inPosition: inPos, pending: pend, executed: exec });
 });
 
 // ── POST /my-paper-trade/buy ──────────────────────────────────────────────────

@@ -15,8 +15,8 @@
 import cron from "node-cron";
 import { fetchLatestBhavcopy } from "./nse";
 import { fetchFundamentals }   from "./scraper";
-import { dbRun, dbAll, upsertStock, upsertPrice, getStaleSymbols, getAllSymbols, initDb, screenStocks, getAllActiveAlerts, updateAlertLastSent, createPick, getUsersWithAutoPicks, paperBuy, paperSell, getPaperPositions } from "./db";
-import { sendAlertEmail } from "./mailer";
+import { dbRun, dbAll, upsertStock, upsertPrice, getStaleSymbols, getAllSymbols, initDb, screenStocks, getAllActiveAlerts, updateAlertLastSent, createPick, getUsersWithAutoPicks, paperBuy, paperSell, getPaperPositions, getAllActivePriceAlerts, triggerPriceAlert, updatePickEntry } from "./db";
+import { sendAlertEmail, sendPriceAlertEmail } from "./mailer";
 
 const FETCH_DELAY_MS = 800;
 function sleep(ms: number) { return new Promise(r => setTimeout(r, ms)); }
@@ -355,7 +355,17 @@ export async function autoPaperTradeFromPicks(): Promise<void> {
 
   for (const user of users) {
     let bought = 0;
+    // Fetch all open positions for this user once per user (avoid per-pick DB calls)
+    const openPositions = await getPaperPositions(user.id);
+    const openSymbols = new Set(openPositions.map((p: any) => p.symbol.toUpperCase()));
+
     for (const pick of picks) {
+      // Skip if user already holds an open position in this stock
+      if (openSymbols.has(pick.stock_symbol.toUpperCase())) {
+        console.log(`[AutoPaper] ⏭️  ${user.email} skip ${pick.stock_symbol}: already in open position`);
+        continue;
+      }
+
       const qty   = 1;
       // Use midpoint of pick's entry zone — this IS yesterday's close ± 0.3% buffer,
       // the intended entry price. Far more meaningful than raw prices table at 9:15 AM.
@@ -382,6 +392,11 @@ export async function autoPaperTradeFromPicks(): Promise<void> {
       if (result.ok) {
         bought++;
         console.log(`[AutoPaper] ✅ ${user.email} bought ${pick.stock_symbol} @ ₹${price} (${tradeType})`);
+        // Mark the pick as entry_triggered so it shows as "In Position" everywhere
+        // (only needs to happen once — subsequent users will find it already triggered)
+        if (pick.result !== 'entry_triggered') {
+          await updatePickEntry(pick.id, price).catch(() => {});
+        }
       } else {
         console.log(`[AutoPaper] ⚠️ ${user.email} skip ${pick.stock_symbol}: ${result.msg}`);
       }
@@ -420,6 +435,27 @@ export async function monitorAutoPaperPositions(): Promise<void> {
   }
 }
 
+// ── Price Alert checker ──────────────────────────────────────────────────────
+export async function checkPriceAlerts(): Promise<void> {
+  const activeAlerts = await getAllActivePriceAlerts();
+  let triggered = 0;
+  for (const a of activeAlerts) {
+    if (a.current_price == null) continue;
+    const hit = a.direction === "above"
+      ? a.current_price >= a.target_price
+      : a.current_price <= a.target_price;
+    if (!hit) continue;
+    try {
+      await triggerPriceAlert(a.id);
+      await sendPriceAlertEmail(a.user_email, a.user_name, a.symbol, a.direction, a.target_price, a.current_price);
+      triggered++;
+    } catch (e: any) {
+      console.error(`[PriceAlerts] Error triggering alert ${a.id}:`, e.message);
+    }
+  }
+  if (triggered > 0) console.log(`[PriceAlerts] Triggered ${triggered}/${activeAlerts.length} alerts`);
+}
+
 // ── Cron ──────────────────────────────────────────────────────────────────────
 export function startScheduler() {
   // Daily prices: weekdays at 6:30 PM IST (13:00 UTC)
@@ -455,6 +491,11 @@ export function startScheduler() {
   // Monitor auto-paper SL/target: every 5 min on weekdays during market hours 9:15–3:30 IST (3:45–10:00 UTC)
   cron.schedule("*/5 3-10 * * 1-5", async () => {
     await monitorAutoPaperPositions();
+  }, { timezone: "UTC" });
+
+  // Price alerts: every 30 min on weekdays during market hours (3:45–10:30 UTC = 9:15–16:00 IST)
+  cron.schedule("*/30 3-10 * * 1-5", async () => {
+    await checkPriceAlerts();
   }, { timezone: "UTC" });
 
   console.log("[Scheduler] Cron jobs registered");

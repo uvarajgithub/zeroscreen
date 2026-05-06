@@ -97,7 +97,7 @@ export async function sendWelcomeEmail(name: string, email: string): Promise<voi
 export async function sendContactNotification(
   senderName: string, senderEmail: string, subject: string, message: string
 ): Promise<void> {
-  const ownerEmail = process.env.SMTP_USER || "";
+  const ownerEmail = process.env.CONTACT_EMAIL || process.env.SMTP_USER || "";
   if (!ownerEmail || ownerEmail === "your-email@gmail.com") {
     console.log(`[Mailer] Contact form: ${senderName} <${senderEmail}> — ${subject}`);
     return;
@@ -161,6 +161,29 @@ export async function sendAlertEmail(
   await send(to, `ZeroScreen Alert: "${alertName}" — ${stocks.length} stock${stocks.length !== 1 ? "s" : ""} found today`, html);
 }
 
+export async function sendPriceAlertEmail(
+  to: string, userName: string,
+  symbol: string, direction: string, targetPrice: number, currentPrice: number
+): Promise<void> {
+  const firstName = userName.split(" ")[0];
+  const hit = direction === "above" ? "crossed above" : "dropped below";
+  const arrow = direction === "above" ? "🚀" : "📉";
+  const appUrl = process.env.APP_URL || "http://localhost:4000";
+  const html = baseTemplate(`
+    <h2>${arrow} Price Alert: ${symbol}</h2>
+    <p>Hi ${firstName}! Your price alert for <strong>${symbol}</strong> was triggered.</p>
+    <div style="background:#f0f4ff;border:1px solid #dde3f5;border-radius:12px;padding:20px 24px;margin:16px 0;text-align:center">
+      <div style="font-size:13px;color:#8e97c0;margin-bottom:4px">${symbol} has ${hit} your target</div>
+      <div style="font-size:36px;font-weight:800;color:${direction === "above" ? "#16a34a" : "#dc2626"}">₹${currentPrice.toFixed(2)}</div>
+      <div style="font-size:13px;color:#8e97c0;margin-top:4px">Alert price: ₹${targetPrice.toFixed(2)}</div>
+    </div>
+    <a href="${appUrl}/stock/${symbol}" class="btn">View ${symbol} →</a>
+    <hr class="divider">
+    <p style="font-size:12px;color:#8e97c0">This alert has been deactivated. Set a new one anytime from <a href="${appUrl}/my-alerts">My Alerts</a>.</p>
+  `);
+  await send(to, `${arrow} ${symbol} ${hit} ₹${targetPrice.toFixed(2)} — ZeroScreen Alert`, html);
+}
+
 export async function sendPasswordResetEmail(to: string, name: string, resetUrl: string): Promise<void> {
   const firstName = name.split(" ")[0];
   const html = baseTemplate(`
@@ -172,4 +195,92 @@ export async function sendPasswordResetEmail(to: string, name: string, resetUrl:
     <p style="font-size:12px;color:#8e97c0">If you didn't request this, you can safely ignore this email. Your password won't change.</p>
   `);
   await send(to, "Reset your ZeroScreen password", html);
+}
+
+export async function sendPicksDigest(
+  subscribers: { name: string; email: string }[],
+  picks: { stock_symbol: string; company_name?: string | null; direction: string; entry_low: number; entry_high: number; target?: number | null; stop_loss?: number | null; reason: string; risk_level: string; pick_type: string }[]
+): Promise<void> {
+  if (!subscribers.length || !picks.length) return;
+  const appUrl = process.env.APP_URL || "http://localhost:4000";
+  const pickRows = picks.map(p => {
+    const riskColor = p.risk_level === "High" ? "#dc2626" : p.risk_level === "Low" ? "#16a34a" : "#d97706";
+    const dir = p.direction === "SHORT" ? "🔴 SHORT" : "🟢 LONG";
+    return `
+    <tr>
+      <td style="padding:10px 12px;border-bottom:1px solid #e8eeff;font-weight:800;color:#2563eb;font-size:14px">${p.stock_symbol}</td>
+      <td style="padding:10px 12px;border-bottom:1px solid #e8eeff;font-size:12px;color:#5b6490">${p.company_name || "—"}</td>
+      <td style="padding:10px 12px;border-bottom:1px solid #e8eeff;font-weight:700">${dir}</td>
+      <td style="padding:10px 12px;border-bottom:1px solid #e8eeff;font-size:13px">₹${p.entry_low}–₹${p.entry_high}</td>
+      <td style="padding:10px 12px;border-bottom:1px solid #e8eeff;font-size:13px;color:#16a34a">${p.target ? "₹" + p.target : "—"}</td>
+      <td style="padding:10px 12px;border-bottom:1px solid #e8eeff;font-size:13px;color:#dc2626">${p.stop_loss ? "₹" + p.stop_loss : "—"}</td>
+      <td style="padding:10px 12px;border-bottom:1px solid #e8eeff"><span style="font-size:11px;font-weight:700;color:${riskColor}">${p.risk_level}</span></td>
+    </tr>`;
+  }).join("");
+
+  const today = new Date().toLocaleDateString("en-IN", { weekday: "long", day: "numeric", month: "long", year: "numeric", timeZone: "Asia/Kolkata" });
+
+  for (const sub of subscribers) {
+    const firstName = sub.name.split(" ")[0];
+    const html = baseTemplate(`
+      <h2>🔥 Today's Picks — ${today}</h2>
+      <p>Hi ${firstName}! Here are today's stock picks selected by the ZeroScreen team.</p>
+      <table style="width:100%;border-collapse:collapse;margin:16px 0;font-size:13px">
+        <thead>
+          <tr style="background:#f0f4ff">
+            <th style="padding:8px 12px;text-align:left;font-size:10px;color:#8e97c0;text-transform:uppercase">Stock</th>
+            <th style="padding:8px 12px;text-align:left;font-size:10px;color:#8e97c0;text-transform:uppercase">Company</th>
+            <th style="padding:8px 12px;text-align:left;font-size:10px;color:#8e97c0;text-transform:uppercase">Dir</th>
+            <th style="padding:8px 12px;text-align:left;font-size:10px;color:#8e97c0;text-transform:uppercase">Entry</th>
+            <th style="padding:8px 12px;text-align:left;font-size:10px;color:#8e97c0;text-transform:uppercase">Target</th>
+            <th style="padding:8px 12px;text-align:left;font-size:10px;color:#8e97c0;text-transform:uppercase">SL</th>
+            <th style="padding:8px 12px;text-align:left;font-size:10px;color:#8e97c0;text-transform:uppercase">Risk</th>
+          </tr>
+        </thead>
+        <tbody>${pickRows}</tbody>
+      </table>
+      <p style="font-size:12px;color:#8e97c0">⚠️ These picks are for educational purposes only. Not SEBI registered. Not investment advice. Always do your own research before investing.</p>
+      <a href="${appUrl}/today" class="btn">View Picks on ZeroScreen →</a>
+      <hr class="divider">
+      <p style="font-size:11px;color:#8e97c0">To stop receiving daily picks emails, visit your <a href="${appUrl}/profile" style="color:#2563eb">profile settings</a>.</p>
+    `);
+    await send(sub.email, `🔥 ZeroScreen Today's Picks — ${today}`, html);
+  }
+}
+
+// ── Telegram Bot Alert ────────────────────────────────────────────────────────
+const TELEGRAM_TOKEN = process.env.TELEGRAM_BOT_TOKEN || "";
+
+export async function sendTelegramMessage(chatId: string, text: string): Promise<void> {
+  if (!TELEGRAM_TOKEN || !chatId) return;
+  try {
+    const url = `https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendMessage`;
+    await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ chat_id: chatId, text, parse_mode: "HTML", disable_web_page_preview: true }),
+      signal: AbortSignal.timeout(8000),
+    });
+  } catch (_) {}
+}
+
+export async function sendTelegramSignalAlert(
+  subscribers: { id: number; name: string; telegram_chat_id: string }[],
+  signal: { direction: string; entryPrice: number; stopLoss: number; symbol: string; mode: string }
+): Promise<void> {
+  if (!TELEGRAM_TOKEN || !subscribers.length) return;
+  const dir = signal.direction === "CE" ? "📈 CALL (CE) — Bullish" : "📉 PUT (PE) — Bearish";
+  const mode = signal.mode === "LIVE" ? "⚡ LIVE" : "📋 PAPER";
+  const text =
+    `📡 <b>ZeroScreen Bot Signal</b>\n\n` +
+    `${dir}\n` +
+    `<b>Symbol:</b> ${signal.symbol || "BANKNIFTY"}\n` +
+    `<b>Entry:</b> ${signal.entryPrice > 0 ? "₹" + signal.entryPrice.toFixed(1) : "Market"}\n` +
+    `<b>Stop Loss:</b> ${signal.stopLoss > 0 ? "₹" + signal.stopLoss.toFixed(1) : "Dynamic"}\n` +
+    `<b>Mode:</b> ${mode}\n\n` +
+    `🔗 <a href="${process.env.APP_URL || "http://localhost:4000"}/signals">View on ZeroScreen</a>`;
+
+  for (const sub of subscribers) {
+    sendTelegramMessage(sub.telegram_chat_id, text).catch(() => {});
+  }
 }

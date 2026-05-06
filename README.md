@@ -525,13 +525,117 @@ Compress-Archive -Path src,public,package.json,package-lock.json,tsconfig.json -
 
 ## Recent Changes (May 2026)
 
-- **Nav responsive fix** — `flex-shrink:0` on nav-right; search bar narrowed to 160px; nav links collapse at ≤1160px and ≤980px breakpoints so profile avatar is always visible
-- **Signals — compact trade rows** — Recent trades now render as single-line `.sig-trade-row` cards (direction badge · date · entry→exit prices · PnL · duration · exit reason). Both SSR and auto-refresh JS updated.
-- **Paper Trade — index symbol autocomplete** — Typing `BANKNIFTY`, `NIFTY`, `FINNIFTY`, `MIDCPNIFTY`, `SENSEX`, or `BANKEX` in the symbol search now shows those as "Index Options (CE/PE)" at the top of the dropdown
-- **Paper Trade — options panel** — Selecting an index auto-switches to Limit order and shows the CE/PE toggle + strike picker with a ✕ close button. Clearing the search input also hides the panel.
-- **Paper Trade — dropdown overlap fixed** — `.pt2-trade-card` changed from `overflow:hidden` to `overflow:visible` so search results render above other form elements
-- **Picks cards** — Reduced font sizes and padding; grid now uses `minmax(180px, 1fr)` showing more cards per row
-- **Nav — double Admin panel** — Removed "🛡️ Admin Panel" link from profile dropdown (it already exists as a dedicated nav dropdown for admins)
+### Phase 8 — Deployed restart #586–587
+- **Stock Research Notes** — private per-user notes on every stock detail page. Auto-saves with 1.5s debounce (POST `/api/note/:symbol`). Max 2000 chars. "Unsaved… → ✓ Saved" status. Stored in new `stock_notes` table (SQLite UPSERT).
+- **`/my-notes` page** — lists all your research notes across stocks in a card grid. Excerpt preview, time-ago, edit button, delete with confirmation.
+- **Paper Trade Monthly P&L chart** — bar chart on `/my-paper-trade` showing P&L by month (green/red). Only renders when you have at least 1 closed trade.
+- **Cumulative P&L curve** — `mptEqChart` canvas element added; equity curve now renders correctly on paper trade page.
+- **Profile: Win Rate** — profile page now shows Win Rate row (e.g. `62.5% · 5W/3L`) in addition to balance and trade count. Powered by `getPaperTradeStats()` single SQL query.
+- **zsMarkInviteDone()** — Copy Link and WhatsApp buttons on `/my-referrals` now fire the onboarding checklist "Invite a Friend" step.
+- **"Research Notes" in nav** — added to Investor Tools section of nav dropdown for logged-in users.
+
+### Phase 7 — Deployed restart #585
+- **Price Alerts (`/my-alerts`)** — per-user price alerts (above/below target). Email fires when price crosses threshold. Scheduler checks every 30 min on weekdays.
+- **PWA manifest** (`/manifest.json`) — Progressive Web App support, installable on mobile.
+- **OG images** — `og-default.svg` (1200×630), `icon-192.svg`, `icon-512.svg` for social sharing and PWA.
+
+### Phase 6 — Deployed restart #583–584
+- **Premium Strategy Picks** — admin CRUD for curated NSE picks at `/admin/premium-picks`. Members see teaser, premium users see full details at `/premium-picks`.
+- **Onboarding checklist** — 5-step widget (first screener search, first watchlist, first paper trade, invite a friend, set up alerts). Persisted in `localStorage`, step completions wired via JS callbacks.
+- **Paper Trade print/export view** — `/my-paper-trade/print` generates a clean printable portfolio summary.
+- **CSS variable fixes** — replaced all `--bg2` / `--bg3` references with correct design tokens.
+- **`/subscribe` → `/premium`** — redirect updated.
+- **Leaderboard** (`/leaderboard`) — top paper traders ranked by portfolio balance, return %, and win rate.
+
+### Earlier Fixes
+- **Nav responsive fix** — `flex-shrink:0` on nav-right; search bar narrowed; nav links collapse at breakpoints.
+- **Signals compact trade rows** — single-line `.sig-trade-row` cards. SSR and auto-refresh JS updated.
+- **Paper Trade index symbol autocomplete** — BANKNIFTY, NIFTY, FINNIFTY etc. appear in search with CE/PE toggle.
+- **Paper Trade dropdown overlap** — `.pt2-trade-card` `overflow:visible` fix.
+- **Mobile nav drawer** — full left-side drawer with overlay, close button, logo header.
+
+---
+
+## TODO — Next Session
+
+### 🪙 Coins / Reward System (new feature — separate from paper trade balance)
+
+Introduce a virtual "ZeroCoins" currency as a reward/gamification layer:
+
+| Rule | Coins |
+|------|-------|
+| New member signs up | +10,000 ZeroCoins |
+| Referred user joins through your referral link | +10,000 to referrer |
+| User who joined via referral link | +5,000 extra bonus |
+| Top paper trade performer of the month (cron job on 1st of month) | +10,000 to #1 leaderboard |
+
+**Implementation plan:**
+1. `db.ts` — add `coins INTEGER NOT NULL DEFAULT 0` column to `users` table (ALTER + migration)
+2. `db.ts` — add `addCoins(userId, amount, reason)` function + `coins_log` table for audit trail
+3. `db.ts` — add `getCoinsBalance(userId)` + `getCoinsLog(userId)` functions
+4. `server.ts` — grant 10,000 coins on email signup (`/signup` POST) and Google OAuth callback
+5. `server.ts` — grant referral coins: +10,000 to referrer + +5,000 to new user in `applyReferral()` flow
+6. `server.ts` — show coins balance in profile page and greeting bar
+7. `db.ts` / `scheduler.ts` — cron on 1st of each month: query leaderboard winner → award 10,000 coins
+8. `server.ts` — `/my-coins` page showing balance + full coins log (earn history)
+9. Admin: view/adjust coins per user in `/admin/users/:id`
+
+---
+
+### 🔧 Admin Dashboard Cleanup
+
+Admin panel has duplicate options spread across multiple pages. Consolidate:
+
+| Issue | Fix |
+|-------|-----|
+| "Permissions" and "Settings" overlap — same toggles appear in multiple admin pages | Merge into single `/admin/settings` page |
+| User paper trade history link appears in both `/admin/users` table and `/admin/users/:id` | Keep only on user detail page |
+| "Signal Control" and "Bot Analytics" accessible from both nav and overview page | Remove redundant links from overview |
+| Multiple "Export CSV" buttons with inconsistent styling | Standardise to one `btn-export` class |
+| Admin nav dropdown has 11 items — too many | Group into sections: Users, Content, Bot, System |
+
+---
+
+### 📡 Telegram Price Alert Delivery
+
+When a price alert fires, also send a Telegram message to the user if they've linked their Telegram account.
+
+**Files:** `src/scheduler.ts` (`checkPriceAlerts`), `src/db.ts` (`getAllActivePriceAlerts` — add `telegram_chat_id` to join), `src/mailer.ts` (add `sendTelegramToUser` helper)
+
+```ts
+// In checkPriceAlerts():
+if (a.telegram_chat_id) {
+  await sendTelegramToUser(a.telegram_chat_id, `🎯 Alert: ${a.symbol} hit ₹${a.target_price} (${a.direction})`);
+}
+```
+
+---
+
+### 📈 Smart "Near 52W High Breakout" Alert Preset
+
+On `/my-alerts` form, add a "⚡ Breakout" quick-fill button next to the target price field. When clicked, fetches `week52_high` for the entered symbol and auto-fills the price field with that value + sets direction to "above".
+
+**Files:** `src/server.ts` (add JS to `/my-alerts` page — AJAX call to `/api/stock/:symbol/52w`), `src/server.ts` (add `/api/stock/:symbol/52w` endpoint returning `{ week52_high, week52_low }`)
+
+---
+
+### 🔁 "Check Alerts Now" Button on `/my-alerts`
+
+Add a "Check Now" button that fires a manual alert check for the current user's active alerts. Useful for testing and gives users confidence alerts are working.
+
+**Files:** `src/server.ts` (add `POST /my-alerts/check` route — runs `checkPriceAlerts()` filtered to user's alerts → returns triggered count as JSON), `/my-alerts` page (AJAX button with spinner)
+
+---
+
+### 📧 Weekly Paper Trade Digest Email
+
+Every Sunday morning (9 AM IST), send members a summary of their paper trading week:
+- Week's realized P&L
+- Trades this week (wins / losses)
+- Current balance vs starting ₹1,00,000
+- Best trade of the week
+
+**Files:** `src/scheduler.ts` (new cron `0 3 * * 0`), `src/mailer.ts` (new `sendWeeklyPaperSummary()`), `src/db.ts` (new `getWeeklyPaperStats(userId)`)
 
 ---
 
@@ -539,45 +643,6 @@ Compress-Archive -Path src,public,package.json,package-lock.json,tsconfig.json -
 
 Private / self-hosted use. Data sourced from screener.in and NSE India — not for redistribution. Trading strategy logic is proprietary.
 
-- **Hero bar** — symbol, company name, live price, change %, day high/low, prev close, 52-week range slider
-- **TradingView chart** — full interactive price chart (550px, syncs dark/light mode)
-- **8 KPI cards** — Market Cap, ROCE, ROE, D/E Ratio, P/E Ratio, EPS, Book Value, Dividend Yield
-- **6 financial charts** — Net Profit (bar), Revenue (line), ROCE vs ROE (grouped bar), Promoter Holding (doughnut), Valuation (P/E · P/B · Current Ratio · Div Yield), Profit Margin %
-- **Metrics table** — all fundamentals in one scrollable table
-- **About** — company description, sector, year established
-- **Live news** — Google News headlines for the stock grouped by Today / Yesterday / Last 7 Days / Older
-- **Action buttons** — Refresh Data · Add to Watchlist · screener.in · NSE India links
-
----
-
-### 3. Signals — `http://139.59.18.52:4000/signals`
-
-**Theme: Emerald/Teal — Public, no login**
-
-Live BANKNIFTY options bot — refreshes every 8 seconds automatically.
-
-- **Active position card** (when bot is in a trade):
-  - Direction badge — CE (green) or PE (red)
-  - Entry price, Stop Loss, Quantity, AI confidence score
-  - Live unrealised PnL
-- **Flat state card** — "💤 No Active Position" when bot is idle
-- **Today's stats bar** — Today's PnL · Total trades · Wins · Losses · Max Drawdown · All-time Win Rate
-- **Recent trades** — last 20 trades as cards, each showing:
-  - Direction badge (CE/PE)
-  - PnL amount (green if profit, red if loss)
-  - Entry price · Exit price · Duration · Exit reason (TARGET HIT / SL HIT / EOD)
-  - Timestamp in IST
-
----
-
-### 4. Dashboard — `http://139.59.18.52:4000/dashboard`
-
-**Theme: Indigo/Purple — Public, no login**
-
-Bot performance analytics with real trade data and 5-year backtest.
-
-- **Live KPI bar** — All-Time PnL · Total Trades · Win Rate · Wins · Losses · Max Drawdown · Today's PnL
-- **Live equity curve** — Chart.js area chart built from every real trade in `trades.json` (shows "no trades yet" when empty)
 - **5-Year Backtest KPI cards** — Combined PnL (pts) · Model A PnL · Model B PnL · Model A Win Rate · Model B Win Rate · Total Trading Days
 - **Monthly combined PnL chart** — green/red bar chart across all 60 months (Jan 2021 – Dec 2026)
 - **Model A vs Model B chart** — grouped bar chart comparing both signal models side-by-side per month
