@@ -382,15 +382,16 @@ function nav(active: string, req?: Request): string {
   const beginnerLinks: [string, string, string][] = [
     ["paper-trade",  "/paper-trade",  "📋 Paper Trade"],
     ["strategies",   "/strategies",   "🎓 How Strategies Work"],
+    ["compare",      "/compare",      "⚖️ Compare Stocks"],
     ["about",        "/about",        "ℹ️ About ZeroScreen"],
   ];
 
   // 🟡 TRADERS (mid-level) — curated ideas + tools
   const traderLinks: [string, string, string][] = [
     ["today",            "/today",            "🔥 Today's Picks"],
-    ["signals",          "/signals",          "📡 Live Bot Signals"],
-    ["dashboard",        "/dashboard",        "📊 Bot Performance"],
-    ["strategy-builder", "/strategy-builder", "🔨 Strategy Builder"],
+    ["signals",          "/signals",          "🤖 Live Bot Signals"],
+    ["dashboard",        "/dashboard",        "📈 Bot Analytics"],
+    ["strategy-builder", "/strategy-builder", "🏗️ Strategy Builder"],
   ];
 
   // 🔴 INVESTORS (advanced) — do your own research
@@ -398,9 +399,11 @@ function nav(active: string, req?: Request): string {
     ["home",    "/",        "🔍 Stock Screener"],
     ["compare", "/compare", "⚖️ Compare Stocks"],
     ...(isLoggedIn
-      ? [["watchlists", "/watchlists", "⭐ Watchlists"] as [string,string,string],
-         ["alerts",     "/alerts",     "🔔 Alerts"] as [string,string,string]]
-      : []),
+      ? [["watchlists",  "/watchlists",  "⭐ Watchlists"]                                          as [string,string,string],
+         ["alerts",      "/alerts",      "🔔 Price Alerts"]                                        as [string,string,string],
+         [isAdmin ? "my-paper-trade" : "my-portfolio",
+          isAdmin ? "/my-paper-trade" : "/my-portfolio", "💼 My Portfolio"]                        as [string,string,string]]
+      : [["premium", "/premium", "💎 Go Premium"]                                                  as [string,string,string]]),
   ];
 
   // Admin dropdown — admin only
@@ -428,7 +431,7 @@ function nav(active: string, req?: Request): string {
       <div class="nav-more-drop nav-tier-drop" id="nav-drop-menu-${id}" role="menu">
         ${sections.map(sec => `
           <div class="nav-tier-section">
-            <div class="nav-tier-label" style="border-left:3px solid ${sec.color}">${sec.label}</div>
+            <div class="nav-tier-label" style="border-left:3px solid ${sec.color}; color:${sec.color}">${sec.label}</div>
             ${sec.links.map(([key, href, label]) =>
               `<a href="${href}" class="${active === key ? "active" : ""}" role="menuitem">${label}</a>`
             ).join("")}
@@ -497,7 +500,7 @@ function nav(active: string, req?: Request): string {
       <a href="/today" class="${active === "today" ? "active" : ""}">🔥 Picks</a>
       <a href="/signals" class="nav-signals-link${active === "signals" ? " active" : ""}"><span class="nav-live-dot"></span>🤖 Live Bot</a>
       <a href="/paper-trade" class="${active === "paper-trade" ? "active" : ""}">📋 Paper Trade</a>
-      ${isLoggedIn ? `<a href="${isAdmin ? '/my-paper-trade' : '/my-portfolio'}" class="nav-hot-link${active === 'my-paper-trade' || active === 'my-portfolio' ? ' active' : ''}">💼 My Trade <span class="nav-hot-badge">HOT</span></a>` : ""}
+      <a href="${isLoggedIn ? '/dashboard' : '/paper-trade'}" class="nav-hot-link${active === 'dashboard' || active === 'my-paper-trade' || active === 'my-portfolio' ? ' active' : ''}">💼 My Trade <span class="nav-hot-badge">HOT</span></a>
       ${exploreDropHtml}
     </div>
     <div class="nav-links" id="nav-links">
@@ -509,12 +512,9 @@ function nav(active: string, req?: Request): string {
       <a href="/today" class="${active === "today" ? "active" : ""}">🔥 Picks</a>
       <a href="/signals" class="nav-signals-link${active === "signals" ? " active" : ""}"><span class="nav-live-dot"></span>🤖 Live Bot</a>
       <a href="/paper-trade" class="${active === "paper-trade" ? "active" : ""}">📋 Paper Trade</a>
-      ${isLoggedIn ? `<a href="${isAdmin ? '/my-paper-trade' : '/my-portfolio'}" class="nav-hot-link${active === 'my-paper-trade' || active === 'my-portfolio' ? ' active' : ''}">💼 My Trade <span class="nav-hot-badge">HOT</span></a>` : ""}
+      <a href="${isLoggedIn ? '/dashboard' : '/paper-trade'}" class="nav-hot-link${active === 'dashboard' || active === 'my-paper-trade' || active === 'my-portfolio' ? ' active' : ''}">💼 My Trade <span class="nav-hot-badge">HOT</span></a>
       ${exploreDropHtml}
       ${mobileMobFooter}
-    </div>
-    <div class="nav-right" id="nav-right">
-      <div class="nav-search" id="nav-search-wrap">
         <input type="text" id="nav-search" class="nav-search-input" placeholder="Search stocks…" autocomplete="off" aria-label="Search stocks">
         <div class="nav-search-results" id="nav-search-results"></div>
       </div>
@@ -4129,6 +4129,21 @@ function getTodayIST(): string {
 }
 
 function computeAnalytics(trades: any[]) {
+  // Build premiumEntry lookup from open records (exitPrice = 0), then enrich close records
+  const premiumMap: Record<string, number> = {};
+  for (const t of trades) {
+    if ((t.exitPrice ?? 0) === 0 && (t as any).premiumEntry > 0) {
+      premiumMap[`${t.direction}|${(t.entryPrice ?? 0).toFixed(1)}`] = (t as any).premiumEntry;
+    }
+  }
+  // Only include completed trades, with premiumEntry filled in
+  trades = trades.filter((t: any) => t.exitPrice && t.exitPrice > 0).map((t: any) => {
+    if (!((t as any).premiumEntry > 0)) {
+      const key = `${t.direction}|${(t.entryPrice ?? 0).toFixed(1)}`;
+      if (premiumMap[key]) return { ...t, premiumEntry: premiumMap[key] };
+    }
+    return t;
+  });
   const today = getTodayIST();
   const todayTrades = trades.filter((t: any) => (t.date || "").startsWith(today));
   const allWins  = trades.filter((t: any) => t.pnl > 0).length;
@@ -5565,7 +5580,7 @@ app.get("/today", async (req: Request, res: Response) => {
         </div>
         <span class="picks-section-count">${sectionPicks.length} pick${sectionPicks.length !== 1 ? 's' : ''}</span>
       </div>
-      ${!showPrices ? `<div class="picks-prices-locked-bar">🔒 Entry, target &amp; stop loss prices require <a href="/premium">Premium</a></div>` : ""}
+      ${!showPrices ? `<div class="picks-prices-locked-bar">${!isLoggedIn ? `🔒 <a href="/login?next=/today" style="color:inherit;font-weight:700;text-decoration:underline">Sign in free</a> to unlock entry zones, targets &amp; stop losses` : `🔒 Entry, target &amp; stop loss prices require <a href="/premium">Premium →</a>`}</div>` : ""}
       <div class="picks-grid">${sectionPicks.map(p => renderPickCard(p, showPrices)).join("")}</div>
     </div>`;
   }
@@ -5576,9 +5591,9 @@ app.get("/today", async (req: Request, res: Response) => {
   // Premium/Admin: all visible, all prices shown
   const intradayVisible  = true;
   const intradayPrices   = isLoggedIn || isPremium;
-  const swingVisible     = isLoggedIn || isPremium;
+  const swingVisible     = true;   // always show — guests see locked cards
   const swingPrices      = isPremium;
-  const longtermVisible  = isPremium;
+  const longtermVisible  = true;   // always show — guests see locked cards
   const longtermPrices   = isPremium;
 
   const intradaySection  = renderSection("⚡", "Intraday Picks", "Same-day entry & exit", intradayPicks, intradayVisible, intradayPrices, "Free");
@@ -5668,8 +5683,8 @@ app.get("/today", async (req: Request, res: Response) => {
     ${swingSection || swingTeaser}
     ${longtermSection || longtermTeaser}
 
-    <footer class="site-footer"><span>© 2026 ZeroScreen &mdash; Picks are for educational &amp; informational purposes only. Not SEBI registered. Not investment advice. Invest at your own risk.</span></footer>
   </div>
+  <footer class="site-footer"><span>© 2026 ZeroScreen &mdash; Picks are for educational &amp; informational purposes only. Not SEBI registered. Not investment advice. Invest at your own risk.</span></footer>
   <script src="/public/js/app.js"></script>
   ${isPremium ? `<script>
   async function toggleAutoPaper(enabled) {
@@ -6088,6 +6103,24 @@ app.get("/paper-trade", featureGate("feature_paper_trade_bot", "Paper Trade"), a
   }
 
   const marketOpen = isMarketHours();
+  const isAdmin = req.session?.userRole === 'admin';
+  const BOT_DIR = "/home/ubuntu/trading-bot";
+  const botSettings = (() => { try { return JSON.parse(fs.readFileSync(`${BOT_DIR}/user-settings.json`, "utf-8")); } catch { return {}; } })();
+  const bs = {
+    mode: botSettings.mode ?? "PAPER",
+    quantity: botSettings.quantity ?? 30,
+    maxDailyLossPoints: botSettings.risk?.maxDailyLossPoints ?? 100,
+    maxTradesPerDay: botSettings.risk?.maxTradesPerDay ?? 5,
+    dailyLossCap: botSettings.risk?.dailyLossCap ?? 200,
+    stopLossPoints: botSettings.tradeManagement?.stopLossPoints ?? 100,
+    targetPoints: botSettings.tradeManagement?.targetPoints ?? 0,
+    minPremium: botSettings.optionSelection?.minPremium ?? 450,
+    maxPremium: botSettings.optionSelection?.maxPremium ?? 600,
+  };
+  // Active picks for Daily Pick trigger
+  const activePicks: any[] = await dbAll<any>(
+    `SELECT id, stock_symbol, direction, entry_low, entry_high, target, stop_loss, pick_type FROM picks WHERE status IN ('active','entry_triggered') ORDER BY id DESC LIMIT 50`
+  );
   const msgParam = req.query.msg ? `<div class="mpt-msg mpt-msg-ok" style="margin-bottom:16px">✅ ${esc(req.query.msg as string)}</div>` : "";
   const errParam = req.query.err ? `<div class="mpt-msg mpt-msg-err" style="margin-bottom:16px">❌ ${esc(req.query.err as string)}</div>` : "";
 
@@ -6208,6 +6241,13 @@ app.get("/paper-trade", featureGate("feature_paper_trade_bot", "Paper Trade"), a
     .mpt-msg-ok{background:#10b98122;color:#10b981;border:1px solid #10b98155}
     .mpt-msg-err{background:#ef444422;color:#ef4444;border:1px solid #ef444455}
     .mpt-green{color:#10b981} .mpt-red{color:#ef4444} .mpt-yellow{color:#f59e0b}
+    /* ── Tabs ── */
+    .pt2-tabs{display:flex;gap:0;border-bottom:2px solid var(--border);margin-bottom:22px}
+    .pt2-tab-btn{padding:10px 22px;font-size:0.92rem;font-weight:700;border:none;background:none;cursor:pointer;color:var(--text-muted);border-bottom:2.5px solid transparent;margin-bottom:-2px;transition:color .15s,border-color .15s;display:flex;align-items:center;gap:7px}
+    .pt2-tab-btn:hover{color:var(--text)}
+    .pt2-tab-btn.active{color:#10b981;border-bottom-color:#10b981}
+    .pt2-tab-pane{display:none}
+    .pt2-tab-pane.active{display:block}
     @media(max-width:580px){
       .pt2-risk-row{grid-template-columns:1fr}
       .pt2-fields-row{flex-direction:column}
@@ -6216,6 +6256,7 @@ app.get("/paper-trade", featureGate("feature_paper_trade_bot", "Paper Trade"), a
       .pt2-buy-row{flex-direction:column-reverse;align-items:stretch}
       .pt2-btn-place{text-align:center;width:100%}
       .pt2-opts-row{flex-direction:column}
+      .pt2-tab-btn{padding:10px 14px;font-size:0.85rem}
     }
   </style>
 </head>
@@ -6233,21 +6274,121 @@ app.get("/paper-trade", featureGate("feature_paper_trade_bot", "Paper Trade"), a
       ${isLoggedIn ? `<a href="/my-paper-trade" style="display:inline-flex;align-items:center;gap:8px;background:var(--card-bg);border:1px solid var(--border);border-radius:10px;padding:10px 18px;font-weight:700;font-size:0.88rem;text-decoration:none;color:var(--text)">📊 My Portfolio →</a>` : ""}
     </div>
 
-    ${!isLoggedIn ? `
-    <!-- SIGN-IN GATE -->
-    <div class="pt2-gate">
-      <div class="pt2-gate-icon">📋</div>
-      <div class="pt2-gate-title">Paper Trade Any NSE Stock — Free</div>
-      <div class="pt2-gate-sub">Create a free account to get ₹1,00,000 virtual cash and start practising trades with zero real risk.</div>
-      <a href="/login?next=/paper-trade" class="pt2-gate-btn">🔑 Sign In to Start Trading →</a>
-      <div style="margin-top:12px"><a href="/signup" style="font-size:0.85rem;color:var(--text-muted)">No account? Sign up free →</a></div>
+    <!-- TABS -->
+    <div class="pt2-tabs">
+      <button class="pt2-tab-btn active" onclick="pt2SwitchTab('manual')" id="pt2-tab-manual">🛒 Manual Trade</button>
+      <button class="pt2-tab-btn" onclick="pt2SwitchTab('autobot')" id="pt2-tab-autobot">🤖 Auto Bot</button>
     </div>
 
-    <div class="pt2-features">
-      <div class="pt2-feat"><div class="pt2-feat-icon">💰</div><div class="pt2-feat-label">₹1,00,000 Virtual Cash</div><div class="pt2-feat-desc">Start with real-scale capital</div></div>
-      <div class="pt2-feat"><div class="pt2-feat-icon">📈</div><div class="pt2-feat-label">1,700+ NSE Stocks</div><div class="pt2-feat-desc">Trade any NSE-listed stock</div></div>
-      <div class="pt2-feat"><div class="pt2-feat-icon">🕐</div><div class="pt2-feat-label">Intraday & Holding</div><div class="pt2-feat-desc">Both trade types supported</div></div>
-      <div class="pt2-feat"><div class="pt2-feat-icon">📊</div><div class="pt2-feat-label">Live P&L Tracking</div><div class="pt2-feat-desc">Real NSE prices from DB</div></div>
+    <!-- ══ MANUAL TRADE TAB ══ -->
+    <div class="pt2-tab-pane active" id="pt2-pane-manual">
+
+    ${!isLoggedIn ? `
+    <!-- GUEST: show dashboard preview with sign-in prompt on trade action -->
+    <div class="pt2-credits" style="opacity:.85">
+      <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+        <span style="color:var(--text-muted);font-weight:700">👤 Guest — <a href="/login?next=/paper-trade" style="color:#7c3aed;font-weight:800">Sign in free</a> to place trades &amp; track P&amp;L</span>
+        <span style="font-size:0.8rem;color:var(--text-muted)">Virtual cash: <strong>₹1,00,000</strong></span>
+      </div>
+      <span class="${marketOpen ? "pt2-mh-open" : "pt2-mh-closed"}">${marketOpen ? "🟢 Market Open" : "🔴 Market Closed"}</span>
+    </div>
+
+    <!-- RICH TRADE CARD (preview) -->
+    <div class="pt2-trade-card">
+      <div class="pt2-card-hdr">
+        <div class="pt2-card-title">🛒 New Order</div>
+        <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+          ${!marketOpen ? `<span style="font-size:0.74rem;background:rgba(255,255,255,0.15);color:#fff;border-radius:12px;padding:3px 10px;font-weight:600">⏸ Market Closed</span>` : ""}
+          <div class="pt2-seg" id="pt2-type-seg">
+            <button type="button" class="pt2-seg-btn active" data-t="INTRADAY" onclick="pt2SetType('INTRADAY')">Intraday</button>
+            <button type="button" class="pt2-seg-btn" data-t="HOLDING" onclick="pt2SetType('HOLDING')">Holding</button>
+          </div>
+        </div>
+      </div>
+      <div class="pt2-card-body">
+        <form method="GET" action="/login" id="pt2-buy-form">
+          <input type="hidden" name="next" value="/paper-trade">
+          <input type="hidden" name="trade_type" id="pt2-trade-type" value="INTRADAY">
+          <input type="hidden" name="order_type" id="pt2-order-type-val" value="MARKET">
+          <input type="hidden" name="symbol" id="pt2-symbol-val">
+
+          <!-- Symbol search -->
+          <div class="pt2-sym-row">
+            <label style="font-size:0.7rem;font-weight:700;text-transform:uppercase;letter-spacing:.07em;color:var(--text-muted);display:block;margin-bottom:5px">Stock / Symbol</label>
+            <div class="pt2-sym-inp-wrap">
+              <div style="position:relative;flex:1;min-width:160px">
+                <input type="text" id="pt2-stock-search" class="pt2-sym-inp" placeholder="Search symbol or company name…" autocomplete="off">
+                <div class="pt2-search-drop" id="pt2-search-drop" style="display:none"></div>
+              </div>
+              <div class="pt2-lpb" id="pt2-lpb">
+                <span id="pt2-lpb-sym" style="color:var(--accent)"></span>
+                <span id="pt2-lpb-price" style="font-variant-numeric:tabular-nums">—</span>
+                <span class="pt2-lpb-chg" id="pt2-lpb-chg"></span>
+              </div>
+            </div>
+          </div>
+
+          <!-- OPTIONS PANEL -->
+          <div class="pt2-opts-panel" id="pt2-opts-panel">
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+              <div class="pt2-opts-title" style="margin-bottom:0">📊 Options Details</div>
+              <button type="button" onclick="document.getElementById('pt2-opts-panel').classList.remove('show');document.getElementById('pt2-stock-search').value='';document.getElementById('pt2-symbol-val').value='';" style="background:none;border:none;cursor:pointer;font-size:1.1rem;color:var(--text-muted);line-height:1;padding:2px 6px">✕</button>
+            </div>
+            <div class="pt2-opts-row">
+              <div class="pt2-fld"><label>Option Type</label><div style="display:flex;gap:6px"><button type="button" class="pt2-opt-type-btn active" id="pt2-btn-ce" onclick="pt2SelectOptType('CE')">CE</button><button type="button" class="pt2-opt-type-btn" id="pt2-btn-pe" onclick="pt2SelectOptType('PE')">PE</button></div></div>
+              <div class="pt2-fld"><label>Strike Price</label><div class="pt2-strike-wrap"><button type="button" class="pt2-strike-step" onclick="pt2StepStrike(-1)">−</button><input type="number" id="pt2-strike-inp" step="1" placeholder="Strike…" style="width:100px;padding:7px 10px;border-radius:7px;border:1px solid var(--border);background:var(--input-bg,#fff);color:var(--text);font-size:0.9rem;font-weight:700" oninput="pt2UpdateOptSymbol()"><button type="button" class="pt2-strike-step" onclick="pt2StepStrike(1)">+</button></div><div class="pt2-atm-label" id="pt2-strike-hint"></div></div>
+              <div class="pt2-fld"><label>Expiry</label><div class="pt2-expiry-badge" id="pt2-expiry-badge">—</div></div>
+              <div class="pt2-fld"><label>Option Symbol</label><div style="font-size:0.85rem;font-weight:700;color:var(--accent);padding:8px 0" id="pt2-opt-sym-disp">—</div></div>
+            </div>
+            <div style="font-size:0.75rem;color:var(--text-muted);margin-top:8px">💡 Enter the current option premium in the <strong>Market Price</strong> field · Qty = number of lots</div>
+          </div>
+
+          <!-- Order type -->
+          <div class="pt2-ot-row">
+            <span class="pt2-ot-label">Order Type</span>
+            <div class="pt2-seg2">
+              <button type="button" class="pt2-seg2-btn active" data-ot="MARKET" onclick="pt2SetOrderType('MARKET')">Market</button>
+              <button type="button" class="pt2-seg2-btn" data-ot="LIMIT" onclick="pt2SetOrderType('LIMIT')">Limit</button>
+            </div>
+            <span id="pt2-ot-note" style="font-size:0.74rem;color:var(--text-muted)">Executes at current market price</span>
+          </div>
+
+          <!-- Qty / Price / Cost -->
+          <div class="pt2-fields-row">
+            <div class="pt2-fld"><label>Quantity</label><input type="number" name="qty" id="pt2-qty" min="1" max="10000" value="1" style="width:90px" oninput="pt2UpdateRisk()"></div>
+            <div class="pt2-fld"><label id="pt2-price-label">Market Price</label><input type="number" name="price" id="pt2-price" step="0.05" min="0.1" placeholder="Select a stock" style="width:130px" readonly oninput="pt2UpdateRisk()"></div>
+            <div class="pt2-fld"><label>Est. Cost</label><div class="pt2-cost-disp" id="pt2-est-cost">—</div></div>
+          </div>
+
+          <!-- SL & Target -->
+          <div class="pt2-risk-row">
+            <div class="pt2-risk-card sl">
+              <div class="pt2-risk-hdr"><span class="pt2-risk-lbl">🛡️ Stop Loss</span><span class="pt2-pct-wrap"><input type="number" class="pt2-pct-inp" id="pt2-sl-pct" name="sl_pct" step="0.1" min="0" max="50" value="2.0" oninput="pt2UpdateRisk()"><span class="pt2-pct-suf">%</span></span></div>
+              <div class="pt2-risk-price" id="pt2-sl-price">₹ —</div>
+              <div class="pt2-risk-note" id="pt2-sl-note">Select a stock first</div>
+            </div>
+            <div class="pt2-risk-card tgt">
+              <div class="pt2-risk-hdr"><span class="pt2-risk-lbl">🎯 Target</span><span class="pt2-pct-wrap"><input type="number" class="pt2-pct-inp" id="pt2-tgt-pct" name="target_pct" step="0.1" min="0" max="200" value="4.0" oninput="pt2UpdateRisk()"><span class="pt2-pct-suf">%</span></span></div>
+              <div class="pt2-risk-price" id="pt2-tgt-price">₹ —</div>
+              <div class="pt2-risk-note" id="pt2-tgt-note">Select a stock first</div>
+            </div>
+          </div>
+
+          <!-- Place order row -->
+          <div class="pt2-buy-row">
+            <div class="pt2-rr-badge" id="pt2-rr-badge">Select a stock to see R:R</div>
+            <a href="/login?next=/paper-trade" class="pt2-btn-place" style="text-decoration:none;display:inline-flex;align-items:center;justify-content:center;gap:6px">🔑 Sign In to Place Order</a>
+          </div>
+        </form>
+
+        <!-- Empty positions table -->
+        <div class="pt2-pos-section" style="margin-top:20px">
+          <div style="font-size:0.72rem;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--text-muted);margin-bottom:10px">Open Positions (0)</div>
+          <div style="padding:24px;text-align:center;background:var(--bg2);border-radius:10px;color:var(--text-muted);font-size:0.85rem">
+            No open positions · <a href="/login?next=/paper-trade" style="color:#7c3aed;font-weight:700">Sign in</a> to start paper trading
+          </div>
+        </div>
+      </div>
     </div>
 
     ` : `
@@ -6299,6 +6440,41 @@ app.get("/paper-trade", featureGate("feature_paper_trade_bot", "Paper Trade"), a
                 <span class="pt2-lpb-chg" id="pt2-lpb-chg"></span>
               </div>
             </div>
+          </div>
+
+          <!-- OPTIONS PANEL: shown immediately when index symbol detected -->
+          <div class="pt2-opts-panel" id="pt2-opts-panel">
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+              <div class="pt2-opts-title" style="margin-bottom:0">📊 Options Details</div>
+              <button type="button" onclick="document.getElementById('pt2-opts-panel').classList.remove('show');document.getElementById('pt2-stock-search').value='';document.getElementById('pt2-symbol-val').value='';" style="background:none;border:none;cursor:pointer;font-size:1.1rem;color:var(--text-muted);line-height:1;padding:2px 6px" title="Close options panel">✕</button>
+            </div>
+            <div class="pt2-opts-row">
+              <div class="pt2-fld">
+                <label>Option Type</label>
+                <div style="display:flex;gap:6px">
+                  <button type="button" class="pt2-opt-type-btn active" id="pt2-btn-ce" onclick="pt2SelectOptType('CE')">CE</button>
+                  <button type="button" class="pt2-opt-type-btn" id="pt2-btn-pe" onclick="pt2SelectOptType('PE')">PE</button>
+                </div>
+              </div>
+              <div class="pt2-fld">
+                <label>Strike Price</label>
+                <div class="pt2-strike-wrap">
+                  <button type="button" class="pt2-strike-step" onclick="pt2StepStrike(-1)">−</button>
+                  <input type="number" id="pt2-strike-inp" step="1" placeholder="Strike…" style="width:100px;padding:7px 10px;border-radius:7px;border:1px solid var(--border);background:var(--input-bg,#fff);color:var(--text);font-size:0.9rem;font-weight:700" oninput="pt2UpdateOptSymbol()">
+                  <button type="button" class="pt2-strike-step" onclick="pt2StepStrike(1)">+</button>
+                </div>
+                <div class="pt2-atm-label" id="pt2-strike-hint"></div>
+              </div>
+              <div class="pt2-fld">
+                <label>Expiry</label>
+                <div class="pt2-expiry-badge" id="pt2-expiry-badge">—</div>
+              </div>
+              <div class="pt2-fld">
+                <label>Option Symbol</label>
+                <div style="font-size:0.85rem;font-weight:700;color:var(--accent);padding:8px 0" id="pt2-opt-sym-disp">—</div>
+              </div>
+            </div>
+            <div style="font-size:0.75rem;color:var(--text-muted);margin-top:8px">💡 Enter the current option premium in the <strong>Market Price</strong> field above · Qty = number of lots</div>
           </div>
 
           <!-- Order type -->
@@ -6356,42 +6532,7 @@ app.get("/paper-trade", featureGate("feature_paper_trade_bot", "Paper Trade"), a
           <!-- Place order row -->
           <div class="pt2-buy-row">
             <div class="pt2-rr-badge" id="pt2-rr-badge">Select a stock to see R:R</div>
-            <button type="submit" class="pt2-btn-place" ${creditsOut ? 'disabled onclick="window.location=\'/my-paper-trade/upgrade\';return false;"' : ""}>📈 Place Order</button>
-          </div>
-
-          <!-- OPTIONS PANEL: shown when index symbol detected -->
-          <div class="pt2-opts-panel" id="pt2-opts-panel">
-            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
-              <div class="pt2-opts-title" style="margin-bottom:0">📊 Options Details</div>
-              <button type="button" onclick="document.getElementById('pt2-opts-panel').classList.remove('show');document.getElementById('pt2-stock-search').value='';document.getElementById('pt2-symbol-val').value='';" style="background:none;border:none;cursor:pointer;font-size:1.1rem;color:var(--text-muted);line-height:1;padding:2px 6px" title="Close options panel">✕</button>
-            </div>
-            <div class="pt2-opts-row">
-              <div class="pt2-fld">
-                <label>Option Type</label>
-                <div style="display:flex;gap:6px">
-                  <button type="button" class="pt2-opt-type-btn active" id="pt2-btn-ce" onclick="pt2SelectOptType('CE')">CE</button>
-                  <button type="button" class="pt2-opt-type-btn" id="pt2-btn-pe" onclick="pt2SelectOptType('PE')">PE</button>
-                </div>
-              </div>
-              <div class="pt2-fld">
-                <label>Strike Price</label>
-                <div class="pt2-strike-wrap">
-                  <button type="button" class="pt2-strike-step" onclick="pt2StepStrike(-1)">−</button>
-                  <input type="number" id="pt2-strike-inp" step="1" placeholder="Strike…" style="width:100px;padding:7px 10px;border-radius:7px;border:1px solid var(--border);background:var(--input-bg,#fff);color:var(--text);font-size:0.9rem;font-weight:700" oninput="pt2UpdateOptSymbol()">
-                  <button type="button" class="pt2-strike-step" onclick="pt2StepStrike(1)">+</button>
-                </div>
-                <div class="pt2-atm-label" id="pt2-strike-hint"></div>
-              </div>
-              <div class="pt2-fld">
-                <label>Expiry</label>
-                <div class="pt2-expiry-badge" id="pt2-expiry-badge">—</div>
-              </div>
-              <div class="pt2-fld">
-                <label>Option Symbol</label>
-                <div style="font-size:0.85rem;font-weight:700;color:var(--accent);padding:8px 0" id="pt2-opt-sym-disp">—</div>
-              </div>
-            </div>
-            <div style="font-size:0.75rem;color:var(--text-muted);margin-top:8px">💡 Enter the current option premium in the <strong>Market Price</strong> field above · Qty = number of lots</div>
+            <button type="submit" class="pt2-btn-place" ${creditsOut ? 'disabled onclick="window.location=\'/my-paper-trade/upgrade\';return false;"' : ""}>&#x1F4C8; Place Order</button>
           </div>
         </form>
 
@@ -6419,36 +6560,451 @@ app.get("/paper-trade", featureGate("feature_paper_trade_bot", "Paper Trade"), a
     </div>
     `}
 
-    <!-- BOT PERFORMANCE (social proof / always shown) -->
-    <div style="font-size:0.72rem;font-weight:700;text-transform:uppercase;letter-spacing:.1em;color:var(--text-muted);border-bottom:1px solid var(--border);padding-bottom:8px;margin:28px 0 14px">📊 Bot's Paper Trade Performance — Strategy Benchmark</div>
-    <div class="pt2-stats-bar">
-      <div class="pt2-stat">
-        <div class="pt2-stat-label">Total PnL (Bot)</div>
-        <div class="pt2-stat-val ${totalPnl >= 0 ? "mpt-green" : "mpt-red"}">${totalPnl >= 0 ? "+" : ""}₹${Math.abs(totalPnl).toFixed(0)}</div>
-      </div>
-      <div class="pt2-stat">
-        <div class="pt2-stat-label">Closed Trades</div>
-        <div class="pt2-stat-val">${closed.length}</div>
-      </div>
-      <div class="pt2-stat">
-        <div class="pt2-stat-label">Win Rate</div>
-        <div class="pt2-stat-val">${winRate}${winRate !== "—" ? "%" : ""}</div>
-      </div>
-      <div class="pt2-stat">
-        <div class="pt2-stat-label">Avg PnL / Trade</div>
-        <div class="pt2-stat-val">${avgPnl !== "—" ? "₹" + avgPnl : "—"}</div>
-      </div>
-      <div class="pt2-stat">
-        <div class="pt2-stat-label">Open Now</div>
-        <div class="pt2-stat-val pt2-yellow">${openCount}</div>
-      </div>
-    </div>
-    <div style="text-align:right;margin-bottom:8px"><a href="/paper-trade/bot-stats" style="font-size:0.8rem;color:var(--text-muted)">View full bot history →</a></div>
+    </div> <!-- /pt2-pane-manual -->
 
+    <!-- ══ AUTO BOT TAB ══ -->
+    <div class="pt2-tab-pane" id="pt2-pane-autobot">
+
+      <!-- Quick link to bot dashboard -->
+      <div style="background:var(--card-bg);border:1px solid var(--border);border-radius:14px;padding:16px 20px;margin-bottom:20px;display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap">
+        <div>
+          <div style="font-size:0.95rem;font-weight:800;margin-bottom:2px">🤖 ZeroScreen Auto Bot</div>
+          <div style="font-size:0.8rem;color:var(--text-muted)">View full bot performance, trade history &amp; live signals</div>
+        </div>
+        <div style="display:flex;gap:10px;flex-wrap:wrap">
+          <a href="/signals" style="display:inline-flex;align-items:center;gap:6px;background:linear-gradient(135deg,#7c3aed,#6366f1);color:#fff;border-radius:9px;padding:8px 18px;font-weight:700;font-size:0.85rem;text-decoration:none">📡 Live Signals →</a>
+          <a href="/paper-trade/bot-stats" style="display:inline-flex;align-items:center;gap:6px;background:var(--bg2);border:1px solid var(--border);border-radius:9px;padding:8px 18px;font-weight:700;font-size:0.85rem;text-decoration:none;color:var(--text)">📊 Bot Dashboard →</a>
+        </div>
+      </div>
+
+      <!-- Bot Config Form -->
+      ${isAdmin ? `
+      <div style="background:var(--card-bg);border:1px solid var(--border);border-radius:16px;padding:20px 22px;margin-bottom:20px">
+        <div style="font-size:0.92rem;font-weight:800;margin-bottom:16px">⚙️ Bot Configuration</div>
+        <form method="POST" action="/paper-trade/bot-config">
+          <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:16px;margin-bottom:20px">
+
+            <div style="background:var(--bg2);border-radius:10px;padding:14px">
+              <div style="font-size:0.7rem;font-weight:700;text-transform:uppercase;letter-spacing:.07em;color:#7c3aed;margin-bottom:10px">⚡ Mode &amp; Position</div>
+              <div style="display:flex;flex-direction:column;gap:8px">
+                <label style="font-size:0.75rem;font-weight:700;color:var(--text-muted)">Mode</label>
+                <select name="mode" style="padding:7px 10px;border-radius:7px;border:1px solid var(--border);background:var(--input-bg,#fff);color:var(--text);font-size:0.88rem;font-weight:600">
+                  <option value="PAPER" ${bs.mode==='PAPER'?'selected':''}>PAPER (Virtual)</option>
+                  <option value="LIVE" ${bs.mode==='LIVE'?'selected':''}>LIVE (Real Money)</option>
+                </select>
+                <label style="font-size:0.75rem;font-weight:700;color:var(--text-muted)">Quantity (lots)</label>
+                <input type="number" name="quantity" min="1" max="500" value="${bs.quantity}" style="padding:7px 10px;border-radius:7px;border:1px solid var(--border);background:var(--input-bg,#fff);color:var(--text);font-size:0.88rem;font-weight:600">
+              </div>
+            </div>
+
+            <div style="background:var(--bg2);border-radius:10px;padding:14px">
+              <div style="font-size:0.7rem;font-weight:700;text-transform:uppercase;letter-spacing:.07em;color:#ef4444;margin-bottom:10px">🛡️ Risk Management</div>
+              <div style="display:flex;flex-direction:column;gap:8px">
+                <label style="font-size:0.75rem;font-weight:700;color:var(--text-muted)">Max Trades / Day</label>
+                <input type="number" name="maxTradesPerDay" min="1" max="20" value="${bs.maxTradesPerDay}" style="padding:7px 10px;border-radius:7px;border:1px solid var(--border);background:var(--input-bg,#fff);color:var(--text);font-size:0.88rem;font-weight:600">
+                <label style="font-size:0.75rem;font-weight:700;color:var(--text-muted)">Daily Loss Cap (pts)</label>
+                <input type="number" name="dailyLossCap" min="10" max="1000" value="${bs.dailyLossCap}" style="padding:7px 10px;border-radius:7px;border:1px solid var(--border);background:var(--input-bg,#fff);color:var(--text);font-size:0.88rem;font-weight:600">
+                <label style="font-size:0.75rem;font-weight:700;color:var(--text-muted)">Max Daily Loss (pts)</label>
+                <input type="number" name="maxDailyLossPoints" min="10" max="1000" value="${bs.maxDailyLossPoints}" style="padding:7px 10px;border-radius:7px;border:1px solid var(--border);background:var(--input-bg,#fff);color:var(--text);font-size:0.88rem;font-weight:600">
+              </div>
+            </div>
+
+            <div style="background:var(--bg2);border-radius:10px;padding:14px">
+              <div style="font-size:0.7rem;font-weight:700;text-transform:uppercase;letter-spacing:.07em;color:#10b981;margin-bottom:10px">🎯 Trade Management</div>
+              <div style="display:flex;flex-direction:column;gap:8px">
+                <label style="font-size:0.75rem;font-weight:700;color:var(--text-muted)">Stop Loss (index pts)</label>
+                <input type="number" name="stopLossPoints" min="10" max="500" value="${bs.stopLossPoints}" style="padding:7px 10px;border-radius:7px;border:1px solid var(--border);background:var(--input-bg,#fff);color:var(--text);font-size:0.88rem;font-weight:600">
+                <label style="font-size:0.75rem;font-weight:700;color:var(--text-muted)">Target (pts, 0 = no target)</label>
+                <input type="number" name="targetPoints" min="0" max="500" value="${bs.targetPoints}" style="padding:7px 10px;border-radius:7px;border:1px solid var(--border);background:var(--input-bg,#fff);color:var(--text);font-size:0.88rem;font-weight:600">
+              </div>
+            </div>
+
+            <div style="background:var(--bg2);border-radius:10px;padding:14px">
+              <div style="font-size:0.7rem;font-weight:700;text-transform:uppercase;letter-spacing:.07em;color:#f59e0b;margin-bottom:10px">📈 Option Selection</div>
+              <div style="display:flex;flex-direction:column;gap:8px">
+                <label style="font-size:0.75rem;font-weight:700;color:var(--text-muted)">Min Premium (₹)</label>
+                <input type="number" name="minPremium" min="10" max="5000" value="${bs.minPremium}" style="padding:7px 10px;border-radius:7px;border:1px solid var(--border);background:var(--input-bg,#fff);color:var(--text);font-size:0.88rem;font-weight:600">
+                <label style="font-size:0.75rem;font-weight:700;color:var(--text-muted)">Max Premium (₹)</label>
+                <input type="number" name="maxPremium" min="10" max="5000" value="${bs.maxPremium}" style="padding:7px 10px;border-radius:7px;border:1px solid var(--border);background:var(--input-bg,#fff);color:var(--text);font-size:0.88rem;font-weight:600">
+              </div>
+            </div>
+
+          </div>
+          <div style="display:flex;justify-content:flex-end">
+            <button type="submit" style="background:linear-gradient(135deg,#7c3aed,#6366f1);color:#fff;border:none;border-radius:9px;padding:10px 28px;font-weight:700;font-size:0.92rem;cursor:pointer">💾 Save Config</button>
+          </div>
+        </form>
+      </div>` : ""}
+
+      <!-- Scheduled Trades — visible to all users -->
+      <div style="background:var(--card-bg);border:1px solid var(--border);border-radius:16px;padding:20px 22px;margin-bottom:20px">
+        <div style="font-size:0.92rem;font-weight:800;margin-bottom:4px">📅 Schedule a Trade</div>
+        <div style="font-size:0.8rem;color:var(--text-muted);margin-bottom:14px">Pick a trigger mode — bot executes the trade automatically when condition is met.</div>
+
+        <!-- Trigger mode tabs -->
+        <div style="display:flex;gap:8px;margin-bottom:18px;flex-wrap:wrap">
+          <button type="button" class="sch-mode-btn active" id="schMode-price" onclick="schSetMode('price')" style="padding:7px 16px;border-radius:8px;border:1px solid var(--border);font-size:0.8rem;font-weight:700;cursor:pointer;background:var(--card-bg);color:var(--text)">📌 Price Level</button>
+          <button type="button" class="sch-mode-btn" id="schMode-pick" onclick="schSetMode('pick')" style="padding:7px 16px;border-radius:8px;border:1px solid var(--border);font-size:0.8rem;font-weight:700;cursor:pointer;background:var(--card-bg);color:var(--text)">🎯 Daily Pick</button>
+          <button type="button" class="sch-mode-btn" id="schMode-indicator" onclick="schSetMode('indicator')" style="padding:7px 16px;border-radius:8px;border:1px solid var(--border);font-size:0.8rem;font-weight:700;cursor:pointer;background:var(--card-bg);color:var(--text)">📊 Indicator Signal</button>
+        </div>
+
+        <form method="POST" action="/paper-trade/schedule-trade" id="schedForm">
+          <input type="hidden" name="triggerMode" id="schTriggerMode" value="price">
+
+          <!-- ===== MODE: PRICE LEVEL ===== -->
+          <div id="schPanel-price">
+            <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px;margin-bottom:14px">
+              <div style="display:flex;flex-direction:column;gap:5px">
+                <label class="sch-lbl">Symbol</label>
+                <select name="symbol" id="schSymbol" onchange="schSymbolChange(this.value)" class="sch-inp">
+                  <option value="BANKNIFTY">BANKNIFTY</option>
+                  <option value="NIFTY">NIFTY</option>
+                  <option value="FINNIFTY">FINNIFTY</option>
+                  <option value="SENSEX">SENSEX</option>
+                  <option value="MIDCPNIFTY">MIDCPNIFTY</option>
+                  <option value="__custom__">Other (equity)…</option>
+                </select>
+                <input type="text" name="symbolCustom" id="schSymbolCustom" placeholder="e.g. RELIANCE" class="sch-inp" style="display:none">
+              </div>
+              <div style="display:flex;flex-direction:column;gap:5px">
+                <label class="sch-lbl">Trade Type</label>
+                <select name="tradeType" id="schTradeType" onchange="schTypeChange(this.value)" class="sch-inp">
+                  <option value="OPTIONS">Options (CE/PE)</option>
+                  <option value="EQUITY">Equity (BUY/SELL)</option>
+                </select>
+              </div>
+              <div style="display:flex;flex-direction:column;gap:5px">
+                <label class="sch-lbl">Direction</label>
+                <select name="direction" id="schDirection" class="sch-inp">
+                  <option value="CE">CE (Call)</option>
+                  <option value="PE">PE (Put)</option>
+                </select>
+              </div>
+              <div style="display:flex;flex-direction:column;gap:5px">
+                <label class="sch-lbl">Trigger Price</label>
+                <input type="number" name="triggerPrice" id="schTriggerPrice" placeholder="e.g. 55000" step="0.5" class="sch-inp">
+              </div>
+              <div style="display:flex;flex-direction:column;gap:5px">
+                <label class="sch-lbl">Trigger When</label>
+                <select name="triggerCondition" class="sch-inp">
+                  <option value="above">Price crosses ABOVE ↑</option>
+                  <option value="below">Price crosses BELOW ↓</option>
+                  <option value="touch">Price TOUCHES (either)</option>
+                </select>
+              </div>
+              <div style="display:flex;flex-direction:column;gap:5px">
+                <label class="sch-lbl">Stop Loss (pts)</label>
+                <input type="number" name="stopLossPoints" min="1" value="${bs.stopLossPoints}" class="sch-inp">
+              </div>
+              <div style="display:flex;flex-direction:column;gap:5px">
+                <label class="sch-lbl">Target (pts, 0=trail)</label>
+                <input type="number" name="targetPoints" min="0" value="${bs.targetPoints}" class="sch-inp">
+              </div>
+              <div style="display:flex;flex-direction:column;gap:5px">
+                <label class="sch-lbl">Qty Override (0=default)</label>
+                <input type="number" name="quantity" min="0" value="0" class="sch-inp">
+              </div>
+              <div id="schExpiryWrap" style="display:flex;flex-direction:column;gap:5px">
+                <label class="sch-lbl">Expiry Date (options)</label>
+                <input type="date" name="expiryDate" class="sch-inp">
+              </div>
+              <div style="display:flex;flex-direction:column;gap:5px">
+                <label class="sch-lbl">Note (optional)</label>
+                <input type="text" name="note" placeholder="e.g. BO breakout" maxlength="80" class="sch-inp">
+              </div>
+            </div>
+          </div>
+
+          <!-- ===== MODE: DAILY PICK ===== -->
+          <div id="schPanel-pick" style="display:none">
+            <div style="font-size:0.8rem;color:var(--text-muted);margin-bottom:12px">Select one of today's active picks — SL &amp; target auto-filled from pick data. Bot trades the equity when entry range is hit.</div>
+            ${activePicks.length === 0 ? `<div style="padding:20px;text-align:center;color:var(--text-muted);background:var(--bg2);border-radius:8px">No active picks right now</div>` : `
+            <div style="display:flex;flex-direction:column;gap:8px;margin-bottom:14px">
+              ${activePicks.map((p: any) => `
+              <label style="display:flex;align-items:center;justify-content:space-between;background:var(--bg2);border-radius:9px;padding:10px 14px;gap:12px;cursor:pointer;flex-wrap:wrap" onclick="schPickSelect(${p.id}, '${p.stock_symbol}', '${p.direction}', ${p.entry_low}, ${p.entry_high}, ${p.stop_loss ?? 0}, ${p.target ?? 0})">
+                <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+                  <input type="radio" name="pickId" value="${p.id}" style="accent-color:#7c3aed">
+                  <span style="font-weight:800;font-size:0.88rem">${p.stock_symbol}</span>
+                  <span style="font-size:0.72rem;padding:2px 7px;border-radius:4px;font-weight:700;background:${p.direction==='LONG'?'rgba(16,185,129,.15)':'rgba(239,68,68,.15)'};color:${p.direction==='LONG'?'#34d399':'#f87171'}">${p.direction}</span>
+                  <span style="font-size:0.75rem;color:var(--text-muted)">Entry ${p.entry_low}–${p.entry_high}</span>
+                  ${p.stop_loss ? `<span style="font-size:0.72rem;color:#f87171">SL ₹${p.stop_loss}</span>` : ""}
+                  ${p.target ? `<span style="font-size:0.72rem;color:#34d399">TGT ₹${p.target}</span>` : ""}
+                  <span style="font-size:0.7rem;color:var(--text-muted);background:var(--card-bg);border-radius:4px;padding:1px 5px">${p.pick_type}</span>
+                </div>
+              </label>`).join("")}
+            </div>
+            <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px;margin-bottom:14px">
+              <div style="display:flex;flex-direction:column;gap:5px">
+                <label class="sch-lbl">Selected Symbol</label>
+                <input type="text" name="pickSymbol" id="schPickSymbol" readonly placeholder="Select pick above" class="sch-inp" style="background:var(--bg2)">
+              </div>
+              <div style="display:flex;flex-direction:column;gap:5px">
+                <label class="sch-lbl">Direction</label>
+                <input type="text" name="pickDirection" id="schPickDirection" readonly class="sch-inp" style="background:var(--bg2)">
+              </div>
+              <div style="display:flex;flex-direction:column;gap:5px">
+                <label class="sch-lbl">Entry Range (auto)</label>
+                <input type="text" id="schPickEntryRange" readonly class="sch-inp" style="background:var(--bg2)">
+              </div>
+              <div style="display:flex;flex-direction:column;gap:5px">
+                <label class="sch-lbl">Stop Loss ₹ (auto)</label>
+                <input type="number" name="pickStopLoss" id="schPickSL" class="sch-inp">
+              </div>
+              <div style="display:flex;flex-direction:column;gap:5px">
+                <label class="sch-lbl">Target ₹ (auto)</label>
+                <input type="number" name="pickTarget" id="schPickTarget" class="sch-inp">
+              </div>
+              <div style="display:flex;flex-direction:column;gap:5px">
+                <label class="sch-lbl">Qty Override (0=default)</label>
+                <input type="number" name="pickQty" min="0" value="0" class="sch-inp">
+              </div>
+              <div style="display:flex;flex-direction:column;gap:5px">
+                <label class="sch-lbl">Note (optional)</label>
+                <input type="text" name="pickNote" placeholder="optional note" maxlength="80" class="sch-inp">
+              </div>
+            </div>`}
+          </div>
+
+          <!-- ===== MODE: INDICATOR SIGNAL ===== -->
+          <div id="schPanel-indicator" style="display:none">
+            <div style="font-size:0.8rem;color:var(--text-muted);margin-bottom:12px">Bot watches the selected indicator on the chosen symbol and fires when the signal condition is met on the configured timeframe.</div>
+            <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px;margin-bottom:14px">
+              <div style="display:flex;flex-direction:column;gap:5px">
+                <label class="sch-lbl">Symbol</label>
+                <select name="indSymbol" class="sch-inp">
+                  <option value="BANKNIFTY">BANKNIFTY</option>
+                  <option value="NIFTY">NIFTY</option>
+                  <option value="FINNIFTY">FINNIFTY</option>
+                  <option value="SENSEX">SENSEX</option>
+                  <option value="MIDCPNIFTY">MIDCPNIFTY</option>
+                  ${activePicks.slice(0,20).map((p: any) => `<option value="${p.stock_symbol}">${p.stock_symbol}</option>`).join("")}
+                  <option value="__custom__">Other…</option>
+                </select>
+              </div>
+              <div style="display:flex;flex-direction:column;gap:5px">
+                <label class="sch-lbl">Indicator</label>
+                <select name="indicator" id="schIndicator" onchange="schIndChange(this.value)" class="sch-inp">
+                  <option value="RSI">RSI — Relative Strength Index</option>
+                  <option value="MACD">MACD — Crossover</option>
+                  <option value="EMA_CROSS">EMA Cross (fast/slow)</option>
+                  <option value="VWAP">VWAP — Price vs VWAP</option>
+                  <option value="BB">Bollinger Bands — Squeeze / Breakout</option>
+                  <option value="SUPERTREND">Supertrend — Flip Signal</option>
+                  <option value="STOCH">Stochastic Oscillator</option>
+                </select>
+              </div>
+              <div style="display:flex;flex-direction:column;gap:5px">
+                <label class="sch-lbl">Signal Condition</label>
+                <select name="indCondition" id="schIndCondition" class="sch-inp">
+                  <option value="BUY">BUY signal (bullish)</option>
+                  <option value="SELL">SELL signal (bearish)</option>
+                </select>
+              </div>
+              <div style="display:flex;flex-direction:column;gap:5px">
+                <label class="sch-lbl">Timeframe</label>
+                <select name="indTimeframe" class="sch-inp">
+                  <option value="1m">1 min</option>
+                  <option value="3m">3 min</option>
+                  <option value="5m" selected>5 min</option>
+                  <option value="15m">15 min</option>
+                  <option value="30m">30 min</option>
+                  <option value="1h">1 hour</option>
+                  <option value="1d">Daily</option>
+                </select>
+              </div>
+              <!-- RSI params -->
+              <div id="schInd-RSI" style="display:flex;flex-direction:column;gap:5px">
+                <label class="sch-lbl">RSI Period</label>
+                <input type="number" name="rsiPeriod" min="2" max="50" value="14" class="sch-inp">
+              </div>
+              <div id="schInd-RSI-lvl" style="display:flex;flex-direction:column;gap:5px">
+                <label class="sch-lbl">RSI Level (buy=oversold / sell=overbought)</label>
+                <input type="number" name="rsiLevel" min="1" max="99" value="30" class="sch-inp">
+              </div>
+              <!-- EMA params -->
+              <div id="schInd-EMA" style="display:none;flex-direction:column;gap:5px">
+                <label class="sch-lbl">Fast EMA Period</label>
+                <input type="number" name="emaFast" min="1" max="200" value="9" class="sch-inp">
+              </div>
+              <div id="schInd-EMA2" style="display:none;flex-direction:column;gap:5px">
+                <label class="sch-lbl">Slow EMA Period</label>
+                <input type="number" name="emaSlow" min="1" max="200" value="21" class="sch-inp">
+              </div>
+              <!-- Trade execution -->
+              <div style="display:flex;flex-direction:column;gap:5px">
+                <label class="sch-lbl">Trade Type on Trigger</label>
+                <select name="indTradeType" class="sch-inp">
+                  <option value="OPTIONS">Options (CE/PE auto)</option>
+                  <option value="EQUITY">Equity (BUY/SELL)</option>
+                </select>
+              </div>
+              <div style="display:flex;flex-direction:column;gap:5px">
+                <label class="sch-lbl">Stop Loss (pts)</label>
+                <input type="number" name="indStopLoss" min="1" value="${bs.stopLossPoints}" class="sch-inp">
+              </div>
+              <div style="display:flex;flex-direction:column;gap:5px">
+                <label class="sch-lbl">Target (pts, 0=trail)</label>
+                <input type="number" name="indTarget" min="0" value="${bs.targetPoints}" class="sch-inp">
+              </div>
+              <div style="display:flex;flex-direction:column;gap:5px">
+                <label class="sch-lbl">Qty Override (0=default)</label>
+                <input type="number" name="indQty" min="0" value="0" class="sch-inp">
+              </div>
+              <div style="display:flex;flex-direction:column;gap:5px">
+                <label class="sch-lbl">Max triggers today (0=unlimited)</label>
+                <input type="number" name="indMaxTriggers" min="0" max="20" value="1" class="sch-inp">
+              </div>
+              <div style="display:flex;flex-direction:column;gap:5px">
+                <label class="sch-lbl">Note (optional)</label>
+                <input type="text" name="indNote" placeholder="e.g. RSI bounce play" maxlength="80" class="sch-inp">
+              </div>
+            </div>
+          </div>
+
+          <div style="display:flex;justify-content:flex-end">
+            ${isLoggedIn
+              ? `<button type="submit" style="background:linear-gradient(135deg,#f59e0b,#ef4444);color:#fff;border:none;border-radius:9px;padding:10px 28px;font-weight:700;font-size:0.92rem;cursor:pointer">+ Add Schedule</button>`
+              : `<a href="/login?next=/paper-trade?tab=autobot" style="background:linear-gradient(135deg,#7c3aed,#6366f1);color:#fff;border-radius:9px;padding:10px 28px;font-weight:700;font-size:0.92rem;text-decoration:none;display:inline-block">🔑 Sign in to Schedule</a>`
+            }
+          </div>
+        </form>
+
+        <!-- Pending list — only for logged-in users -->
+        ${isLoggedIn ? (() => {
+          const schPath = `${BOT_DIR}/scheduled-trades.json`;
+          let schList: any[] = [];
+          try { schList = JSON.parse(fs.readFileSync(schPath, "utf-8")); } catch {}
+          const active = schList.filter((s: any) => s.status === "pending");
+          if (active.length === 0) return `<div style="margin-top:16px;padding:12px 16px;background:var(--bg2);border-radius:8px;font-size:0.82rem;color:var(--text-muted);text-align:center">No scheduled trades pending</div>`;
+          return `
+          <div style="margin-top:18px">
+            <div style="font-size:0.72rem;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--text-muted);margin-bottom:8px">Pending Schedules (${active.length})</div>
+            <div style="display:flex;flex-direction:column;gap:8px">
+              ${active.map((s: any) => `
+              <div style="display:flex;align-items:center;justify-content:space-between;background:var(--bg2);border-radius:9px;padding:10px 14px;gap:12px;flex-wrap:wrap">
+                <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+                  <span style="font-weight:800;font-size:0.88rem">${s.symbol}</span>
+                  <span style="font-size:0.75rem;padding:2px 7px;border-radius:4px;font-weight:700;background:${s.direction==='CE'||s.direction==='BUY'?'rgba(59,130,246,.15)':'rgba(239,68,68,.15)'};color:${s.direction==='CE'||s.direction==='BUY'?'#60a5fa':'#f87171'}">${s.direction}</span>
+                  <span style="font-size:0.78rem;color:var(--text-muted)">Trigger ${s.triggerCondition} <strong style="color:var(--text)">${s.triggerPrice}</strong></span>
+                  ${s.triggerMode === 'indicator' ? `<span style="font-size:0.7rem;background:rgba(99,102,241,.15);color:#818cf8;padding:1px 6px;border-radius:4px;font-weight:700">${s.indicator||''} ${s.indCondition||''}</span>` : ''}
+                  ${s.triggerMode === 'pick' ? `<span style="font-size:0.7rem;background:rgba(16,185,129,.15);color:#34d399;padding:1px 6px;border-radius:4px;font-weight:700">Daily Pick</span>` : ''}
+                  ${s.triggerPrice ? `<span style="font-size:0.78rem;color:var(--text-muted)">@ <strong style="color:var(--text)">${s.triggerPrice}</strong></span>` : ''}
+                  ${s.stopLossPoints ? `<span style="font-size:0.75rem;color:#f87171">SL ${s.stopLossPoints}pts</span>` : ""}
+                  ${s.targetPoints ? `<span style="font-size:0.75rem;color:#34d399">TGT ${s.targetPoints}pts</span>` : ""}
+                  ${s.note ? `<span style="font-size:0.75rem;color:var(--text-muted);font-style:italic">"${s.note}"</span>` : ""}
+                </div>
+                <form method="POST" action="/paper-trade/cancel-schedule" style="margin:0">
+                  <input type="hidden" name="id" value="${s.id}">
+                  <button type="submit" style="background:rgba(239,68,68,.15);color:#f87171;border:1px solid rgba(239,68,68,.3);border-radius:6px;padding:4px 12px;font-size:0.78rem;font-weight:700;cursor:pointer">✕ Cancel</button>
+                </form>
+              </div>`).join("")}
+            </div>
+          </div>`;
+        })() : ""}
+      </div>
+
+
+      <!-- Recent Trades -->
+      ${closed.length > 0 ? `
+      <div style="font-size:0.72rem;font-weight:700;text-transform:uppercase;letter-spacing:.1em;color:var(--text-muted);border-bottom:1px solid var(--border);padding-bottom:8px;margin-bottom:12px">Recent Bot Trades</div>
+      <div style="overflow-x:auto">
+        <table style="width:100%;border-collapse:collapse;font-size:0.85rem">
+          <thead><tr style="color:var(--text-muted);font-size:0.72rem;text-transform:uppercase;letter-spacing:.05em">
+            <th style="padding:6px 10px;text-align:left;font-weight:700">Date</th>
+            <th style="padding:6px 10px;text-align:left;font-weight:700">Symbol</th>
+            <th style="padding:6px 10px;text-align:left;font-weight:700">Dir</th>
+            <th style="padding:6px 10px;text-align:right;font-weight:700">P&amp;L</th>
+            <th style="padding:6px 10px;text-align:left;font-weight:700">Status</th>
+          </tr></thead>
+          <tbody>
+            ${[...botTrades].reverse().slice(0, 20).map((t: any) => `
+            <tr style="border-top:1px solid var(--border)">
+              <td style="padding:7px 10px;color:var(--text-muted);font-size:0.78rem">${t.entryTime ? new Date(t.entryTime).toLocaleDateString("en-IN", {timeZone:"Asia/Kolkata",day:"2-digit",month:"short"}) : "—"}</td>
+              <td style="padding:7px 10px;font-weight:700;font-size:0.78rem">${t.symbol || "—"}</td>
+              <td style="padding:7px 10px"><span style="font-size:.72rem;font-weight:700;padding:2px 7px;border-radius:4px;background:${(t.direction||'')==='CE'?'rgba(59,130,246,.15)':'rgba(239,68,68,.15)'};color:${(t.direction||'')==='CE'?'#60a5fa':'#f87171'}">${t.direction || "—"}</span></td>
+              <td style="padding:7px 10px;text-align:right;font-weight:700" class="${(t.pnl??0)>=0?'mpt-green':'mpt-red'}">${(t.pnl??0)>=0?"+":""}₹${(t.pnl??0).toFixed(0)}</td>
+              <td style="padding:7px 10px;font-size:0.76rem;color:var(--text-muted)">${t.status||"CLOSED"}</td>
+            </tr>`).join("")}
+          </tbody>
+        </table>
+      </div>` : `<div style="text-align:center;padding:40px 20px;color:var(--text-muted)">No bot trades yet</div>`}
+
+      ${!isLoggedIn ? `
+      <div style="margin-top:20px;background:linear-gradient(135deg,rgba(124,58,237,.12),rgba(99,102,241,.08));border:1px solid rgba(124,58,237,.25);border-radius:14px;padding:20px 22px;text-align:center">
+        <div style="font-size:1rem;font-weight:800;margin-bottom:6px">🚀 Trade alongside the bot — free</div>
+        <div style="font-size:0.85rem;color:var(--text-muted);margin-bottom:14px">Create a free account to paper trade any NSE stock with ₹1,00,000 virtual cash</div>
+        <div style="display:flex;gap:10px;justify-content:center;flex-wrap:wrap">
+          <a href="/signup" style="background:linear-gradient(135deg,#7c3aed,#6366f1);color:#fff;border-radius:9px;padding:10px 24px;font-weight:700;font-size:0.9rem;text-decoration:none">✨ Sign Up Free →</a>
+          <a href="/login?next=/paper-trade" style="background:var(--bg2);border:1px solid var(--border);color:var(--text);border-radius:9px;padding:10px 24px;font-weight:700;font-size:0.9rem;text-decoration:none">🔑 Sign In</a>
+        </div>
+      </div>` : ""}
+
+    <!-- BOT PERFORMANCE (social proof / always shown) -->
     <footer class="site-footer"><span>© 2026 ZeroScreen · Paper trading uses virtual money — no real capital at risk · Prices from NSE data updated periodically</span></footer>
   </div>
   <script src="/public/js/app.js"></script>
   <script>
+  // ── Tab switching ───────────────────────────────────────────────────────────
+  function pt2SwitchTab(tab) {
+    ['manual','autobot'].forEach(function(t) {
+      var pane = document.getElementById('pt2-pane-' + t);
+      var btn  = document.getElementById('pt2-tab-' + t);
+      if (pane) pane.classList.toggle('active', t === tab);
+      if (btn)  btn.classList.toggle('active',  t === tab);
+    });
+    try { sessionStorage.setItem('pt2-tab', tab); } catch(e){}
+  }
+  // Restore last tab (URL param takes priority)
+  (function(){try{var u=new URLSearchParams(location.search).get('tab');var t=u||sessionStorage.getItem('pt2-tab');if(t)pt2SwitchTab(t);}catch(e){}})();
+
+  // ── Schedule form helpers ───────────────────────────────────────────────────
+  var SCH_STYLE = 'padding:7px 10px;border-radius:7px;border:1px solid var(--border);background:var(--input-bg,#fff);color:var(--text);font-size:0.88rem;font-weight:600;width:100%;box-sizing:border-box';
+  // Inject shared sch-inp / sch-lbl styles
+  (function(){
+    var s = document.createElement('style');
+    s.textContent = '.sch-inp{padding:7px 10px;border-radius:7px;border:1px solid var(--border);background:var(--input-bg,#fff);color:var(--text);font-size:.88rem;font-weight:600;width:100%;box-sizing:border-box}.sch-lbl{font-size:.72rem;font-weight:700;color:var(--text-muted);text-transform:uppercase;letter-spacing:.05em}.sch-mode-btn.active{background:linear-gradient(135deg,#7c3aed,#6366f1)!important;color:#fff!important;border-color:transparent!important}';
+    document.head.appendChild(s);
+  })();
+
+  function schSetMode(mode) {
+    ['price','pick','indicator'].forEach(function(m) {
+      var p = document.getElementById('schPanel-' + m);
+      var b = document.getElementById('schMode-' + m);
+      if (p) p.style.display = m === mode ? 'block' : 'none';
+      if (b) b.classList.toggle('active', m === mode);
+    });
+    var hid = document.getElementById('schTriggerMode');
+    if (hid) hid.value = mode;
+  }
+
+  function schSymbolChange(v) {
+    var ci = document.getElementById('schSymbolCustom');
+    if (ci) { ci.style.display = v === '__custom__' ? 'block' : 'none'; ci.required = v === '__custom__'; }
+  }
+  function schTypeChange(v) {
+    var dSel = document.getElementById('schDirection');
+    var expW = document.getElementById('schExpiryWrap');
+    if (dSel) {
+      dSel.innerHTML = v === 'EQUITY'
+        ? '<option value="BUY">BUY (Long)</option><option value="SELL">SELL (Short)</option>'
+        : '<option value="CE">CE (Call)</option><option value="PE">PE (Put)</option>';
+    }
+    if (expW) expW.style.display = v === 'OPTIONS' ? 'flex' : 'none';
+  }
+  function schPickSelect(id, sym, dir, lo, hi, sl, tgt) {
+    var s = document.getElementById('schPickSymbol'); if(s) s.value = sym;
+    var d = document.getElementById('schPickDirection'); if(d) d.value = dir;
+    var r = document.getElementById('schPickEntryRange'); if(r) r.value = lo + ' – ' + hi;
+    var sv = document.getElementById('schPickSL'); if(sv) sv.value = sl || '';
+    var tv = document.getElementById('schPickTarget'); if(tv) tv.value = tgt || '';
+  }
+  function schIndChange(v) {
+    var rsiFields = ['schInd-RSI','schInd-RSI-lvl'];
+    var emaFields = ['schInd-EMA','schInd-EMA2'];
+    rsiFields.forEach(function(id){ var el=document.getElementById(id); if(el) el.style.display = v==='RSI'||v==='STOCH'?'flex':'none'; });
+    emaFields.forEach(function(id){ var el=document.getElementById(id); if(el) el.style.display = v==='EMA_CROSS'?'flex':'none'; });
+  }
+
   // ── Trade form interaction ──────────────────────────────────────────────────
   function pt2SetType(t) {
     document.getElementById('pt2-trade-type').value = t;
@@ -6741,6 +7297,9 @@ async function paperPortfolioPage(req: Request, res: Response) {
     }
   }
 
+  const isAdmin  = req.session.userRole === "admin";
+  const BOT_DIR  = "/home/ubuntu/trading-bot";
+
   const [port, positions, trades, tradeCount, ptConfig, activeSub, allPicksForTrade] = await Promise.all([
     getPaperPortfolio(userId),
     getPaperPositions(userId),
@@ -6750,6 +7309,15 @@ async function paperPortfolioPage(req: Request, res: Response) {
     getActiveSubscription(userId),
     getAllPicks(),
   ]);
+
+  // Admin-only: bot trades + scheduled trades
+  const adminBotTrades: any[] = isAdmin ? (() => { try { return JSON.parse(fs.readFileSync(`${BOT_DIR}/trades.json`, "utf-8")); } catch { return []; } })() : [];
+  const adminBotClosed = adminBotTrades.filter((t: any) => (t.exitPrice ?? 0) > 0);
+  const adminScheduled: any[] = isAdmin ? (() => { try { return JSON.parse(fs.readFileSync(`${BOT_DIR}/scheduled-trades.json`, "utf-8")); } catch { return []; } })() : [];
+  const adminSchPending   = adminScheduled.filter((s: any) => s.status === "pending");
+  const adminSchTriggered = adminScheduled.filter((s: any) => s.status === "triggered");
+  const adminBotPnl       = parseFloat(adminBotClosed.reduce((s: number, t: any) => s + (t.pnl ?? 0), 0).toFixed(2));
+  const adminBotWins      = adminBotClosed.filter((t: any) => (t.pnl ?? 0) > 0).length;
 
   // ── Credits ─────────────────────────────────────────────────────────────────
   const freeLimit  = parseInt(await getSetting("paper_free_limit") || "10", 10);
@@ -6836,6 +7404,70 @@ async function paperPortfolioPage(req: Request, res: Response) {
 
   const pageTitle = req.session.userRole === "admin" ? "My Paper Trade" : "My Portfolio";
 
+  // ── Admin-only: pre-build HTML for scheduled + bot trade sections ──────────
+  let adminScheduledHtml = "";
+  let adminBotHtml = "";
+  if (isAdmin) {
+    // Scheduled trades
+    if (adminScheduled.length === 0) {
+      adminScheduledHtml = `<div class="mpt-empty">No scheduled trades yet. <a href="/paper-trade?tab=autobot" style="color:var(--accent)">Schedule one →</a></div>`;
+    } else {
+      const rows = [...adminScheduled].reverse().map((s: any) => {
+        const statusColor = s.status === "triggered" ? "#10b981" : s.status === "cancelled" ? "#ef4444" : "#f59e0b";
+        const statusBg    = s.status === "triggered" ? "#10b98122" : s.status === "cancelled" ? "#ef444422" : "#f59e0b22";
+        const statusLabel = s.status === "triggered" ? "✅ Triggered" : s.status === "cancelled" ? "❌ Cancelled" : "⏳ Pending";
+        let details = "";
+        if (s.triggerMode === "price")     details = `${s.triggerCondition || ""} ₹${s.triggerPrice || "—"} · SL:${s.stopLossPoints||0}pt · T:${s.targetPoints||0}pt`;
+        else if (s.triggerMode === "pick") details = `Pick #${s.pickId||"—"} · SL:₹${s.stopLossPrice||0} · T:₹${s.targetPrice||0}`;
+        else if (s.triggerMode === "indicator") details = `${s.indicator||"—"} ${s.indCondition||""} ${s.indTimeframe||""}`;
+        const dirGreen = s.direction === "CE" || s.direction === "BUY" || s.direction === "LONG";
+        const cancelBtn = s.status === "pending"
+          ? `<form method="POST" action="/paper-trade/cancel-schedule" style="display:inline"><input type="hidden" name="id" value="${s.id}"><button type="submit" style="background:#ef444415;color:#ef4444;border:1px solid #ef444455;border-radius:5px;padding:2px 10px;font-size:.76rem;cursor:pointer">Cancel</button></form>`
+          : "";
+        return `<tr>
+          <td style="font-size:.72rem;text-transform:uppercase;font-weight:700;color:#a78bfa">${esc(s.triggerMode||"—")}</td>
+          <td style="font-weight:700">${esc(s.symbol||"—")}</td>
+          <td><span style="background:${dirGreen?"#10b98122":"#ef444422"};color:${dirGreen?"#10b981":"#ef4444"};border:1px solid ${dirGreen?"#10b98155":"#ef444455"};border-radius:4px;padding:2px 8px;font-size:.73rem;font-weight:700">${esc(s.direction||"—")}</span></td>
+          <td style="font-size:.78rem;color:var(--text-muted)">${esc(details)}</td>
+          <td><span style="background:${statusBg};color:${statusColor};border:1px solid ${statusColor}55;border-radius:4px;padding:2px 8px;font-size:.73rem;font-weight:700">${statusLabel}</span></td>
+          <td style="font-size:.76rem;color:var(--text-muted)">${s.createdAt ? new Date(s.createdAt).toLocaleDateString("en-IN",{day:"2-digit",month:"short",year:"2-digit"}) : "—"}</td>
+          <td style="font-size:.76rem;color:var(--text-muted);max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(s.note||"")}</td>
+          <td>${cancelBtn}</td>
+        </tr>`;
+      }).join("");
+      adminScheduledHtml = `<div class="mpt-tbl-wrap"><table class="mpt-history-table">
+        <thead><tr><th>Mode</th><th>Symbol</th><th>Direction</th><th>Details</th><th>Status</th><th>Created</th><th>Note</th><th></th></tr></thead>
+        <tbody>${rows}</tbody></table></div>`;
+    }
+
+    // Bot trades
+    if (adminBotClosed.length === 0) {
+      adminBotHtml = `<div class="mpt-empty">No bot trades yet · <a href="/signals" style="color:var(--accent)">View signals →</a></div>`;
+    } else {
+      const rows = [...adminBotClosed].reverse().slice(0, 150).map((t: any) => {
+        const dStr  = t.exitTime ? new Date(t.exitTime).toLocaleDateString("en-IN",{timeZone:"Asia/Kolkata",day:"2-digit",month:"short",year:"2-digit"}) : "—";
+        const durMs = t.exitTime && t.entryTime ? new Date(t.exitTime).getTime() - new Date(t.entryTime).getTime() : 0;
+        const durStr = durMs > 0 ? (durMs < 3600000 ? Math.round(durMs/60000)+"m" : (durMs/3600000).toFixed(1)+"h") : "—";
+        const isPos = (t.pnl ?? 0) >= 0;
+        const dirCE = t.direction === "CE";
+        return `<tr>
+          <td style="font-size:.8rem;color:var(--text-muted)">${dStr}</td>
+          <td style="font-weight:700">${esc(t.symbol||"—")}</td>
+          <td><span style="background:${dirCE?"#3b82f622":"#ef444422"};color:${dirCE?"#3b82f6":"#ef4444"};border:1px solid ${dirCE?"#3b82f655":"#ef444455"};border-radius:4px;padding:2px 8px;font-size:.73rem;font-weight:700">${esc(t.direction||"—")}</span></td>
+          <td>${(t.entryPrice??0)>0?"₹"+(t.entryPrice??0).toFixed(1):"—"}</td>
+          <td>${(t.exitPrice??0)>0?"₹"+(t.exitPrice??0).toFixed(1):"—"}</td>
+          <td>${t.qty||"—"}</td>
+          <td class="${isPos?"mpt-green":"mpt-red"}" style="font-weight:700">${isPos?"+":""}₹${(t.pnl??0).toLocaleString("en-IN",{maximumFractionDigits:0})}</td>
+          <td style="font-size:.78rem;color:var(--text-muted)">${durStr}</td>
+          <td style="font-size:.76rem;color:var(--text-muted)">${esc(t.exitReason||"—")}</td>
+        </tr>`;
+      }).join("");
+      adminBotHtml = `<div class="mpt-tbl-wrap"><table class="mpt-history-table">
+        <thead><tr><th>Date</th><th>Symbol</th><th>Direction</th><th>Entry ₹</th><th>Exit ₹</th><th>Qty</th><th>P&L</th><th>Duration</th><th>Exit Reason</th></tr></thead>
+        <tbody>${rows}</tbody></table></div>`;
+    }
+  }
+
   res.send(`<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -6856,14 +7488,18 @@ async function paperPortfolioPage(req: Request, res: Response) {
     .mpt-kpi-val    { font-size: 1.25rem; font-weight: 700; font-variant-numeric: tabular-nums; }
     .mpt-green { color: #10b981; } .mpt-red { color: #ef4444; } .mpt-yellow { color: #f59e0b; }
     .mpt-section    { font-size: 0.72rem; font-weight: 700; text-transform: uppercase; letter-spacing: .1em; color: var(--text-muted); border-bottom: 1px solid var(--border); padding-bottom: 8px; margin: 24px 0 14px; }
-    .mpt-pos-table, .mpt-history-table { width: 100%; border-collapse: collapse; font-size: 0.88rem; }
-    .mpt-pos-table th, .mpt-history-table th { text-align: left; padding: 8px 10px; border-bottom: 2px solid var(--border); font-size: 0.75rem; text-transform: uppercase; color: var(--text-muted); }
-    .mpt-pos-table td, .mpt-history-table td { padding: 9px 10px; border-bottom: 1px solid var(--border); vertical-align: middle; }
-    .mpt-pos-table tr:hover td, .mpt-history-table tr:hover td { background: var(--hover-bg); }
+    .mpt-tbl-wrap { overflow-x:auto; border-radius:12px; border:1px solid var(--border); margin-bottom:4px; }
+    .mpt-pos-table, .mpt-history-table { width: 100%; border-collapse: collapse; font-size: 0.86rem; }
+    .mpt-pos-table thead tr, .mpt-history-table thead tr { background: linear-gradient(135deg,#1e3a5f,#1e40af); }
+    .mpt-pos-table th, .mpt-history-table th { text-align: left; padding: 11px 13px; font-size: 0.72rem; text-transform: uppercase; letter-spacing: .07em; color: #e2e8f0; font-weight: 700; white-space: nowrap; }
+    .mpt-pos-table tbody tr, .mpt-history-table tbody tr { border-bottom: 1px solid var(--border); transition: background .12s; }
+    .mpt-pos-table tbody tr:last-child, .mpt-history-table tbody tr:last-child { border-bottom: none; }
+    .mpt-pos-table td, .mpt-history-table td { padding: 10px 13px; vertical-align: middle; }
+    .mpt-pos-table tbody tr:hover td, .mpt-history-table tbody tr:hover td { background: var(--hover-bg); }
     .mpt-sym { font-weight: 700; color: var(--accent); cursor:pointer; }
     .mpt-sym:hover { text-decoration: underline; }
-    .mpt-action-buy  { background:#10b98122; color:#10b981; border:1px solid #10b98155; border-radius:4px; padding:2px 8px; font-size:0.75rem; font-weight:700; }
-    .mpt-action-sell { background:#ef444422; color:#ef4444; border:1px solid #ef444455; border-radius:4px; padding:2px 8px; font-size:0.75rem; font-weight:700; }
+    .mpt-action-buy  { background:#10b98118;color:#10b981;border:1px solid #10b98155;border-radius:20px;padding:3px 10px;font-size:0.72rem;font-weight:700;white-space:nowrap; }
+    .mpt-action-sell { background:#ef444418;color:#ef4444;border:1px solid #ef444455;border-radius:20px;padding:3px 10px;font-size:0.72rem;font-weight:700;white-space:nowrap; }
     .mpt-sell-btn   { background: #ef444422; color: #ef4444; border: 1px solid #ef444455; border-radius: 6px; padding: 4px 12px; font-size: 0.8rem; cursor:pointer; font-weight:600; }
     .mpt-sell-btn:hover { background: #ef444440; }
     .mpt-buy-form   { background: var(--card-bg); border: 1px solid var(--border); border-radius: 12px; padding: 20px 24px; margin-bottom: 24px; }
@@ -6911,11 +7547,14 @@ async function paperPortfolioPage(req: Request, res: Response) {
     .mpt-picks-panel{display:none}
     .mpt-picks-panel.t2p-active{display:block}
     .mpt-picks-tbl{width:100%;border-collapse:collapse;font-size:.86rem}
-    .mpt-picks-tbl th{text-align:left;padding:8px 10px;border-bottom:2px solid var(--border);font-size:.72rem;text-transform:uppercase;color:var(--text-muted)}
-    .mpt-picks-tbl td{padding:9px 10px;border-bottom:1px solid var(--border);vertical-align:middle}
-    .mpt-picks-tbl tr:hover td{background:var(--hover-bg)}
-    .pb-bullish{background:#10b98122;color:#10b981;border:1px solid #10b98144;border-radius:4px;padding:2px 8px;font-size:.72rem;font-weight:700}
-    .pb-bearish{background:#ef444422;color:#ef4444;border:1px solid #ef444444;border-radius:4px;padding:2px 8px;font-size:.72rem;font-weight:700}
+    .mpt-picks-tbl thead tr{background:linear-gradient(135deg,#1e3a5f,#1e40af)}
+    .mpt-picks-tbl th{text-align:left;padding:11px 13px;font-size:.72rem;text-transform:uppercase;letter-spacing:.07em;color:#e2e8f0;font-weight:700;white-space:nowrap}
+    .mpt-picks-tbl tbody tr{border-bottom:1px solid var(--border);transition:background .12s}
+    .mpt-picks-tbl tbody tr:last-child{border-bottom:none}
+    .mpt-picks-tbl td{padding:10px 13px;vertical-align:middle}
+    .mpt-picks-tbl tbody tr:hover td{background:var(--hover-bg)}
+    .pb-bullish{background:#10b98118;color:#10b981;border:1px solid #10b98144;border-radius:20px;padding:3px 10px;font-size:.72rem;font-weight:700;white-space:nowrap}
+    .pb-bearish{background:#ef444418;color:#ef4444;border:1px solid #ef444444;border-radius:20px;padding:3px 10px;font-size:.72rem;font-weight:700;white-space:nowrap}
     .dim{color:var(--text-muted)}
   </style>
 </head>
@@ -6990,8 +7629,7 @@ async function paperPortfolioPage(req: Request, res: Response) {
     <div class="mpt-section">Open Positions (${posRows.length})</div>
     ${posRows.length === 0
       ? `<div class="mpt-empty">No open positions yet. <a href="/paper-trade" style="color:var(--accent)">Place your first trade →</a></div>`
-      : `<div style="overflow-x:auto">
-        <table class="mpt-pos-table">
+      : `<div class="mpt-tbl-wrap"><table class="mpt-pos-table">
           <thead><tr>
             <th>Symbol</th><th>Company</th><th>Type</th><th>Qty</th>
             <th>Avg Price</th><th>Invested</th><th>Live Price</th>
@@ -7033,8 +7671,7 @@ async function paperPortfolioPage(req: Request, res: Response) {
     <div class="mpt-section">Trade History (${trades.length})</div>
     ${trades.length === 0
       ? `<div class="mpt-empty">No trades yet. <a href="/paper-trade" style="color:var(--accent)">Place your first trade →</a></div>`
-      : `<div style="overflow-x:auto">
-        <table class="mpt-history-table">
+      : `<div class="mpt-tbl-wrap"><table class="mpt-history-table">
           <thead><tr>
             <th>Date/Time</th><th>Symbol</th><th>Type</th><th>Action</th><th>Qty</th>
             <th>Price</th><th>Total</th><th>P&L</th><th>P&L%</th><th>Balance After</th>
@@ -7104,18 +7741,24 @@ async function paperPortfolioPage(req: Request, res: Response) {
     <div class="mpt-picks-panel t2p-active" id="pt-panel-inpos">
       ${inPosition.length === 0
         ? `<div class="mpt-empty">No picks currently in position.</div>`
-        : `<div style="overflow-x:auto"><table class="mpt-picks-tbl">
-          <thead><tr><th>Symbol</th><th>Direction</th><th>Entry Zone</th><th>Target</th><th>SL</th><th>CMP</th><th>Entry At</th></tr></thead>
+        : `<div class="mpt-tbl-wrap"><table class="mpt-picks-tbl">
+          <thead><tr><th>Symbol</th><th>Direction</th><th>Qty</th><th>Entry Price</th><th>Target</th><th>SL</th><th>CMP</th><th>P&amp;L</th><th>Entry At</th></tr></thead>
           <tbody id="mpt-inpos-body">
             ${inPosition.map(p => {
               const lp = priceMap[p.stock_symbol];
+              const ep = p.entry_price ?? ((p.entry_low + p.entry_high) / 2);
+              const mult = p.direction === 'BULLISH' ? 1 : -1;
+              const pnlAmt = lp && ep ? parseFloat(((lp - ep) * mult).toFixed(2)) : null;
+              const pnlPct = lp && ep ? parseFloat((((lp - ep) / ep) * 100 * mult).toFixed(2)) : null;
               return `<tr>
                 <td><strong style="color:var(--accent)">${esc(p.stock_symbol)}</strong>${p.company_name ? `<br><span class="dim" style="font-size:.64rem">${esc(p.company_name)}</span>` : ''}</td>
                 <td><span class="${p.direction === 'BULLISH' ? 'pb-bullish' : 'pb-bearish'}">${p.direction}</span></td>
-                <td class="dim" style="font-size:.74rem">₹${p.entry_low}–${p.entry_high}</td>
+                <td style="font-weight:600;color:var(--text-muted)">1</td>
+                <td style="font-size:.82rem">₹${ep.toFixed(2)}</td>
                 <td style="color:#10b981;font-size:.74rem">${p.target ? '₹' + p.target : '—'}</td>
                 <td style="color:#ef4444;font-size:.74rem">${p.stop_loss ? '₹' + p.stop_loss : '—'}</td>
                 <td style="font-weight:700;color:${lp ? '#3b82f6' : 'var(--text-muted)'}">${lp ? '₹' + lp.toFixed(2) : '—'}</td>
+                <td class="${pnlAmt === null ? '' : pnlAmt >= 0 ? 'mpt-green' : 'mpt-red'}" style="font-weight:700">${pnlAmt === null ? '—' : `<span style="display:block">${pnlAmt >= 0 ? '+' : ''}₹${Math.abs(pnlAmt).toFixed(2)}</span><span style="font-size:.72rem;opacity:.85">${pnlPct !== null ? (pnlPct >= 0 ? '+' : '') + pnlPct + '%' : ''}</span>`}</td>
                 <td class="dim" style="font-size:.72rem">${p.entry_at ? p.entry_at.slice(0,16).replace('T',' ') : '—'}</td>
               </tr>`;
             }).join('')}
@@ -7128,8 +7771,8 @@ async function paperPortfolioPage(req: Request, res: Response) {
     <div class="mpt-picks-panel" id="pt-panel-pend">
       ${pendingNonDupe.length === 0
         ? `<div class="mpt-empty">No pending picks for today${pendingOrders.length > pendingNonDupe.length ? ` (${pendingOrders.length - pendingNonDupe.length} already in position)` : ''}.</div>`
-        : `<div style="overflow-x:auto"><table class="mpt-picks-tbl">
-          <thead><tr><th>Symbol</th><th>Type</th><th>Direction</th><th>Entry Zone</th><th>Target</th><th>SL</th><th>CMP</th></tr></thead>
+        : `<div class="mpt-tbl-wrap"><table class="mpt-picks-tbl">
+          <thead><tr><th>Symbol</th><th>Type</th><th>Direction</th><th>Qty</th><th>Entry Zone</th><th>Target</th><th>SL</th><th>CMP</th></tr></thead>
           <tbody id="mpt-picks-body">
             ${pendingNonDupe.map(p => {
               const lp = priceMap[p.stock_symbol];
@@ -7139,6 +7782,7 @@ async function paperPortfolioPage(req: Request, res: Response) {
                 <td><strong>${esc(p.stock_symbol)}</strong>${p.company_name ? `<br><span class="dim" style="font-size:.64rem">${esc(p.company_name)}</span>` : ''}</td>
                 <td style="font-size:.72rem">${(p.pick_type || 'intraday').toUpperCase()}</td>
                 <td><span class="${p.direction === 'BULLISH' ? 'pb-bullish' : 'pb-bearish'}">${p.direction}</span></td>
+                <td style="font-weight:600;color:var(--text-muted)">1</td>
                 <td class="dim" style="font-size:.74rem;white-space:nowrap">₹${p.entry_low}–${p.entry_high}</td>
                 <td style="color:#10b981;font-size:.74rem">${p.target ? '₹' + p.target : '—'}</td>
                 <td style="color:#ef4444;font-size:.74rem">${p.stop_loss ? '₹' + p.stop_loss : '—'}</td>
@@ -7156,17 +7800,24 @@ async function paperPortfolioPage(req: Request, res: Response) {
     <div class="mpt-picks-panel" id="pt-panel-exec">
       ${resolved.length === 0
         ? `<div class="mpt-empty">No executed picks yet.</div>`
-        : `<div style="overflow-x:auto"><table class="mpt-picks-tbl">
-          <thead><tr><th>Symbol</th><th>Direction</th><th>Result</th><th>Entry</th><th>Result Price</th><th>Date</th></tr></thead>
+        : `<div class="mpt-tbl-wrap"><table class="mpt-picks-tbl">
+          <thead><tr><th>Symbol</th><th>Direction</th><th>Qty</th><th>Result</th><th>Entry</th><th>Result Price</th><th>P&amp;L</th><th>Date</th></tr></thead>
           <tbody>
             ${resolved.slice(0, 30).map(p => {
               const isWin = p.result === 'target_hit';
+              const ep = p.entry_price;
+              const rp = p.result_price;
+              const mult = p.direction === 'BULLISH' ? 1 : -1;
+              const pnlAmt = ep && rp ? parseFloat(((rp - ep) * mult).toFixed(2)) : null;
+              const pnlPct = ep && rp ? parseFloat((((rp - ep) / ep) * 100 * mult).toFixed(2)) : null;
               return `<tr>
                 <td><strong style="color:var(--accent)">${esc(p.stock_symbol)}</strong>${p.company_name ? `<br><span class="dim" style="font-size:.64rem">${esc(p.company_name)}</span>` : ''}</td>
                 <td><span class="${p.direction === 'BULLISH' ? 'pb-bullish' : 'pb-bearish'}">${p.direction}</span></td>
-                <td><span style="background:${isWin ? '#10b98122' : '#ef444422'};color:${isWin ? '#10b981' : '#ef4444'};border:1px solid ${isWin ? '#10b98144' : '#ef444444'};border-radius:4px;padding:2px 8px;font-size:.72rem;font-weight:700">${isWin ? '✅ Target Hit' : '⛔ SL Hit'}</span></td>
-                <td class="dim" style="font-size:.74rem">${p.entry_price ? '₹' + p.entry_price : '—'}</td>
-                <td style="font-weight:700">${p.result_price ? '₹' + p.result_price : '—'}</td>
+                <td style="font-weight:600;color:var(--text-muted)">1</td>
+                <td><span style="background:${isWin ? '#10b98122' : '#ef444422'};color:${isWin ? '#10b981' : '#ef4444'};border:1px solid ${isWin ? '#10b98144' : '#ef444444'};border-radius:20px;padding:3px 10px;font-size:.72rem;font-weight:700;white-space:nowrap">${isWin ? '✅ Target Hit' : '⛔ SL Hit'}</span></td>
+                <td class="dim" style="font-size:.74rem">${ep ? '₹' + ep : '—'}</td>
+                <td style="font-weight:700">${rp ? '₹' + rp : '—'}</td>
+                <td class="${pnlAmt === null ? '' : pnlAmt >= 0 ? 'mpt-green' : 'mpt-red'}" style="font-weight:700">${pnlAmt === null ? '—' : `<span style="display:block">${pnlAmt >= 0 ? '+' : ''}₹${Math.abs(pnlAmt).toFixed(2)}</span><span style="font-size:.72rem;opacity:.85">${pnlPct !== null ? (pnlPct >= 0 ? '+' : '') + pnlPct + '%' : ''}</span>`}</td>
                 <td class="dim" style="font-size:.72rem">${p.result_at ? p.result_at.slice(0,10) : '—'}</td>
               </tr>`;
             }).join('')}
@@ -7180,6 +7831,23 @@ async function paperPortfolioPage(req: Request, res: Response) {
       <div style="font-size:.72rem;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--text-muted);margin-bottom:12px">📅 Monthly P&L</div>
       <canvas id="mptMonthChart" height="120"></canvas>
     </div>` : ''}
+
+    ${isAdmin ? `
+    <!-- ── ADMIN: SCHEDULED TRADES ─────────────────────────────────────────── -->
+    <div class="mpt-section" style="margin-top:32px">📅 Scheduled Trades (${adminScheduled.length})
+      <span style="font-size:.72rem;font-weight:400;margin-left:10px;color:#a78bfa">${adminSchPending.length} pending · ${adminSchTriggered.length} triggered</span>
+    </div>
+    <div style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap">
+      <a href="/paper-trade?tab=autobot" style="background:#7c3aed22;color:#a78bfa;border:1px solid #7c3aed55;border-radius:8px;padding:7px 16px;font-size:.83rem;font-weight:700;text-decoration:none">+ New Schedule</a>
+    </div>
+    ${adminScheduledHtml}
+
+    <!-- ── ADMIN: BOT TRADE HISTORY ──────────────────────────────────────── -->
+    <div class="mpt-section" style="margin-top:32px">🤖 Auto Bot Trade History (${adminBotClosed.length})
+      <span style="font-size:.72rem;font-weight:400;margin-left:10px;color:${adminBotPnl >= 0 ? "#10b981" : "#ef4444"}">${adminBotPnl >= 0 ? "+" : ""}₹${Math.abs(adminBotPnl).toLocaleString("en-IN",{maximumFractionDigits:0})} total · ${adminBotWins}W / ${adminBotClosed.length - adminBotWins}L</span>
+    </div>
+    ${adminBotHtml}
+    ` : ""}
 
     <div class="mpt-disclaimer">
       ⚠️ <strong>Disclaimer:</strong> Paper trading uses simulated virtual money — no real funds are at risk.
@@ -7250,9 +7918,691 @@ async function paperPortfolioPage(req: Request, res: Response) {
 </html>`);
 }
 
+// ── POST /paper-trade/bot-config — admin saves bot user-settings.json ──────────
+app.post("/paper-trade/bot-config", requireAdmin, async (req: Request, res: Response) => {
+  try {
+    const BOT_DIR = "/home/ubuntu/trading-bot";
+    const settingsPath = `${BOT_DIR}/user-settings.json`;
+    let existing: any = {};
+    try { existing = JSON.parse(fs.readFileSync(settingsPath, "utf-8")); } catch {}
+    const q = req.body;
+    existing.mode     = q.mode === "LIVE" ? "LIVE" : "PAPER";
+    existing.quantity = Math.max(1, parseInt(q.quantity) || 30);
+    existing.risk = {
+      ...existing.risk,
+      maxDailyLossPoints: Math.max(1, parseInt(q.maxDailyLossPoints) || 100),
+      maxTradesPerDay:    Math.max(1, parseInt(q.maxTradesPerDay) || 5),
+      dailyLossCap:       Math.max(1, parseInt(q.dailyLossCap) || 200),
+    };
+    existing.tradeManagement = {
+      ...existing.tradeManagement,
+      stopLossPoints: Math.max(1, parseInt(q.stopLossPoints) || 100),
+      targetPoints:   Math.max(0, parseInt(q.targetPoints) || 0),
+    };
+    existing.optionSelection = {
+      ...existing.optionSelection,
+      minPremium: Math.max(1, parseInt(q.minPremium) || 450),
+      maxPremium: Math.max(1, parseInt(q.maxPremium) || 600),
+    };
+    fs.writeFileSync(settingsPath, JSON.stringify(existing, null, 2));
+    res.redirect("/paper-trade?tab=autobot&msg=Bot+config+saved+successfully");
+  } catch (e: any) {
+    res.redirect("/paper-trade?tab=autobot&err=Failed+to+save+config:+" + encodeURIComponent(e.message));
+  }
+});
+
+// ── POST /paper-trade/schedule-trade — admin adds a scheduled/conditional trade ─
+app.post("/paper-trade/schedule-trade", requireAuth, async (req: Request, res: Response) => {
+  try {
+    const BOT_DIR = "/home/ubuntu/trading-bot";
+    const schPath = `${BOT_DIR}/scheduled-trades.json`;
+    let list: any[] = [];
+    try { list = JSON.parse(fs.readFileSync(schPath, "utf-8")); } catch {}
+    const q = req.body;
+    const mode = q.triggerMode || "price";
+    const id = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+    let entry: any = { id, triggerMode: mode, status: "pending", createdAt: new Date().toISOString() };
+
+    if (mode === "price") {
+      const symbol = q.symbol === "__custom__" ? (q.symbolCustom || "").toUpperCase().trim() : q.symbol;
+      if (!symbol) return res.redirect("/paper-trade?tab=autobot&err=Symbol+is+required");
+      const triggerPrice = parseFloat(q.triggerPrice);
+      if (!triggerPrice || triggerPrice <= 0) return res.redirect("/paper-trade?tab=autobot&err=Invalid+trigger+price");
+      Object.assign(entry, {
+        symbol, tradeType: q.tradeType === "EQUITY" ? "EQUITY" : "OPTIONS",
+        direction: q.direction,
+        triggerPrice, triggerCondition: ["above","below","touch"].includes(q.triggerCondition) ? q.triggerCondition : "above",
+        stopLossPoints: Math.max(1, parseInt(q.stopLossPoints) || 50),
+        targetPoints: Math.max(0, parseInt(q.targetPoints) || 0),
+        quantity: Math.max(0, parseInt(q.quantity) || 0),
+      });
+      if (q.expiryDate) entry.expiryDate = q.expiryDate;
+      if (q.note?.trim()) entry.note = q.note.trim().slice(0, 80);
+
+    } else if (mode === "pick") {
+      const pickId = parseInt(q.pickId);
+      if (!pickId) return res.redirect("/paper-trade?tab=autobot&err=Select+a+pick");
+      const sym = (q.pickSymbol || "").toUpperCase().trim();
+      if (!sym) return res.redirect("/paper-trade?tab=autobot&err=Pick+symbol+missing");
+      Object.assign(entry, {
+        symbol: sym, tradeType: "EQUITY",
+        direction: q.pickDirection || "LONG",
+        pickId,
+        stopLossPrice: parseFloat(q.pickStopLoss) || 0,
+        targetPrice: parseFloat(q.pickTarget) || 0,
+        quantity: Math.max(0, parseInt(q.pickQty) || 0),
+      });
+      if (q.pickNote?.trim()) entry.note = q.pickNote.trim().slice(0, 80);
+
+    } else if (mode === "indicator") {
+      const sym = (q.indSymbol === "__custom__" ? "" : q.indSymbol || "").toUpperCase().trim();
+      if (!sym) return res.redirect("/paper-trade?tab=autobot&err=Symbol+is+required");
+      const validIndicators = ["RSI","MACD","EMA_CROSS","VWAP","BB","SUPERTREND","STOCH"];
+      Object.assign(entry, {
+        symbol: sym, tradeType: q.indTradeType === "EQUITY" ? "EQUITY" : "OPTIONS",
+        indicator: validIndicators.includes(q.indicator) ? q.indicator : "RSI",
+        indCondition: q.indCondition === "SELL" ? "SELL" : "BUY",
+        indTimeframe: q.indTimeframe || "5m",
+        rsiPeriod: parseInt(q.rsiPeriod) || 14,
+        rsiLevel: parseInt(q.rsiLevel) || 30,
+        emaFast: parseInt(q.emaFast) || 9,
+        emaSlow: parseInt(q.emaSlow) || 21,
+        stopLossPoints: Math.max(1, parseInt(q.indStopLoss) || 50),
+        targetPoints: Math.max(0, parseInt(q.indTarget) || 0),
+        quantity: Math.max(0, parseInt(q.indQty) || 0),
+        maxTriggers: Math.max(0, parseInt(q.indMaxTriggers) || 1),
+        triggeredCount: 0,
+      });
+      if (q.indNote?.trim()) entry.note = q.indNote.trim().slice(0, 80);
+    }
+
+    list.push(entry);
+    fs.writeFileSync(schPath, JSON.stringify(list, null, 2));
+    res.redirect("/paper-trade?tab=autobot&msg=Trade+scheduled+successfully");
+  } catch (e: any) {
+    res.redirect("/paper-trade?tab=autobot&err=Failed+to+schedule:+" + encodeURIComponent(e.message));
+  }
+});
+
+// ── POST /paper-trade/cancel-schedule — admin cancels a pending scheduled trade ─
+app.post("/paper-trade/cancel-schedule", requireAuth, async (req: Request, res: Response) => {
+  try {
+    const BOT_DIR = "/home/ubuntu/trading-bot";
+    const schPath = `${BOT_DIR}/scheduled-trades.json`;
+    let list: any[] = [];
+    try { list = JSON.parse(fs.readFileSync(schPath, "utf-8")); } catch {}
+    const id = (req.body.id || "").toString().trim();
+    list = list.map((s: any) => s.id === id ? { ...s, status: "cancelled", cancelledAt: new Date().toISOString() } : s);
+    fs.writeFileSync(schPath, JSON.stringify(list, null, 2));
+    res.redirect("/paper-trade?tab=autobot&msg=Schedule+cancelled");
+  } catch (e: any) {
+    res.redirect("/paper-trade?tab=autobot&err=Failed+to+cancel:+" + encodeURIComponent(e.message));
+  }
+});
+
+
 // ── Route registrations for portfolio page ─────────────────────────────────────
 app.get("/my-paper-trade", requireAdmin, paperPortfolioPage);
-app.get("/my-portfolio",   requireAuth, featureGate("feature_my_paper_trade", "Paper Trading"), premiumGate("paper_trade_premium_only", "Paper Trading"), paperPortfolioPage);
+app.get("/my-portfolio",   requireAuth, (_req, res) => res.redirect("/dashboard"));
+
+// ── GET /dashboard — unified trading dashboard (manual + bot trades) ───────────
+app.get("/dashboard", requireAuth, async (req: Request, res: Response) => {
+  try {
+  const userId   = req.session.userId!;
+  const userName = req.session.userName || "Trader";
+  const isAdmin  = req.session.userRole === "admin";
+
+  // Manual paper trade data
+  const [port, positions, trades, activeSub, allPicks] = await Promise.all([
+    getPaperPortfolio(userId),
+    getPaperPositions(userId),
+    getPaperTrades(userId, 200),
+    getActiveSubscription(userId),
+    getAllPicks(),
+  ]);
+  const isPremium = !!activeSub || req.session.userRole === "premium" || isAdmin;
+
+  // Live prices for open positions
+  const dbPrices = positions.length
+    ? await dbAll<{ symbol: string; price: number | null }>(
+        `SELECT symbol, price FROM prices WHERE symbol IN (${positions.map(() => "?").join(",")})`,
+        positions.map((p: any) => p.symbol)
+      )
+    : [];
+  const priceMap: Record<string, number> = {};
+  for (const r of dbPrices) if (r.price != null) priceMap[r.symbol] = r.price;
+
+  // Extend priceMap with picks symbols
+  const pickSymbolsNeeded = [...new Set(allPicks.map((p: any) => p.stock_symbol))].filter((s: string) => !priceMap[s]);
+  if (pickSymbolsNeeded.length > 0) {
+    const pp = await dbAll<{ symbol: string; price: number | null }>(
+      `SELECT symbol, price FROM prices WHERE symbol IN (${pickSymbolsNeeded.map(() => "?").join(",")})`,
+      pickSymbolsNeeded
+    );
+    for (const r of pp) if (r.price != null) priceMap[r.symbol] = r.price;
+  }
+
+  // Picks data
+  const inPositionSymbols = new Set([
+    ...allPicks.filter((p: any) => p.result === "entry_triggered").map((p: any) => p.stock_symbol.toUpperCase()),
+    ...positions.map((p: any) => p.symbol.toUpperCase()),
+  ]);
+  const picksInPosition  = allPicks.filter((p: any) => p.result === "entry_triggered");
+  const latestPendingDate = allPicks
+    .filter((p: any) => !p.result)
+    .sort((a: any, b: any) => (b.published_at || "").localeCompare(a.published_at || ""))[0]
+    ?.published_at?.slice(0, 10);
+  const pendingOrders = latestPendingDate
+    ? allPicks.filter((p: any) => !p.result && (p.published_at || "").slice(0, 10) === latestPendingDate)
+    : [];
+  const pendingNonDupe = pendingOrders.filter((p: any) => !inPositionSymbols.has(p.stock_symbol.toUpperCase()));
+  const resolvedPicks   = allPicks.filter((p: any) => p.result === "target_hit" || p.result === "sl_hit");
+
+  const posRows = positions.map((p: any) => {
+    const livePrice = priceMap[p.symbol] ?? p.avg_price;
+    const pnl = parseFloat(((livePrice - p.avg_price) * p.qty).toFixed(2));
+    const pnlPct = parseFloat(((pnl / p.invested) * 100).toFixed(2));
+    return { ...p, livePrice, pnl, pnlPct };
+  });
+
+  const sellTrades = trades.filter((t: any) => t.action === "SELL");
+  const realizedPnl = parseFloat(sellTrades.reduce((s: number, t: any) => s + (t.pnl ?? 0), 0).toFixed(2));
+  const wins    = sellTrades.filter((t: any) => (t.pnl ?? 0) > 0).length;
+  const losses  = sellTrades.filter((t: any) => (t.pnl ?? 0) <= 0).length;
+  const winRate = sellTrades.length > 0 ? ((wins / sellTrades.length) * 100).toFixed(1) : "—";
+  const investedTotal = posRows.reduce((s: number, p: any) => s + p.invested, 0);
+  const curValTotal   = posRows.reduce((s: number, p: any) => s + (p.livePrice * p.qty), 0);
+  const portfolioValue = parseFloat((port.balance + curValTotal).toFixed(2));
+  const totalPnl = parseFloat((portfolioValue - 100000).toFixed(2));
+
+  // Weekly P&L (last 7 days)
+  const _7dAgo = new Date(Date.now() - 7 * 86400000).toISOString().slice(0, 10);
+  const weekTrades = sellTrades.filter((t: any) => t.traded_at >= _7dAgo);
+  const weekPnl    = parseFloat(weekTrades.reduce((s: number, t: any) => s + (t.pnl ?? 0), 0).toFixed(2));
+
+  // Monthly P&L grouping (last 6 months)
+  const monthMap: Record<string, { pnl: number; trades: number; wins: number }> = {};
+  for (const t of sellTrades) {
+    const mo = t.traded_at.slice(0, 7);
+    if (!monthMap[mo]) monthMap[mo] = { pnl: 0, trades: 0, wins: 0 };
+    monthMap[mo].pnl    += t.pnl ?? 0;
+    monthMap[mo].trades += 1;
+    if ((t.pnl ?? 0) > 0) monthMap[mo].wins += 1;
+  }
+  const monthKeys = Object.keys(monthMap).sort().slice(-6);
+
+  // Weekly grouping (last 8 weeks)
+  function weekKey(dateStr: string): string {
+    if (!dateStr) return "";
+    const d = new Date(dateStr);
+    if (isNaN(d.getTime())) return "";
+    const day = d.getDay();
+    const mon = new Date(d); mon.setDate(d.getDate() - (day === 0 ? 6 : day - 1));
+    return mon.toISOString().slice(0, 10);
+  }
+  const weekMap: Record<string, { pnl: number; trades: number; wins: number }> = {};
+  for (const t of sellTrades) {
+    const wk = weekKey(t.traded_at);
+    if (!wk) continue;
+    if (!weekMap[wk]) weekMap[wk] = { pnl: 0, trades: 0, wins: 0 };
+    weekMap[wk].pnl    += t.pnl ?? 0;
+    weekMap[wk].trades += 1;
+    if ((t.pnl ?? 0) > 0) weekMap[wk].wins += 1;
+  }
+  const weekKeys = Object.keys(weekMap).sort().slice(-8);
+
+  // Bot trades data — admin only
+  const BOT_DIR = "/home/ubuntu/trading-bot";
+  const botClosed: any[] = isAdmin ? (() => {
+    try { return (JSON.parse(fs.readFileSync(`${BOT_DIR}/trades.json`, "utf-8")) as any[]).filter((t: any) => (t.exitPrice ?? 0) > 0); }
+    catch { return []; }
+  })() : [];
+  const botWins      = botClosed.filter((t: any) => (t.pnl ?? 0) > 0).length;
+  const botTotalPnl  = parseFloat(botClosed.reduce((s: number, t: any) => s + (t.pnl ?? 0), 0).toFixed(2));
+  const botWinRate   = botClosed.length > 0 ? ((botWins / botClosed.length) * 100).toFixed(1) : "—";
+  const botWeekTrades = botClosed.filter((t: any) => {
+    const d = t.exitTime ? new Date(t.exitTime) : null;
+    return d && !isNaN(d.getTime()) && d.toISOString().slice(0,10) >= _7dAgo;
+  });
+  const botWeekPnl = parseFloat(botWeekTrades.reduce((s: number, t: any) => s + (t.pnl ?? 0), 0).toFixed(2));
+
+  // Bot monthly grouping
+  const botMonthMap: Record<string, { pnl: number; trades: number; wins: number }> = {};
+  for (const t of botClosed) {
+    const mo = t.exitTime ? new Date(t.exitTime).toISOString().slice(0, 7) : "";
+    if (!mo) continue;
+    if (!botMonthMap[mo]) botMonthMap[mo] = { pnl: 0, trades: 0, wins: 0 };
+    botMonthMap[mo].pnl    += t.pnl ?? 0;
+    botMonthMap[mo].trades += 1;
+    if ((t.pnl ?? 0) > 0) botMonthMap[mo].wins += 1;
+  }
+  const botMonthKeys = Object.keys(botMonthMap).sort().slice(-6);
+
+  const marketOpen = isMarketHours();
+
+  res.send(`<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>My Dashboard — ZeroScreen</title>
+  <link rel="stylesheet" href="/public/css/style.css">
+  <style>
+    .db-hdr{background:var(--card-bg);border:1px solid var(--border);border-radius:14px;padding:20px 24px;margin-bottom:20px;display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap}
+    .db-kpi-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:10px;margin-bottom:20px}
+    .db-kpi{background:var(--card-bg);border:1px solid var(--border);border-radius:10px;padding:12px 15px}
+    .db-kpi-lbl{font-size:.7rem;text-transform:uppercase;letter-spacing:.06em;color:var(--text-muted);margin-bottom:3px}
+    .db-kpi-val{font-size:1.2rem;font-weight:800;font-variant-numeric:tabular-nums}
+    .db-tabs{display:flex;gap:6px;margin-bottom:18px;flex-wrap:wrap;border-bottom:1px solid var(--border);padding-bottom:12px}
+    .db-tab{padding:7px 18px;border-radius:8px;border:1px solid var(--border);background:transparent;color:var(--text-muted);font-size:.83rem;font-weight:600;cursor:pointer;transition:.15s}
+    .db-tab.active{background:var(--accent);color:#fff;border-color:var(--accent)}
+    .db-panel{display:none}.db-panel.active{display:block}
+    .db-section{font-size:.7rem;font-weight:700;text-transform:uppercase;letter-spacing:.1em;color:var(--text-muted);border-bottom:1px solid var(--border);padding-bottom:7px;margin:20px 0 12px}
+    .db-tbl-wrap{overflow-x:auto;border-radius:12px;border:1px solid var(--border);margin-bottom:4px}
+    .db-tbl{width:100%;border-collapse:collapse;font-size:.86rem}
+    .db-tbl thead tr{background:linear-gradient(135deg,#1e3a5f,#1e40af)}
+    .db-tbl th{text-align:left;padding:11px 13px;font-size:.7rem;text-transform:uppercase;letter-spacing:.07em;color:#e2e8f0;font-weight:700;white-space:nowrap}
+    .db-tbl tbody tr{border-bottom:1px solid var(--border);transition:background .12s}
+    .db-tbl tbody tr:last-child{border-bottom:none}
+    .db-tbl td{padding:10px 13px;vertical-align:middle}
+    .db-tbl tbody tr:hover td{background:var(--hover-bg)}
+    .db-badge-buy{background:#10b98118;color:#10b981;border:1px solid #10b98144;border-radius:20px;padding:3px 10px;font-size:.72rem;font-weight:700;white-space:nowrap}
+    .db-badge-sell{background:#ef444418;color:#ef4444;border:1px solid #ef444444;border-radius:20px;padding:3px 10px;font-size:.72rem;font-weight:700;white-space:nowrap}
+    .db-badge-ce{background:#3b82f618;color:#3b82f6;border:1px solid #3b82f644;border-radius:20px;padding:3px 10px;font-size:.72rem;font-weight:700;white-space:nowrap}
+    .db-badge-pe{background:#ef444418;color:#ef4444;border:1px solid #ef444444;border-radius:20px;padding:3px 10px;font-size:.72rem;font-weight:700;white-space:nowrap}
+    .db-badge-hold{background:#a855f718;color:#a855f7;border:1px solid #a855f744;border-radius:20px;padding:3px 10px;font-size:.72rem;font-weight:700}
+    .db-badge-intra{background:#3b82f618;color:#3b82f6;border:1px solid #3b82f644;border-radius:20px;padding:3px 10px;font-size:.72rem;font-weight:700}
+    .db-green{color:#10b981;font-weight:700}.db-red{color:#ef4444;font-weight:700}.db-muted{color:var(--text-muted)}
+    .db-sell-form{display:inline-flex;gap:5px;align-items:center}
+    .db-sell-btn{background:#ef444420;color:#ef4444;border:1px solid #ef444450;border-radius:5px;padding:3px 10px;font-size:.78rem;cursor:pointer;font-weight:600}
+    .db-mo-row{display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:8px;margin-bottom:10px}
+    .db-mo-card{background:var(--card-bg);border:1px solid var(--border);border-radius:9px;padding:12px 14px}
+    .db-mo-label{font-size:.72rem;color:var(--text-muted);margin-bottom:4px}
+    .db-mo-pnl{font-size:1.1rem;font-weight:800}
+    .db-mo-meta{font-size:.72rem;color:var(--text-muted);margin-top:2px}
+    .db-empty{text-align:center;padding:32px;color:var(--text-muted);font-size:.88rem}
+    .mpt-green{color:#10b981}.mpt-red{color:#ef4444}
+  </style>
+</head>
+<body>
+  ${nav("dashboard", req)}
+  <div class="container" style="max-width:1100px">
+
+    <!-- Header -->
+    <div class="db-hdr">
+      <div>
+        <div style="font-size:1.3rem;font-weight:800;margin-bottom:2px">📊 My Dashboard</div>
+        <div style="font-size:.83rem;color:var(--text-muted)">Hi ${esc(userName)} · ${isPremium ? "👑 Premium" : "🎫 Free"} · ${marketOpen ? "🟢 Market Open" : "🔴 Market Closed"}</div>
+      </div>
+      <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">
+        <a href="/paper-trade" style="background:linear-gradient(135deg,#10b981,#059669);color:#fff;border-radius:9px;padding:9px 20px;font-weight:700;font-size:.85rem;text-decoration:none">+ New Trade</a>
+        <a href="/paper-trade?tab=autobot" style="background:linear-gradient(135deg,#7c3aed,#6366f1);color:#fff;border-radius:9px;padding:9px 20px;font-weight:700;font-size:.85rem;text-decoration:none">🤖 Schedule Bot</a>
+      </div>
+    </div>
+
+    <!-- Flash messages -->
+    ${req.query.msg ? `<div class="mpt-msg mpt-msg-ok" style="padding:12px 16px;border-radius:8px;margin-bottom:14px;background:#10b98122;color:#10b981;border:1px solid #10b98155;font-weight:600">✅ ${esc(req.query.msg as string)}</div>` : ""}
+    ${req.query.err ? `<div class="mpt-msg mpt-msg-err" style="padding:12px 16px;border-radius:8px;margin-bottom:14px;background:#ef444422;color:#ef4444;border:1px solid #ef444455;font-weight:600">❌ ${esc(req.query.err as string)}</div>` : ""}
+
+    <!-- KPI row (collapsible) -->
+    <div style="margin-bottom:10px">
+      <button onclick="this.nextElementSibling.classList.toggle('db-stats-open');this.querySelector('.db-stats-arrow').classList.toggle('db-stats-arrow-open')" style="background:none;border:1px solid var(--border);border-radius:8px;padding:5px 14px;cursor:pointer;display:flex;align-items:center;gap:7px;font-size:.8rem;color:var(--text-muted);font-weight:600">
+        <span>📊 Portfolio Stats</span>
+        <span class="db-stats-arrow" style="font-size:.7rem;transition:transform .2s">▼</span>
+      </button>
+      <div class="db-kpi-collapsible" style="overflow:hidden;max-height:0;transition:max-height .3s ease">
+        <div class="db-kpi-grid" style="margin-top:10px">
+          <div class="db-kpi"><div class="db-kpi-lbl">Portfolio Value</div><div class="db-kpi-val ${portfolioValue >= 100000 ? 'db-green' : 'db-red'}">₹${portfolioValue.toLocaleString("en-IN",{maximumFractionDigits:0})}</div></div>
+          <div class="db-kpi"><div class="db-kpi-lbl">Cash Balance</div><div class="db-kpi-val">₹${port.balance.toLocaleString("en-IN",{maximumFractionDigits:0})}</div></div>
+          <div class="db-kpi"><div class="db-kpi-lbl">Total P&L</div><div class="db-kpi-val ${totalPnl>=0?'db-green':'db-red'}">${totalPnl>=0?"+":""}₹${Math.abs(totalPnl).toLocaleString("en-IN",{maximumFractionDigits:0})}</div></div>
+          <div class="db-kpi"><div class="db-kpi-lbl">This Week (Manual)</div><div class="db-kpi-val ${weekPnl>=0?'db-green':'db-red'}">${weekPnl>=0?"+":""}₹${Math.abs(weekPnl).toLocaleString("en-IN",{maximumFractionDigits:0})}</div></div>
+          <div class="db-kpi"><div class="db-kpi-lbl">Win Rate</div><div class="db-kpi-val ${wins>losses?'db-green':'db-red'}">${winRate}${winRate!=="—"?"%":""}</div></div>
+          <div class="db-kpi"><div class="db-kpi-lbl">Open Positions</div><div class="db-kpi-val" style="color:#f59e0b">${posRows.length}</div></div>
+          ${isAdmin ? `
+          <div class="db-kpi"><div class="db-kpi-lbl">Bot P&L (All Time)</div><div class="db-kpi-val ${botTotalPnl>=0?'db-green':'db-red'}">${botTotalPnl>=0?"+":""}₹${Math.abs(botTotalPnl).toLocaleString("en-IN",{maximumFractionDigits:0})}</div></div>
+          <div class="db-kpi"><div class="db-kpi-lbl">Bot This Week</div><div class="db-kpi-val ${botWeekPnl>=0?'db-green':'db-red'}">${botWeekPnl>=0?"+":""}₹${Math.abs(botWeekPnl).toLocaleString("en-IN",{maximumFractionDigits:0})}</div></div>
+          ` : ""}
+        </div>
+      </div>
+    </div>
+    <style>
+      .db-stats-open { max-height: 300px !important; }
+      .db-stats-arrow-open { transform: rotate(180deg); }
+    </style>
+
+    <!-- Tabs -->
+    <div class="db-tabs">
+      <button class="db-tab active" onclick="dbTab('positions')" id="dbt-positions">📂 Positions (${posRows.length})</button>
+      <button class="db-tab" onclick="dbTab('manual')" id="dbt-manual">🛒 My Trades (${sellTrades.length})</button>
+
+      <button class="db-tab" onclick="dbTab('weekly')" id="dbt-weekly">📅 Weekly</button>
+      <button class="db-tab" onclick="dbTab('monthly')" id="dbt-monthly">📆 Monthly</button>
+      ${isAdmin ? `<button class="db-tab" onclick="dbTab('picks')" id="dbt-picks">📌 Picks Tracker <span style="background:#a78bfa22;color:#a78bfa;border-radius:10px;padding:1px 7px;font-size:.72rem;margin-left:3px">${picksInPosition.length + pendingNonDupe.length}</span></button>` : ""}
+    </div>
+
+    <!-- ── PANEL: POSITIONS ── -->
+    <div class="db-panel active" id="dbp-positions">
+      ${posRows.length === 0
+        ? `<div class="db-empty">No open positions. <a href="/paper-trade" style="color:var(--accent)">Place a trade →</a></div>`
+        : `<div class="db-tbl-wrap"><table class="db-tbl">
+            <thead><tr><th>Symbol</th><th>Type</th><th>Qty</th><th>Avg ₹</th><th>Live ₹</th><th>P&L</th><th>P&L%</th><th>Action</th></tr></thead>
+            <tbody>${posRows.map((p: any) => `
+            <tr>
+              <td><a href="/stock/${p.symbol}" style="font-weight:700;color:var(--accent);text-decoration:none">${p.symbol}</a></td>
+              <td><span class="${p.trade_type==='HOLDING'?'mpt-type-hold':'mpt-type-intra'}" style="background:${p.trade_type==='HOLDING'?'#a855f722':'#3b82f622'};color:${p.trade_type==='HOLDING'?'#a855f7':'#3b82f6'};border:1px solid ${p.trade_type==='HOLDING'?'#a855f755':'#3b82f655'};border-radius:4px;padding:2px 7px;font-size:.7rem;font-weight:700">${p.trade_type==='HOLDING'?'HOLD':'INTRA'}</span></td>
+              <td>${p.qty}</td>
+              <td>₹${p.avg_price.toFixed(2)}</td>
+              <td>₹${p.livePrice.toFixed(2)}</td>
+              <td class="${p.pnl>=0?'db-green':'db-red'}">${p.pnl>=0?"+":""}₹${p.pnl.toLocaleString("en-IN",{maximumFractionDigits:0})}</td>
+              <td class="${p.pnlPct>=0?'db-green':'db-red'}">${p.pnlPct>=0?"+":""}${p.pnlPct}%</td>
+              <td>
+                <form method="POST" action="/my-paper-trade/sell" class="db-sell-form">
+                  <input type="hidden" name="symbol" value="${p.symbol}">
+                  <input type="number" name="qty" min="1" max="${p.qty}" value="${p.qty}" style="width:55px;padding:3px 7px;border-radius:5px;border:1px solid var(--border);background:var(--input-bg);color:var(--text);font-size:.8rem">
+                  <input type="hidden" name="price" value="${p.livePrice.toFixed(2)}">
+                  <button type="submit" class="db-sell-btn">Sell</button>
+                </form>
+              </td>
+            </tr>`).join("")}
+            </tbody></table></div>`}
+    </div>
+
+    <!-- ── PANEL: MANUAL TRADES ── -->
+    <div class="db-panel" id="dbp-manual">
+      ${sellTrades.length === 0
+        ? `<div class="db-empty">No closed trades yet. <a href="/paper-trade" style="color:var(--accent)">Start trading →</a></div>`
+        : `<div class="db-tbl-wrap"><table class="db-tbl">
+            <thead><tr><th>Date</th><th>Symbol</th><th>Type</th><th>Qty</th><th>Buy ₹</th><th>Sell ₹</th><th>P&L</th><th>P&L%</th></tr></thead>
+            <tbody>${sellTrades.slice(0,100).map((t: any) => {
+              const buyTrade = trades.find((b: any) => b.action==='BUY' && b.symbol===t.symbol && b.traded_at <= t.traded_at);
+              const buyPrice = buyTrade?.price ?? 0;
+              const pnlPct = buyPrice > 0 ? (((t.price - buyPrice) / buyPrice) * 100).toFixed(1) : "—";
+              return `<tr>
+                <td class="db-muted" style="font-size:.78rem">${t.traded_at.slice(0,10)}</td>
+                <td><a href="/stock/${t.symbol}" style="font-weight:700;color:var(--accent);text-decoration:none">${t.symbol}</a></td>
+                <td><span style="background:${t.trade_type==='HOLDING'?'#a855f722':'#3b82f622'};color:${t.trade_type==='HOLDING'?'#a855f7':'#3b82f6'};border:1px solid ${t.trade_type==='HOLDING'?'#a855f755':'#3b82f655'};border-radius:4px;padding:2px 7px;font-size:.7rem;font-weight:700">${t.trade_type==='HOLDING'?'HOLD':'INTRA'}</span></td>
+                <td>${t.qty}</td>
+                <td>${buyPrice > 0 ? "₹"+buyPrice.toFixed(2) : "—"}</td>
+                <td>₹${t.price.toFixed(2)}</td>
+                <td class="${(t.pnl??0)>=0?'db-green':'db-red'}">${(t.pnl??0)>=0?"+":""}₹${(t.pnl??0).toLocaleString("en-IN",{maximumFractionDigits:0})}</td>
+                <td class="${(t.pnl??0)>=0?'db-green':'db-red'}">${pnlPct !== "—" ? (parseFloat(pnlPct)>=0?"+":"")+pnlPct+"%" : "—"}</td>
+              </tr>`;}).join("")}
+            </tbody></table></div>`}
+    </div>
+
+    <!-- ── PANEL: BOT TRADES (removed - admin uses /my-paper-trade) ── -->
+    ${false ? `<div class="db-panel" id="dbp-bot">
+      <div style="margin-bottom:14px">
+      <div class="db-kpi-grid" style="margin-bottom:16px">
+        <div class="db-kpi"><div class="db-kpi-lbl">Bot Total P&L</div><div class="db-kpi-val ${botTotalPnl>=0?'db-green':'db-red'}">${botTotalPnl>=0?"+":""}₹${Math.abs(botTotalPnl).toLocaleString("en-IN",{maximumFractionDigits:0})}</div></div>
+        <div class="db-kpi"><div class="db-kpi-lbl">Closed Trades</div><div class="db-kpi-val">${botClosed.length}</div></div>
+        <div class="db-kpi"><div class="db-kpi-lbl">Win Rate</div><div class="db-kpi-val ${botWins>botClosed.length-botWins?'db-green':'db-red'}">${botWinRate}${botWinRate!=="—"?"%":""}</div></div>
+        <div class="db-kpi"><div class="db-kpi-lbl">This Week</div><div class="db-kpi-val ${botWeekPnl>=0?'db-green':'db-red'}">${botWeekPnl>=0?"+":""}₹${Math.abs(botWeekPnl).toLocaleString("en-IN",{maximumFractionDigits:0})}</div></div>
+      </div>
+      ${botClosed.length === 0
+        ? `<div class="db-empty">No bot trades yet · <a href="/signals" style="color:var(--accent)">View signals →</a></div>`
+        : `<div class="db-tbl-wrap"><table class="db-tbl">
+            <thead><tr><th>Date</th><th>Symbol</th><th>Dir</th><th>Entry ₹</th><th>Exit ₹</th><th>P&L</th><th>Duration</th><th>Reason</th></tr></thead>
+            <tbody>${[...botClosed].reverse().slice(0,100).map((t: any) => {
+              const dStr = t.exitTime ? new Date(t.exitTime).toLocaleDateString("en-IN",{timeZone:"Asia/Kolkata",day:"2-digit",month:"short"}) : "—";
+              const durMs = t.exitTime && t.entryTime ? new Date(t.exitTime).getTime() - new Date(t.entryTime).getTime() : 0;
+              const durStr = durMs > 0 ? (durMs < 3600000 ? Math.round(durMs/60000)+"m" : (durMs/3600000).toFixed(1)+"h") : "—";
+              return `<tr>
+                <td class="db-muted" style="font-size:.78rem">${dStr}</td>
+                <td style="font-weight:700">${t.symbol||"—"}</td>
+                <td><span class="${(t.direction||'')==='CE'?'db-badge-ce':'db-badge-pe'}">${t.direction||"—"}</span></td>
+                <td>${(t.entryPrice??0)>0?"₹"+(t.entryPrice??0).toFixed(1):"—"}</td>
+                <td>${(t.exitPrice??0)>0?"₹"+(t.exitPrice??0).toFixed(1):"—"}</td>
+                <td class="${(t.pnl??0)>=0?'db-green':'db-red'}">${(t.pnl??0)>=0?"+":""}₹${(t.pnl??0).toLocaleString("en-IN",{maximumFractionDigits:0})}</td>
+                <td class="db-muted">${durStr}</td>
+                <td class="db-muted" style="font-size:.75rem">${t.exitReason||"—"}</td>
+              </tr>`;}).join("")}
+            </tbody></table></div>`}
+    </div>` : ""}
+
+    <!-- ── PANEL: WEEKLY ── -->
+    <div class="db-panel" id="dbp-weekly">
+      <div class="db-section">Manual Trades — Last 8 Weeks</div>
+      ${weekKeys.length === 0
+        ? `<div class="db-empty">No closed trades yet — weekly P&amp;L will appear here once you close positions. <a href="/paper-trade" style="color:var(--accent)">Start trading →</a></div>`
+        : `<div class="db-mo-row">${weekKeys.slice().reverse().map(wk => {
+            const w = weekMap[wk];
+            const label = new Date(wk).toLocaleDateString("en-IN",{day:"2-digit",month:"short"});
+            const wr = w.trades > 0 ? ((w.wins/w.trades)*100).toFixed(0) : "0";
+            return `<div class="db-mo-card">
+              <div class="db-mo-label">W/C ${label}</div>
+              <div class="db-mo-pnl ${w.pnl>=0?'db-green':'db-red'}">${w.pnl>=0?"+":""}₹${Math.abs(w.pnl).toLocaleString("en-IN",{maximumFractionDigits:0})}</div>
+              <div class="db-mo-meta">${w.trades} trades · ${wr}% win</div>
+            </div>`;}).join("")}</div>`}
+      ${isAdmin ? (() => {
+        const botWeekMap: Record<string, { pnl: number; trades: number; wins: number }> = {};
+        for (const t of botClosed) {
+          const exitD = t.exitTime ? new Date(t.exitTime) : null;
+          const wk = weekKey(exitD && !isNaN(exitD.getTime()) ? exitD.toISOString().slice(0,10) : "");
+          if (!wk) continue;
+          if (!botWeekMap[wk]) botWeekMap[wk] = { pnl: 0, trades: 0, wins: 0 };
+          botWeekMap[wk].pnl    += t.pnl ?? 0;
+          botWeekMap[wk].trades += 1;
+          if ((t.pnl ?? 0) > 0) botWeekMap[wk].wins += 1;
+        }
+        const bwk = Object.keys(botWeekMap).sort().slice(-8);
+        const inner = bwk.length === 0 ? `<div class="db-empty">No bot weekly data yet</div>`
+          : `<div class="db-mo-row">${bwk.slice().reverse().map(wk => {
+              const w = botWeekMap[wk];
+              const label = new Date(wk).toLocaleDateString("en-IN",{day:"2-digit",month:"short"});
+              const wr = w.trades > 0 ? ((w.wins/w.trades)*100).toFixed(0) : "0";
+              return `<div class="db-mo-card">
+                <div class="db-mo-label">W/C ${label}</div>
+                <div class="db-mo-pnl ${w.pnl>=0?'db-green':'db-red'}">${w.pnl>=0?"+":""}₹${Math.abs(w.pnl).toLocaleString("en-IN",{maximumFractionDigits:0})}</div>
+                <div class="db-mo-meta">${w.trades} trades · ${wr}% win</div>
+              </div>`;}).join("")}</div>`;
+        return `<div class="db-section">Bot Trades — Last 8 Weeks</div>${inner}`;
+      })() : ""}
+    </div>
+
+    <!-- ── PANEL: MONTHLY ── -->
+    <div class="db-panel" id="dbp-monthly">
+      <div class="db-section">Manual Trades — Monthly P&L</div>
+      ${monthKeys.length === 0
+        ? `<div class="db-empty">No closed trades yet — monthly P&amp;L will appear here once you close positions. <a href="/paper-trade" style="color:var(--accent)">Start trading →</a></div>`
+        : `<div class="db-mo-row">${monthKeys.slice().reverse().map(mo => {
+            const m = monthMap[mo];
+            const [y, mn] = mo.split("-");
+            const label = new Date(parseInt(y), parseInt(mn)-1, 1).toLocaleString("en-IN",{month:"long",year:"2-digit"});
+            const wr = m.trades > 0 ? ((m.wins/m.trades)*100).toFixed(0) : "0";
+            return `<div class="db-mo-card">
+              <div class="db-mo-label">${label}</div>
+              <div class="db-mo-pnl ${m.pnl>=0?'db-green':'db-red'}">${m.pnl>=0?"+":""}₹${Math.abs(m.pnl).toLocaleString("en-IN",{maximumFractionDigits:0})}</div>
+              <div class="db-mo-meta">${m.trades} trades · ${wr}% win</div>
+            </div>`;}).join("")}
+          </div>
+          <div class="db-tbl-wrap"><table class="db-tbl">
+            <thead><tr><th>Month</th><th>Trades</th><th>Wins</th><th>Win Rate</th><th>P&L</th></tr></thead>
+            <tbody>${monthKeys.slice().reverse().map(mo => {
+              const m = monthMap[mo]; const [y, mn] = mo.split("-");
+              const label = new Date(parseInt(y), parseInt(mn)-1, 1).toLocaleString("en-IN",{month:"short",year:"numeric"});
+              const wr = m.trades > 0 ? ((m.wins/m.trades)*100).toFixed(1) : "0";
+              return `<tr>
+                <td style="font-weight:700">${label}</td>
+                <td>${m.trades}</td><td class="db-green">${m.wins}</td>
+                <td class="${parseFloat(wr)>=50?'db-green':'db-red'}">${wr}%</td>
+                <td class="${m.pnl>=0?'db-green':'db-red'}" style="font-weight:700">${m.pnl>=0?"+":""}₹${Math.abs(m.pnl).toLocaleString("en-IN",{maximumFractionDigits:0})}</td>
+              </tr>`;}).join("")}
+            </tbody></table></div>`}
+      ${isAdmin ? (() => {
+        const inner = botMonthKeys.length === 0 ? `<div class="db-empty">No bot monthly data yet</div>`
+          : `<div class="db-mo-row">${botMonthKeys.slice().reverse().map(mo => {
+              const m = botMonthMap[mo]; const [y, mn] = mo.split("-");
+              const label = new Date(parseInt(y), parseInt(mn)-1, 1).toLocaleString("en-IN",{month:"long",year:"2-digit"});
+              const wr = m.trades > 0 ? ((m.wins/m.trades)*100).toFixed(0) : "0";
+              return `<div class="db-mo-card">
+                <div class="db-mo-label">${label}</div>
+                <div class="db-mo-pnl ${m.pnl>=0?'db-green':'db-red'}">${m.pnl>=0?"+":""}₹${Math.abs(m.pnl).toLocaleString("en-IN",{maximumFractionDigits:0})}</div>
+                <div class="db-mo-meta">${m.trades} trades · ${wr}% win</div>
+              </div>`;}).join("")}</div>`;
+        return `<div class="db-section">Bot Trades — Monthly P&L</div>${inner}`;
+      })() : ""}
+    </div>
+
+    <!-- ── PANEL: PICKS TRACKER (admin only) ── -->
+    ${isAdmin ? `<div class="db-panel" id="dbp-picks">
+      <style>
+        .ptk-tabs{display:flex;gap:6px;margin-bottom:14px;flex-wrap:wrap}
+        .ptk-tab{padding:6px 16px;border-radius:20px;border:1px solid var(--border);background:var(--input-bg);color:var(--text-muted);font-size:.83rem;font-weight:600;cursor:pointer;transition:.15s}
+        .ptk-tab.ptk-active{background:var(--accent);color:#fff;border-color:var(--accent)}
+        .ptk-panel{display:none}.ptk-panel.ptk-show{display:block}
+        .ptk-badge{display:inline-block;min-width:20px;height:18px;line-height:18px;border-radius:9px;text-align:center;font-size:.72rem;font-weight:800;padding:0 5px;margin-left:4px;background:var(--bg2);color:var(--text-muted)}
+        .pb-bullish{background:#10b98122;color:#10b981;border:1px solid #10b98144;border-radius:4px;padding:2px 8px;font-size:.72rem;font-weight:700}
+        .pb-bearish{background:#ef444422;color:#ef4444;border:1px solid #ef444444;border-radius:4px;padding:2px 8px;font-size:.72rem;font-weight:700}
+      </style>
+      <div class="ptk-tabs">
+        <div class="ptk-tab ptk-active" id="ptk-t-inpos" onclick="ptkTab('inpos',this)">🟢 In Position <span class="ptk-badge" style="background:rgba(16,185,129,.15);color:#10b981">${picksInPosition.length}</span></div>
+        <div class="ptk-tab" id="ptk-t-pend" onclick="ptkTab('pend',this)">⏳ Pending <span class="ptk-badge" style="${pendingNonDupe.length ? "background:rgba(167,139,250,.15);color:#a78bfa" : ""}">${pendingNonDupe.length}</span></div>
+        <div class="ptk-tab" id="ptk-t-exec" onclick="ptkTab('exec',this)">✅ Executed <span class="ptk-badge" style="${resolvedPicks.length ? "background:rgba(245,158,11,.15);color:#f59e0b" : ""}">${resolvedPicks.length}</span></div>
+      </div>
+
+      <div class="ptk-panel ptk-show" id="ptk-p-inpos">
+        ${picksInPosition.length === 0
+          ? `<div class="db-empty">No picks currently in position.</div>`
+          : (() => {
+              // compute per-row P&L and totals
+              let totalPnlPct = 0, countWithCmp = 0;
+              const rows = picksInPosition.map((p: any) => {
+                const lp = priceMap[p.stock_symbol];
+                const ep = p.entry_price ?? ((p.entry_low + p.entry_high) / 2);
+                const mult = p.direction === "BULLISH" ? 1 : -1;
+                const pnlPct = lp && ep ? parseFloat((((lp - ep) / ep) * 100 * mult).toFixed(2)) : null;
+                if (pnlPct !== null) { totalPnlPct += pnlPct; countWithCmp++; }
+                return { p, lp, ep, pnlPct };
+              });
+              const avgPnlPct = countWithCmp > 0 ? (totalPnlPct / countWithCmp).toFixed(2) : null;
+              const totalPnlAmt = rows.reduce((s: number, r: any) => {
+                const pnlAmt = r.lp && r.ep ? parseFloat(((r.lp - r.ep) * (r.p.direction === "BULLISH" ? 1 : -1)).toFixed(2)) : 0;
+                return s + pnlAmt;
+              }, 0);
+              const inProfit = rows.filter((r: any) => r.pnlPct !== null && r.pnlPct > 0).length;
+              const inLoss = rows.filter((r: any) => r.pnlPct !== null && r.pnlPct < 0).length;
+              const summaryHtml = `<div style="display:grid;grid-template-columns:2fr 1fr 1fr 1fr;gap:12px;margin-bottom:18px">
+                <div style="background:linear-gradient(135deg,${totalPnlAmt>=0?'#052e16,#166534':'#450a0a,#991b1b'});border-radius:14px;padding:18px 22px;display:flex;flex-direction:column;gap:4px">
+                  <span style="font-size:.72rem;color:rgba(255,255,255,.7);text-transform:uppercase;letter-spacing:.08em;font-weight:600">Overall Unrealized P&amp;L</span>
+                  <span style="font-size:1.9rem;font-weight:900;color:#fff;line-height:1.1">${totalPnlAmt>=0?"+":""}₹${Math.abs(totalPnlAmt).toLocaleString("en-IN",{maximumFractionDigits:2})}</span>
+                  ${avgPnlPct !== null ? `<span style="font-size:.85rem;color:rgba(255,255,255,.75);font-weight:600">Avg ${parseFloat(avgPnlPct)>=0?"+":""}${avgPnlPct}% per pick</span>` : ""}
+                </div>
+                <div style="background:var(--card-bg);border:1px solid var(--border);border-radius:14px;padding:16px 18px;display:flex;flex-direction:column;gap:4px">
+                  <span style="font-size:.7rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:.07em">Positions</span>
+                  <span style="font-size:1.6rem;font-weight:800">${picksInPosition.length}</span>
+                </div>
+                <div style="background:var(--card-bg);border:1px solid var(--border);border-radius:14px;padding:16px 18px;display:flex;flex-direction:column;gap:4px">
+                  <span style="font-size:.7rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:.07em">In Profit</span>
+                  <span style="font-size:1.6rem;font-weight:800;color:#10b981">${inProfit}</span>
+                </div>
+                <div style="background:var(--card-bg);border:1px solid var(--border);border-radius:14px;padding:16px 18px;display:flex;flex-direction:column;gap:4px">
+                  <span style="font-size:.7rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:.07em">In Loss</span>
+                  <span style="font-size:1.6rem;font-weight:800;color:#ef4444">${inLoss}</span>
+                </div>
+              </div>`;
+              const tableHtml = `<div class="db-tbl-wrap"><table class="db-tbl">
+                <thead><tr><th>Symbol</th><th>Direction</th><th>Qty</th><th>Entry Price</th><th>Target</th><th>SL</th><th>CMP</th><th>P&amp;L</th><th>Entry At</th></tr></thead>
+                <tbody>${rows.map(({ p, lp, ep, pnlPct }: any) => {
+                  const qty = 1;
+                  const pnlAmt = lp && ep ? parseFloat(((lp - ep) * (p.direction === "BULLISH" ? 1 : -1) * qty).toFixed(2)) : null;
+                  return `<tr>
+                  <td><strong style="color:var(--accent)">${esc(p.stock_symbol)}</strong>${p.company_name ? `<br><span style="color:var(--text-muted);font-size:.7rem">${esc(p.company_name)}</span>` : ""}</td>
+                  <td><span class="${p.direction === "BULLISH" ? "pb-bullish" : "pb-bearish"}">${p.direction}</span></td>
+                  <td style="font-weight:600;color:var(--text-muted)">${qty}</td>
+                  <td style="font-size:.82rem">₹${ep.toFixed(2)}</td>
+                  <td style="color:#10b981;font-size:.8rem">${p.target ? "₹"+p.target : "—"}</td>
+                  <td style="color:#ef4444;font-size:.8rem">${p.stop_loss ? "₹"+p.stop_loss : "—"}</td>
+                  <td style="font-weight:700;color:${lp ? "#3b82f6" : "var(--text-muted)"}">${lp ? "₹"+lp.toFixed(2) : "—"}</td>
+                  <td class="${pnlAmt === null ? "" : pnlAmt >= 0 ? "db-green" : "db-red"}" style="font-weight:700">${pnlAmt === null ? "—" : `<span style="display:block">${pnlAmt >= 0 ? "+" : ""}₹${Math.abs(pnlAmt).toFixed(2)}</span><span style="font-size:.75rem;opacity:.85">${pnlPct !== null ? (pnlPct >= 0 ? "+" : "") + pnlPct + "%" : ""}</span>`}</td>
+                  <td style="color:var(--text-muted);font-size:.78rem">${p.entry_at ? p.entry_at.slice(0,16).replace("T"," ") : "—"}</td>
+                </tr>`;}).join("")}
+                </tbody></table></div>`;
+              return summaryHtml + tableHtml;
+            })()}
+      </div>
+
+      <div class="ptk-panel" id="ptk-p-pend">
+        ${pendingNonDupe.length === 0
+          ? `<div class="db-empty">No pending picks for today.</div>`
+          : `<div class="db-tbl-wrap"><table class="db-tbl">
+              <thead><tr><th>Symbol</th><th>Type</th><th>Direction</th><th>Qty</th><th>Entry Zone</th><th>Target</th><th>SL</th><th>CMP</th></tr></thead>
+              <tbody>${pendingNonDupe.map((p: any) => {
+                const lp = priceMap[p.stock_symbol];
+                const inZone = lp && lp >= p.entry_low && lp <= p.entry_high;
+                return `<tr>
+                  <td><strong>${esc(p.stock_symbol)}</strong>${p.company_name ? `<br><span style="color:var(--text-muted);font-size:.7rem">${esc(p.company_name)}</span>` : ""}</td>
+                  <td style="font-size:.78rem">${(p.pick_type || "intraday").toUpperCase()}</td>
+                  <td><span class="${p.direction === "BULLISH" ? "pb-bullish" : "pb-bearish"}">${p.direction}</span></td>
+                  <td style="font-weight:600;color:var(--text-muted)">1</td>
+                  <td style="color:var(--text-muted);font-size:.8rem;white-space:nowrap">₹${p.entry_low}–${p.entry_high}</td>
+                  <td style="color:#10b981;font-size:.8rem">${p.target ? "₹"+p.target : "—"}</td>
+                  <td style="color:#ef4444;font-size:.8rem">${p.stop_loss ? "₹"+p.stop_loss : "—"}</td>
+                  <td style="font-weight:700;color:${lp ? (inZone ? "#f59e0b" : "#3b82f6") : "var(--text-muted)"};white-space:nowrap">${lp ? "₹"+lp.toFixed(2)+(inZone?" 🔔":"") : "—"}</td>
+                </tr>`;
+              }).join("")}
+              </tbody></table></div>`}
+      </div>
+
+      <div class="ptk-panel" id="ptk-p-exec">
+        ${resolvedPicks.length === 0
+          ? `<div class="db-empty">No executed picks yet.</div>`
+          : `<div class="db-tbl-wrap"><table class="db-tbl">
+              <thead><tr><th>Symbol</th><th>Direction</th><th>Qty</th><th>Result</th><th>Entry ₹</th><th>Result ₹</th><th>P&amp;L</th><th>Date</th></tr></thead>
+              <tbody>${resolvedPicks.slice(0, 50).map((p: any) => {
+                const isWin = p.result === "target_hit";
+                const qty = 1;
+                const ep = p.entry_price;
+                const rp = p.result_price;
+                const mult = p.direction === "BULLISH" ? 1 : -1;
+                const pnlAmt = ep && rp ? parseFloat(((rp - ep) * mult * qty).toFixed(2)) : null;
+                const pnlPct = ep && rp ? parseFloat((((rp - ep) / ep) * 100 * mult).toFixed(2)) : null;
+                return `<tr>
+                  <td><strong style="color:var(--accent)">${esc(p.stock_symbol)}</strong>${p.company_name ? `<br><span style="color:var(--text-muted);font-size:.7rem">${esc(p.company_name)}</span>` : ""}</td>
+                  <td><span class="${p.direction === "BULLISH" ? "pb-bullish" : "pb-bearish"}">${p.direction}</span></td>
+                  <td style="font-weight:600;color:var(--text-muted)">${qty}</td>
+                  <td><span style="background:${isWin ? "#10b98122" : "#ef444422"};color:${isWin ? "#10b981" : "#ef4444"};border:1px solid ${isWin ? "#10b98144" : "#ef444444"};border-radius:20px;padding:3px 10px;font-size:.72rem;font-weight:700;white-space:nowrap">${isWin ? "✅ Target Hit" : "⛔ SL Hit"}</span></td>
+                  <td style="font-size:.84rem">${ep ? "₹"+ep : "—"}</td>
+                  <td style="font-weight:700">${rp ? "₹"+rp : "—"}</td>
+                  <td class="${pnlAmt === null ? "" : pnlAmt >= 0 ? "db-green" : "db-red"}" style="font-weight:700">${pnlAmt === null ? "—" : `<span style="display:block">${pnlAmt >= 0 ? "+" : ""}₹${Math.abs(pnlAmt).toFixed(2)}</span><span style="font-size:.75rem;opacity:.85">${pnlPct !== null ? (pnlPct >= 0 ? "+" : "")+pnlPct+"%" : ""}</span>`}</td>
+                  <td style="color:var(--text-muted);font-size:.78rem">${p.result_at ? p.result_at.slice(0,10) : "—"}</td>
+                </tr>`;
+              }).join("")}
+              </tbody></table></div>`}
+      </div>
+    </div>` : ""}
+
+  </div>
+
+  <script src="/public/js/app.js"></script>
+  <script>
+  function ptkTab(id, el) {
+    document.querySelectorAll('.ptk-tab').forEach(function(b){ b.classList.remove('ptk-active'); });
+    document.querySelectorAll('.ptk-panel').forEach(function(p){ p.classList.remove('ptk-show'); });
+    el.classList.add('ptk-active');
+    var panel = document.getElementById('ptk-p-'+id);
+    if (panel) panel.classList.add('ptk-show');
+  }
+  function dbTab(id) {
+    document.querySelectorAll('.db-tab').forEach(function(b){ b.classList.remove('active'); });
+    document.querySelectorAll('.db-panel').forEach(function(p){ p.classList.remove('active'); });
+    document.getElementById('dbt-'+id).classList.add('active');
+    document.getElementById('dbp-'+id).classList.add('active');
+    try { sessionStorage.setItem('db-tab', id); } catch(e){}
+  }
+  (function(){ try{ var t=new URLSearchParams(location.search).get('tab')||sessionStorage.getItem('db-tab'); if(t) dbTab(t); }catch(e){} })();
+  </script>
+</body>
+</html>`);
+  } catch (err: any) {
+    console.error("[/dashboard] Error:", err);
+    res.status(500).send(`<!DOCTYPE html><html><head><title>Error</title><link rel="stylesheet" href="/public/css/style.css"></head><body>${nav("dashboard", req)}<div class="container" style="padding:40px 0;text-align:center"><h2 style="color:#ef4444">⚠️ Dashboard Error</h2><p style="color:var(--text-muted)">${err?.message || "Unknown error"}</p><a href="/" class="btn-primary" style="margin-top:16px;display:inline-block">Back to Screener</a></div></body></html>`);
+  }
+});
+
+// Redirect old bot-stats and portfolio URLs to unified dashboard
+app.get("/paper-trade/bot-stats", requireAuth, (_req, res) => res.redirect("/dashboard"));
+
 
 // ── GET /api/picks/live — quick counts for JS refresh ─────────────────────────
 app.get("/api/picks/live", requireAuth, async (_req: Request, res: Response) => {
@@ -8018,32 +9368,42 @@ app.get("/dashboard", featureGate("feature_dashboard", "Dashboard"), async (req:
 // ── GET /signals ────────────────────────────────────────────────────────────────
 app.get("/signals", featureGate("feature_signals", "Signals"), (req, res) => {
     const state = readBotJSON("trade-state.json", {});
-    const trades = readBotJSON("trades.json", []);
+    const _rawTrades: any[] = readBotJSON("trades.json", []);
+    const _premMap: Record<string, number> = {};
+    for (const t of _rawTrades) if ((t.exitPrice ?? 0) === 0 && t.premiumEntry > 0) _premMap[`${t.direction}|${(t.entryPrice ?? 0).toFixed(1)}`] = t.premiumEntry;
+    const trades = _rawTrades.map((t: any) => {
+      if (!(t.premiumEntry > 0)) { const k = `${t.direction}|${(t.entryPrice ?? 0).toFixed(1)}`; if (_premMap[k]) return { ...t, premiumEntry: _premMap[k] }; }
+      return t;
+    });
     const hbGuest = readBotJSON("bot-heartbeat.json", null);
     const analytics = computeAnalytics(trades);
     const hasPosition = !!(state && (state.activeTrade || state.mainEntryDone));
     const isAliveGuest = hbGuest?.at ? (Date.now() - new Date(hbGuest.at).getTime()) < 3 * 60 * 1000 : false;
     const hbStatusGuest = (hbGuest?.status || "").toUpperCase();
+    const _nowIST = new Date(new Date().toLocaleString("en-US", { timeZone: "Asia/Kolkata" }));
+    const _istH = _nowIST.getHours(), _istM = _nowIST.getMinutes();
+    const _isMarketHours = (_istH > 9 || (_istH === 9 && _istM >= 15)) && (_istH < 15 || (_istH === 15 && _istM <= 30));
+    const _botSleeping = !isAliveGuest && !_isMarketHours;
     function guestBotLabel() {
-      if (!isAliveGuest) return "Bot offline \u2014 not responding";
+      if (!isAliveGuest) return _botSleeping ? "Bot sleeping \u2014 market closed" : "Bot offline \u2014 not responding";
       if (hasPosition) return "Bot is running a trade";
-      if (hbStatusGuest.includes("WAIT") || hbStatusGuest.includes("9:25")) return "Bot alive \u2014 waiting for market hours (opens 9:25 IST)";
-      return "Bot alive \u2014 scanning BANKNIFTY for signal";
+      if (hbStatusGuest.includes("WAIT") || hbStatusGuest.includes("9:25")) return "Bot alive \u2014 waiting for market to open (9:15 IST)";
+      return "Bot alive \u2014 monitoring the options market";
     }
     function guestBotVal() {
-      if (!isAliveGuest) return "Offline";
+      if (!isAliveGuest) return _botSleeping ? "Sleeping" : "Offline";
       if (hasPosition) return "\u25CF\u00A0ACTIVE";
       if (hbStatusGuest.includes("WAIT") || hbStatusGuest.includes("9:25")) return "Waiting";
-      return "Scanning";
+      return "Monitoring";
     }
     function guestDotCls() {
-      if (!isAliveGuest) return "offline";
+      if (!isAliveGuest) return _botSleeping ? "waiting" : "offline";
       if (hasPosition) return "active";
       if (hbStatusGuest.includes("WAIT") || hbStatusGuest.includes("9:25")) return "waiting";
       return "scanning";
     }
     function guestValCls() {
-      if (!isAliveGuest) return "offline-col";
+      if (!isAliveGuest) return _botSleeping ? "waiting-col" : "offline-col";
       if (hasPosition) return "active-col";
       if (hbStatusGuest.includes("WAIT") || hbStatusGuest.includes("9:25")) return "waiting-col";
       return "scanning-col";
@@ -8072,6 +9432,10 @@ app.get("/signals", featureGate("feature_signals", "Signals"), (req, res) => {
         const an2 = computeAnalytics(trades);
         const hb2 = readBotJSON("bot-heartbeat.json", {});
         const isAlive2 = hb2?.at ? (Date.now() - new Date(hb2.at).getTime()) < 3 * 60 * 1000 : false;
+        const _nowIST2 = new Date(new Date().toLocaleString("en-US", { timeZone: "Asia/Kolkata" }));
+        const _istH2 = _nowIST2.getHours(), _istM2 = _nowIST2.getMinutes();
+        const _isMarket2 = (_istH2 > 9 || (_istH2 === 9 && _istM2 >= 15)) && (_istH2 < 15 || (_istH2 === 15 && _istM2 <= 30));
+        const _sleeping2ssr = !isAlive2 && !_isMarket2;
         const ep2 = state.entryPrice ?? hb2.entryPrice ?? 0;
         const dir2 = state.tradeDirection ?? hb2.direction ?? null;
         const live2 = hb2.livePrice ?? 0;
@@ -8086,7 +9450,15 @@ app.get("/signals", featureGate("feature_signals", "Signals"), (req, res) => {
         const entryIST2 = entryMs2 > 0 ? new Date(entryMs2).toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata", hour: "2-digit", minute: "2-digit" }) : "";
         const mode2 = hb2.mode ?? state.mode ?? "PAPER";
         const todayStr2 = getTodayIST();
-        const todayTradesAll2 = readBotJSON("trades.json", []);
+        const todayTradesAll2 = (() => {
+          const raw: any[] = readBotJSON("trades.json", []);
+          const pMap: Record<string, number> = {};
+          for (const t of raw) if ((t.exitPrice ?? 0) === 0 && t.premiumEntry > 0) pMap[`${t.direction}|${(t.entryPrice ?? 0).toFixed(1)}`] = t.premiumEntry;
+          return raw.map((t: any) => {
+            if (!(t.premiumEntry > 0)) { const k = `${t.direction}|${(t.entryPrice ?? 0).toFixed(1)}`; if (pMap[k]) return { ...t, premiumEntry: pMap[k] }; }
+            return t;
+          });
+        })();
         const closedToday2 = todayTradesAll2.filter((t) => (t.date || "").startsWith(todayStr2) && t.exitPrice && t.exitPrice > 0);
         function fmtTime2(iso) {
             return new Date(iso).toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata", hour: "2-digit", minute: "2-digit" });
@@ -8115,7 +9487,7 @@ app.get("/signals", featureGate("feature_signals", "Signals"), (req, res) => {
       <tr>
         <td class="td-t">${fmtTime2(t.date)}</td>
         <td><span class="d-b d-${(t.direction || "").toLowerCase()}">${t.direction || "—"}</span></td>
-        <td class="td-m">${(t.entryPrice ?? 0).toFixed(1)} → ${(t.exitPrice ?? 0).toFixed(1)}</td>
+        <td class="td-m">${(t.entryPrice ?? 0) > 0 ? (t.entryPrice ?? 0).toFixed(1) : "&mdash;"} &rarr; ${(t.exitPrice ?? 0) > 0 ? (t.exitPrice ?? 0).toFixed(1) : "&mdash;"}</td>
         <td class="td-m ${pnlCls2(t.pnl ?? 0)}" style="font-weight:700">${fmtBoth2(t.pnl ?? 0)}</td>
         <td>${t.reasonExit ? `<span class="rc-b ${rcCls(t.reasonExit)}">${t.reasonExit}</span>` : "—"}</td>
         <td class="td-t">${t.duration ? (t.duration < 60 ? t.duration + "s" : Math.round(t.duration / 60) + "m") : "—"}</td>
@@ -8125,7 +9497,7 @@ app.get("/signals", featureGate("feature_signals", "Signals"), (req, res) => {
       <tr>
         <td class="td-t">${t.date ? fmtDate2(t.date) : "—"}</td>
         <td><span class="d-b d-${(t.direction || "").toLowerCase()}">${t.direction || "—"}</span></td>
-        <td class="td-m">${(t.entryPrice ?? 0).toFixed(0)} → ${(t.exitPrice ?? 0).toFixed(0)}</td>
+        <td class="td-m">${(t.entryPrice ?? 0) > 0 ? (t.entryPrice ?? 0).toFixed(0) : "&mdash;"} &rarr; ${(t.exitPrice ?? 0) > 0 ? (t.exitPrice ?? 0).toFixed(0) : "&mdash;"}</td>
         <td class="td-m ${pnlCls2(t.pnl ?? 0)}" style="font-weight:700">${fmtBoth2(t.pnl ?? 0)}</td>
         <td>${t.reasonExit ? `<span class="rc-b ${rcCls(t.reasonExit)}">${t.reasonExit}</span>` : "—"}</td>
       </tr>`).join("");
@@ -8236,15 +9608,15 @@ app.get("/signals", featureGate("feature_signals", "Signals"), (req, res) => {
     <div class="sig3-hdr">
       <div>
         <div class="sig3-title">📡 Live Bot Dashboard</div>
-        <div class="sig3-sub">BANKNIFTY &middot; HYBRID_REVERSE &middot; ${mode2.toUpperCase()} &middot; 30 qty &middot; ₹ P&amp;L = index pts &times; 30 qty &times; 0.5 delta = pts &times; 15</div>
+        <div class="sig3-sub">BANKNIFTY Options &middot; Automated intraday bot</div>
       </div>
       <div class="sig3-live"><span class="sig3-dot"></span><span id="sig3-upd">Connecting&hellip;</span></div>
     </div>
     <!-- Bot Status Bar (same as guest view) -->
     <div class="gv-status" id="sig3-bot-status" style="margin-bottom:1rem;padding:10px 16px;border-radius:10px;background:var(--card-bg,#1e293b);border:1px solid var(--border);display:flex;align-items:center;gap:10px">
-      <span class="gv-status-dot ${!isAlive2 ? 'offline' : inTrade2 ? 'active' : (hb2?.status?.toUpperCase().includes('WAIT') || hb2?.status?.toUpperCase().includes('9:25') ? 'waiting' : 'scanning')}" id="sig3-status-dot"></span>
-      <span style="font-size:.82rem;color:var(--text-muted)" id="sig3-status-lbl">${inTrade2 ? 'Bot is running a trade' : hb2?.status?.toUpperCase().includes('WAIT') ? 'Bot alive \u2014 waiting for market hours (opens 9:25 IST)' : 'Bot alive \u2014 scanning BANKNIFTY for signal'}</span>
-      <span style="font-size:.82rem;font-weight:700;margin-left:auto" class="${inTrade2 ? 'sig3-g' : 'sig3-d'}" id="sig3-status-val">${inTrade2 ? '&#x25CF;&nbsp;ACTIVE' : hb2?.status?.toUpperCase().includes('WAIT') ? 'Waiting' : 'Scanning'}</span>
+      <span class="gv-status-dot ${!isAlive2 ? (_sleeping2ssr ? 'waiting' : 'offline') : inTrade2 ? 'active' : (hb2?.status?.toUpperCase().includes('WAIT') || hb2?.status?.toUpperCase().includes('9:25') ? 'waiting' : 'scanning')}" id="sig3-status-dot"></span>
+      <span style="font-size:.82rem;color:var(--text-muted)" id="sig3-status-lbl">${!isAlive2 ? (_sleeping2ssr ? 'Bot sleeping \u2014 market closed' : 'Bot offline \u2014 not responding') : inTrade2 ? 'Bot is running a trade' : hb2?.status?.toUpperCase().includes('WAIT') ? 'Bot alive \u2014 waiting for market to open (9:15 IST)' : 'Bot alive \u2014 monitoring the options market'}</span>
+      <span style="font-size:.82rem;font-weight:700;margin-left:auto" class="${!isAlive2 ? (_sleeping2ssr ? 'sig3-d' : 'sig3-r') : inTrade2 ? 'sig3-g' : 'sig3-d'}" id="sig3-status-val">${!isAlive2 ? (_sleeping2ssr ? 'Sleeping' : 'Offline') : inTrade2 ? '&#x25CF;&nbsp;ACTIVE' : hb2?.status?.toUpperCase().includes('WAIT') ? 'Waiting' : 'Monitoring'}</span>
     </div>
 
     <!-- KPI Stats (paper-trade card style) -->
@@ -8274,11 +9646,7 @@ app.get("/signals", featureGate("feature_signals", "Signals"), (req, res) => {
         <div class="sig3-kv" id="k3-wr">${an2.allTime.winRate}%</div>
         <div class="sig3-ks sig3-d">${an2.allTime.wins}W / ${an2.allTime.losses}L all-time</div>
       </div>
-      <div class="sig3-kpi">
-        <div class="sig3-kl">Max Risk / Trade</div>
-        <div class="sig3-kv sig3-r">&#8722;&#8377;1,500</div>
-        <div class="sig3-ks sig3-d">100 pts SL &times; 30 qty</div>
-      </div>
+
     </div>
 
     <!-- Active Position Card -->
@@ -8289,7 +9657,7 @@ app.get("/signals", featureGate("feature_signals", "Signals"), (req, res) => {
           <span class="sig3-dot"></span>
           <span class="sig3-dir-b sig3-dir-${(dir2 || "").toLowerCase()}">${dir2} OPTION</span>
           <span class="sig3-mono" style="color:var(--text-muted)">${sym2 || "BANKNIFTY"}</span>
-          <span class="sig3-mode-b">${mode2.toUpperCase()}</span>
+
           ${durStr2 ? `<span class="sig3-dur">${durStr2} in trade</span>` : ""}
         </div>
         <div class="sig3-pnl-big ${pnlCls2(unreal2)}" id="sig3-pnl-rs">${fmtRs2(unreal2)}</div>
@@ -8326,7 +9694,7 @@ app.get("/signals", featureGate("feature_signals", "Signals"), (req, res) => {
           <span style="font-size:1.6rem">&#9203;</span>
           <div>
             <div style="font-weight:700;font-size:.95rem">No Active Position</div>
-            <div style="font-size:.74rem;color:var(--text-muted);margin-top:3px">Bot scanning BANKNIFTY for breakout signal&hellip;</div>
+            <div style="font-size:.74rem;color:var(--text-muted);margin-top:3px">No signal at the moment &mdash; monitoring the options market&hellip;</div>
           </div>
         </div>
       </div>`}
@@ -8340,23 +9708,23 @@ app.get("/signals", featureGate("feature_signals", "Signals"), (req, res) => {
     <div class="sig3-tw">
       <table class="sig3-t">
         <thead><tr>
-          <th>Time</th><th>Dir</th><th>Symbol</th><th>Premium In&#8594;Out</th><th>Entry &#8594; Exit (Index)</th>
-          <th>P&amp;L (&#8377;)</th><th>Reason</th><th>Duration</th>
+          <th>Time</th><th>Dir</th>${isAdmin ? `<th>Symbol</th><th>Premium In&#8594;Out</th><th>Entry &#8594; Exit (Index)</th>` : ``}
+          <th>P&amp;L (&#8377;)</th>${isAdmin ? `<th>Reason</th>` : ``}<th>Duration</th>
         </tr></thead>
         <tbody id="sig3-today-body">
           ${[...closedToday2].reverse().map((t) => `<tr>
             <td class="sig3-ct">${fmtTime2(t.date)}</td>
             <td><span class="sig3-db ${(t.direction || "").toLowerCase()}">${t.direction || "&mdash;"}</span></td>
-            <td class="sig3-mono" style="font-size:.72rem;color:var(--text-muted)">${(t as any).symbol || "&mdash;"}</td>
-            <td class="sig3-mono">${(t as any).premiumEntry > 0 ? (t as any).premiumEntry.toFixed(1) : "&mdash;"} &#8594; ${(t as any).premiumExit > 0 ? (t as any).premiumExit.toFixed(1) : "&mdash;"}</td>
-            <td class="sig3-mono">${(t.entryPrice ?? 0).toFixed(1)} &#8594; ${(t.exitPrice ?? 0).toFixed(1)}</td>
+            ${isAdmin ? `<td class="sig3-mono" style="font-size:.72rem;color:var(--text-muted)">${(t as any).symbol || "&mdash;"}</td>
+            <td class="sig3-mono">${(t as any).premiumEntry > 0 ? `<span style="font-size:.61rem;background:rgba(16,185,129,.15);color:#34d399;border-radius:3px;padding:1px 4px;margin-right:3px">BUY</span>${(t as any).premiumEntry.toFixed(1)}` : ""} ${(t as any).premiumExit > 0 ? `<span style="font-size:.61rem;background:rgba(239,68,68,.15);color:#f87171;border-radius:3px;padding:1px 4px;margin-right:3px;margin-left:4px">SELL</span>${(t as any).premiumExit.toFixed(1)}` : ""}</td>
+            <td class="sig3-mono">${(t.entryPrice ?? 0) > 0 ? (t.entryPrice ?? 0).toFixed(1) : "&mdash;"} &#8594; ${(t.exitPrice ?? 0) > 0 ? (t.exitPrice ?? 0).toFixed(1) : "&mdash;"}</td>` : ``}
             <td>
               <span class="sig3-pnl-rs ${pnlCls2(t.pnl ?? 0)}">${fmtRs2(t.pnl ?? 0)}</span>
               <span class="sig3-pnl-spt">${fmtPts2(t.pnl ?? 0)}</span>
             </td>
-            <td>${t.reasonExit ? `<span class="sig3-rc ${rcCls(t.reasonExit).replace("rc-", "sig3-rc-")}">${t.reasonExit}</span>` : "&mdash;"}</td>
+            ${isAdmin ? `<td>${t.reasonExit ? `<span class="sig3-rc ${rcCls(t.reasonExit).replace("rc-", "sig3-rc-")}">${t.reasonExit}</span>` : "&mdash;"}</td>` : ``}
             <td class="sig3-ct">${t.duration ? (t.duration < 60 ? t.duration + "s" : Math.round(t.duration / 60) + "m") : "&mdash;"}</td>
-          </tr>`).join("") || `<tr><td colspan="8" class="sig3-te">No closed trades today${inTrade2 ? " &mdash; 1 live position active" : ""}</td></tr>`}
+          </tr>`).join("") || `<tr><td colspan="${isAdmin ? 8 : 4}" class="sig3-te">No closed trades today${inTrade2 ? " &mdash; 1 live position active" : ""}</td></tr>`}
         </tbody>
       </table>
     </div>
@@ -8369,8 +9737,8 @@ app.get("/signals", featureGate("feature_signals", "Signals"), (req, res) => {
     <div class="sig3-tw">
       <table class="sig3-t">
         <thead><tr>
-          <th>Date / Time</th><th>Dir</th><th>Symbol</th><th>Premium In&#8594;Out</th><th>Entry &#8594; Exit (Index)</th>
-          <th>P&amp;L (&#8377;)</th><th>Reason</th>
+          <th>Date / Time</th><th>Dir</th>${isAdmin ? `<th>Symbol</th><th>Premium In&#8594;Out</th><th>Entry &#8594; Exit (Index)</th>` : ``}
+          <th>P&amp;L (&#8377;)</th>${isAdmin ? `<th>Reason</th>` : ``}
         </tr></thead>
         <tbody>
           ${(() => {
@@ -8379,18 +9747,18 @@ app.get("/signals", featureGate("feature_signals", "Signals"), (req, res) => {
             _wAgo.setDate(_now.getDate() - 7);
             const _wk = an2.recentTrades.filter((t) => t.date && new Date(t.date) >= _wAgo);
             if (!_wk.length)
-                return `<tr><td colspan="7" class="sig3-te">No trades in the past 7 days</td></tr>`;
+                return `<tr><td colspan="${isAdmin ? 7 : 3}" class="sig3-te">No trades in the past 7 days</td></tr>`;
             return _wk.map((t) => `<tr>
               <td class="sig3-ct">${fmtDate2(t.date)}</td>
               <td><span class="sig3-db ${(t.direction || "").toLowerCase()}">${t.direction || "&mdash;"}</span></td>
-              <td class="sig3-mono" style="font-size:.72rem;color:var(--text-muted)">${(t as any).symbol || "&mdash;"}</td>
-              <td class="sig3-mono">${(t as any).premiumEntry > 0 ? (t as any).premiumEntry.toFixed(1) : "&mdash;"} &#8594; ${(t as any).premiumExit > 0 ? (t as any).premiumExit.toFixed(1) : "&mdash;"}</td>
-              <td class="sig3-mono">${(t.entryPrice ?? 0).toFixed(0)} &#8594; ${(t.exitPrice ?? 0).toFixed(0)}</td>
+              ${isAdmin ? `<td class="sig3-mono" style="font-size:.72rem;color:var(--text-muted)">${(t as any).symbol || "&mdash;"}</td>
+              <td class="sig3-mono">${(t as any).premiumEntry > 0 ? `<span style="font-size:.61rem;background:rgba(16,185,129,.15);color:#34d399;border-radius:3px;padding:1px 4px;margin-right:3px">BUY</span>${(t as any).premiumEntry.toFixed(1)}` : ""} ${(t as any).premiumExit > 0 ? `<span style="font-size:.61rem;background:rgba(239,68,68,.15);color:#f87171;border-radius:3px;padding:1px 4px;margin-right:3px;margin-left:4px">SELL</span>${(t as any).premiumExit.toFixed(1)}` : ""}</td>
+              <td class="sig3-mono">${(t.entryPrice ?? 0) > 0 ? (t.entryPrice ?? 0).toFixed(0) : "&mdash;"} &#8594; ${(t.exitPrice ?? 0) > 0 ? (t.exitPrice ?? 0).toFixed(0) : "&mdash;"}</td>` : ``}
               <td>
                 <span class="sig3-pnl-rs ${pnlCls2(t.pnl ?? 0)}">${fmtRs2(t.pnl ?? 0)}</span>
                 <span class="sig3-pnl-spt">${fmtPts2(t.pnl ?? 0)}</span>
               </td>
-              <td>${t.reasonExit ? `<span class="sig3-rc ${rcCls(t.reasonExit).replace("rc-", "sig3-rc-")}">${t.reasonExit}</span>` : "&mdash;"}</td>
+              ${isAdmin ? `<td>${t.reasonExit ? `<span class="sig3-rc ${rcCls(t.reasonExit).replace("rc-", "sig3-rc-")}">${t.reasonExit}</span>` : "&mdash;"}</td>` : ``}
             </tr>`).join("");
         })()}
         </tbody>
@@ -8428,10 +9796,10 @@ app.get("/signals", featureGate("feature_signals", "Signals"), (req, res) => {
       </table>
     </div>` : ""}
 
-    <footer class="site-footer" style="margin-top:1.5rem">
-      <span>&copy; 2026 ZeroScreen &mdash; Admin View &middot; ${mode2.toUpperCase()} mode &middot; Not SEBI registered.</span>
-    </footer>
   </div>
+  <footer class="site-footer">
+    <span>&copy; 2026 ZeroScreen &mdash; Not SEBI registered. Not investment advice.</span>
+  </footer>
 
   <script>
   const _QM = 15;
@@ -8462,11 +9830,15 @@ app.get("/signals", featureGate("feature_signals", "Signals"), (req, res) => {
       // update bot status bar
       const alive2=d.isAlive!==false;
       const hbSt2=(d.botStatus||"").toUpperCase();
+      const _nowI=new Date(new Date().toLocaleString("en-US",{timeZone:"Asia/Kolkata"}));
+      const _iH=_nowI.getHours(),_iM=_nowI.getMinutes();
+      const _mktOpen=(_iH>9||(_iH===9&&_iM>=15))&&(_iH<15||(_iH===15&&_iM<=30));
+      const _sleeping2=!alive2&&!_mktOpen;
       const isWait2=!inT&&alive2&&(hbSt2.includes("WAIT")||hbSt2.includes("9:25")||hbSt2.includes("MARKET"));
-      const dotCls2=!alive2?"offline":inT?"active":isWait2?"waiting":"scanning";
-      const lbl2=!alive2?"Bot offline \u2014 not responding":inT?"Bot is running a trade \u2014 "+((d.heartbeat?.direction||"")+" OPTION").trim():(isWait2?"Bot alive \u2014 waiting for market hours (opens 9:25 IST)":"Bot alive \u2014 scanning BANKNIFTY for signal");
-      const val2=!alive2?"Offline":inT?"\u25CF\u00A0ACTIVE":(isWait2?"Waiting":"Scanning");
-      const valCol2=!alive2?"offline-col":inT?"active-col":isWait2?"waiting-col":"scanning-col";
+      const dotCls2=!alive2?(_sleeping2?"waiting":"offline"):inT?"active":isWait2?"waiting":"scanning";
+      const lbl2=!alive2?(_sleeping2?"Bot sleeping \u2014 market closed":"Bot offline \u2014 not responding"):inT?"Bot is running a trade \u2014 "+((d.heartbeat?.direction||"")+" OPTION").trim():(isWait2?"Bot alive \u2014 waiting for market hours (opens 9:25 IST)":"Bot alive \u2014 monitoring the options market");
+      const val2=!alive2?(_sleeping2?"Sleeping":"Offline"):inT?"\u25CF\u00A0ACTIVE":(isWait2?"Waiting":"Scanning");
+      const valCol2=!alive2?(_sleeping2?"waiting-col":"offline-col"):inT?"active-col":isWait2?"waiting-col":"scanning-col";
       const dot2=_ge("sig3-status-dot");if(dot2)dot2.className="gv-status-dot "+dotCls2;
       if(_ge("sig3-status-lbl"))_ge("sig3-status-lbl").textContent=lbl2;
       if(_ge("sig3-status-val")){_ge("sig3-status-val").textContent=val2;_ge("sig3-status-val").className="gv-status-val "+valCol2;}
@@ -8563,17 +9935,29 @@ app.get("/signals", featureGate("feature_signals", "Signals"), (req, res) => {
     .sig-tier-guest{background:rgba(100,116,139,.15);color:#94a3b8;border:1px solid rgba(100,116,139,.3)}
     .gv-badge{font-size:.68rem;font-weight:700;padding:3px 9px;border-radius:20px;letter-spacing:.3px;border:1px solid transparent}
     .gv-upd{font-size:.65rem;color:var(--text-muted)}
+    /* ── Blur for guest numbers ───────────────────────────────── */
+    .sig-blur{filter:blur(5px);user-select:none;pointer-events:none;display:inline-block}
+    .sig-blur-row{position:relative}
+    .sig-unlock-bar{display:flex;align-items:center;gap:10px;background:rgba(124,58,237,.13);border:1px solid rgba(124,58,237,.35);border-radius:10px;padding:10px 16px;margin-bottom:1rem;flex-wrap:wrap}
+    .sig-unlock-bar span{flex:1;font-size:.8rem;color:#c4b5fd}
   </style>
 </head>
 <body class="page-theme-signals">
   ${nav("signals", req)}
   <div class="sig3">
 
+    <!-- Unlock bar for guests -->
+    ${!loggedIn ? `
+    <div class="sig-unlock-bar">
+      <span>&#x1F512; Numbers are blurred &mdash; <a href="/login?next=/signals" style="color:#a78bfa;font-weight:700;text-decoration:underline">Sign in free</a> to see real P&amp;L and full trade history.</span>
+      <a href="/login?next=/signals" style="background:linear-gradient(135deg,#7c3aed,#6366f1);color:#fff;border-radius:7px;padding:6px 14px;font-size:.75rem;font-weight:700;text-decoration:none;white-space:nowrap">Sign in free &#x2192;</a>
+    </div>` : ""}
+
     <!-- Header -->
     <div class="sig3-hdr">
       <div>
         <div class="sig3-title">&#x1F4E1; Live Signals</div>
-        <div class="sig3-sub">BANKNIFTY Options &middot; Automated intraday bot &middot; &#x20B9; P&amp;L = index pts &times; 15</div>
+        <div class="sig3-sub">BANKNIFTY Options &middot; Automated intraday bot</div>
       </div>
       <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
         <span class="gv-badge ${tierClass}">${tierLabel}</span>
@@ -8592,8 +9976,8 @@ app.get("/signals", featureGate("feature_signals", "Signals"), (req, res) => {
     <div class="sig3-kpis">
       <div class="sig3-kpi">
         <div class="sig3-kl">Today P&amp;L</div>
-        <div class="sig3-kv ${analytics.today.pnl >= 0 ? 'sig3-g' : 'sig3-r'}" id="gv-today-rs">${fmtRsG(analytics.today.pnl)}</div>
-        <div class="sig3-ks sig3-d" id="gv-today-pts">${fmtPtsG(analytics.today.pnl)}</div>
+        <div class="sig3-kv ${analytics.today.pnl >= 0 ? 'sig3-g' : 'sig3-r'}" id="gv-today-rs"><span class="${!loggedIn ? 'sig-blur' : ''}">${fmtRsG(analytics.today.pnl)}</span></div>
+        <div class="sig3-ks sig3-d" id="gv-today-pts"><span class="${!loggedIn ? 'sig-blur' : ''}">${fmtPtsG(analytics.today.pnl)}</span></div>
       </div>
       <div class="sig3-kpi">
         <div class="sig3-kl">Today Trades</div>
@@ -8602,23 +9986,23 @@ app.get("/signals", featureGate("feature_signals", "Signals"), (req, res) => {
       </div>
       <div class="sig3-kpi">
         <div class="sig3-kl">This Week</div>
-        <div class="sig3-kv ${analytics.weekly.pnl >= 0 ? 'sig3-g' : 'sig3-r'}" id="gv-wk-rs">${fmtRsG(analytics.weekly.pnl)}</div>
-        <div class="sig3-ks sig3-d" id="gv-wk-pts">${fmtPtsG(analytics.weekly.pnl)}</div>
+        <div class="sig3-kv ${analytics.weekly.pnl >= 0 ? 'sig3-g' : 'sig3-r'}" id="gv-wk-rs"><span class="${!loggedIn ? 'sig-blur' : ''}">${fmtRsG(analytics.weekly.pnl)}</span></div>
+        <div class="sig3-ks sig3-d" id="gv-wk-pts"><span class="${!loggedIn ? 'sig-blur' : ''}">${fmtPtsG(analytics.weekly.pnl)}</span></div>
       </div>
       <div class="sig3-kpi">
         <div class="sig3-kl">All-Time P&amp;L</div>
-        <div class="sig3-kv ${analytics.allTime.pnl >= 0 ? 'sig3-g' : 'sig3-r'}">${fmtRsG(analytics.allTime.pnl)}</div>
-        <div class="sig3-ks sig3-d">${fmtPtsG(analytics.allTime.pnl)}</div>
+        <div class="sig3-kv ${analytics.allTime.pnl >= 0 ? 'sig3-g' : 'sig3-r'}"><span class="${!loggedIn ? 'sig-blur' : ''}">${fmtRsG(analytics.allTime.pnl)}</span></div>
+        <div class="sig3-ks sig3-d"><span class="${!loggedIn ? 'sig-blur' : ''}">${fmtPtsG(analytics.allTime.pnl)}</span></div>
       </div>
       <div class="sig3-kpi">
         <div class="sig3-kl">Win Rate</div>
-        <div class="sig3-kv">${analytics.allTime.winRate}%</div>
-        <div class="sig3-ks sig3-d">${analytics.allTime.wins}W / ${analytics.allTime.losses}L all-time</div>
+        <div class="sig3-kv"><span class="${!loggedIn ? 'sig-blur' : ''}">${analytics.allTime.winRate}%</span></div>
+        <div class="sig3-ks sig3-d"><span class="${!loggedIn ? 'sig-blur' : ''}">${analytics.allTime.wins}W / ${analytics.allTime.losses}L all-time</span></div>
       </div>
       <div class="sig3-kpi">
         <div class="sig3-kl">Yesterday</div>
-        <div class="sig3-kv ${yPnl >= 0 ? 'sig3-g' : 'sig3-r'}">${fmtRsG(yPnl)}</div>
-        <div class="sig3-ks sig3-d">${fmtPtsG(yPnl)}${yTrades.length > 0 ? " &middot; " + yWins + "W/" + (yTrades.length - yWins) + "L" : ""}</div>
+        <div class="sig3-kv ${yPnl >= 0 ? 'sig3-g' : 'sig3-r'}"><span class="${!loggedIn ? 'sig-blur' : ''}">${fmtRsG(yPnl)}</span></div>
+        <div class="sig3-ks sig3-d"><span class="${!loggedIn ? 'sig-blur' : ''}">${fmtPtsG(yPnl)}${yTrades.length > 0 ? " &middot; " + yWins + "W/" + (yTrades.length - yWins) + "L" : ""}</span></div>
       </div>
     </div>
 
@@ -8647,7 +10031,7 @@ app.get("/signals", featureGate("feature_signals", "Signals"), (req, res) => {
           <span style="font-size:1.6rem">&#9203;</span>
           <div>
             <div style="font-weight:700;font-size:.95rem">No Active Position</div>
-            <div style="font-size:.74rem;color:var(--text-muted);margin-top:3px">Bot scanning BANKNIFTY for breakout signal&hellip;</div>
+            <div style="font-size:.74rem;color:var(--text-muted);margin-top:3px">No signal at the moment &mdash; monitoring the options market&hellip;</div>
           </div>
         </div>
       </div>`}
@@ -8661,27 +10045,54 @@ app.get("/signals", featureGate("feature_signals", "Signals"), (req, res) => {
     <div class="sig3-tw">
       <table class="sig3-t">
         <thead><tr>
-          <th>Time</th><th>Dir</th><th>P&amp;L (&#8377;)</th><th>P&amp;L (pts)</th><th>Reason</th><th>Duration</th>
+          <th>Time</th><th>Dir</th><th>P&amp;L (&#8377;)</th><th>P&amp;L (pts)</th><th>Duration</th>
         </tr></thead>
         <tbody>
           ${[...closedTodayG].reverse().map((t) => {
             const d3 = (t.direction || "").toLowerCase();
-            const rcRaw = (t.reasonExit || "").toLowerCase();
-            const rcCls = rcRaw.includes("sl") || rcRaw.includes("stop") ? "sig3-rc-sl" : rcRaw.includes("target") ? "" : rcRaw.includes("eod") ? "sig3-rc-eod" : "sig3-rc-early";
             const dur = t.duration ? (t.duration < 60 ? t.duration + "s" : Math.round(t.duration / 60) + "m") : "\u2014";
             const tStr = t.date ? new Date(t.date).toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata", hour: "2-digit", minute: "2-digit" }) : "\u2014";
             return `<tr>
               <td class="sig3-ct">${tStr}</td>
               <td>${d3 ? `<span class="sig3-db ${d3}">${(t.direction || "").toUpperCase()}</span>` : "\u2014"}</td>
-              <td><span class="sig3-pnl-rs ${(t.pnl ?? 0) >= 0 ? "sig3-g" : "sig3-r"}">${fmtRsG(t.pnl ?? 0)}</span></td>
-              <td class="sig3-mono" style="font-size:.76rem;color:var(--text-muted)">${fmtPtsG(t.pnl ?? 0)}</td>
-              <td>${t.reasonExit ? `<span class="sig3-rc ${rcCls}">${t.reasonExit}</span>` : "\u2014"}</td>
+              <td><span class="sig3-pnl-rs ${(t.pnl ?? 0) >= 0 ? "sig3-g" : "sig3-r'"}"><span class="${!loggedIn ? 'sig-blur' : ''}">${fmtRsG(t.pnl ?? 0)}</span></span></td>
+              <td class="sig3-mono" style="font-size:.76rem;color:var(--text-muted)"><span class="${!loggedIn ? 'sig-blur' : ''}">${fmtPtsG(t.pnl ?? 0)}</span></td>
               <td class="sig3-ct">${dur}</td>
             </tr>`;
-          }).join("") || `<tr><td colspan="6" class="sig3-te">No closed trades today${hasPosition ? " \u2014 1 live position active" : ""}</td></tr>`}
+          }).join("") || `<tr><td colspan="5" class="sig3-te">No closed trades today${hasPosition ? " \u2014 1 live position active" : ""}</td></tr>`}
         </tbody>
       </table>
     </div>
+
+    <!-- THIS WEEK (last 7 days) — members only -->
+    ${loggedIn ? (() => {
+      const _nowG = new Date(new Date().toLocaleString("en-US", { timeZone: "Asia/Kolkata" }));
+      const _wAgoG = new Date(_nowG); _wAgoG.setDate(_nowG.getDate() - 7);
+      const _wkG = analytics.recentTrades.filter((t) => t.date && new Date(t.date) >= _wAgoG && t.exitPrice && t.exitPrice > 0);
+      return `<div class="sig3-sec">
+        This Week &mdash; Last 7 Days
+        <span class="sig3-sec-count">(${_wkG.length} trade${_wkG.length !== 1 ? 's' : ''}&nbsp;<span class="${analytics.weekly.pnl >= 0 ? 'sig3-g' : 'sig3-r'}">${fmtRsG(analytics.weekly.pnl)}</span>)</span>
+      </div>
+      <div class="sig3-tw">
+        <table class="sig3-t">
+          <thead><tr><th>Date / Time</th><th>Dir</th><th>P&amp;L (&#8377;)</th><th>P&amp;L (pts)</th><th>Duration</th></tr></thead>
+          <tbody>
+            ${_wkG.length === 0 ? `<tr><td colspan="5" class="sig3-te">No trades in the past 7 days</td></tr>` : _wkG.map((t) => {
+              const _d = (t.direction || '').toLowerCase();
+              const _dur = t.duration ? (t.duration < 60 ? t.duration + 's' : Math.round(t.duration / 60) + 'm') : '\u2014';
+              const _dt = t.date ? new Date(t.date).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' }) : '\u2014';
+              return `<tr>
+                <td class="sig3-ct">${_dt}</td>
+                <td>${_d ? `<span class="sig3-db ${_d}">${(t.direction || '').toUpperCase()}</span>` : '\u2014'}</td>
+                <td><span class="sig3-pnl-rs ${(t.pnl ?? 0) >= 0 ? 'sig3-g' : 'sig3-r'}">${fmtRsG(t.pnl ?? 0)}</span></td>
+                <td class="sig3-mono" style="font-size:.76rem;color:var(--text-muted)">${fmtPtsG(t.pnl ?? 0)}</td>
+                <td class="sig3-ct">${_dur}</td>
+              </tr>`;
+            }).join('')}
+          </tbody>
+        </table>
+      </div>`;
+    })() : ''}
 
     <!-- MONTHLY P&L -->
     <div class="sig3-sec">Month-wise P&amp;L</div>
@@ -8693,27 +10104,36 @@ app.get("/signals", featureGate("feature_signals", "Signals"), (req, res) => {
             const ml = new Date(m.month + "-01").toLocaleString("en-IN", { month: "short", year: "2-digit" });
             return `<tr>
               <td style="font-weight:600">${ml}</td>
-              <td><span class="sig3-pnl-rs ${m.pnl >= 0 ? "sig3-g" : "sig3-r"}" style="font-size:.95rem">${fmtRsG(m.pnl)}</span></td>
-              <td class="sig3-mono" style="font-size:.76rem;color:var(--text-muted)">${fmtPtsG(m.pnl)}</td>
+              <td><span class="sig3-pnl-rs ${m.pnl >= 0 ? "sig3-g" : "sig3-r"}" style="font-size:.95rem"><span class="${!loggedIn ? 'sig-blur' : ''}">${fmtRsG(m.pnl)}</span></span></td>
+              <td class="sig3-mono" style="font-size:.76rem;color:var(--text-muted)"><span class="${!loggedIn ? 'sig-blur' : ''}">${fmtPtsG(m.pnl)}</span></td>
               <td>${m.trades}</td>
-              <td class="${m.winRate >= 55 ? "sig3-g" : m.winRate >= 40 ? "" : "sig3-r"}">${m.trades > 0 ? m.winRate + "%" : "\u2014"}</td>
+              <td class="${m.winRate >= 55 ? "sig3-g" : m.winRate >= 40 ? "" : "sig3-r"}"><span class="${!loggedIn ? 'sig-blur' : ''}">${m.trades > 0 ? m.winRate + "%" : "\u2014"}</span></td>
             </tr>`;
           }).join("") || '<tr><td colspan="5" class="sig3-te">No historical data yet</td></tr>'}
         </tbody>
       </table>
     </div>
 
+    ${!loggedIn ? `
     <div class="gv-cta">
-      <div class="gv-cta-icon">&#x26A1;</div>
+      <div class="gv-cta-icon">&#x1F512;</div>
       <div class="gv-cta-body">
-        <strong>See every trade in real time</strong>
-        <p>Premium unlocks live entry price, stop loss level, exact P&amp;L per trade &amp; instant Telegram alerts.</p>
+        <strong>Sign in to see real P&amp;L numbers</strong>
+        <p>Create a free account to see live trade P&amp;L, weekly history, and performance stats &mdash; no payment needed.</p>
       </div>
-      <a href="/premium" class="gv-btn">Upgrade &#x2192;</a>
-    </div>
+      <a href="/login?next=/signals" class="gv-btn">Sign in free &#x2192;</a>
+    </div>` : `
+    <div class="gv-cta" style="background:rgba(16,185,129,.08);border-color:rgba(16,185,129,.25)">
+      <div class="gv-cta-icon">&#x1F4F1;</div>
+      <div class="gv-cta-body">
+        <strong style="color:#34d399">Get instant Telegram alerts</strong>
+        <p>Premium sends a Telegram message the moment the bot enters or exits a trade.</p>
+      </div>
+      <a href="/premium" class="gv-btn" style="background:linear-gradient(135deg,#059669,#10b981)">Upgrade &#x2192;</a>
+    </div>`}
 
-    <footer class="site-footer"><span>&#xA9; 2026 ZeroScreen &mdash; For informational purposes only. Not SEBI registered. Not investment advice.</span></footer>
   </div>
+  <footer class="site-footer"><span>&#xA9; 2026 ZeroScreen &mdash; For informational purposes only. Not SEBI registered. Not investment advice.</span></footer>
   <script src="/public/js/app.js"></script>
   <script>
   const _GQM = 15;
@@ -8729,21 +10149,34 @@ app.get("/signals", featureGate("feature_signals", "Signals"), (req, res) => {
       const alive=d.isAlive!==false;
       const hbStatus=(d.botStatus||"").toUpperCase();
       const isWaiting=!inT&&alive&&(hbStatus.includes("WAIT")||hbStatus.includes("9:25")||hbStatus.includes("MARKET"));
-      const dotCls=!alive?"offline":inT?"active":isWaiting?"waiting":"scanning";
-      const lblTxt=!alive?"Bot offline \u2014 not responding":inT?"Bot is running a trade \u2014 "+((d.heartbeat?.direction||"")+" OPTION").trim():(isWaiting?"Bot alive \u2014 waiting for market hours (opens 9:25 IST)":"Bot alive \u2014 scanning BANKNIFTY for signal");
-      const valTxt=!alive?"Offline":inT?"\u25CF\u00A0ACTIVE":(isWaiting?"Waiting":"Scanning");
-      const valCls=!alive?"offline-col":inT?"active-col":isWaiting?"waiting-col":"scanning-col";
+      const _nowIG=new Date(new Date().toLocaleString("en-US",{timeZone:"Asia/Kolkata"}));
+      const _iHG=_nowIG.getHours(),_iMG=_nowIG.getMinutes();
+      const _mktOpenG=(_iHG>9||(_iHG===9&&_iMG>=15))&&(_iHG<15||(_iHG===15&&_iMG<=30));
+      const _sleepingG=!alive&&!_mktOpenG;
+      const dotCls=!alive?(_sleepingG?"waiting":"offline"):inT?"active":isWaiting?"waiting":"scanning";
+      const lblTxt=!alive?(_sleepingG?"Bot sleeping \u2014 market closed":"Bot offline \u2014 not responding"):inT?"Bot is running a trade \u2014 "+((d.heartbeat?.direction||"")+" OPTION").trim():(isWaiting?"Bot alive \u2014 waiting for market to open (9:15 IST)":"Bot alive \u2014 monitoring the options market");
+      const valTxt=!alive?(_sleepingG?"Sleeping":"Offline"):inT?"\u25CF\u00A0ACTIVE":(isWaiting?"Waiting":"Monitoring");
+      const valCls=!alive?(_sleepingG?"waiting-col":"offline-col"):inT?"active-col":isWaiting?"waiting-col":"scanning-col";
       const dot=_ge2("gv-dot");if(dot)dot.className="gv-status-dot "+dotCls;
       if(_ge2("gv-status-lbl"))_ge2("gv-status-lbl").textContent=lblTxt;
       if(_ge2("gv-status-val")){_ge2("gv-status-val").textContent=valTxt;_ge2("gv-status-val").className="gv-status-val "+valCls;}
       const tot=(d.today?.pnl??0)+(inT?(d.activeState?.unrealisedPnL??0):0);
-      if(_ge2("gv-today-rs")){_ge2("gv-today-rs").textContent=_gfR(tot);_ge2("gv-today-rs").style.color=_gc2(tot);}
-      if(_ge2("gv-today-pts"))_ge2("gv-today-pts").textContent=_gfP(tot)+(inT?" (incl. live)":"");
+      const _isGuest=${!loggedIn};
+      // Only update numeric KPIs live if logged in — guests keep blurred SSR values
+      if(_isGuest){
+        if(_ge2("gv-today-rs")){_ge2("gv-today-rs").innerHTML='<span class="sig-blur">'+_gfR(tot)+'</span>';_ge2("gv-today-rs").style.color=_gc2(tot);}
+        if(_ge2("gv-today-pts"))_ge2("gv-today-pts").innerHTML='<span class="sig-blur">'+_gfP(tot)+(inT?" (incl. live)":"")+'</span>';
+        if(_ge2("gv-wk-rs")&&d.weekly){_ge2("gv-wk-rs").innerHTML='<span class="sig-blur">'+_gfR(d.weekly.pnl)+'</span>';_ge2("gv-wk-rs").style.color=_gc2(d.weekly.pnl);}
+        if(_ge2("gv-wk-pts")&&d.weekly)_ge2("gv-wk-pts").innerHTML='<span class="sig-blur">'+_gfP(d.weekly.pnl)+'</span>';
+      } else {
+        if(_ge2("gv-today-rs")){_ge2("gv-today-rs").textContent=_gfR(tot);_ge2("gv-today-rs").style.color=_gc2(tot);}
+        if(_ge2("gv-today-pts"))_ge2("gv-today-pts").textContent=_gfP(tot)+(inT?" (incl. live)":"");
+        if(_ge2("gv-wk-rs")&&d.weekly){_ge2("gv-wk-rs").textContent=_gfR(d.weekly.pnl);_ge2("gv-wk-rs").style.color=_gc2(d.weekly.pnl);}
+        if(_ge2("gv-wk-pts")&&d.weekly)_ge2("gv-wk-pts").textContent=_gfP(d.weekly.pnl);
+      }
       const tc=d.today?.trades||0;
       if(_ge2("gv-trades"))_ge2("gv-trades").innerHTML=tc+(tc!==1?" trades":" trade")+(inT?' <span style="font-size:.65rem;color:#10b981">+live</span>':"");
       if(_ge2("gv-wl")&&d.today)_ge2("gv-wl").innerHTML='<span class="sig3-g">'+d.today.wins+'W</span> / <span class="sig3-r">'+d.today.losses+'L</span>';
-      if(_ge2("gv-wk-rs")&&d.weekly){_ge2("gv-wk-rs").textContent=_gfR(d.weekly.pnl);_ge2("gv-wk-rs").style.color=_gc2(d.weekly.pnl);}
-      if(_ge2("gv-wk-pts")&&d.weekly)_ge2("gv-wk-pts").textContent=_gfP(d.weekly.pnl);
       if(inT&&d.activeState?.entryPrice>0){
         const u=d.activeState?.unrealisedPnL??0;
         const dirLive=(d.heartbeat?.direction||"").toUpperCase();
@@ -8778,3 +10211,6 @@ initDb().then(async () => {
     startScheduler();
   });
 }).catch(err => { console.error("DB init failed:", err); process.exit(1); });
+
+
+

@@ -62,22 +62,55 @@ Live BANKNIFTY options bot — refreshes every 8 seconds automatically.
 
 ---
 
-### 4. Dashboard — `http://139.59.18.52:4000/dashboard`
+### 4. My Trade / Unified Dashboard — `http://139.59.18.52:4000/dashboard`
 
-**Theme: Indigo/Purple — Public, no login**
+**Login required — unified for all roles (members + admin)**
 
-Bot performance analytics with real trade data and 5-year backtest.
+The main hub for every logged-in user. Replaces the old fragmented `/dashboard`, `/paper-trade/bot-stats`, and `/my-portfolio` routes (all now redirect here).
 
-- **Live KPI bar** — All-Time PnL · Total Trades · Win Rate · Wins · Losses · Max Drawdown · Today's PnL
-- **Live equity curve** — Chart.js area chart built from every real trade in `trades.json` (shows "no trades yet" when empty)
-- **5-Year Backtest KPI cards** — Combined PnL (pts) · Model A PnL · Model B PnL · Model A Win Rate · Model B Win Rate · Total Trading Days
-- **Monthly combined PnL chart** — green/red bar chart across all 60 months (Jan 2021 – Dec 2026)
-- **Model A vs Model B chart** — grouped bar chart comparing both signal models side-by-side per month
-- **Monthly breakdown table** — all months newest-first: Month · Model A PnL · Model B PnL · Combined · Trades · Wins · Losses
+#### Layout
+- **Header** — "My Trading Dashboard" + user name badge + quick action buttons (+ New Trade, 🤖 Schedule Bot)
+- **📊 Portfolio Stats** — collapsible panel (collapsed by default). Click to expand KPI cards:
+  - Portfolio Value · Cash Balance · Total P&L · This Week (Manual) · Win Rate · Open Positions
+  - _(Admin only)_ Bot P&L (All Time) · Bot This Week
+
+#### Tabs
+| Tab | Who sees it | Description |
+|-----|-------------|-------------|
+| 📂 Positions (N) | All users | Open paper trade positions with live P&L and inline Sell form |
+| 🛒 My Trades (N) | All users | Closed (SELL) paper trades — date, symbol, type, qty, buy ₹, sell ₹, P&L, P&L% |
+| 📅 Weekly | All users | Manual trade P&L grouped by week (last 8 weeks). Empty state links to paper trade |
+| 📆 Monthly | All users | Manual trade P&L grouped by month (last 6 months) with cards + table |
+| 📌 Picks Tracker | **Admin only** | Full picks tracker with In Position / Pending / Executed sub-tabs |
+
+#### Picks Tracker (Admin only) — In Position sub-tab
+- **Hero summary row**: Overall Unrealized P&L (big green/red card) · Positions count · In Profit · In Loss
+- **Table columns**: Symbol · Direction · Qty · Entry Price · Target · SL · CMP · P&L (₹ + % stacked) · Entry At
+- P&L uses `entry_price` field if set, otherwise mid-point of entry zone; direction-aware (BULLISH/BEARISH)
+
+#### Picks Tracker — Pending sub-tab
+- Table: Symbol · Type · Direction · Qty · Entry Zone · Target · SL · CMP (🔔 if price is in zone)
+
+#### Picks Tracker — Executed sub-tab
+- Table: Symbol · Direction · Qty · Result (pill badge) · Entry ₹ · Result ₹ · P&L (₹ + %) · Date
 
 ---
 
-### 5. Strategies — `http://139.59.18.52:4000/strategies`
+### 5. My Paper Trade — `http://139.59.18.52:4000/my-paper-trade`
+
+**Admin only** (members are redirected to `/dashboard`)
+
+Admin's full paper trade portfolio page with additional bot sections.
+
+#### Standard sections
+- Hero · Credits bar · 6 KPI cards · Buy form · Equity curve · Open Positions · Trade History · Reset
+
+#### Admin-only additions
+- **📅 Scheduled Trades** — mode, symbol, direction, details, status, cancel button
+- **🤖 Auto Bot Trade History** — date, symbol, direction, entry/exit, qty, P&L, duration, reason
+- **Today's Picks Tracker** — same In Position / Pending / Executed tabs as dashboard (with Qty + P&L columns)
+
+---
 
 **Theme: Amber/Orange — Public, no login**
 
@@ -276,18 +309,25 @@ Type a strategy in plain English → instantly get screener filters.
 ```
 ZeroScreen
 ├── 🔍 Screener              /                     (primary · public)
-├── 📡 Signals               /signals              (primary · public)
-├── 📊 Dashboard             /dashboard            (primary · public)
-├── ⚙️  Strategies            /strategies           (primary · public)
-├── 📋 Paper Trade (Bot)     /paper-trade          (primary · public)
-└── ▾ More / Explore
+├── � Picks                 /picks                (primary · public)
+├── 🤖 Live Bot              /signals              (primary · public)
+├── 📋 Paper Trade           /paper-trade          (primary · public)
+├── 💼 My Trade (HOT)        /dashboard            (primary · login required → unified dashboard)
+└── ▾ Explore
     ├── 🔨 Strategy Builder   /strategy-builder     (public)
     ├── ⭐ Watchlists          /watchlists           (login required)
     ├── 🔔 Alerts              /alerts               (login required)
     ├── ⚖️  Compare             /compare              (public)
     ├── 📬 Contact             /contact              (public)
-    └── 📋 My Paper Trade      /my-paper-trade       (login + mobile verified)
+    └── 🛠 Admin               /admin/users          (admin only)
 ```
+
+### Route Redirects
+| From | To | Notes |
+|------|----|-------|
+| `/my-portfolio` | `/dashboard` | Members redirected |
+| `/paper-trade/bot-stats` | `/dashboard` | Old bot stats route |
+| `/my-paper-trade` | Admin-only portfolio page | Members get 403 |
 
 ---
 

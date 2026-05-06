@@ -206,19 +206,62 @@ export async function generateDailyPicks(): Promise<void> {
   }
   console.log(`[Picks] Pool: ${stocks.length} stocks with price data`);
 
+  // ── Helpers ──────────────────────────────────────────────────────────────────
+
+  // Select best picks from a sorted (desc score) pool:
+  //   • must beat pool's median score (quality gate)
+  //   • max `maxPerSector` stocks from any single sector (diversity)
+  //   • skip symbols already chosen in a prior category (dedup)
+  //   • hard cap at `maxPicks`
+  function selectBest(
+    pool: any[], maxPicks: number, maxPerSector: number, usedSymbols: Set<string>
+  ): any[] {
+    if (pool.length === 0) return [];
+    const medianScore = pool[Math.floor(pool.length / 2)]?.score ?? 0;
+    const sectorCount: Record<string, number> = {};
+    const result: any[] = [];
+    for (const s of pool) {
+      if (result.length >= maxPicks) break;
+      if (s.score < medianScore) break; // already sorted desc — nothing better below
+      if (usedSymbols.has(s.symbol)) continue;
+      const sector = s.sector ?? "Other";
+      if ((sectorCount[sector] ?? 0) >= maxPerSector) continue;
+      result.push(s);
+      usedSymbols.add(s.symbol);
+      sectorCount[sector] = (sectorCount[sector] ?? 0) + 1;
+    }
+    return result;
+  }
+
+  // Dynamic risk level from actual data
+  function riskLevel(changeAbs: number, de: number | null): "low" | "medium" | "high" {
+    if (changeAbs > 3 || (de != null && de > 1.5)) return "high";
+    if (changeAbs > 1.5 || (de != null && de > 0.7)) return "medium";
+    return "low";
+  }
+
+  const usedSymbols = new Set<string>(); // cross-category dedup
   let intradayCount = 0, swingCount = 0, longtermCount = 0;
 
-  // ── INTRADAY PICKS — high volume movers with price momentum ─────────────────
-  const intradayPool = stocks
-    .filter(s => s.price > 50 && s.price < 8000 && (s.volume ?? 0) > 300_000 && Math.abs(s.change_pct ?? 0) > 0.5)
-    .map(s => ({
-      ...s,
-      score: ((s.volume ?? 0) / 1_000_000) * Math.abs(s.change_pct ?? 0) * (s.roce != null && s.roce > 0 ? Math.min(s.roce / 10, 2) : 1),
-    }))
-    .sort((a, b) => b.score - a.score)
-    .slice(0, 5);
+  // ── INTRADAY PICKS — strong volume + real price momentum ─────────────────────
+  // Filters raised: volume > 500K (was 300K), |change| > 1% (was 0.5%)
+  // Score: volume × momentum × quality multiplier + 52W-high breakout bonus
+  const intradaySorted = stocks
+    .filter(s =>
+      s.price > 50 && s.price < 8000 &&
+      (s.volume ?? 0) > 500_000 &&
+      Math.abs(s.change_pct ?? 0) > 1.0
+    )
+    .map(s => {
+      const volScore     = Math.min((s.volume ?? 0) / 1_000_000, 10);
+      const momScore     = Math.abs(s.change_pct ?? 0);
+      const qualMult     = s.roce != null && s.roce > 0 ? Math.min(s.roce / 15, 1.5) : 1;
+      const breakoutBonus = (s.week52_high ?? 0) > 0 && s.price >= s.week52_high * 0.95 ? 2 : 0;
+      return { ...s, score: volScore * momScore * qualMult + breakoutBonus };
+    })
+    .sort((a, b) => b.score - a.score);
 
-  for (const s of intradayPool) {
+  for (const s of selectBest(intradaySorted, 6, 2, usedSymbols)) {
     const price = s.price;
     const dir = (s.change_pct ?? 0) >= 0 ? "LONG" : "SHORT";
     const entryLow   = parseFloat((price * (dir === "LONG" ? 0.997 : 1.003)).toFixed(2));
@@ -230,6 +273,7 @@ export async function generateDailyPicks(): Promise<void> {
     if ((s.change_pct ?? 0) > 0) parts.push(`Up ${(s.change_pct as number).toFixed(1)}% today`);
     else parts.push(`Down ${Math.abs(s.change_pct as number).toFixed(1)}% today`);
     if ((s.volume ?? 0) > 1_000_000) parts.push(`Volume ${((s.volume as number) / 1e6).toFixed(1)}M`);
+    if ((s.week52_high ?? 0) > 0 && s.price >= s.week52_high * 0.95) parts.push("Near 52W high");
     if ((s.roce ?? 0) > 15) parts.push(`ROCE ${(s.roce as number).toFixed(0)}%`);
     const reason = parts.slice(0, 3).join(" · ");
 
@@ -238,33 +282,40 @@ export async function generateDailyPicks(): Promise<void> {
       direction: dir, pick_type: "intraday",
       entry_low: entryLow, entry_high: entryHigh,
       target, stop_loss: stopLoss,
-      reason, risk_level: "medium", status: "active",
+      reason,
+      risk_level: riskLevel(Math.abs(s.change_pct ?? 0), s.de_ratio),
+      status: "active",
     });
     intradayCount++;
   }
 
-  // ── SWING PICKS — momentum + quality fundamentals, 1–2 week horizon ─────────
-  const swingPool = stocks
+  // ── SWING PICKS — momentum + quality fundamentals, 1–2 week horizon ──────────
+  // Filters raised: ROCE > 10% (was 8%), D/E < 2.0 (was 2.5)
+  // Score: fundamentals + momentum + near-52W-high bonus
+  const swingSorted = stocks
     .filter(s =>
       s.price > 100 && s.price < 15000 &&
-      (s.roce ?? 0) > 8 &&
-      (s.de_ratio == null || s.de_ratio < 2.5) &&
-      (s.change_pct ?? 0) > 0 && (s.change_pct ?? 0) < 8
+      (s.roce ?? 0) > 10 &&
+      (s.de_ratio == null || s.de_ratio < 2.0) &&
+      (s.change_pct ?? 0) > 0.3 && (s.change_pct ?? 0) < 8
     )
-    .map(s => ({
-      ...s,
-      score:
-        (s.roce ?? 0) * 0.4 +
-        (s.roe ?? 0) * 0.3 +
-        (s.promoter_pct ?? 0) * 0.1 +
-        (s.change_pct ?? 0) * 2 +
-        (s.all_profitable ? 10 : 0) +
-        (s.profit_uptrend ? 5 : 0),
-    }))
-    .sort((a, b) => b.score - a.score)
-    .slice(0, 5);
+    .map(s => {
+      const nearHighBonus = (s.week52_high ?? 0) > 0 && s.price >= s.week52_high * 0.92 ? 5 : 0;
+      return {
+        ...s,
+        score:
+          (s.roce ?? 0) * 0.4 +
+          (s.roe  ?? 0) * 0.3 +
+          (s.promoter_pct ?? 0) * 0.1 +
+          (s.change_pct ?? 0) * 2 +
+          (s.all_profitable ? 10 : 0) +
+          (s.profit_uptrend ? 5  : 0) +
+          nearHighBonus,
+      };
+    })
+    .sort((a, b) => b.score - a.score);
 
-  for (const s of swingPool) {
+  for (const s of selectBest(swingSorted, 5, 2, usedSymbols)) {
     const price = s.price;
     const entryLow  = parseFloat((price * 0.995).toFixed(2));
     const entryHigh = parseFloat((price * 1.005).toFixed(2));
@@ -273,7 +324,7 @@ export async function generateDailyPicks(): Promise<void> {
 
     const parts: string[] = [];
     if ((s.roce ?? 0) > 0) parts.push(`ROCE ${(s.roce as number).toFixed(0)}%`);
-    if ((s.roe ?? 0) > 0)  parts.push(`ROE ${(s.roe as number).toFixed(0)}%`);
+    if ((s.roe  ?? 0) > 0) parts.push(`ROE ${(s.roe as number).toFixed(0)}%`);
     if (s.all_profitable)  parts.push("Consistently profitable");
     if (s.profit_uptrend)  parts.push("Profit uptrend");
     if ((s.change_pct ?? 0) > 0) parts.push(`Momentum +${(s.change_pct as number).toFixed(1)}%`);
@@ -284,33 +335,37 @@ export async function generateDailyPicks(): Promise<void> {
       direction: "LONG", pick_type: "swing",
       entry_low: entryLow, entry_high: entryHigh,
       target, stop_loss: stopLoss,
-      reason, risk_level: "medium", status: "active",
+      reason,
+      risk_level: riskLevel(Math.abs(s.change_pct ?? 0), s.de_ratio),
+      status: "active",
     });
     swingCount++;
   }
 
-  // ── LONGTERM PICKS — strong balance sheets, multi-month horizon ───────────────
-  const longtermPool = stocks
+  // ── LONGTERM PICKS — strongest balance sheets only, multi-month horizon ───────
+  // Filters raised: ROCE > 18% (was 15%), ROE > 15% (was 12%), D/E < 0.8, profit_uptrend required
+  // Sector cap 1 (max diversity for long-term conviction picks)
+  const longtermSorted = stocks
     .filter(s =>
       s.price > 100 &&
-      (s.roce ?? 0) > 15 && (s.roe ?? 0) > 12 &&
-      (s.de_ratio == null || s.de_ratio < 1) &&
-      (s.pe_ratio ?? 0) > 5 && (s.pe_ratio ?? 0) < 50 &&
-      s.all_profitable === 1
+      (s.roce ?? 0) > 18 && (s.roe ?? 0) > 15 &&
+      (s.de_ratio == null || s.de_ratio < 0.8) &&
+      (s.pe_ratio ?? 0) > 5 && (s.pe_ratio ?? 0) < 45 &&
+      s.all_profitable === 1 &&
+      s.profit_uptrend === 1
     )
     .map(s => ({
       ...s,
       score:
         (s.roce ?? 0) * 0.35 +
-        (s.roe ?? 0) * 0.35 +
-        (s.all_profitable ? 15 : 0) +
-        (s.profit_uptrend ? 10 : 0) +
-        ((s.promoter_pct ?? 0) > 50 ? 5 : 0),
+        (s.roe  ?? 0) * 0.35 +
+        25 + // all_profitable + profit_uptrend (both required by filter)
+        ((s.promoter_pct ?? 0) > 50 ? 8 : 0) +
+        ((s.de_ratio ?? 1) < 0.3    ? 5 : 0),
     }))
-    .sort((a, b) => b.score - a.score)
-    .slice(0, 3);
+    .sort((a, b) => b.score - a.score);
 
-  for (const s of longtermPool) {
+  for (const s of selectBest(longtermSorted, 3, 1, usedSymbols)) {
     const price = s.price;
     const entryLow  = parseFloat((price * 0.99).toFixed(2));
     const entryHigh = parseFloat((price * 1.01).toFixed(2));
@@ -319,11 +374,11 @@ export async function generateDailyPicks(): Promise<void> {
 
     const parts: string[] = [];
     if ((s.roce ?? 0) > 0) parts.push(`ROCE ${(s.roce as number).toFixed(0)}%`);
-    if ((s.roe ?? 0) > 0)  parts.push(`ROE ${(s.roe as number).toFixed(0)}%`);
+    if ((s.roe  ?? 0) > 0) parts.push(`ROE ${(s.roe as number).toFixed(0)}%`);
     if (s.de_ratio != null && s.de_ratio < 0.5) parts.push("Near debt-free");
-    else if (s.de_ratio != null && s.de_ratio < 1) parts.push(`Low D/E ${(s.de_ratio as number).toFixed(2)}`);
-    if (s.all_profitable)  parts.push("All years profitable");
-    if (s.profit_uptrend)  parts.push("Profit uptrend");
+    else if (s.de_ratio != null) parts.push(`Low D/E ${(s.de_ratio as number).toFixed(2)}`);
+    if (s.all_profitable) parts.push("All years profitable");
+    if (s.profit_uptrend) parts.push("Profit uptrend");
     const reason = parts.slice(0, 4).join(" · ") || `Strong fundamentals — ROCE ${(s.roce ?? 0).toFixed(0)}%, ROE ${(s.roe ?? 0).toFixed(0)}%`;
 
     await createPick({
