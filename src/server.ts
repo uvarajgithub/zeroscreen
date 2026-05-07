@@ -7747,7 +7747,7 @@ async function paperPortfolioPage(req: Request, res: Response) {
             ${inPosition.map(p => {
               const lp = priceMap[p.stock_symbol];
               const ep = p.entry_price ?? ((p.entry_low + p.entry_high) / 2);
-              const mult = p.direction === 'BULLISH' ? 1 : -1;
+              const mult = (p.direction === 'BULLISH' || p.direction === 'LONG') ? 1 : -1;
               const pnlAmt = lp && ep ? parseFloat(((lp - ep) * mult).toFixed(2)) : null;
               const pnlPct = lp && ep ? parseFloat((((lp - ep) / ep) * 100 * mult).toFixed(2)) : null;
               return `<tr>
@@ -7807,7 +7807,7 @@ async function paperPortfolioPage(req: Request, res: Response) {
               const isWin = p.result === 'target_hit';
               const ep = p.entry_price;
               const rp = p.result_price;
-              const mult = p.direction === 'BULLISH' ? 1 : -1;
+              const mult = (p.direction === 'BULLISH' || p.direction === 'LONG') ? 1 : -1;
               const pnlAmt = ep && rp ? parseFloat(((rp - ep) * mult).toFixed(2)) : null;
               const pnlPct = ep && rp ? parseFloat((((rp - ep) / ep) * 100 * mult).toFixed(2)) : null;
               return `<tr>
@@ -8470,14 +8470,14 @@ app.get("/dashboard", requireAuth, async (req: Request, res: Response) => {
               const rows = picksInPosition.map((p: any) => {
                 const lp = priceMap[p.stock_symbol];
                 const ep = p.entry_price ?? ((p.entry_low + p.entry_high) / 2);
-                const mult = p.direction === "BULLISH" ? 1 : -1;
+                const mult = (p.direction === "BULLISH" || p.direction === "LONG") ? 1 : -1;
                 const pnlPct = lp && ep ? parseFloat((((lp - ep) / ep) * 100 * mult).toFixed(2)) : null;
                 if (pnlPct !== null) { totalPnlPct += pnlPct; countWithCmp++; }
                 return { p, lp, ep, pnlPct };
               });
               const avgPnlPct = countWithCmp > 0 ? (totalPnlPct / countWithCmp).toFixed(2) : null;
               const totalPnlAmt = rows.reduce((s: number, r: any) => {
-                const pnlAmt = r.lp && r.ep ? parseFloat(((r.lp - r.ep) * (r.p.direction === "BULLISH" ? 1 : -1)).toFixed(2)) : 0;
+                const pnlAmt = r.lp && r.ep ? parseFloat(((r.lp - r.ep) * ((r.p.direction === "BULLISH" || r.p.direction === "LONG") ? 1 : -1)).toFixed(2)) : 0;
                 return s + pnlAmt;
               }, 0);
               const inProfit = rows.filter((r: any) => r.pnlPct !== null && r.pnlPct > 0).length;
@@ -8505,7 +8505,7 @@ app.get("/dashboard", requireAuth, async (req: Request, res: Response) => {
                 <thead><tr><th>Symbol</th><th>Direction</th><th>Qty</th><th>Entry Price</th><th>Target</th><th>SL</th><th>CMP</th><th>P&amp;L</th><th>Entry At</th></tr></thead>
                 <tbody>${rows.map(({ p, lp, ep, pnlPct }: any) => {
                   const qty = 1;
-                  const pnlAmt = lp && ep ? parseFloat(((lp - ep) * (p.direction === "BULLISH" ? 1 : -1) * qty).toFixed(2)) : null;
+                  const pnlAmt = lp && ep ? parseFloat(((lp - ep) * ((p.direction === "BULLISH" || p.direction === "LONG") ? 1 : -1) * qty).toFixed(2)) : null;
                   return `<tr>
                   <td><strong style="color:var(--accent)">${esc(p.stock_symbol)}</strong>${p.company_name ? `<br><span style="color:var(--text-muted);font-size:.7rem">${esc(p.company_name)}</span>` : ""}</td>
                   <td><span class="${p.direction === "BULLISH" ? "pb-bullish" : "pb-bearish"}">${p.direction}</span></td>
@@ -8554,7 +8554,7 @@ app.get("/dashboard", requireAuth, async (req: Request, res: Response) => {
                 const qty = 1;
                 const ep = p.entry_price;
                 const rp = p.result_price;
-                const mult = p.direction === "BULLISH" ? 1 : -1;
+                const mult = (p.direction === "BULLISH" || p.direction === "LONG") ? 1 : -1;
                 const pnlAmt = ep && rp ? parseFloat(((rp - ep) * mult * qty).toFixed(2)) : null;
                 const pnlPct = ep && rp ? parseFloat((((rp - ep) / ep) * 100 * mult).toFixed(2)) : null;
                 return `<tr>
@@ -10211,6 +10211,7 @@ initDb().then(async () => {
     startScheduler();
   });
 }).catch(err => { console.error("DB init failed:", err); process.exit(1); });
+
 
 
 

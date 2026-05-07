@@ -4,6 +4,45 @@ Live at **http://139.59.18.52:4000**
 
 ---
 
+## Latest Changes (May 7, 2026)
+
+### 🔧 Bug Fixes
+- **Live P&L on signals page was always showing 0** — Root cause: JS was reading `d.activeState.unrealisedPnL` but the API puts it in `d.heartbeat.unrealisedPnL`. Fixed all 4 occurrences across the signals and guest view JS blocks. Unrealised P&L now shows live and updates every 12–15s while in a trade.
+- **Telegram notifications stopped mid-session** — Root cause: Node.js 20 tries IPv6 first for DNS. This VPS has IPv6 unreachable but `fetch()` (undici) doesn't fall back to IPv4 the way curl does → `fetch failed`. Fixed by adding `NODE_OPTIONS: '--dns-result-order=ipv4first'` to the trading-bot entry in `ecosystem.config.js`.
+- **Auto paper trade never executed picks** — Root cause: date filter `date(published_at) = date('now','localtime')` was used at 9:15 AM, but picks are generated at 6:45 PM the previous day. Fixed to use a `-18 hours` lookback window for intraday, `-7 days` for swing.
+
+### ✨ New Features
+- **⚡ TRAIL vs LOCK50 Today's P&L card** added to `/dashboard` (admin only). Reads `bot-heartbeat.json` and shows both strategies side by side with live unrealised P&L when in a trade. Shows: pts, ₹ value (×15 lot size), trades count, and an amber "open" badge when a position is active.
+- **Pick staleness / expiry rules**: intraday picks expire end-of-day, swing picks expire after 7 days, longterm picks never auto-expire. Auto paper trade only runs on `intraday` and `swing` pick types — longterm excluded by design.
+- **shadowPnL + shadowTrades** added to `bot-heartbeat.json` so ZeroScreen can compare LOCK50 shadow strategy P&L alongside TRAIL live strategy.
+
+### 🗺️ Page / Route Reference
+| Route | What it is |
+|---|---|
+| `/signals` | Live bot dashboard (public) — P&L, entry, SL, recent trades, monthly summary |
+| `/dashboard` | My Trade hub (login required) — picks tracker, paper portfolio, ⚡ strategy P&L card (admin) |
+| `/today` | Today's picks (public guest view) |
+| `/my-paper-trade` | Personal paper trade portfolio (login required) |
+
+### 🖥️ VPS / Deploy Reference
+- **VPS**: DigitalOcean `139.59.18.52`, ZeroScreen on port 4000
+- **ZeroScreen path**: `/root/zeroscreen/` (PM2 process id 8)
+- **Trading bot path**: `/home/ubuntu/trading-bot/` (PM2 process id 15)
+- **DB**: SQLite at `/root/zeroscreen/zeroscreen.db`
+- **Heartbeat file**: `/home/ubuntu/trading-bot/bot-heartbeat.json` (updated every 15s)
+
+```powershell
+# Deploy ZeroScreen change:
+.\pscp.exe -pw "..." server_vps.ts root@139.59.18.52:/root/zeroscreen/src/server.ts
+.\plink.exe -batch -pw "..." root@139.59.18.52 "cd /root/zeroscreen && npx tsc && pm2 restart zeroscreen --update-env"
+
+# Deploy trading-bot change:
+.\pscp.exe -pw "..." index_vps.ts root@139.59.18.52:/home/ubuntu/trading-bot/src/index.ts
+.\plink.exe -batch -pw "..." root@139.59.18.52 "cd /home/ubuntu/trading-bot && npx tsc && pm2 restart trading-bot --update-env"
+```
+
+---
+
 ## What You See, Screen by Screen
 
 ### 1. Launch URL — `http://139.59.18.52:4000/`
