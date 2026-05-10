@@ -196,10 +196,6 @@ export async function initDb(): Promise<void> {
       )`);
       db.run("CREATE INDEX IF NOT EXISTS idx_picks_status ON picks(status)");
       db.run(`ALTER TABLE picks ADD COLUMN pick_type TEXT NOT NULL DEFAULT 'intraday'`, () => {});
-      db.run(`ALTER TABLE picks ADD COLUMN entry_price REAL`, () => {});
-      db.run(`ALTER TABLE picks ADD COLUMN result TEXT`, () => {});
-      db.run(`ALTER TABLE picks ADD COLUMN result_price REAL`, () => {});
-      db.run(`ALTER TABLE picks ADD COLUMN result_at TEXT`, () => {});
       // ── App settings ─────────────────────────────────────────────────────────
       db.run(`CREATE TABLE IF NOT EXISTS app_settings (
         key   TEXT PRIMARY KEY,
@@ -297,9 +293,6 @@ export async function initDb(): Promise<void> {
       db.run("ALTER TABLE users ADD COLUMN auto_paper_picks INTEGER NOT NULL DEFAULT 0", () => {});
       // Daily picks email notification opt-in (safe migration)
       db.run("ALTER TABLE users ADD COLUMN notify_picks INTEGER NOT NULL DEFAULT 1", () => {});
-      // Auto paper mode & custom stocks (safe migration)
-      db.run("ALTER TABLE paper_trade_config ADD COLUMN auto_paper_mode TEXT NOT NULL DEFAULT 'picks'", () => {});
-      db.run("ALTER TABLE paper_trade_config ADD COLUMN auto_paper_stocks TEXT NOT NULL DEFAULT '[]'", () => {});
       // Telegram chat ID for premium signal alerts (safe migration)
       db.run("ALTER TABLE users ADD COLUMN telegram_chat_id TEXT", () => {});
       // SL / Target / OrderType on positions (safe migrations)
@@ -884,7 +877,7 @@ export async function getActivePicks(): Promise<PickRow[]> {
 }
 
 export async function getAllPicks(): Promise<PickRow[]> {
-  return dbAll<PickRow>("SELECT * FROM picks WHERE pick_type != 'longterm' ORDER BY published_at DESC LIMIT 100");
+  return dbAll<PickRow>("SELECT * FROM picks ORDER BY published_at DESC LIMIT 100");
 }
 
 export async function createPick(p: {
@@ -1021,8 +1014,6 @@ export interface PaperTrade {
 export interface PaperTradeConfig {
   user_id: number; trade_type: string; default_qty: number;
   default_sl_pct: number; default_tgt_pct: number; max_positions: number;
-  auto_paper_mode?: string;   // 'picks' | 'custom'
-  auto_paper_stocks?: string; // JSON array of symbols
 }
 
 export async function getPaperPortfolio(userId: number): Promise<{ balance: number }> {
@@ -1137,15 +1128,6 @@ export async function countPaperTrades(userId: number): Promise<number> {
   return r?.c ?? 0;
 }
 
-export async function countTodayPaperBuys(userId: number): Promise<number> {
-  const today = new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" }); // YYYY-MM-DD in IST
-  const r = await dbGet<{ c: number }>(
-    "SELECT COUNT(*) as c FROM paper_trades WHERE user_id=? AND action='BUY' AND DATE(traded_at)=?",
-    [userId, today]
-  );
-  return r?.c ?? 0;
-}
-
 export async function getPaperTradeStats(userId: number): Promise<{ total: number; wins: number; losses: number; winRate: number }> {
   const r = await dbGet<{ total: number; wins: number }>(
     `SELECT COUNT(*) as total,
@@ -1166,15 +1148,13 @@ export async function getPaperTradeStats(userId: number): Promise<{ total: numbe
 export async function getPaperTradeConfig(userId: number): Promise<PaperTradeConfig> {
   const row = await dbGet<PaperTradeConfig>("SELECT * FROM paper_trade_config WHERE user_id=?", [userId]);
   if (!row) {
-    const def: PaperTradeConfig = { user_id: userId, trade_type: 'INTRADAY', default_qty: 1, default_sl_pct: 2.0, default_tgt_pct: 4.0, max_positions: 10, auto_paper_mode: 'picks', auto_paper_stocks: '[]' };
+    const def: PaperTradeConfig = { user_id: userId, trade_type: 'INTRADAY', default_qty: 1, default_sl_pct: 2.0, default_tgt_pct: 4.0, max_positions: 10 };
     await dbRun(
-      "INSERT OR IGNORE INTO paper_trade_config (user_id,trade_type,default_qty,default_sl_pct,default_tgt_pct,max_positions,auto_paper_mode,auto_paper_stocks) VALUES (?,?,?,?,?,?,?,?)",
-      [userId, def.trade_type, def.default_qty, def.default_sl_pct, def.default_tgt_pct, def.max_positions, def.auto_paper_mode, def.auto_paper_stocks]
+      "INSERT OR IGNORE INTO paper_trade_config (user_id,trade_type,default_qty,default_sl_pct,default_tgt_pct,max_positions) VALUES (?,?,?,?,?,?)",
+      [userId, def.trade_type, def.default_qty, def.default_sl_pct, def.default_tgt_pct, def.max_positions]
     );
     return def;
   }
-  row.auto_paper_mode = row.auto_paper_mode || 'picks';
-  row.auto_paper_stocks = row.auto_paper_stocks || '[]';
   return row;
 }
 
@@ -1182,9 +1162,9 @@ export async function savePaperTradeConfig(userId: number, config: Partial<Paper
   const cur = await getPaperTradeConfig(userId);
   const m = { ...cur, ...config };
   await dbRun(
-    `INSERT OR REPLACE INTO paper_trade_config (user_id,trade_type,default_qty,default_sl_pct,default_tgt_pct,max_positions,auto_paper_mode,auto_paper_stocks,updated_at)
-     VALUES (?,?,?,?,?,?,?,?,datetime('now','localtime'))`,
-    [userId, m.trade_type, m.default_qty, m.default_sl_pct, m.default_tgt_pct, m.max_positions, m.auto_paper_mode ?? 'picks', m.auto_paper_stocks ?? '[]']
+    `INSERT OR REPLACE INTO paper_trade_config (user_id,trade_type,default_qty,default_sl_pct,default_tgt_pct,max_positions,updated_at)
+     VALUES (?,?,?,?,?,?,datetime('now','localtime'))`,
+    [userId, m.trade_type, m.default_qty, m.default_sl_pct, m.default_tgt_pct, m.max_positions]
   );
 }
 

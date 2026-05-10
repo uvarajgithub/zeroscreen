@@ -284,35 +284,3 @@ export async function sendTelegramSignalAlert(
     sendTelegramMessage(sub.telegram_chat_id, text).catch(() => {});
   }
 }
-
-export async function sendWeeklyAdminEmail(adminEmail: string, stats: {
-  weekStart: string; weekEnd: string;
-  botPnL: string; botTrades: number; botWins: number; botLosses: number;
-  paperPnL: string; paperTrades: number;
-  pickWins: number; pickLosses: number; pickWinRate: string;
-  totalUsers: number;
-}): Promise<void> {
-  const {
-    weekStart, weekEnd, botPnL, botTrades, botWins, botLosses,
-    paperPnL, paperTrades, pickWins, pickLosses, pickWinRate, totalUsers
-  } = stats;
-
-  const html = baseTemplate(`
-    <h2 style="color:#7c3aed">📊 Weekly Summary — ${weekStart} to ${weekEnd}</h2>
-    <table style="width:100%;border-collapse:collapse;margin-top:16px">
-      <tr style="background:#1a1a2e">
-        <th style="padding:10px;text-align:left;color:#7c3aed">Metric</th>
-        <th style="padding:10px;text-align:right;color:#7c3aed">Value</th>
-      </tr>
-      <tr><td style="padding:8px">🤖 Bot PnL (pts)</td><td style="padding:8px;text-align:right;color:${parseFloat(botPnL) >= 0 ? "#22c55e" : "#ef4444"}">${parseFloat(botPnL) >= 0 ? "+" : ""}${botPnL}</td></tr>
-      <tr><td style="padding:8px">Bot Trades</td><td style="padding:8px;text-align:right">${botTrades} (${botWins}W / ${botLosses}L)</td></tr>
-      <tr><td style="padding:8px">📋 Paper Trade PnL (₹)</td><td style="padding:8px;text-align:right;color:${parseFloat(paperPnL) >= 0 ? "#22c55e" : "#ef4444"}">${parseFloat(paperPnL) >= 0 ? "+" : ""}₹${paperPnL}</td></tr>
-      <tr><td style="padding:8px">Paper Trades</td><td style="padding:8px;text-align:right">${paperTrades}</td></tr>
-      <tr><td style="padding:8px">📌 Pick Win Rate</td><td style="padding:8px;text-align:right">${pickWinRate}% (${pickWins}W / ${pickLosses}L)</td></tr>
-      <tr><td style="padding:8px">👥 Total Users</td><td style="padding:8px;text-align:right">${totalUsers}</td></tr>
-    </table>
-    <p style="margin-top:20px;color:#94a3b8;font-size:13px">ZeroScreen — Weekly Admin Report</p>
-  `);
-
-  await send(adminEmail, `ZeroScreen Weekly Summary — ${weekStart} to ${weekEnd}`, html);
-}

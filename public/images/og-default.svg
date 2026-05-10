@@ -1,0 +1,54 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#2563eb;stop-opacity:1"/>
+      <stop offset="100%" style="stop-color:#7c3aed;stop-opacity:1"/>
+    </linearGradient>
+    <linearGradient id="card" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" style="stop-color:rgba(255,255,255,0.15);stop-opacity:1"/>
+      <stop offset="100%" style="stop-color:rgba(255,255,255,0.05);stop-opacity:1"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Background -->
+  <rect width="1200" height="630" fill="url(#bg)"/>
+
+  <!-- Decorative circles -->
+  <circle cx="980" cy="120" r="220" fill="rgba(255,255,255,0.04)"/>
+  <circle cx="1060" cy="520" r="140" fill="rgba(255,255,255,0.03)"/>
+  <circle cx="120" cy="520" r="160" fill="rgba(255,255,255,0.04)"/>
+
+  <!-- Chart bars (decorative) -->
+  <rect x="820" y="280" width="48" height="180" rx="6" fill="rgba(255,255,255,0.12)"/>
+  <rect x="880" y="220" width="48" height="240" rx="6" fill="rgba(255,255,255,0.18)"/>
+  <rect x="940" y="160" width="48" height="300" rx="6" fill="rgba(255,255,255,0.14)"/>
+  <rect x="1000" y="200" width="48" height="260" rx="6" fill="rgba(255,255,255,0.10)"/>
+  <rect x="1060" y="140" width="48" height="320" rx="6" fill="rgba(16,185,129,0.60)"/>
+  <rect x="1120" y="180" width="48" height="280" rx="6" fill="rgba(255,255,255,0.12)"/>
+
+  <!-- Logo -->
+  <text x="88" y="200" font-family="'Segoe UI',Arial,sans-serif" font-size="80" font-weight="800" fill="white" letter-spacing="-2">Zero</text>
+  <text x="88" y="200" font-family="'Segoe UI',Arial,sans-serif" font-size="80" font-weight="800" fill="white" letter-spacing="-2">
+    <tspan fill="white">Zero</tspan><tspan fill="#f59e0b">Screen</tspan>
+  </text>
+
+  <!-- Tagline -->
+  <text x="88" y="260" font-family="'Segoe UI',Arial,sans-serif" font-size="32" fill="rgba(255,255,255,0.80)" letter-spacing="0">India's sharpest NSE stock screener</text>
+
+  <!-- Stat pills -->
+  <rect x="88" y="310" width="220" height="56" rx="14" fill="url(#card)" stroke="rgba(255,255,255,0.20)" stroke-width="1"/>
+  <text x="198" y="345" font-family="'Segoe UI',Arial,sans-serif" font-size="22" font-weight="700" fill="white" text-anchor="middle">5000+ Stocks</text>
+
+  <rect x="326" y="310" width="200" height="56" rx="14" fill="url(#card)" stroke="rgba(255,255,255,0.20)" stroke-width="1"/>
+  <text x="426" y="345" font-family="'Segoe UI',Arial,sans-serif" font-size="22" font-weight="700" fill="white" text-anchor="middle">Paper Trading</text>
+
+  <rect x="544" y="310" width="210" height="56" rx="14" fill="url(#card)" stroke="rgba(255,255,255,0.20)" stroke-width="1"/>
+  <text x="649" y="345" font-family="'Segoe UI',Arial,sans-serif" font-size="22" font-weight="700" fill="white" text-anchor="middle">Live Signals</text>
+
+  <!-- Bottom URL -->
+  <text x="88" y="540" font-family="'Segoe UI',Arial,sans-serif" font-size="28" fill="rgba(255,255,255,0.60)">zeroscreen.app</text>
+
+  <!-- Green badge -->
+  <rect x="88" y="400" width="260" height="52" rx="12" fill="rgba(16,185,129,0.20)" stroke="#10b981" stroke-width="1.5"/>
+  <text x="218" y="432" font-family="'Segoe UI',Arial,sans-serif" font-size="20" font-weight="700" fill="#10b981" text-anchor="middle">Free · No Registration</text>
+</svg>
