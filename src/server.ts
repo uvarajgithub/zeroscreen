@@ -3010,16 +3010,18 @@ app.get("/admin", requireAdmin, async (req: Request, res: Response) => {
       .hm-alert-msg{font-size:.75rem;opacity:.8;margin-top:3px}
       .hm-alert-btn{display:inline-block;margin-top:9px;padding:4px 13px;border-radius:5px;font-size:.73rem;font-weight:700;cursor:pointer;border:1px solid currentColor;background:transparent;color:inherit;text-decoration:none}
       .hm-alert-upd{font-size:.7rem;color:var(--text-muted,#64748b);margin-top:.5rem}
+      .hm-fix{margin-top:5px}.hm-fix a,.hm-fix button{font-size:.63rem;font-weight:700;padding:2px 9px;border-radius:4px;border:1px solid currentColor;cursor:pointer;background:transparent;color:inherit;text-decoration:none;display:inline-block}
+      .hm-sub{font-size:.7rem;opacity:.65;margin-top:3px;line-height:1.2}
     </style>
     <div class="hm-section-title">\u26A1 System Health <span id="hm-upd" style="font-weight:400;font-size:.7rem;opacity:.6">&mdash;</span></div>
     <div class="hm-grid">
-      <div class="hm-card hm-dim" id="hm-bot"><div class="hm-dot"></div><div><div class="hm-label">Bot Heartbeat</div><div class="hm-val" id="hm-bot-v">&mdash;</div></div></div>
-      <div class="hm-card hm-dim" id="hm-tok"><div class="hm-dot"></div><div><div class="hm-label">Zerodha Token</div><div class="hm-val" id="hm-tok-v">&mdash;</div></div></div>
+      <div class="hm-card hm-dim" id="hm-bot"><div class="hm-dot"></div><div><div class="hm-label">Bot Heartbeat</div><div class="hm-val" id="hm-bot-v">&mdash;</div><div class="hm-fix" id="hm-bot-fix" style="display:none"></div></div></div>
+      <div class="hm-card hm-dim" id="hm-tok"><div class="hm-dot"></div><div><div class="hm-label">Zerodha Token</div><div class="hm-val" id="hm-tok-v">&mdash;</div><div class="hm-fix" id="hm-tok-fix" style="display:none"></div></div></div>
       <div class="hm-card hm-dim" id="hm-mkt"><div class="hm-dot"></div><div><div class="hm-label">Market</div><div class="hm-val" id="hm-mkt-v">&mdash;</div></div></div>
-      <div class="hm-card hm-dim" id="hm-pos"><div class="hm-dot"></div><div><div class="hm-label">Position</div><div class="hm-val" id="hm-pos-v">&mdash;</div></div></div>
-      <div class="hm-card hm-dim" id="hm-cnd"><div class="hm-dot"></div><div><div class="hm-label">Last 15-Min Candle</div><div class="hm-val" id="hm-cnd-v">&mdash;</div></div></div>
+      <div class="hm-card hm-dim" id="hm-pos"><div class="hm-dot"></div><div><div class="hm-label">Position (LOCK50)</div><div class="hm-val" id="hm-pos-v">&mdash;</div></div></div>
+      <div class="hm-card hm-dim" id="hm-cnd"><div class="hm-dot"></div><div><div class="hm-label">Last 15-Min Candle</div><div class="hm-val" id="hm-cnd-v">&mdash;</div><div class="hm-sub" id="hm-cnd-s"></div></div></div>
       <div class="hm-card hm-dim" id="hm-pnl"><div class="hm-dot"></div><div><div class="hm-label">Today P&amp;L (LOCK50)</div><div class="hm-val" id="hm-pnl-v">&mdash;</div></div></div>
-      <div class="hm-card hm-dim" id="hm-trl"><div class="hm-dot"></div><div><div class="hm-label">TRAIL (shadow)</div><div class="hm-val" id="hm-trl-v">&mdash;</div></div></div>
+      <div class="hm-card hm-dim" id="hm-trl"><div class="hm-dot"></div><div><div class="hm-label">TRAIL (shadow)</div><div class="hm-val" id="hm-trl-v">&mdash;</div><div class="hm-sub" id="hm-trl-s"></div></div></div>
       <div class="hm-card hm-dim" id="hm-trds"><div class="hm-dot"></div><div><div class="hm-label">Trades Today</div><div class="hm-val" id="hm-trds-v">&mdash;</div></div></div>
     </div>
     <div class="hm-alerts" id="hm-alerts"></div>
@@ -3058,23 +3060,56 @@ app.get("/admin", requireAdmin, async (req: Request, res: Response) => {
           var todayRs=Math.round(todayPnl*15);
           var shadowPnl=parseFloat((d.heartbeat&&d.heartbeat.shadowPnL||0).toFixed(0));
           var shadowTr=d.heartbeat&&d.heartbeat.shadowTrades||0;
+          var shadowInTrade=!!(d.heartbeat&&d.heartbeat.shadowInTrade);
+          var shadowDir=(d.heartbeat&&d.heartbeat.shadowDir||"").toUpperCase();
+          var shadowMaxed=shadowTr>=5;
+          var shadowMissed=after915&&mktOpen&&(d.today&&d.today.trades||0)>0&&shadowTr===0;
           var trades=d.today&&d.today.trades||0;
+
+          // ── Bot heartbeat card + inline fix button
           hmSet("hm-bot",alive?"ok":"err",alive?(hbAgo<90000?"Just now":hbMin+"m ago"):"Offline"+(hbAt?" ("+hbMin+"m ago)":""));
+          var bf=hg("hm-bot-fix");if(bf){bf.innerHTML=alive?"":"<button onclick=\"doHmAction('restart')\">\u21BB Restart Bot</button>";bf.style.display=alive?"none":"";}
+
+          // ── Token card + inline fix link
           hmSet("hm-tok",tkOK?"ok":"err",tkOK?"Valid \u2713":"Expired \u2717");
+          var tf=hg("hm-tok-fix");if(tf){tf.innerHTML=tkOK?"":"<a href=\"https://139-59-18-52.nip.io/login\" target=\"_blank\">\uD83D\uDD11 Refresh Token</a>";tf.style.display=tkOK?"none":"";}
+
+          // ── Market card
           hmSet("hm-mkt",mktOpen?"ok":"dim",mktOpen?"Open \u2014 closes 3:30 PM":"Closed");
-          hmSet("hm-pos",inPos?"ok":"dim",inPos?posDir+" OPTION \u25CF":"Flat");
-          hmSet("hm-cnd",lc?"ok":(mktOpen?"warn":"dim"),lc?lc.time+" ("+(lc.colour==="bull"?"\u25B2 Bull":"\u25BC Bear")+")":mktOpen?"Awaiting next candle":"No candle (market closed)");
+
+          // ── Position (LOCK50) card
+          var unrealised=inPos&&d.activeState&&d.activeState.unrealisedPnL?d.activeState.unrealisedPnL:0;
+          var posLabel=inPos?(posDir||"?")+" OPTION \u25CF":"Flat \u2014 watching";
+          hmSet("hm-pos",inPos?"ok":"dim",posLabel);
+
+          // ── Last 15-min candle card with trade-status sub-line
+          var cndBull=lc&&lc.colour==="bull";
+          var cndMain=lc?lc.time+" ("+(cndBull?"\u25B2 Bull":"\u25BC Bear")+")":mktOpen?"Awaiting next candle":"No candle (mkt closed)";
+          var cndSub=inPos?((posDir||"")+" In Trade \u25CF"):(alive&&mktOpen?"Watching for opportunity":"");
+          hmSet("hm-cnd",lc?"ok":(mktOpen?"warn":"dim"),cndMain);
+          var cs=hg("hm-cnd-s");if(cs)cs.textContent=cndSub;
+
+          // ── Today P&L (LOCK50) card
           hmSet("hm-pnl",todayPnl>0?"ok":todayPnl<0?"err":"dim",(todayPnl>=0?"+":"-")+"\u20B9"+Math.abs(todayRs).toLocaleString("en-IN")+" ("+(todayPnl>=0?"+":"")+todayPnl+" pts)");
-          hmSet("hm-trl",shadowPnl>0?"ok":shadowPnl<0?"err":"dim",(shadowPnl>=0?"+":"-")+"\u20B9"+Math.abs(Math.round(shadowPnl*15)).toLocaleString("en-IN")+" / "+shadowTr+" trades");
+
+          // ── TRAIL (shadow) card — show position status + P&L as sub-line
+          var trlLabel=shadowMaxed?"\u23F9 Max 5 trades done":(shadowInTrade?(shadowDir+" In Trade \u25CF"):(shadowMissed?"\u26A0 Missed entry":(mktOpen?"Watching for opportunity":"Flat")));
+          var trlState=shadowInTrade?"ok":(shadowMissed?"warn":(shadowMaxed?"dim":(shadowPnl<0?"err":"dim")));
+          var trlSub=(shadowPnl>=0?"+":"")+shadowPnl+" pts \u00B7 "+shadowTr+" trade"+(shadowTr!==1?"s":"");
+          hmSet("hm-trl",trlState,trlLabel);
+          var ts=hg("hm-trl-s");if(ts)ts.textContent=trlSub;
+
+          // ── Trades today card
           hmSet("hm-trds",trades>0?"ok":"dim",trades+" trade"+(trades!==1?"s":"")+" ("+(d.today&&d.today.wins||0)+"W / "+(d.today&&d.today.losses||0)+"L)");
+
           var upd=hg("hm-upd");if(upd)upd.textContent="Updated "+new Date().toLocaleTimeString("en-IN");
           var ac=hg("hm-alerts");if(!ac)return;
           var issues=[];
           if(after915&&mktOpen){
             if(!alive)issues.push({type:"err",icon:"\u26A0\uFE0F",title:"Bot Offline",msg:"No heartbeat for "+(hbAt?hbMin+"+ min":"unknown duration")+". Bot is not running.",fn:"doHmAction('restart')",btnLabel:"\u21BB Restart Bot"});
-            if(!tkOK)issues.push({type:"warn",icon:"\uD83D\uDD11",title:"Token Expired",msg:"Zerodha access token invalid. Bot cannot trade.",href:"https://139-59-18-52.nip.io/login",btnLabel:"\u2192 Refresh Token"});
-            if(alive&&hbAgo>4*60*1000)issues.push({type:"warn",icon:"\u23F0",title:"Heartbeat Stale",msg:"Last heartbeat "+hbMin+" min ago. Bot may be hung."});
-            if(alive&&!lc)issues.push({type:"warn",icon:"\uD83D\uDCC9",title:"No Candle Data",msg:"Bot is alive but no 15-min candle received yet."});
+            if(!tkOK)issues.push({type:"warn",icon:"\uD83D\uDD11",title:"Token Expired",msg:"Zerodha access token invalid. Submit a fresh token to resume trading.",href:"https://139-59-18-52.nip.io/login",btnLabel:"\u2192 Refresh Token"});
+            if(alive&&hbAgo>4*60*1000)issues.push({type:"warn",icon:"\u23F0",title:"Heartbeat Stale",msg:"Last heartbeat "+hbMin+" min ago. Bot may be hung.",fn:"doHmAction('restart')",btnLabel:"\u21BB Restart Bot"});
+            if(alive&&!lc)issues.push({type:"warn",icon:"\uD83D\uDCC9",title:"No Candle Data",msg:"Bot is alive but no 15-min candle received yet. Normal before 9:30 AM."});
           }
           hmAlert(ac,issues);
         }).catch(function(e){var upd=hg("hm-upd");if(upd)upd.textContent="Error: "+e.message;});
