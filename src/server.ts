@@ -2902,6 +2902,7 @@ app.delete("/watchlists/:id", async (req: Request, res: Response) => {
 
 // ── GET /admin ─────────────────────────────────────────────────────────────────
 app.get("/admin", requireAdmin, async (req: Request, res: Response) => {
+  res.setHeader("Cache-Control", "no-store");
   const users = await getAllUsers();
   const today = new Date().toISOString().slice(0, 10);
   const todaySignups = users.filter(u => u.created_at?.slice(0, 10) === today).length;
@@ -9813,6 +9814,7 @@ app.get("/dashboard", featureGate("feature_dashboard", "Dashboard"), async (req:
 
 // ── GET /signals ────────────────────────────────────────────────────────────────
 app.get("/signals", featureGate("feature_signals", "Signals"), async (req, res) => {
+    res.setHeader("Cache-Control", "no-store");
     const state = readBotJSON("trade-state.json", {});
     const _rawTrades: any[] = readBotJSON("trades.json", []);
     const _premMap: Record<string, number> = {};
@@ -10137,6 +10139,7 @@ app.get("/signals", featureGate("feature_signals", "Signals"), async (req, res) 
     </div>
 
     <!-- Strategy Tab Switcher -->
+    <script>function _switchTab(t){var iL=(t==='lock50');var pl=document.getElementById('panel-lock50');var pt=document.getElementById('panel-trail');var bl=document.getElementById('tab-btn-lock50');var bt=document.getElementById('tab-btn-trail');if(pl)pl.style.display=iL?'':'none';if(pt)pt.style.display=iL?'none':'';if(bl)bl.classList.toggle('active',iL);if(bt)bt.classList.toggle('active',!iL);}</script>
     <div class="strat-tabs">
       <button class="strat-tab strat-tab-lock50 active" id="tab-btn-lock50" onclick="_switchTab('lock50')">
         &#9679; LOCK50 <span class="strat-badge">LIVE</span>
@@ -10493,13 +10496,6 @@ app.get("/signals", featureGate("feature_signals", "Signals"), async (req, res) 
   function _fP(v){return(v>=0?"+":"")+v.toFixed(0)+" pts";}
   function _gc(v){return v>=0?"#10b981":"#ef4444";}
   function _ge(id){return document.getElementById(id);}
-  function _switchTab(t){
-    const isLock=(t==='lock50');
-    _ge('panel-lock50').style.display=isLock?'':'none';
-    _ge('panel-trail').style.display=isLock?'none':'';
-    _ge('tab-btn-lock50').classList.toggle('active',isLock);
-    _ge('tab-btn-trail').classList.toggle('active',!isLock);
-  }
   async function _sig3Refresh(){
     try{
       const r=await fetch("/api/bot/status");const d=await r.json();
