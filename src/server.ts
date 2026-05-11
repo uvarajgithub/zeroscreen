@@ -10467,6 +10467,23 @@ app.get("/signals", featureGate("feature_signals", "Signals"), async (req, res) 
       </table>
     </div>
 
+    <!-- TRAIL Today's Trades -->
+    <div class="sig3-sec">
+      Today &mdash; TRAIL Paper Trades
+      <span class="sig3-sec-count" id="k3t-today-count">(${hb2?.shadowTrades ?? 0} trades)</span>
+    </div>
+    <div class="sig3-tw">
+      <table class="sig3-t">
+        <thead><tr>
+          <th>Time</th><th>Dir</th><th>Entry &rarr; Exit (Index)</th>
+          <th>P&amp;L (&#8377;)</th><th>Reason</th>
+        </tr></thead>
+        <tbody id="k3t-today-body">
+          <tr><td colspan="5" class="sig3-te">Loading&hellip;</td></tr>
+        </tbody>
+      </table>
+    </div>
+
     </div><!-- /panel-trail -->
 
   </div>
@@ -10537,6 +10554,32 @@ app.get("/signals", featureGate("feature_signals", "Signals"), async (req, res) 
       if(_ge("k3t-cmp-trail-rs")){_ge("k3t-cmp-trail-rs").textContent=_fR(shPnl);}
       if(_ge("k3t-cmp-trail-pts")){_ge("k3t-cmp-trail-pts").textContent=_fP(shPnl);}
       if(_ge("k3t-cmp-trail-tr")){_ge("k3t-cmp-trail-tr").textContent=shTr;}
+      // TRAIL today's trades log
+      const shLog=d.heartbeat?.shadowTradeLog||[];
+      if(_ge("k3t-today-count"))_ge("k3t-today-count").textContent="("+shTr+" trade"+(shTr!==1?"s":"")+")";
+      const k3tbody=_ge("k3t-today-body");
+      if(k3tbody){
+        if(!shLog.length){
+          k3tbody.innerHTML='<tr><td colspan="5" class="sig3-te">No TRAIL paper trades today'+(shInT?' &mdash; 1 live position active':'')+"</td></tr>";
+        } else {
+          k3tbody.innerHTML=[...shLog].reverse().map(function(t){
+            const _pts=t.pts!=null?parseFloat(t.pts):null;
+            const _pC=_pts!=null?(_pts>0?'sig3-g':_pts<0?'sig3-r':''):''; 
+            const _rsV=_pts!=null?_fR(_pts):'&mdash;';
+            const _ptV=_pts!=null?_fP(_pts):'';
+            const _entStr=t.entry>0?parseFloat(t.entry).toFixed(1):'&mdash;';
+            const _exStr=t.exit!=null&&t.exit>0?parseFloat(t.exit).toFixed(1):'<em style="color:#818cf8">live</em>';
+            const _dir=(t.dir||'').toUpperCase();
+            return '<tr>'
+              +'<td class="sig3-ct">'+(t.time||'&mdash;')+'</td>'
+              +'<td><span class="sig3-db '+(_dir.toLowerCase())+'">'+(_dir||'&mdash;')+'</span></td>'
+              +'<td class="sig3-mono">'+_entStr+' &rarr; '+_exStr+'</td>'
+              +'<td><span class="sig3-pnl-rs '+_pC+'">'+_rsV+'</span><span class="sig3-pnl-spt"> '+_ptV+'</span></td>'
+              +'<td>'+(t.reason||'&mdash;')+'</td>'
+              +'</tr>';
+          }).join("");
+        }
+      }
       // TRAIL live position card
       if(shInT&&shEntry>0&&livePrice>0){
         const shU=shDir==="CE"?livePrice-shEntry:shEntry-livePrice;
