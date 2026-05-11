@@ -10357,7 +10357,7 @@ app.get("/signals", featureGate("feature_signals", "Signals"), async (req, res) 
       <div class="sig3-kpi">
         <div class="sig3-kl">Today Trades</div>
         <div class="sig3-kv" id="k3t-trades">${hb2?.shadowTrades ?? 0}</div>
-        <div class="sig3-ks sig3-d">Paper only &mdash; no real orders</div>
+        <div class="sig3-ks sig3-d" id="k3t-wl"><span class="sig3-g">${hb2?.shadowWins ?? 0}W</span> / <span class="sig3-r">${hb2?.shadowLosses ?? 0}L</span></div>
       </div>
       <div class="sig3-kpi">
         <div class="sig3-kl">vs LOCK50 today</div>
@@ -10378,6 +10378,61 @@ app.get("/signals", featureGate("feature_signals", "Signals"), async (req, res) 
         <div class="sig3-kl">Strategy Rules</div>
         <div class="sig3-kv sig3-d" style="font-size:.82rem">TRAIL</div>
         <div class="sig3-ks sig3-d">peak&ge;100&#8594;+20 &nbsp; peak&ge;200&#8594;+100</div>
+      </div>
+    </div>
+
+    <!-- TRAIL Live Position Card -->
+    <div id="k3t-pos-wrap">
+      ${(hb2?.shadowInTrade && (hb2?.shadowEntry ?? 0) > 0) ? `
+      <div class="sig3-pos sig3-pos-${(hb2?.shadowDir || "flat").toLowerCase()}">
+        <div class="sig3-ph">
+          <span class="sig3-dot"></span>
+          <span class="sig3-dir-b sig3-dir-${(hb2?.shadowDir || "").toLowerCase()}">${hb2?.shadowDir ?? ""} OPTION</span>
+          <span class="sig3-mode-b" style="background:rgba(99,102,241,.15);color:#818cf8">PAPER</span>
+          <span class="sig3-dur" style="color:#818cf8">Shadow only</span>
+        </div>
+        <div class="sig3-pnl-big" id="k3t-pos-pnl" style="color:#818cf8">&mdash;</div>
+        <div class="sig3-pnl-pts" id="k3t-pos-pts" style="color:#818cf8">Unrealised (paper)</div>
+        <div class="sig3-pg">
+          <div>
+            <div class="sig3-pl">Entry Index</div>
+            <div class="sig3-pv sig3-mono">${(hb2?.shadowEntry ?? 0).toFixed(1)}</div>
+          </div>
+          <div>
+            <div class="sig3-pl">Live Index</div>
+            <div class="sig3-pv sig3-g sig3-mono" id="k3t-pos-live">&hellip;</div>
+          </div>
+          <div>
+            <div class="sig3-pl">Stop Loss</div>
+            <div class="sig3-pv sig3-r sig3-mono" id="k3t-pos-sl">${(hb2?.shadowSL ?? 0) > 0 ? (hb2?.shadowSL ?? 0).toFixed(1) : "&mdash;"}</div>
+          </div>
+          <div>
+            <div class="sig3-pl">Direction</div>
+            <div class="sig3-pv">${hb2?.shadowDir ?? "&mdash;"}</div>
+          </div>
+        </div>
+      </div>` : `
+      <div class="sig3-pos sig3-pos-flat" id="k3t-pos-flat">
+        <div style="display:flex;align-items:center;gap:.75rem">
+          <span style="font-size:1.6rem">&#9203;</span>
+          <div>
+            <div style="font-weight:700;font-size:.95rem">TRAIL — Watching for Signal</div>
+            <div class="sig3-ks sig3-d" id="k3t-next-opp" style="margin-top:4px">Next opportunity loading&hellip;</div>
+          </div>
+        </div>
+      </div>`}
+    </div>
+
+    <!-- LAST 15-MIN CANDLE (shared with LOCK50) -->
+    <div id="sig3t-candle-wrap" style="margin-bottom:1rem;display:none">
+      <div class="sig3-sec" style="margin-bottom:.5rem">Last 15-Min Candle <span id="sig3t-candle-time" style="font-weight:400;font-size:.72rem;color:var(--text-muted)"></span></div>
+      <div style="background:var(--card-bg);border:1px solid var(--border);border-radius:10px;padding:14px 18px;display:flex;flex-wrap:wrap;gap:1.2rem;align-items:center">
+        <span id="sig3t-candle-colour" style="font-size:1.1rem;font-weight:700"></span>
+        <span style="font-size:.8rem;color:var(--text-muted)">O: <b id="sig3t-c-o" style="color:var(--text)"></b></span>
+        <span style="font-size:.8rem;color:var(--text-muted)">H: <b id="sig3t-c-h" style="color:#10b981"></b></span>
+        <span style="font-size:.8rem;color:var(--text-muted)">L: <b id="sig3t-c-l" style="color:#ef4444"></b></span>
+        <span style="font-size:.8rem;color:var(--text-muted)">C: <b id="sig3t-c-c" style="color:var(--text)"></b></span>
+        <span id="sig3t-candle-status" style="font-size:.78rem;margin-left:auto;color:var(--text-muted)"></span>
       </div>
     </div>
 
@@ -10438,6 +10493,7 @@ app.get("/signals", featureGate("feature_signals", "Signals"), async (req, res) 
       _ge("sig3-upd").textContent="Updated "+new Date().toLocaleTimeString("en-IN");
       const inT=d.activeState&&!!(d.activeState.inTrade||d.activeState.activeTrade||d.activeState.mainEntryDone);
       const tot=parseFloat(((d.today?.pnl||0)+(inT?(d.activeState?.unrealisedPnL||0):0)).toFixed(0));
+      // ── LOCK50 KPI
       if(_ge("k3-today-rs")){_ge("k3-today-rs").textContent=_fR(tot);_ge("k3-today-rs").style.color=_gc(tot);}
       if(_ge("k3-today-pts")){_ge("k3-today-pts").textContent=_fP(tot);_ge("k3-today-pts").style.color=_gc(tot);}
       const tc=d.today?.trades||0;
@@ -10446,31 +10502,66 @@ app.get("/signals", featureGate("feature_signals", "Signals"), async (req, res) 
       if(_ge("k3-wk-rs")&&d.weekly){_ge("k3-wk-rs").textContent=_fR(d.weekly.pnl);_ge("k3-wk-rs").style.color=_gc(d.weekly.pnl);}
       if(_ge("k3-wk-pts")&&d.weekly){_ge("k3-wk-pts").textContent=_fP(d.weekly.pnl);_ge("k3-wk-pts").style.color=_gc(d.weekly.pnl);}
       if(_ge("k3-wr")&&d.allTime)_ge("k3-wr").textContent=d.allTime.winRate+"%";
-      // update TRAIL shadow panel
-      const shPnl=parseFloat((d.heartbeat?.shadowPnL??0).toFixed(0));
-      const shTr=d.heartbeat?.shadowTrades??0;
-      if(_ge("k3t-today-rs")){_ge("k3t-today-rs").textContent=_fR(shPnl);_ge("k3t-today-rs").style.color="#818cf8";}
-      if(_ge("k3t-today-pts")){_ge("k3t-today-pts").textContent=_fP(shPnl);_ge("k3t-today-pts").style.color="#818cf8";}
-      if(_ge("k3t-trades")){_ge("k3t-trades").textContent=shTr;}
-      const lock50Today=parseFloat(((d.today?.pnl||0)+(inT?(d.activeState?.unrealisedPnL||0):0)).toFixed(0));
-      const diffV=shPnl-lock50Today;
-      if(_ge("k3t-diff")){_ge("k3t-diff").textContent=_fR(diffV);_ge("k3t-diff").style.color=diffV>=0?"#818cf8":"#ef4444";}
-      if(_ge("k3t-diff-pts")){_ge("k3t-diff-pts").textContent=_fP(diffV)+" pts diff";}
-      if(_ge("k3t-lock50-rs")){_ge("k3t-lock50-rs").textContent=_fR(lock50Today);_ge("k3t-lock50-rs").style.color=_gc(lock50Today);}
-      if(_ge("k3t-lock50-pts")){_ge("k3t-lock50-pts").textContent=_fP(lock50Today);_ge("k3t-lock50-pts").style.color=_gc(lock50Today);}
-      if(_ge("k3t-cmp-lock-rs")){_ge("k3t-cmp-lock-rs").textContent=_fR(lock50Today);_ge("k3t-cmp-lock-rs").style.color=_gc(lock50Today);}
-      if(_ge("k3t-cmp-lock-pts")){_ge("k3t-cmp-lock-pts").textContent=_fP(lock50Today);_ge("k3t-cmp-lock-pts").style.color=_gc(lock50Today);}
-      if(_ge("k3t-cmp-lock-tr")){_ge("k3t-cmp-lock-tr").textContent=d.today?.trades??0;}
-      if(_ge("k3t-cmp-trail-rs")){_ge("k3t-cmp-trail-rs").textContent=_fR(shPnl);}
-      if(_ge("k3t-cmp-trail-pts")){_ge("k3t-cmp-trail-pts").textContent=_fP(shPnl);}
-      if(_ge("k3t-cmp-trail-tr")){_ge("k3t-cmp-trail-tr").textContent=shTr;}
+      // ── LOCK50 live position + SL update
       if(inT&&d.activeState?.entryPrice>0){
         const u=d.activeState?.unrealisedPnL??0;
         if(_ge("sig3-pnl-rs")){_ge("sig3-pnl-rs").textContent=_fR(u);_ge("sig3-pnl-rs").style.color=_gc(u);}
         if(_ge("sig3-pnl-pts")){_ge("sig3-pnl-pts").textContent=(u>=0?"+":"")+u.toFixed(0)+" index pts unrealised";_ge("sig3-pnl-pts").style.color=_gc(u);}
         if(_ge("sig3-live")&&d.activeState?.livePrice)_ge("sig3-live").textContent=parseFloat(d.activeState.livePrice).toFixed(1);
       }
-      // update bot status bar
+      // ── TRAIL shadow panel
+      const shPnl=parseFloat((d.heartbeat?.shadowPnL??0).toFixed(0));
+      const shTr=d.heartbeat?.shadowTrades??0;
+      const shW=d.heartbeat?.shadowWins??0;
+      const shL=d.heartbeat?.shadowLosses??0;
+      const shInT=!!(d.heartbeat?.shadowInTrade);
+      const shDir=(d.heartbeat?.shadowDir||"").toUpperCase();
+      const shEntry=parseFloat(d.heartbeat?.shadowEntry||0);
+      const shSL=parseFloat(d.heartbeat?.shadowSL||0);
+      const livePrice=d.activeState?.livePrice||d.heartbeat?.livePrice||0;
+      const lock50Today=parseFloat(((d.today?.pnl||0)+(inT?(d.activeState?.unrealisedPnL||0):0)).toFixed(0));
+      // TRAIL KPI
+      if(_ge("k3t-today-rs")){_ge("k3t-today-rs").textContent=_fR(shPnl);_ge("k3t-today-rs").style.color="#818cf8";}
+      if(_ge("k3t-today-pts")){_ge("k3t-today-pts").textContent=_fP(shPnl);_ge("k3t-today-pts").style.color="#818cf8";}
+      if(_ge("k3t-trades")){_ge("k3t-trades").textContent=shTr;}
+      if(_ge("k3t-wl"))_ge("k3t-wl").innerHTML='<span class="sig3-g">'+shW+'W</span> / <span class="sig3-r">'+shL+'L</span>';
+      const diffV=shPnl-lock50Today;
+      if(_ge("k3t-diff")){_ge("k3t-diff").textContent=_fR(diffV);_ge("k3t-diff").style.color=diffV>=0?"#818cf8":"#ef4444";}
+      if(_ge("k3t-diff-pts")){_ge("k3t-diff-pts").textContent=_fP(diffV)+" pts diff";}
+      if(_ge("k3t-lock50-rs")){_ge("k3t-lock50-rs").textContent=_fR(lock50Today);_ge("k3t-lock50-rs").style.color=_gc(lock50Today);}
+      if(_ge("k3t-lock50-pts")){_ge("k3t-lock50-pts").textContent=_fP(lock50Today);_ge("k3t-lock50-pts").style.color=_gc(lock50Today);}
+      // TRAIL comparison
+      if(_ge("k3t-cmp-lock-rs")){_ge("k3t-cmp-lock-rs").textContent=_fR(lock50Today);_ge("k3t-cmp-lock-rs").style.color=_gc(lock50Today);}
+      if(_ge("k3t-cmp-lock-pts")){_ge("k3t-cmp-lock-pts").textContent=_fP(lock50Today);_ge("k3t-cmp-lock-pts").style.color=_gc(lock50Today);}
+      if(_ge("k3t-cmp-lock-tr")){_ge("k3t-cmp-lock-tr").textContent=d.today?.trades??0;}
+      if(_ge("k3t-cmp-trail-rs")){_ge("k3t-cmp-trail-rs").textContent=_fR(shPnl);}
+      if(_ge("k3t-cmp-trail-pts")){_ge("k3t-cmp-trail-pts").textContent=_fP(shPnl);}
+      if(_ge("k3t-cmp-trail-tr")){_ge("k3t-cmp-trail-tr").textContent=shTr;}
+      // TRAIL live position card
+      if(shInT&&shEntry>0&&livePrice>0){
+        const shU=shDir==="CE"?livePrice-shEntry:shEntry-livePrice;
+        if(_ge("k3t-pos-pnl")){_ge("k3t-pos-pnl").textContent=_fR(shU);_ge("k3t-pos-pnl").style.color=shU>=0?"#818cf8":"#ef4444";}
+        if(_ge("k3t-pos-pts")){_ge("k3t-pos-pts").textContent=(shU>=0?"+":"")+shU.toFixed(0)+" index pts unrealised (paper)";}
+        if(_ge("k3t-pos-live"))_ge("k3t-pos-live").textContent=livePrice.toFixed(1);
+        if(_ge("k3t-pos-sl")&&shSL>0)_ge("k3t-pos-sl").textContent=shSL.toFixed(1);
+      }
+      // TRAIL flat — show next opportunity trigger levels
+      if(!shInT){
+        const lc2=d.heartbeat?.lastCandle;
+        if(lc2&&_ge("k3t-next-opp")){
+          const _bH=Math.max(lc2.open,lc2.close);
+          const _bL=Math.min(lc2.open,lc2.close);
+          const _ceTrig=(_bH+25).toFixed(0);
+          const _peTrig=(_bL-25).toFixed(0);
+          const _lpf=parseFloat(livePrice)||0;
+          const _ceAway=_lpf>0?((_bH+25)-_lpf).toFixed(0):null;
+          const _peAway=_lpf>0?(_lpf-(_bL-25)).toFixed(0):null;
+          const _ceStr=_ceAway!==null?(" \u2014 "+(_ceAway>0?"\uD83D\uDD34 "+_ceAway+" pts away":"\u2705 past")):"";
+          const _peStr=_peAway!==null?(" \u2014 "+(_peAway>0?"\uD83D\uDD34 "+_peAway+" pts away":"\u2705 past")):"";
+          _ge("k3t-next-opp").innerHTML="CE entry if close \u2265 "+_ceTrig+_ceStr+"&nbsp;&nbsp;/&nbsp;&nbsp;PE entry if close \u2264 "+_peTrig+_peStr;
+        }
+      }
+      // ── Bot status bar
       const alive2=d.isAlive!==false;
       const hbSt2=(d.botStatus||"").toUpperCase();
       const _nowI=new Date(new Date().toLocaleString("en-US",{timeZone:"Asia/Kolkata"}));
@@ -10488,19 +10579,21 @@ app.get("/signals", featureGate("feature_signals", "Signals"), async (req, res) 
       const tkOK=!!(d.tokenOK);
       if(_ge("sig3-token-status")){_ge("sig3-token-status").textContent=tkOK?"\u2713 Token OK":"\u2717 No Token";_ge("sig3-token-status").style.background=tkOK?"rgba(16,185,129,.15)":"rgba(239,68,68,.15)";_ge("sig3-token-status").style.color=tkOK?"#10b981":"#ef4444";}
       if(_ge("sig3-token-link"))_ge("sig3-token-link").style.display=tkOK?"none":"";
-      // update last 15-min candle card
+      // ── Last 15-min candle (both panels)
       const lc=d.heartbeat?.lastCandle;
-      const cw=_ge("sig3-candle-wrap");
-      if(lc&&cw){
+      [["sig3-candle-wrap","sig3-candle-time","sig3-candle-colour","sig3-c-o","sig3-c-h","sig3-c-l","sig3-c-c","sig3-candle-status"],
+       ["sig3t-candle-wrap","sig3t-candle-time","sig3t-candle-colour","sig3t-c-o","sig3t-c-h","sig3t-c-l","sig3t-c-c","sig3t-candle-status"]
+      ].forEach(function(ids){
+        const cw=_ge(ids[0]);if(!lc||!cw)return;
         cw.style.display="";
-        if(_ge("sig3-candle-time"))_ge("sig3-candle-time").textContent="@ "+lc.time;
-        if(_ge("sig3-candle-colour"))_ge("sig3-candle-colour").textContent=lc.colour==="bull"?"\uD83D\uDFE2 Bullish":"\uD83D\uDD34 Bearish";
-        if(_ge("sig3-c-o"))_ge("sig3-c-o").textContent=lc.open;
-        if(_ge("sig3-c-h"))_ge("sig3-c-h").textContent=lc.high;
-        if(_ge("sig3-c-l"))_ge("sig3-c-l").textContent=lc.low;
-        if(_ge("sig3-c-c"))_ge("sig3-c-c").textContent=lc.close;
-        if(_ge("sig3-candle-status"))_ge("sig3-candle-status").textContent=lc.status||"";
-      }
+        if(_ge(ids[1]))_ge(ids[1]).textContent="@ "+lc.time;
+        if(_ge(ids[2]))_ge(ids[2]).textContent=lc.colour==="bull"?"\uD83D\uDFE2 Bullish":"\uD83D\uDD34 Bearish";
+        if(_ge(ids[3]))_ge(ids[3]).textContent=lc.open;
+        if(_ge(ids[4]))_ge(ids[4]).textContent=lc.high;
+        if(_ge(ids[5]))_ge(ids[5]).textContent=lc.low;
+        if(_ge(ids[6]))_ge(ids[6]).textContent=lc.close;
+        if(_ge(ids[7]))_ge(ids[7]).textContent=lc.status||"";
+      });
     }catch(e){console.error(e);}
   }
   _sig3Refresh();setInterval(_sig3Refresh,8000);
