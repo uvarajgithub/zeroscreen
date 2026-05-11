@@ -3013,7 +3013,7 @@ app.get("/admin", requireAdmin, async (req: Request, res: Response) => {
       .hm-fix{margin-top:5px}.hm-fix a,.hm-fix button{font-size:.63rem;font-weight:700;padding:2px 9px;border-radius:4px;border:1px solid currentColor;cursor:pointer;background:transparent;color:inherit;text-decoration:none;display:inline-block}
       .hm-sub{font-size:.7rem;opacity:.65;margin-top:3px;line-height:1.2}
     </style>
-    <div class="hm-section-title">\u26A1 System Health <span id="hm-upd" style="font-weight:400;font-size:.7rem;opacity:.6">&mdash;</span></div>
+    <div class="hm-section-title">&#x26A1; System Health <span id="hm-upd" style="font-weight:400;font-size:.7rem;opacity:.6">Loading&hellip;</span></div>
     <div class="hm-grid">
       <div class="hm-card hm-dim" id="hm-bot"><div class="hm-dot"></div><div><div class="hm-label">Bot Heartbeat</div><div class="hm-val" id="hm-bot-v">&mdash;</div><div class="hm-fix" id="hm-bot-fix" style="display:none"></div></div></div>
       <div class="hm-card hm-dim" id="hm-tok"><div class="hm-dot"></div><div><div class="hm-label">Zerodha Token</div><div class="hm-val" id="hm-tok-v">&mdash;</div><div class="hm-fix" id="hm-tok-fix" style="display:none"></div></div></div>
@@ -3026,7 +3026,7 @@ app.get("/admin", requireAdmin, async (req: Request, res: Response) => {
     </div>
     <div class="hm-alerts" id="hm-alerts"></div>
     <script>
-    (function(){
+    document.addEventListener('DOMContentLoaded',function(){
       function hg(id){return document.getElementById(id);}
       function hmSet(id,state,val){var c=hg(id);if(!c)return;c.className="hm-card hm-"+state;var v=hg(id+"-v");if(v)v.textContent=val;}
       function hmAlert(container,issues){
@@ -3120,7 +3120,7 @@ app.get("/admin", requireAdmin, async (req: Request, res: Response) => {
           .then(function(r){return r.json();}).then(function(d){alert(d.ok?"\u2713 "+d.msg:"Error: "+d.msg);doHmRefresh();}).catch(function(){alert("Request failed");});
       };
       doHmRefresh();setInterval(doHmRefresh,10000);
-    })();
+    });
     </script>
     <!-- ─────────────────────────────────────────────────────────── -->
   </div>
