@@ -3026,8 +3026,9 @@ app.get("/admin", requireAdmin, async (req: Request, res: Response) => {
     </div>
     <div class="hm-alerts" id="hm-alerts"></div>
     <script>
-    document.addEventListener('DOMContentLoaded',function(){
+    (function(){
       function hg(id){return document.getElementById(id);}
+      var _hmu=hg('hm-upd');if(_hmu)_hmu.textContent='Connecting\u2026';
       function hmSet(id,state,val){var c=hg(id);if(!c)return;c.className="hm-card hm-"+state;var v=hg(id+"-v");if(v)v.textContent=val;}
       function hmAlert(container,issues){
         container.innerHTML="";
@@ -3120,7 +3121,7 @@ app.get("/admin", requireAdmin, async (req: Request, res: Response) => {
           .then(function(r){return r.json();}).then(function(d){alert(d.ok?"\u2713 "+d.msg:"Error: "+d.msg);doHmRefresh();}).catch(function(){alert("Request failed");});
       };
       doHmRefresh();setInterval(doHmRefresh,10000);
-    });
+    })();
     </script>
     <!-- ─────────────────────────────────────────────────────────── -->
   </div>
@@ -10222,13 +10223,13 @@ app.get("/signals", featureGate("feature_signals", "Signals"), async (req, res) 
           </div>
         </div>
       </div>` : `
-      <div class="sig3-pos sig3-pos-flat">
-        <div style="display:flex;align-items:center;gap:.75rem">
-          <span style="font-size:1.6rem">&#9203;</span>
-          <div>
-            <div style="font-weight:700;font-size:.95rem">No Active Position</div>
-            <div style="font-size:.74rem;color:var(--text-muted);margin-top:3px">Bot scanning BANKNIFTY for breakout signal&hellip;</div>
-          </div>
+      <div class="sig3-pos sig3-pos-flat" id="sig3-pos-flat">
+        <div style="display:flex;align-items:center;gap:.75rem;margin-bottom:.6rem">
+          <span style="font-size:1.3rem">&#9203;</span>
+          <div style="font-weight:700;font-size:.93rem">Watching for Next Opportunity</div>
+        </div>
+        <div id="sig3-next-opp" style="font-size:.78rem;color:var(--text-muted);line-height:1.8">
+          <span style="opacity:.5">Loading trigger levels&hellip;</span>
         </div>
       </div>`}
     </div>
@@ -10487,8 +10488,8 @@ app.get("/signals", featureGate("feature_signals", "Signals"), async (req, res) 
   </footer>
 
   <script>
-  const _QM = 15;
-  function _fR(v){const r=Math.round(v*_QM);return(r>=0?"+":"\u2212")+"\u20B9"+Math.abs(r).toLocaleString("en-IN");}
+  var _QM = 15;
+  function _fR(v){var r=Math.round(v*_QM);return(r>=0?"+":"\u2212")+"\u20B9"+Math.abs(r).toLocaleString("en-IN");}
   function _fP(v){return(v>=0?"+":"")+v.toFixed(0)+" pts";}
   function _gc(v){return v>=0?"#10b981":"#ef4444";}
   function _ge(id){return document.getElementById(id);}
@@ -10521,7 +10522,29 @@ app.get("/signals", featureGate("feature_signals", "Signals"), async (req, res) 
         if(_ge("sig3-pnl-pts")){_ge("sig3-pnl-pts").textContent=(u>=0?"+":"")+u.toFixed(0)+" index pts unrealised";_ge("sig3-pnl-pts").style.color=_gc(u);}
         if(_ge("sig3-live")&&d.activeState?.livePrice)_ge("sig3-live").textContent=parseFloat(d.activeState.livePrice).toFixed(1);
       }
-      // ── TRAIL shadow panel
+      // ── LOCK50 flat — next opportunity trigger levels
+      if(!inT){
+        const _lc0=d.heartbeat?.lastCandle;
+        const _lp0=parseFloat(d.activeState?.livePrice||d.heartbeat?.livePrice||0);
+        const _noEl=_ge("sig3-next-opp");
+        if(_lc0&&_noEl){
+          const _bH0=Math.max(_lc0.open,_lc0.close);
+          const _bL0=Math.min(_lc0.open,_lc0.close);
+          const _ce0=(_bH0+25).toFixed(0);
+          const _pe0=(_bL0-25).toFixed(0);
+          const _ceD0=_lp0>0?(_lp0-(_bH0+25)):null;
+          const _peD0=_lp0>0?((_bL0-25)-_lp0):null;
+          const _ceIcon0=_ceD0===null?"":(_ceD0>=0?'<span style="color:#10b981">&#9679;</span>':'<span style="color:#ef4444">&#9679;</span>');
+          const _peIcon0=_peD0===null?"":(_peD0>=0?'<span style="color:#10b981">&#9679;</span>':'<span style="color:#ef4444">&#9679;</span>');
+          const _ceAway0=_ceD0!==null?(' &nbsp;<span style="color:'+(_ceD0>=0?'#10b981':'#ef4444')+'">'+(_ceD0>=0?'&#10003; past':'&#8679; '+Math.abs(_ceD0).toFixed(0)+' pts away')+'</span>'):"";
+          const _peAway0=_peD0!==null?(' &nbsp;<span style="color:'+(_peD0>=0?'#10b981':'#ef4444')+'">'+(_peD0>=0?'&#10003; past':'&#8681; '+Math.abs(_peD0).toFixed(0)+' pts away')+'</span>'):"";
+          _noEl.innerHTML=
+            _ceIcon0+' <b style="color:#60a5fa">CE</b> entry if close &ge; <b>'+_ce0+'</b>'+_ceAway0+'<br>'+
+            _peIcon0+' <b style="color:#f87171">PE</b> entry if close &le; <b>'+_pe0+'</b>'+_peAway0;
+        } else if(_noEl){
+          _noEl.innerHTML='<span style="opacity:.5">Waiting for first candle&hellip;</span>';
+        }
+      }
       const shPnl=parseFloat((d.heartbeat?.shadowPnL??0).toFixed(0));
       const shTr=d.heartbeat?.shadowTrades??0;
       const shW=d.heartbeat?.shadowWins??0;
