@@ -614,9 +614,11 @@ export async function autoPaperTradeFromPicks(): Promise<void> {
   const users = await getUsersWithAutoPicks();
   if (users.length === 0) { console.log("[AutoPaper] No users opted in"); return; }
 
-  // Get today's active picks — exclude longterm only (not suitable for daily auto-trade)
+  // Get recent active picks — exclude longterm only (not suitable for daily auto-trade)
+  // Use last 2 days to cover overnight window: picks generated at 6:45 PM yesterday are
+  // valid for auto-trade at 9:15 AM today (date would be yesterday, not today)
   const picks = await dbAll<any>(
-    `SELECT * FROM picks WHERE status='active' AND pick_type != 'longterm' AND date(published_at) = date('now','localtime')`
+    `SELECT * FROM picks WHERE status='active' AND pick_type != 'longterm' AND date(published_at) >= date('now','localtime','-2 days')`
   );
   if (picks.length === 0) { console.log("[AutoPaper] No picks available today"); return; }
 
