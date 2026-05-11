@@ -10360,14 +10360,9 @@ app.get("/signals", featureGate("feature_signals", "Signals"), async (req, res) 
         <div class="sig3-ks sig3-d" id="k3t-wl"><span class="sig3-g">${hb2?.shadowWins ?? 0}W</span> / <span class="sig3-r">${hb2?.shadowLosses ?? 0}L</span></div>
       </div>
       <div class="sig3-kpi">
-        <div class="sig3-kl">vs LOCK50 today</div>
-        <div class="sig3-kv" id="k3t-diff" style="color:${((hb2?.shadowPnL??0)-(an2.today.pnl))>=0?'#818cf8':'#ef4444'}">${fmtRs2((hb2?.shadowPnL??0)-(an2.today.pnl))}</div>
-        <div class="sig3-ks sig3-d" id="k3t-diff-pts">${fmtPts2((hb2?.shadowPnL??0)-(an2.today.pnl))} pts diff</div>
-      </div>
-      <div class="sig3-kpi">
-        <div class="sig3-kl">LOCK50 today</div>
-        <div class="sig3-kv ${pnlCls2(an2.today.pnl)}" id="k3t-lock50-rs">${fmtRs2(an2.today.pnl)}</div>
-        <div class="sig3-ks ${pnlCls2(an2.today.pnl)}" id="k3t-lock50-pts">${fmtPts2(an2.today.pnl)}</div>
+        <div class="sig3-kl">Win Rate</div>
+        <div class="sig3-kv sig3-d" id="k3t-winrate">${hb2 && ((hb2.shadowWins??0)+(hb2.shadowLosses??0))>0 ? Math.round(((hb2.shadowWins??0)/((hb2.shadowWins??0)+(hb2.shadowLosses??0)))*100)+'%' : '&mdash;'}</div>
+        <div class="sig3-ks sig3-d">today</div>
       </div>
       <div class="sig3-kpi">
         <div class="sig3-kl">5yr Backtest</div>
@@ -10542,12 +10537,9 @@ app.get("/signals", featureGate("feature_signals", "Signals"), async (req, res) 
       if(_ge("k3t-today-pts")){_ge("k3t-today-pts").textContent=_fP(shPnl);_ge("k3t-today-pts").style.color="#818cf8";}
       if(_ge("k3t-trades")){_ge("k3t-trades").textContent=shTr;}
       if(_ge("k3t-wl"))_ge("k3t-wl").innerHTML='<span class="sig3-g">'+shW+'W</span> / <span class="sig3-r">'+shL+'L</span>';
-      const diffV=shPnl-lock50Today;
-      if(_ge("k3t-diff")){_ge("k3t-diff").textContent=_fR(diffV);_ge("k3t-diff").style.color=diffV>=0?"#818cf8":"#ef4444";}
-      if(_ge("k3t-diff-pts")){_ge("k3t-diff-pts").textContent=_fP(diffV)+" pts diff";}
-      if(_ge("k3t-lock50-rs")){_ge("k3t-lock50-rs").textContent=_fR(lock50Today);_ge("k3t-lock50-rs").style.color=_gc(lock50Today);}
-      if(_ge("k3t-lock50-pts")){_ge("k3t-lock50-pts").textContent=_fP(lock50Today);_ge("k3t-lock50-pts").style.color=_gc(lock50Today);}
-      // TRAIL comparison
+      const _wrt=shW+shL>0?Math.round(shW/(shW+shL)*100):0;
+      if(_ge("k3t-winrate")){_ge("k3t-winrate").textContent=shW+shL>0?_wrt+'%':'\u2014';}
+      const lock50Today=parseFloat(((d.today?.pnl||0)+(inT?(d.activeState?.unrealisedPnL||0):0)).toFixed(0));
       if(_ge("k3t-cmp-lock-rs")){_ge("k3t-cmp-lock-rs").textContent=_fR(lock50Today);_ge("k3t-cmp-lock-rs").style.color=_gc(lock50Today);}
       if(_ge("k3t-cmp-lock-pts")){_ge("k3t-cmp-lock-pts").textContent=_fP(lock50Today);_ge("k3t-cmp-lock-pts").style.color=_gc(lock50Today);}
       if(_ge("k3t-cmp-lock-tr")){_ge("k3t-cmp-lock-tr").textContent=d.today?.trades??0;}
