@@ -10183,9 +10183,14 @@ app.get("/signals", featureGate("feature_signals", "Signals"), async (req, res) 
         <div class="sig3-ks sig3-d">${an2.allTime.wins}W / ${an2.allTime.losses}L all-time</div>
       </div>
       <div class="sig3-kpi">
-        <div class="sig3-kl">Max Risk / Trade</div>
+        <div class="sig3-kl">Max Loss / Trade</div>
         <div class="sig3-kv sig3-r">&#8722;&#8377;${_slRs2ssr}</div>
         <div class="sig3-ks sig3-d">${_slPts2ssr} pts SL &times; ${_qty2ssr} qty</div>
+      </div>
+      <div class="sig3-kpi">
+        <div class="sig3-kl">Daily Loss Cap</div>
+        <div class="sig3-kv sig3-r">&#8722;&#8377;${Math.round((hb2?.dailyCapPts ?? 350) * _qty2ssr * 0.5).toLocaleString("en-IN")}</div>
+        <div class="sig3-ks sig3-d">${hb2?.dailyCapPts ?? 350} pts max per day</div>
       </div>
     </div>
 
