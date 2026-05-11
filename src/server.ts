@@ -9879,6 +9879,9 @@ app.get("/signals", featureGate("feature_signals", "Signals"), async (req, res) 
     if (premium) {
         const an2 = computeAnalytics(trades);
         const hb2 = readBotJSON("bot-heartbeat.json", {});
+        const _qty2ssr   = hb2?.qty   ?? 30;
+        const _slPts2ssr = hb2?.slPts ?? 100;
+        const _slRs2ssr  = Math.round(_slPts2ssr * _qty2ssr * 0.5).toLocaleString("en-IN");
         const isAlive2 = hb2?.at ? (Date.now() - new Date(hb2.at).getTime()) < 3 * 60 * 1000 : false;
         const _nowIST2 = new Date(new Date().toLocaleString("en-US", { timeZone: "Asia/Kolkata" }));
         const _istH2 = _nowIST2.getHours(), _istM2 = _nowIST2.getMinutes();
@@ -10181,8 +10184,8 @@ app.get("/signals", featureGate("feature_signals", "Signals"), async (req, res) 
       </div>
       <div class="sig3-kpi">
         <div class="sig3-kl">Max Risk / Trade</div>
-        <div class="sig3-kv sig3-r">&#8722;&#8377;1,500</div>
-        <div class="sig3-ks sig3-d">100 pts SL &times; 30 qty</div>
+        <div class="sig3-kv sig3-r">&#8722;&#8377;${_slRs2ssr}</div>
+        <div class="sig3-ks sig3-d">${_slPts2ssr} pts SL &times; ${_qty2ssr} qty</div>
       </div>
     </div>
 
@@ -10214,7 +10217,7 @@ app.get("/signals", featureGate("feature_signals", "Signals"), async (req, res) 
           </div>
           <div>
             <div class="sig3-pl">SL Loss (&#8377;)</div>
-            <div class="sig3-pv sig3-r">&#8722;&#8377;1,500</div>
+            <div class="sig3-pv sig3-r">&#8722;&#8377;${_slRs2ssr}</div>
           </div>
           <div>
             <div class="sig3-pl">Qty / Lot</div>
@@ -10382,11 +10385,11 @@ app.get("/signals", featureGate("feature_signals", "Signals"), async (req, res) 
 
     <!-- TRAIL Live Position Card -->
     <div id="k3t-pos-wrap">
-      ${(hb2?.shadowInTrade && (hb2?.shadowEntry ?? 0) > 0) ? `
-      <div class="sig3-pos sig3-pos-${(hb2?.shadowDir || "flat").toLowerCase()}">
+      <!-- In-trade card: always rendered, JS shows/hides -->
+      <div class="sig3-pos sig3-pos-ce" id="k3t-pos-intrade" style="display:${(hb2?.shadowInTrade && (hb2?.shadowEntry ?? 0) > 0) ? '' : 'none'}">
         <div class="sig3-ph">
           <span class="sig3-dot"></span>
-          <span class="sig3-dir-b sig3-dir-${(hb2?.shadowDir || "").toLowerCase()}">${hb2?.shadowDir ?? ""} OPTION</span>
+          <span class="sig3-dir-b" id="k3t-pos-dir-b" style="background:rgba(99,102,241,.15);color:#818cf8">${hb2?.shadowDir ?? "?"} OPTION</span>
           <span class="sig3-mode-b" style="background:rgba(99,102,241,.15);color:#818cf8">PAPER</span>
           <span class="sig3-dur" style="color:#818cf8">Shadow only</span>
         </div>
@@ -10395,7 +10398,7 @@ app.get("/signals", featureGate("feature_signals", "Signals"), async (req, res) 
         <div class="sig3-pg">
           <div>
             <div class="sig3-pl">Entry Index</div>
-            <div class="sig3-pv sig3-mono">${(hb2?.shadowEntry ?? 0).toFixed(1)}</div>
+            <div class="sig3-pv sig3-mono" id="k3t-pos-entry">${(hb2?.shadowEntry ?? 0) > 0 ? (hb2?.shadowEntry ?? 0).toFixed(1) : "&mdash;"}</div>
           </div>
           <div>
             <div class="sig3-pl">Live Index</div>
@@ -10407,11 +10410,12 @@ app.get("/signals", featureGate("feature_signals", "Signals"), async (req, res) 
           </div>
           <div>
             <div class="sig3-pl">Direction</div>
-            <div class="sig3-pv">${hb2?.shadowDir ?? "&mdash;"}</div>
+            <div class="sig3-pv" id="k3t-pos-dir">${hb2?.shadowDir ?? "&mdash;"}</div>
           </div>
         </div>
-      </div>` : `
-      <div class="sig3-pos sig3-pos-flat" id="k3t-pos-flat">
+      </div>
+      <!-- Flat/watching card: always rendered, JS shows/hides -->
+      <div class="sig3-pos sig3-pos-flat" id="k3t-pos-flat" style="display:${(hb2?.shadowInTrade && (hb2?.shadowEntry ?? 0) > 0) ? 'none' : ''}">
         <div style="display:flex;align-items:center;gap:.75rem">
           <span style="font-size:1.6rem">&#9203;</span>
           <div>
@@ -10419,7 +10423,7 @@ app.get("/signals", featureGate("feature_signals", "Signals"), async (req, res) 
             <div class="sig3-ks sig3-d" id="k3t-next-opp" style="margin-top:4px">Next opportunity loading&hellip;</div>
           </div>
         </div>
-      </div>`}
+      </div>
     </div>
 
     <!-- LAST 15-MIN CANDLE (shared with LOCK50) -->
@@ -10591,12 +10595,19 @@ app.get("/signals", featureGate("feature_signals", "Signals"), async (req, res) 
           }).join("");
         }
       }
-      // TRAIL live position card
+      // TRAIL live position card — show/hide and update
+      const _k3inT=_ge("k3t-pos-intrade");
+      const _k3flat=_ge("k3t-pos-flat");
+      if(_k3inT)_k3inT.style.display=shInT&&shEntry>0?'':'none';
+      if(_k3flat)_k3flat.style.display=shInT&&shEntry>0?'none':'';
       if(shInT&&shEntry>0&&livePrice>0){
         const shU=shDir==="CE"?livePrice-shEntry:shEntry-livePrice;
         if(_ge("k3t-pos-pnl")){_ge("k3t-pos-pnl").textContent=_fR(shU);_ge("k3t-pos-pnl").style.color=shU>=0?"#818cf8":"#ef4444";}
         if(_ge("k3t-pos-pts")){_ge("k3t-pos-pts").textContent=(shU>=0?"+":"")+shU.toFixed(0)+" index pts unrealised (paper)";}
         if(_ge("k3t-pos-live"))_ge("k3t-pos-live").textContent=livePrice.toFixed(1);
+        if(_ge("k3t-pos-entry"))_ge("k3t-pos-entry").textContent=shEntry.toFixed(1);
+        if(_ge("k3t-pos-dir"))_ge("k3t-pos-dir").textContent=shDir||"—";
+        if(_ge("k3t-pos-dir-b"))_ge("k3t-pos-dir-b").textContent=(shDir||"?")+' OPTION';
         if(_ge("k3t-pos-sl")&&shSL>0)_ge("k3t-pos-sl").textContent=shSL.toFixed(1);
       }
       // TRAIL flat — show next opportunity trigger levels
