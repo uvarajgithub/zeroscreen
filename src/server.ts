@@ -10567,7 +10567,6 @@ app.get("/signals", featureGate("feature_signals", "Signals"), async (req, res) 
       if(_ge("k3t-wl"))_ge("k3t-wl").innerHTML='<span class="sig3-g">'+shW+'W</span> / <span class="sig3-r">'+shL+'L</span>';
       const _wrt=shW+shL>0?Math.round(shW/(shW+shL)*100):0;
       if(_ge("k3t-winrate")){_ge("k3t-winrate").textContent=shW+shL>0?_wrt+'%':'\u2014';}
-      const lock50Today=parseFloat(((d.today?.pnl||0)+(inT?(d.activeState?.unrealisedPnL||0):0)).toFixed(0));
       if(_ge("k3t-cmp-lock-rs")){_ge("k3t-cmp-lock-rs").textContent=_fR(lock50Today);_ge("k3t-cmp-lock-rs").style.color=_gc(lock50Today);}
       if(_ge("k3t-cmp-lock-pts")){_ge("k3t-cmp-lock-pts").textContent=_fP(lock50Today);_ge("k3t-cmp-lock-pts").style.color=_gc(lock50Today);}
       if(_ge("k3t-cmp-lock-tr")){_ge("k3t-cmp-lock-tr").textContent=d.today?.trades??0;}
@@ -10576,6 +10575,7 @@ app.get("/signals", featureGate("feature_signals", "Signals"), async (req, res) 
       if(_ge("k3t-cmp-trail-tr")){_ge("k3t-cmp-trail-tr").textContent=shTr;}
       // TRAIL today's trades log
       const shLog=d.heartbeat?.shadowTradeLog||[];
+      // (lock50Today already declared above)
       if(_ge("k3t-today-count"))_ge("k3t-today-count").textContent="("+shTr+" trade"+(shTr!==1?"s":"")+")";
       const k3tbody=_ge("k3t-today-body");
       if(k3tbody){
