@@ -2985,6 +2985,109 @@ app.get("/admin", requireAdmin, async (req: Request, res: Response) => {
         </div>
       </div>
     </div>
+
+    <!-- ─── System Health Monitor ─────────────────────────────────── -->
+    <style>
+      .hm-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(145px,1fr));gap:10px;margin-bottom:1rem}
+      .hm-card{background:var(--card-bg,#1e293b);border:1px solid var(--border,#334155);border-radius:10px;padding:13px 16px;display:flex;align-items:center;gap:11px;transition:border-color .3s}
+      .hm-card.hm-ok{border-color:rgba(16,185,129,.4)}
+      .hm-card.hm-warn{border-color:rgba(251,191,36,.5)}
+      .hm-card.hm-err{border-color:rgba(239,68,68,.5)}
+      .hm-card.hm-dim{border-color:var(--border,#334155)}
+      .hm-dot{width:10px;height:10px;border-radius:50%;flex-shrink:0;background:#475569}
+      .hm-ok .hm-dot{background:#10b981}
+      .hm-warn .hm-dot{background:#fbbf24;box-shadow:0 0 6px rgba(251,191,36,.6)}
+      .hm-err .hm-dot{background:#ef4444;box-shadow:0 0 7px rgba(239,68,68,.7);animation:hm-blink 1s infinite}
+      @keyframes hm-blink{0%,100%{opacity:1}50%{opacity:.25}}
+      .hm-label{font-size:.67rem;color:var(--text-muted,#94a3b8);text-transform:uppercase;letter-spacing:.05em;line-height:1}
+      .hm-val{font-size:.82rem;font-weight:700;margin-top:4px;line-height:1.2}
+      .hm-section-title{font-size:.85rem;font-weight:700;color:var(--text-muted,#94a3b8);text-transform:uppercase;letter-spacing:.07em;margin:1.4rem 0 .7rem}
+      .hm-alerts{display:flex;flex-direction:column;gap:8px;margin-bottom:1rem}
+      .hm-alert{border-radius:10px;padding:13px 18px;border:1px solid;display:flex;align-items:flex-start;gap:12px;position:relative}
+      .hm-alert-err{background:rgba(239,68,68,.07);border-color:rgba(239,68,68,.4);color:#fca5a5}
+      .hm-alert-warn{background:rgba(251,191,36,.07);border-color:rgba(251,191,36,.4);color:#fde68a}
+      .hm-alert-title{font-weight:700;font-size:.85rem}
+      .hm-alert-msg{font-size:.75rem;opacity:.8;margin-top:3px}
+      .hm-alert-btn{display:inline-block;margin-top:9px;padding:4px 13px;border-radius:5px;font-size:.73rem;font-weight:700;cursor:pointer;border:1px solid currentColor;background:transparent;color:inherit;text-decoration:none}
+      .hm-alert-upd{font-size:.7rem;color:var(--text-muted,#64748b);margin-top:.5rem}
+    </style>
+    <div class="hm-section-title">\u26A1 System Health <span id="hm-upd" style="font-weight:400;font-size:.7rem;opacity:.6">&mdash;</span></div>
+    <div class="hm-grid">
+      <div class="hm-card hm-dim" id="hm-bot"><div class="hm-dot"></div><div><div class="hm-label">Bot Heartbeat</div><div class="hm-val" id="hm-bot-v">&mdash;</div></div></div>
+      <div class="hm-card hm-dim" id="hm-tok"><div class="hm-dot"></div><div><div class="hm-label">Zerodha Token</div><div class="hm-val" id="hm-tok-v">&mdash;</div></div></div>
+      <div class="hm-card hm-dim" id="hm-mkt"><div class="hm-dot"></div><div><div class="hm-label">Market</div><div class="hm-val" id="hm-mkt-v">&mdash;</div></div></div>
+      <div class="hm-card hm-dim" id="hm-pos"><div class="hm-dot"></div><div><div class="hm-label">Position</div><div class="hm-val" id="hm-pos-v">&mdash;</div></div></div>
+      <div class="hm-card hm-dim" id="hm-cnd"><div class="hm-dot"></div><div><div class="hm-label">Last 15-Min Candle</div><div class="hm-val" id="hm-cnd-v">&mdash;</div></div></div>
+      <div class="hm-card hm-dim" id="hm-pnl"><div class="hm-dot"></div><div><div class="hm-label">Today P&amp;L (LOCK50)</div><div class="hm-val" id="hm-pnl-v">&mdash;</div></div></div>
+      <div class="hm-card hm-dim" id="hm-trl"><div class="hm-dot"></div><div><div class="hm-label">TRAIL (shadow)</div><div class="hm-val" id="hm-trl-v">&mdash;</div></div></div>
+      <div class="hm-card hm-dim" id="hm-trds"><div class="hm-dot"></div><div><div class="hm-label">Trades Today</div><div class="hm-val" id="hm-trds-v">&mdash;</div></div></div>
+    </div>
+    <div class="hm-alerts" id="hm-alerts"></div>
+    <script>
+    (function(){
+      function hg(id){return document.getElementById(id);}
+      function hmSet(id,state,val){var c=hg(id);if(!c)return;c.className="hm-card hm-"+state;var v=hg(id+"-v");if(v)v.textContent=val;}
+      function hmAlert(container,issues){
+        container.innerHTML="";
+        issues.forEach(function(iss){
+          var d=document.createElement("div");
+          d.className="hm-alert hm-alert-"+iss.type;
+          var btns="";
+          if(iss.href)btns='<a class="hm-alert-btn" href="'+iss.href+'" target="_blank">'+iss.btnLabel+'</a>';
+          else if(iss.fn)btns='<button class="hm-alert-btn" onclick="'+iss.fn+'">'+iss.btnLabel+'</button>';
+          d.innerHTML='<div><div class="hm-alert-title">'+iss.icon+" "+iss.title+'</div><div class="hm-alert-msg">'+iss.msg+'</div>'+btns+'</div>';
+          container.appendChild(d);
+        });
+        container.style.display=issues.length?"flex":"none";
+      }
+      function doHmRefresh(){
+        fetch("/api/bot/status").then(function(r){return r.json();}).then(function(d){
+          var hbAt=d.heartbeat&&d.heartbeat.at?new Date(d.heartbeat.at).getTime():0;
+          var hbAgo=hbAt?(Date.now()-hbAt):Infinity;
+          var hbMin=Math.round(hbAgo/60000);
+          var alive=d.isAlive!==false;
+          var tkOK=!!d.tokenOK;
+          var nowIST=new Date(new Date().toLocaleString("en-US",{timeZone:"Asia/Kolkata"}));
+          var iH=nowIST.getHours(),iM=nowIST.getMinutes();
+          var mktOpen=(iH>9||(iH===9&&iM>=15))&&(iH<15||(iH===15&&iM<=30));
+          var after915=iH>9||(iH===9&&iM>=15);
+          var inPos=d.activeState&&!!(d.activeState.inTrade||d.activeState.activeTrade||d.activeState.mainEntryDone);
+          var posDir=(d.activeState&&(d.activeState.tradeDirection||d.activeState.direction)||"").toUpperCase();
+          var lc=d.heartbeat&&d.heartbeat.lastCandle;
+          var todayPnl=parseFloat(((d.today&&d.today.pnl||0)+(inPos?(d.activeState&&d.activeState.unrealisedPnL||0):0)).toFixed(0));
+          var todayRs=Math.round(todayPnl*15);
+          var shadowPnl=parseFloat((d.heartbeat&&d.heartbeat.shadowPnL||0).toFixed(0));
+          var shadowTr=d.heartbeat&&d.heartbeat.shadowTrades||0;
+          var trades=d.today&&d.today.trades||0;
+          hmSet("hm-bot",alive?"ok":"err",alive?(hbAgo<90000?"Just now":hbMin+"m ago"):"Offline"+(hbAt?" ("+hbMin+"m ago)":""));
+          hmSet("hm-tok",tkOK?"ok":"err",tkOK?"Valid \u2713":"Expired \u2717");
+          hmSet("hm-mkt",mktOpen?"ok":"dim",mktOpen?"Open \u2014 closes 3:30 PM":"Closed");
+          hmSet("hm-pos",inPos?"ok":"dim",inPos?posDir+" OPTION \u25CF":"Flat");
+          hmSet("hm-cnd",lc?"ok":(mktOpen?"warn":"dim"),lc?lc.time+" ("+(lc.colour==="bull"?"\u25B2 Bull":"\u25BC Bear")+")":mktOpen?"Awaiting next candle":"No candle (market closed)");
+          hmSet("hm-pnl",todayPnl>0?"ok":todayPnl<0?"err":"dim",(todayPnl>=0?"+":"-")+"\u20B9"+Math.abs(todayRs).toLocaleString("en-IN")+" ("+(todayPnl>=0?"+":"")+todayPnl+" pts)");
+          hmSet("hm-trl",shadowPnl>0?"ok":shadowPnl<0?"err":"dim",(shadowPnl>=0?"+":"-")+"\u20B9"+Math.abs(Math.round(shadowPnl*15)).toLocaleString("en-IN")+" / "+shadowTr+" trades");
+          hmSet("hm-trds",trades>0?"ok":"dim",trades+" trade"+(trades!==1?"s":"")+" ("+(d.today&&d.today.wins||0)+"W / "+(d.today&&d.today.losses||0)+"L)");
+          var upd=hg("hm-upd");if(upd)upd.textContent="Updated "+new Date().toLocaleTimeString("en-IN");
+          var ac=hg("hm-alerts");if(!ac)return;
+          var issues=[];
+          if(after915&&mktOpen){
+            if(!alive)issues.push({type:"err",icon:"\u26A0\uFE0F",title:"Bot Offline",msg:"No heartbeat for "+(hbAt?hbMin+"+ min":"unknown duration")+". Bot is not running.",fn:"doHmAction('restart')",btnLabel:"\u21BB Restart Bot"});
+            if(!tkOK)issues.push({type:"warn",icon:"\uD83D\uDD11",title:"Token Expired",msg:"Zerodha access token invalid. Bot cannot trade.",href:"https://139-59-18-52.nip.io/login",btnLabel:"\u2192 Refresh Token"});
+            if(alive&&hbAgo>4*60*1000)issues.push({type:"warn",icon:"\u23F0",title:"Heartbeat Stale",msg:"Last heartbeat "+hbMin+" min ago. Bot may be hung."});
+            if(alive&&!lc)issues.push({type:"warn",icon:"\uD83D\uDCC9",title:"No Candle Data",msg:"Bot is alive but no 15-min candle received yet."});
+          }
+          hmAlert(ac,issues);
+        }).catch(function(e){var upd=hg("hm-upd");if(upd)upd.textContent="Error: "+e.message;});
+      }
+      window.doHmAction=function(action){
+        if(!confirm(action==="restart"?"Restart the trading bot?":"Perform: "+action+"?"))return;
+        fetch('/api/bot/action',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:action})})
+          .then(function(r){return r.json();}).then(function(d){alert(d.ok?"\u2713 "+d.msg:"Error: "+d.msg);doHmRefresh();}).catch(function(){alert("Request failed");});
+      };
+      doHmRefresh();setInterval(doHmRefresh,10000);
+    })();
+    </script>
+    <!-- ─────────────────────────────────────────────────────────── -->
   </div>
   <script src="/public/js/app.js"></script>
 </body>
@@ -7658,115 +7761,8 @@ async function paperPortfolioPage(req: Request, res: Response) {
       </div>
     </div>
 
-    <!-- KPI ROW -->
-    <div class="mpt-kpi-row">
-      <div class="mpt-kpi">
-        <div class="mpt-kpi-label">Portfolio Value</div>
-        <div class="mpt-kpi-val ${portfolioValue >= 100000 ? "mpt-green" : "mpt-red"}">₹${portfolioValue.toLocaleString("en-IN", { maximumFractionDigits: 0 })}</div>
-      </div>
-      <div class="mpt-kpi">
-        <div class="mpt-kpi-label">Total PnL</div>
-        <div class="mpt-kpi-val ${totalPnl >= 0 ? "mpt-green" : "mpt-red"}">${totalPnl >= 0 ? "+" : ""}₹${Math.abs(totalPnl).toLocaleString("en-IN", { maximumFractionDigits: 0 })} (${totalPnlPct >= 0 ? "+" : ""}${totalPnlPct}%)</div>
-      </div>
-      <div class="mpt-kpi">
-        <div class="mpt-kpi-label">Realized PnL</div>
-        <div class="mpt-kpi-val ${realizedPnl >= 0 ? "mpt-green" : "mpt-red"}">${realizedPnl >= 0 ? "+" : ""}₹${Math.abs(realizedPnl).toLocaleString("en-IN", { maximumFractionDigits: 0 })}</div>
-      </div>
-      <div class="mpt-kpi">
-        <div class="mpt-kpi-label">Win Rate</div>
-        <div class="mpt-kpi-val ${wins > losses ? "mpt-green" : "mpt-red"}">${winRate}${winRate !== "—" ? "%" : ""}</div>
-      </div>
-      <div class="mpt-kpi">
-        <div class="mpt-kpi-label">Wins / Losses</div>
-        <div class="mpt-kpi-val"><span class="mpt-green">${wins}</span> / <span class="mpt-red">${losses}</span></div>
-      </div>
-      <div class="mpt-kpi">
-        <div class="mpt-kpi-label">Invested</div>
-        <div class="mpt-kpi-val">₹${investedTotal.toLocaleString("en-IN", { maximumFractionDigits: 0 })}</div>
-      </div>
-    </div>
-
-    <!-- OPEN POSITIONS -->
-    <div class="mpt-section">Open Positions (${posRows.length})</div>
-    ${posRows.length === 0
-      ? `<div class="mpt-empty">No open positions yet. <a href="/paper-trade" style="color:var(--accent)">Place your first trade →</a></div>`
-      : `<div class="mpt-tbl-wrap"><table class="mpt-pos-table">
-          <thead><tr>
-            <th>Symbol</th><th>Company</th><th>Type</th><th>Qty</th>
-            <th>Avg Price</th><th>Invested</th><th>Live Price</th>
-            <th>Cur. Value</th><th>P&L</th><th>P&L%</th><th>Action</th>
-          </tr></thead>
-          <tbody>
-            ${posRows.map(p => `<tr>
-              <td><a href="/stock/${p.symbol}" class="mpt-sym">${p.symbol}</a></td>
-              <td style="font-size:0.83rem; max-width:140px; overflow:hidden; white-space:nowrap; text-overflow:ellipsis">${p.company_name ?? "—"}</td>
-              <td><span class="${p.trade_type === 'HOLDING' ? 'mpt-type-hold' : 'mpt-type-intra'}">${p.trade_type === 'HOLDING' ? 'HOLD' : 'INTRA'}</span></td>
-              <td>${p.qty}</td>
-              <td>₹${p.avg_price.toFixed(2)}</td>
-              <td>₹${p.invested.toLocaleString("en-IN", { maximumFractionDigits: 0 })}</td>
-              <td>₹${p.livePrice.toFixed(2)}</td>
-              <td>₹${p.curVal.toLocaleString("en-IN", { maximumFractionDigits: 0 })}</td>
-              <td class="${p.pnl >= 0 ? "mpt-green" : "mpt-red"}" style="font-weight:700">${p.pnl >= 0 ? "+" : ""}₹${p.pnl.toLocaleString("en-IN", { maximumFractionDigits: 0 })}</td>
-              <td class="${p.pnl >= 0 ? "mpt-green" : "mpt-red"}">${p.pnlPct >= 0 ? "+" : ""}${p.pnlPct}%</td>
-              <td>
-                <form method="POST" action="/my-paper-trade/sell" style="display:inline-flex;gap:6px;align-items:center">
-                  <input type="hidden" name="symbol" value="${p.symbol}">
-                  <input type="number" name="qty" min="1" max="${p.qty}" value="${p.qty}" style="width:60px;padding:3px 7px;border-radius:5px;border:1px solid var(--border);background:var(--input-bg);color:var(--text);font-size:0.82rem">
-                  <input type="hidden" name="price" value="${p.livePrice.toFixed(2)}">
-                  <button type="submit" class="mpt-sell-btn">Sell</button>
-                </form>
-              </td>
-            </tr>`).join("")}
-          </tbody>
-        </table>
-      </div>`}
-
-    <!-- EQUITY CURVE -->
-    ${eqData.length >= 2 ? `
-    <div class="mpt-section">Realized P&L Curve</div>
-    <div class="mpt-chart-wrap">
-      <canvas id="mptEqChart" height="70"></canvas>
-    </div>` : ""}
-
-    <!-- TRADE HISTORY -->
-    <div class="mpt-section">Trade History (${trades.length})</div>
-    ${trades.length === 0
-      ? `<div class="mpt-empty">No trades yet. <a href="/paper-trade" style="color:var(--accent)">Place your first trade →</a></div>`
-      : `<div class="mpt-tbl-wrap"><table class="mpt-history-table">
-          <thead><tr>
-            <th>Date/Time</th><th>Symbol</th><th>Type</th><th>Action</th><th>Qty</th>
-            <th>Price</th><th>Total</th><th>P&L</th><th>P&L%</th><th>Balance After</th>
-          </tr></thead>
-          <tbody>
-            ${trades.map(t => {
-              const isPos = (t.pnl ?? 0) >= 0;
-              return `<tr>
-                <td style="font-size:0.82rem;color:var(--text-muted)">${t.traded_at.slice(0, 16).replace("T", " ")}</td>
-                <td><a href="/stock/${t.symbol}" class="mpt-sym">${t.symbol}</a></td>
-                <td><span class="${(t.trade_type||'INTRADAY') === 'HOLDING' ? 'mpt-type-hold' : 'mpt-type-intra'}">${(t.trade_type||'INTRADAY') === 'HOLDING' ? 'HOLD' : 'INTRA'}</span></td>
-                <td><span class="mpt-action-${t.action.toLowerCase()}">${t.action}</span></td>
-                <td>${t.qty}</td>
-                <td>₹${t.price.toFixed(2)}</td>
-                <td>₹${t.total.toLocaleString("en-IN", { maximumFractionDigits: 0 })}</td>
-                <td class="${t.pnl != null ? (isPos ? "mpt-green" : "mpt-red") : ""}" style="font-weight:${t.pnl != null ? "700" : "400"}">${t.pnl != null ? (isPos ? "+" : "") + "₹" + t.pnl.toLocaleString("en-IN", { maximumFractionDigits: 0 }) : "—"}</td>
-                <td class="${t.pnl_pct != null ? ((t.pnl_pct ?? 0) >= 0 ? "mpt-green" : "mpt-red") : ""}">${t.pnl_pct != null ? ((t.pnl_pct ?? 0) >= 0 ? "+" : "") + t.pnl_pct + "%" : "—"}</td>
-                <td>₹${t.balance_after.toLocaleString("en-IN", { maximumFractionDigits: 0 })}</td>
-              </tr>`;
-            }).join("")}
-          </tbody>
-        </table>
-      </div>`}
-
-    <!-- RESET -->
-    <div style="margin-top:32px; padding-top:20px; border-top:1px solid var(--border); display:flex; align-items:center; gap:16px; flex-wrap:wrap">
-      <form method="POST" action="/my-paper-trade/reset" onsubmit="return confirm('Reset your entire paper portfolio? This cannot be undone.')">
-        <button type="submit" class="mpt-btn-reset">🔄 Reset Portfolio (restart with ₹1,00,000)</button>
-      </form>
-      <span style="font-size:0.8rem; color:var(--text-muted)">Hi ${esc(userName.split(" ")[0])} · Your portfolio is saved to your account</span>
-    </div>
-
     <!-- ── PICKS TRACKER ──────────────────────────────────────────────────── -->
-    <div class="mpt-section" style="margin-top:32px">Today's Picks Tracker</div>
+    <div class="mpt-section" style="margin-top:0">Today's Picks Tracker</div>
 
     <!-- Topbar stats -->
     <div class="mpt-topbar2">
@@ -7895,6 +7891,113 @@ async function paperPortfolioPage(req: Request, res: Response) {
 
     ${isAdmin ? `
     <!-- ── ADMIN: SCHEDULED TRADES ─────────────────────────────────────────── -->
+    <!-- KPI ROW -->
+    <div class="mpt-kpi-row">
+      <div class="mpt-kpi">
+        <div class="mpt-kpi-label">Portfolio Value</div>
+        <div class="mpt-kpi-val ${portfolioValue >= 100000 ? "mpt-green" : "mpt-red"}">₹${portfolioValue.toLocaleString("en-IN", { maximumFractionDigits: 0 })}</div>
+      </div>
+      <div class="mpt-kpi">
+        <div class="mpt-kpi-label">Total PnL</div>
+        <div class="mpt-kpi-val ${totalPnl >= 0 ? "mpt-green" : "mpt-red"}">${totalPnl >= 0 ? "+" : ""}₹${Math.abs(totalPnl).toLocaleString("en-IN", { maximumFractionDigits: 0 })} (${totalPnlPct >= 0 ? "+" : ""}${totalPnlPct}%)</div>
+      </div>
+      <div class="mpt-kpi">
+        <div class="mpt-kpi-label">Realized PnL</div>
+        <div class="mpt-kpi-val ${realizedPnl >= 0 ? "mpt-green" : "mpt-red"}">${realizedPnl >= 0 ? "+" : ""}₹${Math.abs(realizedPnl).toLocaleString("en-IN", { maximumFractionDigits: 0 })}</div>
+      </div>
+      <div class="mpt-kpi">
+        <div class="mpt-kpi-label">Win Rate</div>
+        <div class="mpt-kpi-val ${wins > losses ? "mpt-green" : "mpt-red"}">${winRate}${winRate !== "—" ? "%" : ""}</div>
+      </div>
+      <div class="mpt-kpi">
+        <div class="mpt-kpi-label">Wins / Losses</div>
+        <div class="mpt-kpi-val"><span class="mpt-green">${wins}</span> / <span class="mpt-red">${losses}</span></div>
+      </div>
+      <div class="mpt-kpi">
+        <div class="mpt-kpi-label">Invested</div>
+        <div class="mpt-kpi-val">₹${investedTotal.toLocaleString("en-IN", { maximumFractionDigits: 0 })}</div>
+      </div>
+    </div>
+
+    <!-- OPEN POSITIONS -->
+    <div class="mpt-section">Open Positions (${posRows.length})</div>
+    ${posRows.length === 0
+      ? `<div class="mpt-empty">No open positions yet. <a href="/paper-trade" style="color:var(--accent)">Place your first trade →</a></div>`
+      : `<div class="mpt-tbl-wrap"><table class="mpt-pos-table">
+          <thead><tr>
+            <th>Symbol</th><th>Company</th><th>Type</th><th>Qty</th>
+            <th>Avg Price</th><th>Invested</th><th>Live Price</th>
+            <th>Cur. Value</th><th>P&L</th><th>P&L%</th><th>Action</th>
+          </tr></thead>
+          <tbody>
+            ${posRows.map(p => `<tr>
+              <td><a href="/stock/${p.symbol}" class="mpt-sym">${p.symbol}</a></td>
+              <td style="font-size:0.83rem; max-width:140px; overflow:hidden; white-space:nowrap; text-overflow:ellipsis">${p.company_name ?? "—"}</td>
+              <td><span class="${p.trade_type === 'HOLDING' ? 'mpt-type-hold' : 'mpt-type-intra'}">${p.trade_type === 'HOLDING' ? 'HOLD' : 'INTRA'}</span></td>
+              <td>${p.qty}</td>
+              <td>₹${p.avg_price.toFixed(2)}</td>
+              <td>₹${p.invested.toLocaleString("en-IN", { maximumFractionDigits: 0 })}</td>
+              <td>₹${p.livePrice.toFixed(2)}</td>
+              <td>₹${p.curVal.toLocaleString("en-IN", { maximumFractionDigits: 0 })}</td>
+              <td class="${p.pnl >= 0 ? "mpt-green" : "mpt-red"}" style="font-weight:700">${p.pnl >= 0 ? "+" : ""}₹${p.pnl.toLocaleString("en-IN", { maximumFractionDigits: 0 })}</td>
+              <td class="${p.pnl >= 0 ? "mpt-green" : "mpt-red"}">${p.pnlPct >= 0 ? "+" : ""}${p.pnlPct}%</td>
+              <td>
+                <form method="POST" action="/my-paper-trade/sell" style="display:inline-flex;gap:6px;align-items:center">
+                  <input type="hidden" name="symbol" value="${p.symbol}">
+                  <input type="number" name="qty" min="1" max="${p.qty}" value="${p.qty}" style="width:60px;padding:3px 7px;border-radius:5px;border:1px solid var(--border);background:var(--input-bg);color:var(--text);font-size:0.82rem">
+                  <input type="hidden" name="price" value="${p.livePrice.toFixed(2)}">
+                  <button type="submit" class="mpt-sell-btn">Sell</button>
+                </form>
+              </td>
+            </tr>`).join("")}
+          </tbody>
+        </table>
+      </div>`}
+
+    <!-- EQUITY CURVE -->
+    ${eqData.length >= 2 ? `
+    <div class="mpt-section">Realized P&L Curve</div>
+    <div class="mpt-chart-wrap">
+      <canvas id="mptEqChart" height="70"></canvas>
+    </div>` : ""}
+
+    <!-- TRADE HISTORY -->
+    <div class="mpt-section">Trade History (${trades.length})</div>
+    ${trades.length === 0
+      ? `<div class="mpt-empty">No trades yet. <a href="/paper-trade" style="color:var(--accent)">Place your first trade →</a></div>`
+      : `<div class="mpt-tbl-wrap"><table class="mpt-history-table">
+          <thead><tr>
+            <th>Date/Time</th><th>Symbol</th><th>Type</th><th>Action</th><th>Qty</th>
+            <th>Price</th><th>Total</th><th>P&L</th><th>P&L%</th><th>Balance After</th>
+          </tr></thead>
+          <tbody>
+            ${trades.map(t => {
+              const isPos = (t.pnl ?? 0) >= 0;
+              return `<tr>
+                <td style="font-size:0.82rem;color:var(--text-muted)">${t.traded_at.slice(0, 16).replace("T", " ")}</td>
+                <td><a href="/stock/${t.symbol}" class="mpt-sym">${t.symbol}</a></td>
+                <td><span class="${(t.trade_type||'INTRADAY') === 'HOLDING' ? 'mpt-type-hold' : 'mpt-type-intra'}">${(t.trade_type||'INTRADAY') === 'HOLDING' ? 'HOLD' : 'INTRA'}</span></td>
+                <td><span class="mpt-action-${t.action.toLowerCase()}">${t.action}</span></td>
+                <td>${t.qty}</td>
+                <td>₹${t.price.toFixed(2)}</td>
+                <td>₹${t.total.toLocaleString("en-IN", { maximumFractionDigits: 0 })}</td>
+                <td class="${t.pnl != null ? (isPos ? "mpt-green" : "mpt-red") : ""}" style="font-weight:${t.pnl != null ? "700" : "400"}">${t.pnl != null ? (isPos ? "+" : "") + "₹" + t.pnl.toLocaleString("en-IN", { maximumFractionDigits: 0 }) : "—"}</td>
+                <td class="${t.pnl_pct != null ? ((t.pnl_pct ?? 0) >= 0 ? "mpt-green" : "mpt-red") : ""}">${t.pnl_pct != null ? ((t.pnl_pct ?? 0) >= 0 ? "+" : "") + t.pnl_pct + "%" : "—"}</td>
+                <td>₹${t.balance_after.toLocaleString("en-IN", { maximumFractionDigits: 0 })}</td>
+              </tr>`;
+            }).join("")}
+          </tbody>
+        </table>
+      </div>`}
+
+    <!-- RESET -->
+    <div style="margin-top:32px; padding-top:20px; border-top:1px solid var(--border); display:flex; align-items:center; gap:16px; flex-wrap:wrap">
+      <form method="POST" action="/my-paper-trade/reset" onsubmit="return confirm('Reset your entire paper portfolio? This cannot be undone.')">
+        <button type="submit" class="mpt-btn-reset">🔄 Reset Portfolio (restart with ₹1,00,000)</button>
+      </form>
+      <span style="font-size:0.8rem; color:var(--text-muted)">Hi ${esc(userName.split(" ")[0])} · Your portfolio is saved to your account</span>
+    </div>
+
     <div class="mpt-section" style="margin-top:32px">📅 Scheduled Trades (${adminScheduled.length})
       <span style="font-size:.72rem;font-weight:400;margin-left:10px;color:#a78bfa">${adminSchPending.length} pending · ${adminSchTriggered.length} triggered</span>
     </div>
@@ -8243,6 +8346,98 @@ app.get("/dashboard", requireAuth, async (req: Request, res: Response) => {
 
   const marketOpen = isMarketHours();
 
+  // ── AI INSIGHTS COMPUTATIONS ───────────────────────────────────────────────
+
+  // 1. P&L Pattern Detector
+  const dayNames = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
+  const dayMap: Record<string, { pnl: number; trades: number; wins: number }> = {};
+  for (const t of sellTrades) {
+    if (!t.traded_at) continue;
+    const day = dayNames[new Date(t.traded_at).getDay()];
+    if (!dayMap[day]) dayMap[day] = { pnl: 0, trades: 0, wins: 0 };
+    dayMap[day].pnl += t.pnl ?? 0;
+    dayMap[day].trades += 1;
+    if ((t.pnl ?? 0) > 0) dayMap[day].wins += 1;
+  }
+  const tradingDays = ["Mon","Tue","Wed","Thu","Fri"].filter(d => dayMap[d]);
+  let bestDay = "", worstDay = "", bestDayPnl = -Infinity, worstDayPnl = Infinity;
+  for (const d of tradingDays) {
+    if (dayMap[d].pnl > bestDayPnl) { bestDayPnl = dayMap[d].pnl; bestDay = d; }
+    if (dayMap[d].pnl < worstDayPnl) { worstDayPnl = dayMap[d].pnl; worstDay = d; }
+  }
+
+  // 2. Pick Confidence Score — score each pending/active pick 0–100
+  const resolvedBySymbol: Record<string, { wins: number; total: number }> = {};
+  for (const p of allPicks) {
+    if (p.result === "target_hit" || p.result === "sl_hit") {
+      const sym = p.stock_symbol.toUpperCase();
+      if (!resolvedBySymbol[sym]) resolvedBySymbol[sym] = { wins: 0, total: 0 };
+      resolvedBySymbol[sym].total += 1;
+      if (p.result === "target_hit") resolvedBySymbol[sym].wins += 1;
+    }
+  }
+  function pickConfidence(p: any): number {
+    let score = 30; // base
+    if (p.stop_loss) score += 20;
+    if (p.target)    score += 15;
+    if (p.risk_level === "Low")    score += 20;
+    else if (p.risk_level === "Medium") score += 10;
+    const hist = resolvedBySymbol[p.stock_symbol?.toUpperCase()];
+    if (hist && hist.total >= 2) score += Math.round((hist.wins / hist.total) * 15);
+    return Math.min(score, 100);
+  }
+  const scoredPending = pendingNonDupe.map((p: any) => ({ ...p, confidence: pickConfidence(p) }));
+  const scoredInPosition = picksInPosition.map((p: any) => ({ ...p, confidence: pickConfidence(p) }));
+
+  // 3. Over-trading Detector
+  const tradesByDay: Record<string, number> = {};
+  for (const t of sellTrades) {
+    const d = t.traded_at?.slice(0, 10);
+    if (d) tradesByDay[d] = (tradesByDay[d] || 0) + 1;
+  }
+  const dayCountList = Object.values(tradesByDay);
+  const avgTradesPerDay = dayCountList.length > 0 ? dayCountList.reduce((a, b) => a + b, 0) / dayCountList.length : 0;
+  const todayStr = new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" });
+  const todayTradeCount = tradesByDay[todayStr] || 0;
+  const overtradingAlert = avgTradesPerDay > 0 && todayTradeCount > avgTradesPerDay * 1.5
+    ? { warn: true, todayCount: todayTradeCount, avg: parseFloat(avgTradesPerDay.toFixed(1)) }
+    : { warn: false, todayCount: todayTradeCount, avg: parseFloat(avgTradesPerDay.toFixed(1)) };
+
+  // 4. Drawdown Predictor
+  const drawdownRows = posRows.map((p: any) => {
+    const slPrice = p.sl_price ?? null;
+    const maxLoss = slPrice && slPrice < p.avg_price
+      ? parseFloat(((p.avg_price - slPrice) * p.qty).toFixed(2))
+      : parseFloat((p.avg_price * 0.05 * p.qty).toFixed(2));
+    const hasSl = !!(slPrice && slPrice < p.avg_price);
+    return { ...p, maxLoss, hasSl };
+  });
+  const totalDrawdownRisk = parseFloat(drawdownRows.reduce((s: number, r: any) => s + r.maxLoss, 0).toFixed(2));
+  const unprotectedPositions = drawdownRows.filter((r: any) => !r.hasSl).length;
+
+  // 5. VIX-aware Mode (fetch from cached NSE markets)
+  let vixValue: number | null = null;
+  try {
+    const mktData = await fetchNseMarkets();
+    const vixEntry = mktData.find((m: any) => m.symbol === "INDIA VIX" || m.label === "INDIA VIX");
+    if (vixEntry?.price) vixValue = parseFloat(vixEntry.price);
+  } catch (_) {}
+  const vixAlert = vixValue !== null
+    ? vixValue > 25 ? "extreme" : vixValue > 20 ? "high" : vixValue > 15 ? "moderate" : "low"
+    : "unknown";
+
+  // 6. Anomaly Alert — flag unusual pending picks
+  const pickAnomalies = pendingNonDupe.map((p: any) => {
+    const flags: string[] = [];
+    if (!p.stop_loss) flags.push("No stop loss set");
+    if (!p.target) flags.push("No target set");
+    if (p.risk_level === "High") flags.push("High risk pick");
+    const rangeWidth = p.entry_high > 0 && p.entry_low > 0
+      ? (p.entry_high - p.entry_low) / p.entry_low : 0;
+    if (rangeWidth > 0.08) flags.push(`Wide entry range (${(rangeWidth * 100).toFixed(1)}%)`);
+    return { ...p, flags };
+  }).filter((p: any) => p.flags.length > 0);
+
   res.send(`<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -8335,16 +8530,16 @@ app.get("/dashboard", requireAuth, async (req: Request, res: Response) => {
 
     <!-- Tabs -->
     <div class="db-tabs">
-      <button class="db-tab active" onclick="dbTab('positions')" id="dbt-positions">📂 Positions (${posRows.length})</button>
+      ${isAdmin ? `<button class="db-tab active" onclick="dbTab('picks')" id="dbt-picks">📌 Picks Tracker <span style="background:#a78bfa22;color:#a78bfa;border-radius:10px;padding:1px 7px;font-size:.72rem;margin-left:3px">${picksInPosition.length + pendingNonDupe.length}</span></button>` : ""}
+      <button class="db-tab${isAdmin ? '' : ' active'}" onclick="dbTab('positions')" id="dbt-positions">📁 Positions (${posRows.length})</button>
       <button class="db-tab" onclick="dbTab('manual')" id="dbt-manual">🛒 My Trades (${sellTrades.length})</button>
-
       <button class="db-tab" onclick="dbTab('weekly')" id="dbt-weekly">📅 Weekly</button>
       <button class="db-tab" onclick="dbTab('monthly')" id="dbt-monthly">📆 Monthly</button>
-      ${isAdmin ? `<button class="db-tab" onclick="dbTab('picks')" id="dbt-picks">📌 Picks Tracker <span style="background:#a78bfa22;color:#a78bfa;border-radius:10px;padding:1px 7px;font-size:.72rem;margin-left:3px">${picksInPosition.length + pendingNonDupe.length}</span></button>` : ""}
+      <button class="db-tab" onclick="dbTab('ai')" id="dbt-ai">🧠 AI Insights${pickAnomalies.length > 0 || overtradingAlert.warn || vixAlert === "extreme" || vixAlert === "high" ? ` <span style="background:#ef444422;color:#ef4444;border:1px solid #ef444444;border-radius:10px;padding:1px 7px;font-size:.7rem;margin-left:3px">!</span>` : ""}</button>
     </div>
 
     <!-- ── PANEL: POSITIONS ── -->
-    <div class="db-panel active" id="dbp-positions">
+    <div class="db-panel" id="dbp-positions">
       ${posRows.length === 0
         ? `<div class="db-empty">No open positions. <a href="/paper-trade" style="color:var(--accent)">Place a trade →</a></div>`
         : `<div class="db-tbl-wrap"><table class="db-tbl">
@@ -8507,8 +8702,160 @@ app.get("/dashboard", requireAuth, async (req: Request, res: Response) => {
       })() : ""}
     </div>
 
+    <!-- ── PANEL: AI INSIGHTS ── -->
+    <div class="db-panel" id="dbp-ai">
+      <style>
+        .ai-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:14px;margin-bottom:14px}
+        .ai-card{background:var(--card-bg);border:1px solid var(--border);border-radius:13px;padding:18px 20px}
+        .ai-card-hdr{display:flex;align-items:center;gap:10px;margin-bottom:12px}
+        .ai-card-icon{font-size:1.5rem;line-height:1}
+        .ai-card-title{font-size:.9rem;font-weight:800;color:var(--text)}
+        .ai-card-sub{font-size:.72rem;color:var(--text-muted);margin-top:1px}
+        .ai-alert-box{border-radius:9px;padding:10px 14px;font-size:.82rem;font-weight:600;margin-bottom:8px}
+        .ai-alert-warn{background:#f59e0b18;color:#f59e0b;border:1px solid #f59e0b44}
+        .ai-alert-danger{background:#ef444418;color:#ef4444;border:1px solid #ef444444}
+        .ai-alert-ok{background:#10b98118;color:#10b981;border:1px solid #10b98144}
+        .ai-alert-info{background:#3b82f618;color:#3b82f6;border:1px solid #3b82f644}
+        .ai-day-grid{display:flex;gap:6px;flex-wrap:wrap}
+        .ai-day-card{flex:1;min-width:60px;background:var(--bg2);border-radius:8px;padding:8px 10px;text-align:center}
+        .ai-day-name{font-size:.68rem;color:var(--text-muted);font-weight:700;text-transform:uppercase}
+        .ai-day-pnl{font-size:.9rem;font-weight:800;margin-top:3px}
+        .ai-day-meta{font-size:.65rem;color:var(--text-muted)}
+        .ai-score-bar{height:6px;border-radius:3px;background:var(--border);margin:5px 0}
+        .ai-score-fill{height:6px;border-radius:3px;transition:width .3s}
+        .ai-flag{font-size:.75rem;background:#ef444418;color:#ef4444;border:1px solid #ef444444;border-radius:4px;padding:2px 8px;margin:3px 2px;display:inline-block;font-weight:600}
+        .ai-tbl{width:100%;border-collapse:collapse;font-size:.82rem}
+        .ai-tbl td{padding:8px 10px;border-bottom:1px solid var(--border);vertical-align:middle}
+        .ai-tbl tr:last-child td{border-bottom:none}
+        .ai-vix-bar{height:12px;border-radius:6px;background:linear-gradient(90deg,#10b981,#f59e0b,#ef4444);position:relative;margin:8px 0}
+        .ai-vix-ptr{position:absolute;top:-3px;width:4px;height:18px;border-radius:2px;background:var(--text);transform:translateX(-50%)}
+      </style>
+
+      <div class="ai-grid">
+
+        <!-- ── 1. VIX-aware Mode ── -->
+        <div class="ai-card">
+          <div class="ai-card-hdr">
+            <span class="ai-card-icon">🌡️</span>
+            <div><div class="ai-card-title">Market Volatility (India VIX)</div><div class="ai-card-sub">Real-time VIX level and risk guidance</div></div>
+          </div>
+          ${vixValue !== null ? `
+          <div class="ai-vix-bar"><div class="ai-vix-ptr" style="left:${Math.min((vixValue / 35) * 100, 100).toFixed(1)}%"></div></div>
+          <div style="display:flex;justify-content:space-between;font-size:.68rem;color:var(--text-muted);margin-bottom:10px"><span>Low (0)</span><span>High (35+)</span></div>
+          <div style="font-size:1.6rem;font-weight:900;margin-bottom:6px;color:${vixAlert==="extreme"?"#ef4444":vixAlert==="high"?"#f59e0b":vixAlert==="moderate"?"#eab308":"#10b981"}">${vixValue.toFixed(2)} <span style="font-size:.8rem;font-weight:600;color:var(--text-muted)">VIX</span></div>
+          <div class="ai-alert-box ${vixAlert==="extreme"?"ai-alert-danger":vixAlert==="high"?"ai-alert-warn":vixAlert==="moderate"?"ai-alert-info":"ai-alert-ok"}">
+            ${vixAlert==="extreme" ? "⚠️ Extreme volatility! Consider cutting position sizes in half and tightening stop losses."
+              : vixAlert==="high"  ? "⚠️ High VIX — market is volatile. Use tighter stops and avoid averaging down."
+              : vixAlert==="moderate" ? "📊 Moderate volatility. Normal caution applies."
+              : "✅ Low VIX — market is calm. Normal position sizing is fine."}
+          </div>` : `<div class="ai-alert-box ai-alert-info">📡 VIX data unavailable (market may be closed)</div>`}
+        </div>
+
+        <!-- ── 2. Over-trading Detector ── -->
+        <div class="ai-card">
+          <div class="ai-card-hdr">
+            <span class="ai-card-icon">⚡</span>
+            <div><div class="ai-card-title">Over-trading Detector</div><div class="ai-card-sub">Today vs your historical average</div></div>
+          </div>
+          <div style="display:flex;gap:20px;margin-bottom:12px">
+            <div><div style="font-size:1.6rem;font-weight:900">${overtradingAlert.todayCount}</div><div style="font-size:.72rem;color:var(--text-muted)">Trades Today</div></div>
+            <div><div style="font-size:1.6rem;font-weight:900;color:var(--text-muted)">${overtradingAlert.avg}</div><div style="font-size:.72rem;color:var(--text-muted)">Daily Average</div></div>
+          </div>
+          ${overtradingAlert.warn
+            ? `<div class="ai-alert-box ai-alert-danger">⚡ You've made ${overtradingAlert.todayCount} trades today vs your avg of ${overtradingAlert.avg}. Over-trading leads to emotional decisions — consider pausing.</div>`
+            : overtradingAlert.todayCount === 0
+            ? `<div class="ai-alert-box ai-alert-info">📋 No trades placed today.</div>`
+            : `<div class="ai-alert-box ai-alert-ok">✅ Trade count is within normal range. You're disciplined today.</div>`}
+          ${sellTrades.length < 5 ? `<div style="font-size:.72rem;color:var(--text-muted);margin-top:8px">Need at least 5 closed trades for meaningful analysis.</div>` : ""}
+        </div>
+
+        <!-- ── 3. Drawdown Predictor ── -->
+        <div class="ai-card">
+          <div class="ai-card-hdr">
+            <span class="ai-card-icon">🛡️</span>
+            <div><div class="ai-card-title">Drawdown Risk Estimate</div><div class="ai-card-sub">Max potential loss if all positions hit SL or drop 5%</div></div>
+          </div>
+          ${posRows.length === 0
+            ? `<div class="ai-alert-box ai-alert-ok">✅ No open positions. Zero drawdown risk.</div>`
+            : `<div style="font-size:1.6rem;font-weight:900;color:#ef4444;margin-bottom:6px">₹${totalDrawdownRisk.toLocaleString("en-IN",{maximumFractionDigits:0})}</div>
+          <div style="font-size:.78rem;color:var(--text-muted);margin-bottom:10px">Estimated maximum loss across ${posRows.length} open position${posRows.length>1?"s":""}</div>
+          ${unprotectedPositions > 0
+            ? `<div class="ai-alert-box ai-alert-warn">⚠️ ${unprotectedPositions} position${unprotectedPositions>1?"s have":" has"} no stop loss. Using 5% drawdown estimate. Set SLs to protect capital.</div>`
+            : `<div class="ai-alert-box ai-alert-ok">✅ All positions have stop losses set.</div>`}
+          <table class="ai-tbl" style="margin-top:10px">
+            <tr style="font-size:.68rem;color:var(--text-muted)"><td>Symbol</td><td>Max Loss</td><td>Protected?</td></tr>
+            ${drawdownRows.slice(0,5).map((r: any) => `<tr>
+              <td style="font-weight:700">${r.symbol}</td>
+              <td class="db-red">₹${r.maxLoss.toLocaleString("en-IN",{maximumFractionDigits:0})}</td>
+              <td>${r.hasSl ? '<span style="color:#10b981;font-weight:700">✓ SL set</span>' : '<span style="color:#f59e0b;font-weight:600">⚠ No SL</span>'}</td>
+            </tr>`).join("")}
+          </table>`}
+        </div>
+
+        <!-- ── 4. P&L Pattern Detector ── -->
+        <div class="ai-card">
+          <div class="ai-card-hdr">
+            <span class="ai-card-icon">📊</span>
+            <div><div class="ai-card-title">P&L Pattern Detector</div><div class="ai-card-sub">Which day of the week you trade best</div></div>
+          </div>
+          ${tradingDays.length < 3
+            ? `<div class="ai-alert-box ai-alert-info">📊 Need trades on at least 3 different weekdays to detect patterns. Keep trading!</div>`
+            : `${bestDay ? `<div class="ai-alert-box ai-alert-ok" style="margin-bottom:8px">🏆 Best day: <strong>${bestDay}</strong> (${bestDayPnl >= 0 ? "+" : ""}₹${Math.abs(bestDayPnl).toLocaleString("en-IN",{maximumFractionDigits:0})})</div>` : ""}
+          ${worstDay && worstDay !== bestDay ? `<div class="ai-alert-box ai-alert-warn" style="margin-bottom:10px">⚠️ Worst day: <strong>${worstDay}</strong> (${worstDayPnl >= 0 ? "+" : ""}₹${Math.abs(worstDayPnl).toLocaleString("en-IN",{maximumFractionDigits:0})})</div>` : ""}
+          <div class="ai-day-grid">
+            ${["Mon","Tue","Wed","Thu","Fri"].map(d => {
+              const m = dayMap[d];
+              if (!m) return `<div class="ai-day-card"><div class="ai-day-name">${d}</div><div class="ai-day-pnl db-muted">—</div></div>`;
+              const wr = m.trades > 0 ? Math.round(m.wins/m.trades*100) : 0;
+              return `<div class="ai-day-card${d===bestDay?" ":''}"><div class="ai-day-name" style="${d===bestDay?"color:#10b981":d===worstDay?"color:#ef4444":""}">${d}${d===bestDay?" 🏆":d===worstDay?" ⚠️":""}</div><div class="ai-day-pnl ${m.pnl>=0?"db-green":"db-red"}">${m.pnl>=0?"+":""}₹${Math.abs(m.pnl).toLocaleString("en-IN",{maximumFractionDigits:0})}</div><div class="ai-day-meta">${m.trades}T · ${wr}%W</div></div>`;
+            }).join("")}
+          </div>`}
+        </div>
+
+        <!-- ── 5. AI Pick Confidence Score ── -->
+        <div class="ai-card">
+          <div class="ai-card-hdr">
+            <span class="ai-card-icon">🎯</span>
+            <div><div class="ai-card-title">Pick Confidence Scores</div><div class="ai-card-sub">AI-scored 0–100 based on SL, target, risk, history</div></div>
+          </div>
+          ${[...scoredInPosition, ...scoredPending].length === 0
+            ? `<div class="ai-alert-box ai-alert-info">📌 No active picks to score right now.</div>`
+            : `<table class="ai-tbl">
+              <tr style="font-size:.68rem;color:var(--text-muted)"><td>Symbol</td><td>Score</td><td></td></tr>
+              ${[...scoredInPosition, ...scoredPending].slice(0, 8).map((p: any) => {
+                const col = p.confidence >= 70 ? "#10b981" : p.confidence >= 50 ? "#f59e0b" : "#ef4444";
+                const label = p.confidence >= 70 ? "High" : p.confidence >= 50 ? "Medium" : "Low";
+                return `<tr>
+                  <td style="font-weight:700">${p.stock_symbol} <span style="font-size:.68rem;color:var(--text-muted)">${p.result==="entry_triggered"?"🟢":"⏳"}</span></td>
+                  <td><div style="font-weight:800;color:${col}">${p.confidence}</div><div class="ai-score-bar"><div class="ai-score-fill" style="width:${p.confidence}%;background:${col}"></div></div></td>
+                  <td style="font-size:.72rem;color:${col}">${label}</td>
+                </tr>`;
+              }).join("")}
+            </table>
+            <div style="font-size:.7rem;color:var(--text-muted);margin-top:8px">Score: 30 base + SL (+20) + Target (+15) + Low risk (+20) + historical win rate (+up to 15)</div>`}
+        </div>
+
+        <!-- ── 6. Anomaly Alert ── -->
+        <div class="ai-card">
+          <div class="ai-card-hdr">
+            <span class="ai-card-icon">🔍</span>
+            <div><div class="ai-card-title">Pick Anomaly Alerts</div><div class="ai-card-sub">Unusual or risky pending picks flagged automatically</div></div>
+          </div>
+          ${pickAnomalies.length === 0
+            ? `<div class="ai-alert-box ai-alert-ok">✅ No anomalies detected in current pending picks.</div>`
+            : pickAnomalies.slice(0, 5).map((p: any) => `
+              <div style="margin-bottom:10px;padding:10px 12px;background:var(--bg2);border-radius:9px;border-left:3px solid #f59e0b">
+                <div style="font-weight:800;margin-bottom:5px">${p.stock_symbol} <span style="font-size:.72rem;color:var(--text-muted);font-weight:500">${p.direction}</span></div>
+                ${p.flags.map((f: string) => `<span class="ai-flag">${f}</span>`).join("")}
+              </div>`).join("")}
+          ${pendingNonDupe.length === 0 ? `<div style="font-size:.72rem;color:var(--text-muted);margin-top:8px">No pending picks to analyze.</div>` : ""}
+        </div>
+
+      </div><!-- end ai-grid -->
+    </div><!-- end dbp-ai -->
+
     <!-- ── PANEL: PICKS TRACKER (admin only) ── -->
-    ${isAdmin ? `<div class="db-panel" id="dbp-picks">
+    ${isAdmin ? `<div class="db-panel active" id="dbp-picks">
       <style>
         .ptk-tabs{display:flex;gap:6px;margin-bottom:14px;flex-wrap:wrap}
         .ptk-tab{padding:6px 16px;border-radius:20px;border:1px solid var(--border);background:var(--input-bg);color:var(--text-muted);font-size:.83rem;font-weight:600;cursor:pointer;transition:.15s}
@@ -8653,7 +9000,7 @@ app.get("/dashboard", requireAuth, async (req: Request, res: Response) => {
     document.getElementById('dbp-'+id).classList.add('active');
     try { sessionStorage.setItem('db-tab', id); } catch(e){}
   }
-  (function(){ try{ var t=new URLSearchParams(location.search).get('tab')||sessionStorage.getItem('db-tab'); if(t) dbTab(t); }catch(e){} })();
+  (function(){ try{ sessionStorage.removeItem('db-tab'); var t=new URLSearchParams(location.search).get('tab')||'${isAdmin ? "picks" : "positions"}'; dbTab(t); }catch(e){} })();
   </script>
 </body>
 </html>`);
@@ -9515,6 +9862,18 @@ app.get("/signals", featureGate("feature_signals", "Signals"), async (req, res) 
         const kiteToken2  = await getSetting("kite_access_token").catch(() => "");
         const kiteTokenAt2 = await getSetting("kite_token_set_at").catch(() => "");
         const tokenMasked2 = kiteToken2 ? kiteToken2.slice(0, 6) + "\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022" + kiteToken2.slice(-4) : "";
+        // Validate token via actual Zerodha API call (not just existence check)
+        let kiteToken2Valid = false;
+        try {
+          const _botEnv2 = fs.readFileSync('/home/ubuntu/trading-bot/.env', 'utf-8');
+          const _ak2 = (_botEnv2.match(/^API_KEY=(.+)$/m)?.[1] ?? "").trim();
+          const _at2 = (_botEnv2.match(/^ACCESS_TOKEN=(.+)$/m)?.[1] ?? "").trim();
+          if (_ak2 && _at2) {
+            const _vResp = await fetch("https://api.kite.trade/user/profile",
+              { headers: { "X-Kite-Version": "3", "Authorization": `token ${_ak2}:${_at2}` }, signal: AbortSignal.timeout(4000) });
+            kiteToken2Valid = _vResp.status === 200;
+          }
+        } catch (_) {}
         const todayStr2 = getTodayIST();
         const todayTradesAll2 = (() => {
           const raw: any[] = readBotJSON("trades.json", []);
@@ -9682,6 +10041,33 @@ app.get("/signals", featureGate("feature_signals", "Signals"), async (req, res) 
     .sc-pts{font-size:.72rem;font-weight:600;margin-top:2px;opacity:.85}
     .sc-meta{font-size:.68rem;color:var(--text-muted);margin-top:7px}
     .sc-diff{text-align:center;padding:10px;background:var(--card-bg);border:1px dashed var(--border);border-radius:8px;margin-bottom:.85rem;font-size:.75rem;color:var(--text-muted)}
+    /* ── Health Monitor ── */
+    .hm-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:8px;margin-bottom:1rem}
+    .hm-card{background:var(--card-bg);border:1px solid var(--border);border-radius:9px;padding:11px 14px;display:flex;align-items:center;gap:10px;transition:border-color .3s}
+    .hm-card.hm-ok{border-color:rgba(16,185,129,.35)}
+    .hm-card.hm-warn{border-color:rgba(251,191,36,.45)}
+    .hm-card.hm-err{border-color:rgba(239,68,68,.45)}
+    .hm-card.hm-dim{border-color:var(--border)}
+    .hm-dot{width:9px;height:9px;border-radius:50%;flex-shrink:0;background:#475569}
+    .hm-ok .hm-dot{background:#10b981}
+    .hm-warn .hm-dot{background:#fbbf24;box-shadow:0 0 6px rgba(251,191,36,.6)}
+    .hm-err .hm-dot{background:#ef4444;box-shadow:0 0 6px rgba(239,68,68,.6);animation:hm-blink 1s infinite}
+    @keyframes hm-blink{0%,100%{opacity:1}50%{opacity:.3}}
+    .hm-label{font-size:.67rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:.04em;line-height:1}
+    .hm-val{font-size:.8rem;font-weight:700;margin-top:3px;line-height:1.2}
+    /* ── Alert Banners ── */
+    .sig3-alerts{display:flex;flex-direction:column;gap:8px;margin-bottom:1rem}
+    .sig3-alert{border-radius:10px;padding:13px 18px;border:1px solid;position:relative;display:flex;align-items:flex-start;gap:12px}
+    .sig3-alert-err{background:rgba(239,68,68,.08);border-color:rgba(239,68,68,.4);color:#fca5a5}
+    .sig3-alert-warn{background:rgba(251,191,36,.07);border-color:rgba(251,191,36,.4);color:#fde68a}
+    .sig3-alert-icon{font-size:1.1rem;flex-shrink:0;margin-top:1px}
+    .sig3-alert-body{flex:1}
+    .sig3-alert-title{font-weight:700;font-size:.85rem;line-height:1.2}
+    .sig3-alert-msg{font-size:.75rem;opacity:.8;margin-top:3px}
+    .sig3-alert-btns{display:flex;gap:6px;flex-wrap:wrap;margin-top:9px}
+    .sig3-alert-btn{padding:4px 12px;border-radius:5px;font-size:.73rem;font-weight:700;cursor:pointer;border:1px solid currentColor;background:transparent;color:inherit;transition:opacity .2s}
+    .sig3-alert-btn:hover{opacity:.7}
+    .sig3-alert-close{position:absolute;top:9px;right:12px;background:none;border:none;color:inherit;opacity:.5;cursor:pointer;font-size:1rem;line-height:1;padding:0}
   </style>
 </head>
 <body class="page-theme-signals">
@@ -9700,8 +10086,8 @@ app.get("/signals", featureGate("feature_signals", "Signals"), async (req, res) 
     <div class="gv-status" id="sig3-bot-status" style="margin-bottom:1rem;padding:10px 16px;border-radius:10px;background:var(--card-bg,#1e293b);border:1px solid var(--border);display:flex;align-items:center;gap:10px">
       <span class="gv-status-dot ${!isAlive2 ? (_sleeping2ssr ? 'waiting' : 'offline') : inTrade2 ? 'active' : (hb2?.status?.toUpperCase().includes('WAIT') || hb2?.status?.toUpperCase().includes('9:25') ? 'waiting' : 'scanning')}" id="sig3-status-dot"></span>
       <span style="font-size:.82rem;color:var(--text-muted)" id="sig3-status-lbl">${!isAlive2 ? (_sleeping2ssr ? 'Bot sleeping \u2014 market closed' : 'Bot offline \u2014 not responding') : inTrade2 ? 'Bot is running a trade' : hb2?.status?.toUpperCase().includes('WAIT') ? 'Bot alive \u2014 waiting for market to open (9:15 IST)' : 'Bot alive \u2014 monitoring the options market'}</span>
-      <span style="font-size:.75rem;margin-left:12px;padding:2px 8px;border-radius:4px;font-weight:600;${kiteToken2 ? 'background:rgba(16,185,129,.15);color:#10b981' : 'background:rgba(239,68,68,.15);color:#ef4444'}" id="sig3-token-status">${kiteToken2 ? '&#10003; Token OK' : '&#10007; No Token'}</span>
-      <a href="https://139-59-18-52.nip.io/login" target="_blank" id="sig3-token-link" style="font-size:.72rem;margin-left:6px;padding:2px 8px;border-radius:4px;font-weight:700;text-decoration:none;background:rgba(251,191,36,.12);border:1px solid #fbbf24;color:#fbbf24;${kiteToken2 ? 'display:none' : ''}" title="Submit Zerodha token">&#8594; Refresh Token</a>
+      <span style="font-size:.75rem;margin-left:12px;padding:2px 8px;border-radius:4px;font-weight:600;${kiteToken2Valid ? 'background:rgba(16,185,129,.15);color:#10b981' : 'background:rgba(239,68,68,.15);color:#ef4444'}" id="sig3-token-status">${kiteToken2Valid ? '&#10003; Token OK' : '&#10007; Token Expired'}</span>
+      <a href="https://139-59-18-52.nip.io/login" target="_blank" id="sig3-token-link" style="font-size:.72rem;margin-left:6px;padding:2px 8px;border-radius:4px;font-weight:700;text-decoration:none;background:rgba(251,191,36,.12);border:1px solid #fbbf24;color:#fbbf24;${kiteToken2Valid ? 'display:none' : ''}" title="Submit Zerodha token">&#8594; Refresh Token</a>
       <span style="font-size:.82rem;font-weight:700;margin-left:auto" class="${!isAlive2 ? (_sleeping2ssr ? 'sig3-d' : 'sig3-r') : inTrade2 ? 'sig3-g' : 'sig3-d'}" id="sig3-status-val">${!isAlive2 ? (_sleeping2ssr ? 'Sleeping' : 'Offline') : inTrade2 ? '&#x25CF;&nbsp;ACTIVE' : hb2?.status?.toUpperCase().includes('WAIT') ? 'Waiting' : 'Monitoring'}</span>
       <div style="position:relative;margin-left:10px" id="bot-ctl-wrap">
         <button onclick="_toggleBotMenu(event)" style="padding:3px 10px;border-radius:5px;font-size:.72rem;font-weight:700;cursor:pointer;background:rgba(99,102,241,.12);border:1px solid #6366f1;color:#a5b4fc" id="bot-ctl-btn">&#9881; Bot &#9660;</button>
@@ -9810,6 +10196,19 @@ app.get("/signals", featureGate("feature_signals", "Signals"), async (req, res) 
           </div>
         </div>
       </div>`}
+    </div>
+
+    <!-- LAST 15-MIN CANDLE -->
+    <div id="sig3-candle-wrap" style="margin-bottom:1rem;display:none">
+      <div class="sig3-sec" style="margin-bottom:.5rem">Last 15-Min Candle <span id="sig3-candle-time" style="font-weight:400;font-size:.72rem;color:var(--text-muted)"></span></div>
+      <div style="background:var(--card-bg);border:1px solid var(--border);border-radius:10px;padding:14px 18px;display:flex;flex-wrap:wrap;gap:1.2rem;align-items:center">
+        <span id="sig3-candle-colour" style="font-size:1.1rem;font-weight:700"></span>
+        <span style="font-size:.8rem;color:var(--text-muted)">O: <b id="sig3-c-o" style="color:var(--text)"></b></span>
+        <span style="font-size:.8rem;color:var(--text-muted)">H: <b id="sig3-c-h" style="color:#10b981"></b></span>
+        <span style="font-size:.8rem;color:var(--text-muted)">L: <b id="sig3-c-l" style="color:#ef4444"></b></span>
+        <span style="font-size:.8rem;color:var(--text-muted)">C: <b id="sig3-c-c" style="color:var(--text)"></b></span>
+        <span id="sig3-candle-status" style="font-size:.78rem;margin-left:auto;color:var(--text-muted)"></span>
+      </div>
     </div>
 
     <!-- TODAY'S TRADES -->
@@ -10054,6 +10453,19 @@ app.get("/signals", featureGate("feature_signals", "Signals"), async (req, res) 
       const tkOK=!!(d.tokenOK);
       if(_ge("sig3-token-status")){_ge("sig3-token-status").textContent=tkOK?"\u2713 Token OK":"\u2717 No Token";_ge("sig3-token-status").style.background=tkOK?"rgba(16,185,129,.15)":"rgba(239,68,68,.15)";_ge("sig3-token-status").style.color=tkOK?"#10b981":"#ef4444";}
       if(_ge("sig3-token-link"))_ge("sig3-token-link").style.display=tkOK?"none":"";
+      // update last 15-min candle card
+      const lc=d.heartbeat?.lastCandle;
+      const cw=_ge("sig3-candle-wrap");
+      if(lc&&cw){
+        cw.style.display="";
+        if(_ge("sig3-candle-time"))_ge("sig3-candle-time").textContent="@ "+lc.time;
+        if(_ge("sig3-candle-colour"))_ge("sig3-candle-colour").textContent=lc.colour==="bull"?"\uD83D\uDFE2 Bullish":"\uD83D\uDD34 Bearish";
+        if(_ge("sig3-c-o"))_ge("sig3-c-o").textContent=lc.open;
+        if(_ge("sig3-c-h"))_ge("sig3-c-h").textContent=lc.high;
+        if(_ge("sig3-c-l"))_ge("sig3-c-l").textContent=lc.low;
+        if(_ge("sig3-c-c"))_ge("sig3-c-c").textContent=lc.close;
+        if(_ge("sig3-candle-status"))_ge("sig3-candle-status").textContent=lc.status||"";
+      }
     }catch(e){console.error(e);}
   }
   _sig3Refresh();setInterval(_sig3Refresh,8000);
@@ -10068,7 +10480,7 @@ app.get("/signals", featureGate("feature_signals", "Signals"), async (req, res) 
       const r=await fetch('/api/bot/action',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action})});
       const d=await r.json();
       if(btn){btn.textContent='\u2699 Bot \u25be';btn.disabled=false;}
-      if(d.ok){const t=document.createElement('span');t.textContent=' ✓ '+d.msg;t.style.cssText='font-size:.7rem;color:#10b981;margin-left:6px';btn.parentNode.appendChild(t);setTimeout(()=>t.remove(),3000);}
+      if(d.ok){const t=document.createElement('span');t.textContent=' \u2713 '+d.msg;t.style.cssText='font-size:.7rem;color:#10b981;margin-left:6px';btn.parentNode.appendChild(t);setTimeout(function(){t.remove();},3000);}
       else alert('Error: '+(d.msg||'Failed'));
     }catch(e){alert('Request failed');if(btn){btn.textContent='\u2699 Bot \u25be';btn.disabled=false;}}
   }
