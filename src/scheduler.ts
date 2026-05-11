@@ -638,15 +638,25 @@ export async function autoPaperTradeFromPicks(): Promise<void> {
       }
 
       const qty   = 1;
-      // Use midpoint of pick's entry zone — this IS yesterday's close ± 0.3% buffer,
-      // the intended entry price. Far more meaningful than raw prices table at 9:15 AM.
-      const entryMid = parseFloat(((pick.entry_low + pick.entry_high) / 2).toFixed(2));
-      // Fallback: live price from prices table (same data, but use midpoint first)
       const priceRow = await dbAll<{ price: number }>(
         "SELECT price FROM prices WHERE symbol = ?", [pick.stock_symbol]
       );
-      const price = entryMid > 0 ? entryMid : (priceRow[0]?.price && priceRow[0].price > 0 ? priceRow[0].price : pick.entry_low);
+      const livePrice = priceRow[0]?.price ?? 0;
+      const entryMid  = parseFloat(((pick.entry_low + pick.entry_high) / 2).toFixed(2));
       const tradeType = (pick.pick_type === "intraday" || pick.pick_type === "scalper") ? "INTRADAY" : "HOLDING";
+
+      // Swing: only enter if live price is within entry zone (limit order — wait for pullback)
+      // Intraday/scalper: simulate market-open fill at entry midpoint
+      let price: number;
+      if (pick.pick_type === "swing") {
+        if (livePrice <= 0 || livePrice < pick.entry_low || livePrice > pick.entry_high) {
+          console.log(`[AutoPaper] ⏳ ${user.email} pending ${pick.stock_symbol}: ₹${livePrice} not in zone [${pick.entry_low}–${pick.entry_high}]`);
+          continue;
+        }
+        price = livePrice;
+      } else {
+        price = entryMid > 0 ? entryMid : (livePrice > 0 ? livePrice : pick.entry_low);
+      }
 
       const result = await paperBuy(
         user.id,
@@ -682,14 +692,32 @@ export async function monitorAutoPaperPositions(): Promise<void> {
   if (users.length === 0) return;
 
   for (const user of users) {
-    const positions = await getPaperPositions(user.id);
-    if (positions.length === 0) continue;
+    const positions  = await getPaperPositions(user.id);
+    const openSymbols = new Set(positions.map((p: any) => p.symbol.toUpperCase()));
 
+    // ── 1. Entry trigger: pending swing picks waiting for price to enter zone ──
+    const pendingPicks = await dbAll<any>(
+      `SELECT * FROM picks WHERE status='active' AND pick_type='swing'
+       AND date(published_at) >= date('now','localtime','-2 days')
+       AND (entry_price IS NULL OR entry_price = 0)`
+    );
+    for (const pick of pendingPicks) {
+      if (openSymbols.has(pick.stock_symbol.toUpperCase())) continue;
+      const priceRow  = await dbAll<{ price: number }>("SELECT price FROM prices WHERE symbol = ?", [pick.stock_symbol]);
+      const livePrice = priceRow[0]?.price ?? 0;
+      if (livePrice <= 0 || livePrice < pick.entry_low || livePrice > pick.entry_high) continue;
+      const result = await paperBuy(user.id, pick.stock_symbol, pick.company_name ?? null, 1, livePrice, 'HOLDING', pick.stop_loss ?? null, pick.target ?? null, 'LIMIT');
+      if (result.ok) {
+        await updatePickEntry(pick.id, livePrice).catch(() => {});
+        openSymbols.add(pick.stock_symbol.toUpperCase());
+        console.log(`[AutoPaper] ✅ Swing entry triggered ${pick.stock_symbol} @ ₹${livePrice} (zone ${pick.entry_low}–${pick.entry_high})`);
+      }
+    }
+
+    // ── 2. SL / Target monitor for open positions ─────────────────────────────
+    if (positions.length === 0) continue;
     for (const pos of positions) {
-      // Get live price from prices table
-      const priceRow = await dbAll<{ price: number }>(
-        "SELECT price FROM prices WHERE symbol = ?", [pos.symbol]
-      );
+      const priceRow  = await dbAll<{ price: number }>("SELECT price FROM prices WHERE symbol = ?", [pos.symbol]);
       const livePrice = priceRow[0]?.price;
       if (!livePrice || livePrice <= 0) continue;
 
@@ -703,6 +731,31 @@ export async function monitorAutoPaperPositions(): Promise<void> {
         console.log(`[AutoPaper] ${hit} hit — ${user.email} sold ${pos.symbol} @ ₹${livePrice} → ${result.msg}`);
       }
     }
+  }
+}
+
+// ── Intraday forced square-off at 3:15 PM IST ─────────────────────────────────
+export async function squareOffIntradayPositions(): Promise<void> {
+  const users = await getUsersWithAutoPicks();
+  if (users.length === 0) return;
+
+  for (const user of users) {
+    const positions   = await getPaperPositions(user.id);
+    const intradayPos = positions.filter((p: any) => p.trade_type === 'INTRADAY');
+    if (intradayPos.length === 0) continue;
+
+    let closed = 0;
+    for (const pos of intradayPos) {
+      const priceRow  = await dbAll<{ price: number }>("SELECT price FROM prices WHERE symbol = ?", [pos.symbol]);
+      const exitPrice = priceRow[0]?.price ?? (pos as any).avg_price;
+      if (!exitPrice || exitPrice <= 0) continue;
+      const result = await paperSell(user.id, pos.symbol, pos.qty, exitPrice);
+      if (result.ok) {
+        closed++;
+        console.log(`[SquareOff] ${pos.symbol} closed @ ₹${exitPrice} — ${result.msg}`);
+      }
+    }
+    console.log(`[SquareOff] ${user.email} — closed ${closed}/${intradayPos.length} INTRADAY positions`);
   }
 }
 
@@ -943,6 +996,12 @@ export function startScheduler() {
   // Monitor auto-paper SL/target: every 5 min on weekdays during market hours 9:15–3:30 IST (3:45–10:00 UTC)
   cron.schedule("*/5 3-10 * * 1-5", async () => {
     await monitorAutoPaperPositions();
+  }, { timezone: "UTC" });
+
+  // Intraday forced square-off: 3:15 PM IST = 09:45 UTC, weekdays
+  cron.schedule("45 9 * * 1-5", async () => {
+    console.log("[Cron] Intraday square-off at 3:15 PM IST");
+    await squareOffIntradayPositions();
   }, { timezone: "UTC" });
 
   // Price alerts: every 30 min on weekdays during market hours (3:45–10:30 UTC = 9:15–16:00 IST)
