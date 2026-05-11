@@ -10431,6 +10431,24 @@ app.get("/signals", featureGate("feature_signals", "Signals"), async (req, res) 
       </div>
     </div>
 
+    <!-- TRAIL Today's Trades — shown right after position card -->
+    <div class="sig3-sec" style="margin-top:1.2rem">
+      Today &mdash; TRAIL Paper Trades
+      <span class="sig3-sec-count" id="k3t-today-count">(${hb2?.shadowTrades ?? 0} trades)</span>
+    </div>
+    <div class="sig3-tw">
+      <table class="sig3-t">
+        <thead><tr>
+          <th>Time</th><th>Dir</th><th>Entry &rarr; Exit (Index)</th>
+          <th>Prem In</th><th>Prem Out</th>
+          <th>P&amp;L (&#8377;)</th><th>Reason</th>
+        </tr></thead>
+        <tbody id="k3t-today-body">
+          <tr><td colspan="7" class="sig3-te">Loading&hellip;</td></tr>
+        </tbody>
+      </table>
+    </div>
+
     <!-- LAST 15-MIN CANDLE (shared with LOCK50) -->
     <div id="sig3t-candle-wrap" style="margin-bottom:1rem;display:none">
       <div class="sig3-sec" style="margin-bottom:.5rem">Last 15-Min Candle <span id="sig3t-candle-time" style="font-weight:400;font-size:.72rem;color:var(--text-muted)"></span></div>
@@ -10471,23 +10489,6 @@ app.get("/signals", featureGate("feature_signals", "Signals"), async (req, res) 
             <td id="k3t-cmp-trail-tr">${hb2?.shadowTrades ?? 0}</td>
             <td><span style="font-size:.65rem;font-weight:700;background:rgba(99,102,241,.15);color:#818cf8;padding:2px 6px;border-radius:3px">PAPER</span></td>
           </tr>
-        </tbody>
-      </table>
-    </div>
-
-    <!-- TRAIL Today's Trades -->
-    <div class="sig3-sec">
-      Today &mdash; TRAIL Paper Trades
-      <span class="sig3-sec-count" id="k3t-today-count">(${hb2?.shadowTrades ?? 0} trades)</span>
-    </div>
-    <div class="sig3-tw">
-      <table class="sig3-t">
-        <thead><tr>
-          <th>Time</th><th>Dir</th><th>Entry &rarr; Exit (Index)</th>
-          <th>P&amp;L (&#8377;)</th><th>Reason</th>
-        </tr></thead>
-        <tbody id="k3t-today-body">
-          <tr><td colspan="5" class="sig3-te">Loading&hellip;</td></tr>
         </tbody>
       </table>
     </div>
@@ -10580,7 +10581,7 @@ app.get("/signals", featureGate("feature_signals", "Signals"), async (req, res) 
       const k3tbody=_ge("k3t-today-body");
       if(k3tbody){
         if(!shLog.length){
-          k3tbody.innerHTML='<tr><td colspan="5" class="sig3-te">No TRAIL paper trades today'+(shInT?' &mdash; 1 live position active':'')+"</td></tr>";
+          k3tbody.innerHTML='<tr><td colspan="7" class="sig3-te">No TRAIL paper trades today'+(shInT?' &mdash; 1 live position active':'')+'</td></tr>';
         } else {
           k3tbody.innerHTML=[...shLog].reverse().map(function(t){
             const _pts=t.pts!=null?parseFloat(t.pts):null;
@@ -10590,10 +10591,14 @@ app.get("/signals", featureGate("feature_signals", "Signals"), async (req, res) 
             const _entStr=t.entry>0?parseFloat(t.entry).toFixed(1):'&mdash;';
             const _exStr=t.exit!=null&&t.exit>0?parseFloat(t.exit).toFixed(1):'<em style="color:#818cf8">live</em>';
             const _dir=(t.dir||'').toUpperCase();
+            const _pIn=t.premIn!=null?'&#8377;'+parseFloat(t.premIn).toFixed(0):'&mdash;';
+            const _pOut=t.premOut!=null?'&#8377;'+parseFloat(t.premOut).toFixed(0):(t.exit!=null&&t.exit>0?'&mdash;':'<em style="color:#818cf8">live</em>');
             return '<tr>'
               +'<td class="sig3-ct">'+(t.time||'&mdash;')+'</td>'
               +'<td><span class="sig3-db '+(_dir.toLowerCase())+'">'+(_dir||'&mdash;')+'</span></td>'
               +'<td class="sig3-mono">'+_entStr+' &rarr; '+_exStr+'</td>'
+              +'<td class="sig3-mono">'+_pIn+'</td>'
+              +'<td class="sig3-mono">'+_pOut+'</td>'
               +'<td><span class="sig3-pnl-rs '+_pC+'">'+_rsV+'</span><span class="sig3-pnl-spt"> '+_ptV+'</span></td>'
               +'<td>'+(t.reason||'&mdash;')+'</td>'
               +'</tr>';
