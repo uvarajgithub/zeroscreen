@@ -2968,7 +2968,7 @@ app.get("/admin", requireAdmin, async (req: Request, res: Response) => {
       <div class="admin-quick-card">
         <h3>🤖 Bot Status</h3>
         <p>Position: <strong class="${botActive ? "sig-green" : "text-dim"}">${botActive ? "● " + (botStatus.direction || "ACTIVE") : "💤 FLAT"}</strong></p>
-        <p>Strategy: <strong>${botStatus.strategy || botStatus.type || "—"}</strong></p>
+        <p>Strategy: <strong>${botStatus.strategy || botStatus.type || "LOCK50 Candle-SL"}</strong></p>
         <a href="/admin/signals" class="btn-secondary" style="margin-top:8px">⚙️ Signal Control</a>
       </div>
       <div class="admin-quick-card">
