@@ -31,3 +31,9 @@ test_*.js
 
 # PM2
 .pm2/
+
+patch_*.py
+chk_*.py
+dbg_*.py
+notifier_fixed.ts
+patch_*.py
