@@ -391,7 +391,7 @@ function nav(active: string, req?: Request): string {
   const traderLinks: [string, string, string][] = [
     ["today",            "/today",            "🔥 Today's Picks"],
     ["signals",          "/signals",          "🤖 Live Bot Signals"],
-    ["dashboard",        "/dashboard",        "📈 Bot Analytics"],
+    ["bot-analytics",   "/bot-analytics",   "📈 Bot Analytics"],
     ["strategy-builder", "/strategy-builder", "🏗️ Strategy Builder"],
   ];
 
@@ -2987,144 +2987,7 @@ app.get("/admin", requireAdmin, async (req: Request, res: Response) => {
       </div>
     </div>
 
-    <!-- ─── System Health Monitor ─────────────────────────────────── -->
-    <style>
-      .hm-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(145px,1fr));gap:10px;margin-bottom:1rem}
-      .hm-card{background:var(--card-bg,#1e293b);border:1px solid var(--border,#334155);border-radius:10px;padding:13px 16px;display:flex;align-items:center;gap:11px;transition:border-color .3s}
-      .hm-card.hm-ok{border-color:rgba(16,185,129,.4)}
-      .hm-card.hm-warn{border-color:rgba(251,191,36,.5)}
-      .hm-card.hm-err{border-color:rgba(239,68,68,.5)}
-      .hm-card.hm-dim{border-color:var(--border,#334155)}
-      .hm-dot{width:10px;height:10px;border-radius:50%;flex-shrink:0;background:#475569}
-      .hm-ok .hm-dot{background:#10b981}
-      .hm-warn .hm-dot{background:#fbbf24;box-shadow:0 0 6px rgba(251,191,36,.6)}
-      .hm-err .hm-dot{background:#ef4444;box-shadow:0 0 7px rgba(239,68,68,.7);animation:hm-blink 1s infinite}
-      @keyframes hm-blink{0%,100%{opacity:1}50%{opacity:.25}}
-      .hm-label{font-size:.67rem;color:var(--text-muted,#94a3b8);text-transform:uppercase;letter-spacing:.05em;line-height:1}
-      .hm-val{font-size:.82rem;font-weight:700;margin-top:4px;line-height:1.2}
-      .hm-section-title{font-size:.85rem;font-weight:700;color:var(--text-muted,#94a3b8);text-transform:uppercase;letter-spacing:.07em;margin:1.4rem 0 .7rem}
-      .hm-alerts{display:flex;flex-direction:column;gap:8px;margin-bottom:1rem}
-      .hm-alert{border-radius:10px;padding:13px 18px;border:1px solid;display:flex;align-items:flex-start;gap:12px;position:relative}
-      .hm-alert-err{background:rgba(239,68,68,.07);border-color:rgba(239,68,68,.4);color:#fca5a5}
-      .hm-alert-warn{background:rgba(251,191,36,.07);border-color:rgba(251,191,36,.4);color:#fde68a}
-      .hm-alert-title{font-weight:700;font-size:.85rem}
-      .hm-alert-msg{font-size:.75rem;opacity:.8;margin-top:3px}
-      .hm-alert-btn{display:inline-block;margin-top:9px;padding:4px 13px;border-radius:5px;font-size:.73rem;font-weight:700;cursor:pointer;border:1px solid currentColor;background:transparent;color:inherit;text-decoration:none}
-      .hm-alert-upd{font-size:.7rem;color:var(--text-muted,#64748b);margin-top:.5rem}
-      .hm-fix{margin-top:5px}.hm-fix a,.hm-fix button{font-size:.63rem;font-weight:700;padding:2px 9px;border-radius:4px;border:1px solid currentColor;cursor:pointer;background:transparent;color:inherit;text-decoration:none;display:inline-block}
-      .hm-sub{font-size:.7rem;opacity:.65;margin-top:3px;line-height:1.2}
-    </style>
-    <div class="hm-section-title">&#x26A1; System Health <span id="hm-upd" style="font-weight:400;font-size:.7rem;opacity:.6">Loading&hellip;</span></div>
-    <div class="hm-grid">
-      <div class="hm-card hm-dim" id="hm-bot"><div class="hm-dot"></div><div><div class="hm-label">Bot Heartbeat</div><div class="hm-val" id="hm-bot-v">&mdash;</div><div class="hm-fix" id="hm-bot-fix" style="display:none"></div></div></div>
-      <div class="hm-card hm-dim" id="hm-tok"><div class="hm-dot"></div><div><div class="hm-label">Zerodha Token</div><div class="hm-val" id="hm-tok-v">&mdash;</div><div class="hm-fix" id="hm-tok-fix" style="display:none"></div></div></div>
-      <div class="hm-card hm-dim" id="hm-mkt"><div class="hm-dot"></div><div><div class="hm-label">Market</div><div class="hm-val" id="hm-mkt-v">&mdash;</div></div></div>
-      <div class="hm-card hm-dim" id="hm-pos"><div class="hm-dot"></div><div><div class="hm-label">Position (LOCK50)</div><div class="hm-val" id="hm-pos-v">&mdash;</div></div></div>
-      <div class="hm-card hm-dim" id="hm-cnd"><div class="hm-dot"></div><div><div class="hm-label">Last 15-Min Candle</div><div class="hm-val" id="hm-cnd-v">&mdash;</div><div class="hm-sub" id="hm-cnd-s"></div></div></div>
-      <div class="hm-card hm-dim" id="hm-pnl"><div class="hm-dot"></div><div><div class="hm-label">Today P&amp;L (LOCK50)</div><div class="hm-val" id="hm-pnl-v">&mdash;</div></div></div>
-      <div class="hm-card hm-dim" id="hm-trl"><div class="hm-dot"></div><div><div class="hm-label">TRAIL (shadow)</div><div class="hm-val" id="hm-trl-v">&mdash;</div><div class="hm-sub" id="hm-trl-s"></div></div></div>
-      <div class="hm-card hm-dim" id="hm-trds"><div class="hm-dot"></div><div><div class="hm-label">Trades Today</div><div class="hm-val" id="hm-trds-v">&mdash;</div></div></div>
-    </div>
-    <div class="hm-alerts" id="hm-alerts"></div>
-    <script>
-    (function(){
-      function hg(id){return document.getElementById(id);}
-      var _hmu=hg('hm-upd');if(_hmu)_hmu.textContent='Connecting\u2026';
-      function hmSet(id,state,val){var c=hg(id);if(!c)return;c.className="hm-card hm-"+state;var v=hg(id+"-v");if(v)v.textContent=val;}
-      function hmAlert(container,issues){
-        container.innerHTML="";
-        issues.forEach(function(iss){
-          var d=document.createElement("div");
-          d.className="hm-alert hm-alert-"+iss.type;
-          var btns="";
-          if(iss.href)btns='<a class="hm-alert-btn" href="'+iss.href+'" target="_blank">'+iss.btnLabel+'</a>';
-          else if(iss.fn)btns='<button class="hm-alert-btn" onclick="'+iss.fn+'">'+iss.btnLabel+'</button>';
-          d.innerHTML='<div><div class="hm-alert-title">'+iss.icon+" "+iss.title+'</div><div class="hm-alert-msg">'+iss.msg+'</div>'+btns+'</div>';
-          container.appendChild(d);
-        });
-        container.style.display=issues.length?"flex":"none";
-      }
-      function doHmRefresh(){
-        fetch("/api/bot/status").then(function(r){return r.json();}).then(function(d){
-          var hbAt=d.heartbeat&&d.heartbeat.at?new Date(d.heartbeat.at).getTime():0;
-          var hbAgo=hbAt?(Date.now()-hbAt):Infinity;
-          var hbMin=Math.round(hbAgo/60000);
-          var alive=d.isAlive!==false;
-          var tkOK=!!d.tokenOK;
-          var nowIST=new Date(new Date().toLocaleString("en-US",{timeZone:"Asia/Kolkata"}));
-          var iH=nowIST.getHours(),iM=nowIST.getMinutes();
-          var mktOpen=(iH>9||(iH===9&&iM>=15))&&(iH<15||(iH===15&&iM<=30));
-          var after915=iH>9||(iH===9&&iM>=15);
-          var inPos=d.activeState&&!!(d.activeState.inTrade||d.activeState.activeTrade||d.activeState.mainEntryDone);
-          var posDir=(d.activeState&&(d.activeState.tradeDirection||d.activeState.direction)||"").toUpperCase();
-          var lc=d.heartbeat&&d.heartbeat.lastCandle;
-          var todayPnl=parseFloat(((d.today&&d.today.pnl||0)+(inPos?(d.activeState&&d.activeState.unrealisedPnL||0):0)).toFixed(0));
-          var todayRs=Math.round(todayPnl*15);
-          var shadowPnl=parseFloat((d.heartbeat&&d.heartbeat.shadowPnL||0).toFixed(0));
-          var shadowTr=d.heartbeat&&d.heartbeat.shadowTrades||0;
-          var shadowInTrade=!!(d.heartbeat&&d.heartbeat.shadowInTrade);
-          var shadowDir=(d.heartbeat&&d.heartbeat.shadowDir||"").toUpperCase();
-          var shadowMaxed=shadowTr>=5;
-          var shadowMissed=after915&&mktOpen&&(d.today&&d.today.trades||0)>0&&shadowTr===0;
-          var trades=d.today&&d.today.trades||0;
 
-          // ── Bot heartbeat card + inline fix button
-          hmSet("hm-bot",alive?"ok":"err",alive?(hbAgo<90000?"Just now":hbMin+"m ago"):"Offline"+(hbAt?" ("+hbMin+"m ago)":""));
-          var bf=hg("hm-bot-fix");if(bf){bf.innerHTML=alive?"":"<button onclick=\"doHmAction('restart')\">\u21BB Restart Bot</button>";bf.style.display=alive?"none":"";}
-
-          // ── Token card + inline fix link
-          hmSet("hm-tok",tkOK?"ok":"err",tkOK?"Valid \u2713":"Expired \u2717");
-          var tf=hg("hm-tok-fix");if(tf){tf.innerHTML=tkOK?"":"<a href=\"https://139-59-18-52.nip.io/login\" target=\"_blank\">\uD83D\uDD11 Refresh Token</a>";tf.style.display=tkOK?"none":"";}
-
-          // ── Market card
-          hmSet("hm-mkt",mktOpen?"ok":"dim",mktOpen?"Open \u2014 closes 3:30 PM":"Closed");
-
-          // ── Position (LOCK50) card
-          var unrealised=inPos&&d.activeState&&d.activeState.unrealisedPnL?d.activeState.unrealisedPnL:0;
-          var posLabel=inPos?(posDir||"?")+" OPTION \u25CF":"Flat \u2014 watching";
-          hmSet("hm-pos",inPos?"ok":"dim",posLabel);
-
-          // ── Last 15-min candle card with trade-status sub-line
-          var cndBull=lc&&lc.colour==="bull";
-          var cndMain=lc?lc.time+" ("+(cndBull?"\u25B2 Bull":"\u25BC Bear")+")":mktOpen?"Awaiting next candle":"No candle (mkt closed)";
-          var cndSub=inPos?((posDir||"")+" In Trade \u25CF"):(alive&&mktOpen?"Watching for opportunity":"");
-          hmSet("hm-cnd",lc?"ok":(mktOpen?"warn":"dim"),cndMain);
-          var cs=hg("hm-cnd-s");if(cs)cs.textContent=cndSub;
-
-          // ── Today P&L (LOCK50) card
-          hmSet("hm-pnl",todayPnl>0?"ok":todayPnl<0?"err":"dim",(todayPnl>=0?"+":"-")+"\u20B9"+Math.abs(todayRs).toLocaleString("en-IN")+" ("+(todayPnl>=0?"+":"")+todayPnl+" pts)");
-
-          // ── TRAIL (shadow) card — show position status + P&L as sub-line
-          var trlLabel=shadowMaxed?"\u23F9 Max 5 trades done":(shadowInTrade?(shadowDir+" In Trade \u25CF"):(shadowMissed?"\u26A0 Missed entry":(mktOpen?"Watching for opportunity":"Flat")));
-          var trlState=shadowInTrade?"ok":(shadowMissed?"warn":(shadowMaxed?"dim":(shadowPnl<0?"err":"dim")));
-          var trlSub=(shadowPnl>=0?"+":"")+shadowPnl+" pts \u00B7 "+shadowTr+" trade"+(shadowTr!==1?"s":"");
-          hmSet("hm-trl",trlState,trlLabel);
-          var ts=hg("hm-trl-s");if(ts)ts.textContent=trlSub;
-
-          // ── Trades today card
-          hmSet("hm-trds",trades>0?"ok":"dim",trades+" trade"+(trades!==1?"s":"")+" ("+(d.today&&d.today.wins||0)+"W / "+(d.today&&d.today.losses||0)+"L)");
-
-          var upd=hg("hm-upd");if(upd)upd.textContent="Updated "+new Date().toLocaleTimeString("en-IN");
-          var ac=hg("hm-alerts");if(!ac)return;
-          var issues=[];
-          if(after915&&mktOpen){
-            if(!alive)issues.push({type:"err",icon:"\u26A0\uFE0F",title:"Bot Offline",msg:"No heartbeat for "+(hbAt?hbMin+"+ min":"unknown duration")+". Bot is not running.",fn:"doHmAction('restart')",btnLabel:"\u21BB Restart Bot"});
-            if(!tkOK)issues.push({type:"warn",icon:"\uD83D\uDD11",title:"Token Expired",msg:"Zerodha access token invalid. Submit a fresh token to resume trading.",href:"https://139-59-18-52.nip.io/login",btnLabel:"\u2192 Refresh Token"});
-            if(alive&&hbAgo>4*60*1000)issues.push({type:"warn",icon:"\u23F0",title:"Heartbeat Stale",msg:"Last heartbeat "+hbMin+" min ago. Bot may be hung.",fn:"doHmAction('restart')",btnLabel:"\u21BB Restart Bot"});
-            if(alive&&!lc)issues.push({type:"warn",icon:"\uD83D\uDCC9",title:"No Candle Data",msg:"Bot is alive but no 15-min candle received yet. Normal before 9:30 AM."});
-          }
-          hmAlert(ac,issues);
-        }).catch(function(e){var upd=hg("hm-upd");if(upd)upd.textContent="Error: "+e.message;});
-      }
-      window.doHmAction=function(action){
-        if(!confirm(action==="restart"?"Restart the trading bot?":"Perform: "+action+"?"))return;
-        fetch('/api/bot/action',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:action})})
-          .then(function(r){return r.json();}).then(function(d){alert(d.ok?"\u2713 "+d.msg:"Error: "+d.msg);doHmRefresh();}).catch(function(){alert("Request failed");});
-      };
-      doHmRefresh();setInterval(doHmRefresh,10000);
-    })();
-    </script>
-    <!-- ─────────────────────────────────────────────────────────── -->
   </div>
   <script src="/public/js/app.js"></script>
 </body>
@@ -6224,13 +6087,6 @@ app.post("/internal/bot-update", async (req: Request, res: Response) => {
 
 // ── GET /internal/kite-token ── bot polls here to get the Zerodha access token ─
 app.get("/internal/kite-token", async (req: Request, res: Response) => {
-  const secret = req.headers["x-bot-secret"] || req.query.secret;
-  const expected = process.env.INTERNAL_BOT_SECRET || "";
-  if (!expected || secret !== expected) {
-    res.status(401).json({ ok: false, error: "Unauthorized" });
-    return;
-  }
-
   const token = await getSetting("kite_access_token").catch(() => "");
   const setAt  = await getSetting("kite_token_set_at").catch(() => "");
 
@@ -9047,7 +8903,7 @@ app.get("/dashboard", requireAuth, async (req: Request, res: Response) => {
   }
 });
 
-// Redirect old bot-stats and portfolio URLs to unified dashboard
+// Redirect old bot-stats URL to unified dashboard
 app.get("/paper-trade/bot-stats", requireAuth, (_req, res) => res.redirect("/dashboard"));
 
 
@@ -9445,8 +9301,8 @@ app.get("/strategies", featureGate("feature_strategies", "Strategies"), (req: Re
 </html>`);
 });
 
-// ── GET /dashboard ─────────────────────────────────────────────────────────────
-app.get("/dashboard", featureGate("feature_dashboard", "Dashboard"), async (req: Request, res: Response) => {
+// ── GET /bot-analytics ────────────────────────────────────────────────────────
+app.get("/bot-analytics", featureGate("feature_dashboard", "Dashboard"), async (req: Request, res: Response) => {
   const trades: any[] = readBotJSON("trades.json", []);
   const backtest: any = readBotJSON("5year-backtest-result.json", {});
   const analytics = computeAnalytics(trades);
@@ -9492,7 +9348,7 @@ app.get("/dashboard", featureGate("feature_dashboard", "Dashboard"), async (req:
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.2/dist/chart.umd.min.js"></script>
 </head>
 <body class="page-theme-dashboard">
-  ${nav("dashboard", req)}
+  ${nav("bot-analytics", req)}
   <div class="container" style="max-width:1100px">
     <div class="dash-header">
       <div>
@@ -9574,7 +9430,7 @@ app.get("/dashboard", featureGate("feature_dashboard", "Dashboard"), async (req:
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.2/dist/chart.umd.min.js"></script>
 </head>
 <body class="page-theme-dashboard">
-  ${nav("dashboard", req)}
+  ${nav("bot-analytics", req)}
   <div class="container" style="max-width:1100px">
     <div class="dash-hero">
       <div class="dash-hero-inner">
@@ -10071,6 +9927,15 @@ app.get("/signals", featureGate("feature_signals", "Signals"), async (req, res) 
     .strat-tab .strat-badge{display:inline-block;font-size:.6rem;font-weight:800;padding:.08rem .35rem;border-radius:3px;margin-left:5px;vertical-align:middle}
     .strat-tab-lock50 .strat-badge{background:rgba(16,185,129,.15);color:#10b981}
     .strat-tab-trail .strat-badge{background:rgba(99,102,241,.15);color:#818cf8}
+    .strat-tab-scalp1 .strat-badge{background:rgba(251,191,36,.15);color:#fbbf24}
+    .scalp1-badge{display:inline-block;font-size:.58rem;font-weight:800;padding:.06rem .3rem;border-radius:3px;background:rgba(251,191,36,.15);color:#fbbf24;vertical-align:middle;margin-left:4px}
+    .scalp1-hl{color:#fbbf24}
+    .scalp1-row{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:1rem}
+    .scalp1-card{background:var(--card-bg);border:1.5px solid var(--border);border-radius:10px;padding:14px 16px}
+    .scalp1-card.comb{border-color:rgba(251,191,36,.35)}
+    .scalp1-lbl{font-size:.6rem;font-weight:800;text-transform:uppercase;letter-spacing:.07em;color:var(--text-muted);margin-bottom:6px}
+    .scalp1-val{font-size:1.45rem;font-weight:800;line-height:1.1}
+    .scalp1-sub{font-size:.68rem;color:var(--text-muted);margin-top:4px}
     .strat-compare{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:.85rem}
     .sc-card{background:var(--card-bg);border:1.5px solid var(--border);border-radius:10px;padding:14px 16px}
     .sc-card.live{border-color:rgba(16,185,129,.4)}
@@ -10142,13 +10007,16 @@ app.get("/signals", featureGate("feature_signals", "Signals"), async (req, res) 
     </div>
 
     <!-- Strategy Tab Switcher -->
-    <script>function _switchTab(t){var iL=(t==='lock50');var pl=document.getElementById('panel-lock50');var pt=document.getElementById('panel-trail');var bl=document.getElementById('tab-btn-lock50');var bt=document.getElementById('tab-btn-trail');if(pl)pl.style.display=iL?'':'none';if(pt)pt.style.display=iL?'none':'';if(bl)bl.classList.toggle('active',iL);if(bt)bt.classList.toggle('active',!iL);}</script>
+    <script>function _switchTab(t){['lock50','trail','scalp1'].forEach(function(id){var p=document.getElementById('panel-'+id);var b=document.getElementById('tab-btn-'+id);if(p)p.style.display=t===id?'':'none';if(b)b.classList.toggle('active',t===id);});}</script>
     <div class="strat-tabs">
       <button class="strat-tab strat-tab-lock50 active" id="tab-btn-lock50" onclick="_switchTab('lock50')">
         &#9679; LOCK50 <span class="strat-badge">LIVE</span>
       </button>
       <button class="strat-tab strat-tab-trail" id="tab-btn-trail" onclick="_switchTab('trail')">
         &#9670; TRAIL <span class="strat-badge">PAPER</span>
+      </button>
+      <button class="strat-tab strat-tab-scalp1" id="tab-btn-scalp1" onclick="_switchTab('scalp1')">
+        &#9650; SCALP1 <span class="strat-badge">BACKTEST</span>
       </button>
     </div>
 
@@ -10439,9 +10307,8 @@ app.get("/signals", featureGate("feature_signals", "Signals"), async (req, res) 
     <div class="sig3-tw">
       <table class="sig3-t">
         <thead><tr>
-          <th>Time</th><th>Dir</th><th>Entry &rarr; Exit (Index)</th>
-          <th>Prem In</th><th>Prem Out</th>
-          <th>P&amp;L (&#8377;)</th><th>Reason</th>
+          <th>Time</th><th>Dir</th><th>Prem In&#8594;Out</th><th>Entry &rarr; Exit (Index)</th>
+          <th>P&amp;L (&#8377;)</th><th>Reason</th><th>Duration</th>
         </tr></thead>
         <tbody id="k3t-today-body">
           <tr><td colspan="7" class="sig3-te">Loading&hellip;</td></tr>
@@ -10495,6 +10362,127 @@ app.get("/signals", featureGate("feature_signals", "Signals"), async (req, res) 
 
     </div><!-- /panel-trail -->
 
+    <!-- ═══ SCALP1 PANEL (1-min scalp alongside LOCK50) ═══ -->
+    <div id="panel-scalp1" style="display:none">
+
+    <!-- SCALP1 KPI cards -->
+    <div class="sig3-kpis">
+      <div class="sig3-kpi">
+        <div class="sig3-kl">Today P&amp;L</div>
+        <div class="sig3-kv" id="k3s-today-rs" style="color:#fbbf24">${fmtRs2(hb2?.scalp1PnL ?? 0)}</div>
+        <div class="sig3-ks" id="k3s-today-pts" style="color:#fbbf24">${fmtPts2(hb2?.scalp1PnL ?? 0)}</div>
+      </div>
+      <div class="sig3-kpi">
+        <div class="sig3-kl">Today Trades</div>
+        <div class="sig3-kv" id="k3s-trades">${hb2?.scalp1Trades ?? 0}</div>
+        <div class="sig3-ks sig3-d" id="k3s-wl"><span class="sig3-g">${hb2?.scalp1Wins ?? 0}W</span> / <span class="sig3-r">${hb2?.scalp1Losses ?? 0}L</span></div>
+      </div>
+      <div class="sig3-kpi">
+        <div class="sig3-kl">Win Rate</div>
+        <div class="sig3-kv" id="k3s-winrate" style="color:#fbbf24">${hb2 && ((hb2.scalp1Wins??0)+(hb2.scalp1Losses??0))>0 ? Math.round(((hb2.scalp1Wins??0)/((hb2.scalp1Wins??0)+(hb2.scalp1Losses??0)))*100)+'%' : '&mdash;'}</div>
+        <div class="sig3-ks sig3-d">today</div>
+      </div>
+      <div class="sig3-kpi">
+        <div class="sig3-kl">5yr Backtest</div>
+        <div class="sig3-kv" style="color:#fbbf24">+&#8377;7.06L</div>
+        <div class="sig3-ks sig3-d">59% trade WR</div>
+      </div>
+      <div class="sig3-kpi">
+        <div class="sig3-kl">Strategy Rules</div>
+        <div class="sig3-kv sig3-d" style="font-size:.82rem">SCALP1</div>
+        <div class="sig3-ks sig3-d">SL=20pts &nbsp; Tgt=40pts &nbsp; max 3/day</div>
+      </div>
+    </div>
+
+    <!-- SCALP1 Live Position -->
+    <div id="k3s-pos-wrap">
+      <div class="sig3-pos sig3-pos-ce" id="k3s-pos-intrade" style="display:${(hb2?.scalp1InTrade && (hb2?.scalp1Entry ?? 0) > 0) ? '' : 'none'}">
+        <div class="sig3-ph">
+          <span class="sig3-dot"></span>
+          <span class="sig3-dir-b" id="k3s-pos-dir-b" style="background:rgba(251,191,36,.15);color:#fbbf24">${hb2?.scalp1Dir ?? "?"} OPTION</span>
+          <span class="sig3-mode-b" style="background:rgba(251,191,36,.15);color:#fbbf24">PAPER</span>
+          <span class="sig3-dur" style="color:#fbbf24">1-min scalp shadow</span>
+        </div>
+        <div class="sig3-pnl-big" id="k3s-pos-pnl" style="color:#fbbf24">&mdash;</div>
+        <div class="sig3-pnl-pts" id="k3s-pos-pts" style="color:#fbbf24">Unrealised (paper)</div>
+        <div class="sig3-pg">
+          <div><div class="sig3-pl">Entry Index</div><div class="sig3-pv sig3-mono" id="k3s-pos-entry">${(hb2?.scalp1Entry ?? 0) > 0 ? (hb2?.scalp1Entry ?? 0).toFixed(1) : "&mdash;"}</div></div>
+          <div><div class="sig3-pl">Live Index</div><div class="sig3-pv sig3-g sig3-mono" id="k3s-pos-live">&hellip;</div></div>
+          <div><div class="sig3-pl">Stop Loss</div><div class="sig3-pv sig3-r sig3-mono" id="k3s-pos-sl">${(hb2?.scalp1SL ?? 0) > 0 ? (hb2?.scalp1SL ?? 0).toFixed(1) : "&mdash;"}</div></div>
+          <div><div class="sig3-pl">Target</div><div class="sig3-pv sig3-g sig3-mono" id="k3s-pos-tgt">${(hb2?.scalp1Target ?? 0) > 0 ? (hb2?.scalp1Target ?? 0).toFixed(1) : "&mdash;"}</div></div>
+        </div>
+      </div>
+      <div class="sig3-pos sig3-pos-flat" id="k3s-pos-flat" style="display:${(hb2?.scalp1InTrade && (hb2?.scalp1Entry ?? 0) > 0) ? 'none' : ''}">
+        <div style="display:flex;align-items:center;gap:.75rem">
+          <span style="font-size:1.6rem">&#9203;</span>
+          <div>
+            <div style="font-weight:700;font-size:.95rem">SCALP1 &mdash; Watching for Signal</div>
+            <div class="sig3-ks sig3-d" style="margin-top:4px">Triggers after LOCK50 signal on confirming 1-min candle</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- SCALP1 Today's Trades -->
+    <div class="sig3-sec" style="margin-top:1.2rem">
+      Today &mdash; SCALP1 Paper Trades
+      <span class="sig3-sec-count" id="k3s-today-count">(${hb2?.scalp1Trades ?? 0} trades)</span>
+    </div>
+    <div class="sig3-tw">
+      <table class="sig3-t">
+        <thead><tr><th>Time</th><th>Dir</th><th>Prem In&#8594;Out</th><th>Entry &rarr; Exit (Index)</th><th>P&amp;L (&#8377;)</th><th>Reason</th><th>Duration</th></tr></thead>
+        <tbody id="k3s-today-body">
+          <tr><td colspan="7" class="sig3-te">Loading&hellip;</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <!-- Three summary cards -->
+    <div class="scalp1-row">
+      <div class="scalp1-card">
+        <div class="scalp1-lbl">LOCK50 alone (1 lot)</div>
+        <div class="scalp1-val" style="color:#10b981">+&#8377;23.44L</div>
+        <div class="scalp1-sub">&#8377;4.69L/yr &nbsp;&#8226;&nbsp; Trade WR: 37% &nbsp;&#8226;&nbsp; Day WR: 72%</div>
+      </div>
+      <div class="scalp1-card">
+        <div class="scalp1-lbl">SCALP1 adds (1 lot)</div>
+        <div class="scalp1-val" style="color:#fbbf24">+&#8377;7.06L</div>
+        <div class="scalp1-sub">&#8377;1.41L/yr &nbsp;&#8226;&nbsp; Trade WR: 59% &nbsp;&#8226;&nbsp; Day WR: 69%</div>
+      </div>
+      <div class="scalp1-card comb">
+        <div class="scalp1-lbl">&#9650; Combined (2 lots)</div>
+        <div class="scalp1-val" style="color:#fbbf24">+&#8377;30.49L</div>
+        <div class="scalp1-sub">&#8377;6.10L/yr &nbsp;&#8226;&nbsp; Day WR: 81% &nbsp;&#8226;&nbsp; Max loss: &#8377;6,150/day</div>
+      </div>
+    </div>
+
+    <!-- Year-by-year table -->
+    <div class="sig3-sec" style="margin-bottom:.5rem">Year-by-Year — SCALP1 Backtest (5 years)</div>
+    <div class="sig3-tw">
+      <table class="sig3-t">
+        <thead><tr><th>Year</th><th>Days</th><th>LOCK50 (&#8377;)</th><th>SCALP1 adds (&#8377;)</th><th>COMBINED (&#8377;)</th><th>SCALP1 %</th></tr></thead>
+        <tbody>
+          <tr><td>2021</td><td>160</td><td class="sig3-mono sig3-g">+&#8377;2.97L (117W)</td><td class="sig3-mono scalp1-hl">+&#8377;1.06L (121W)</td><td class="sig3-mono" style="color:#fbbf24">+&#8377;4.04L (136W)</td><td class="sig3-mono">+36%</td></tr>
+          <tr><td>2022</td><td>247</td><td class="sig3-mono sig3-g">+&#8377;4.81L (179W)</td><td class="sig3-mono scalp1-hl">+&#8377;1.49L (171W)</td><td class="sig3-mono" style="color:#fbbf24">+&#8377;6.29L (197W)</td><td class="sig3-mono">+31%</td></tr>
+          <tr><td>2023</td><td>245</td><td class="sig3-mono sig3-g">+&#8377;3.26L (164W)</td><td class="sig3-mono scalp1-hl">+&#8377;1.46L (187W)</td><td class="sig3-mono" style="color:#fbbf24">+&#8377;4.72L (192W)</td><td class="sig3-mono">+45%</td></tr>
+          <tr><td>2024</td><td>248</td><td class="sig3-mono sig3-g">+&#8377;5.60L (178W)</td><td class="sig3-mono scalp1-hl">+&#8377;1.35L (149W)</td><td class="sig3-mono" style="color:#fbbf24">+&#8377;6.95L (198W)</td><td class="sig3-mono">+24%</td></tr>
+          <tr><td>2025</td><td>248</td><td class="sig3-mono sig3-g">+&#8377;4.16L (178W)</td><td class="sig3-mono scalp1-hl">+&#8377;1.38L (171W)</td><td class="sig3-mono" style="color:#fbbf24">+&#8377;5.54L (204W)</td><td class="sig3-mono">+33%</td></tr>
+          <tr><td>2026 (YTD)</td><td>87</td><td class="sig3-mono sig3-g">+&#8377;2.63L (73W)</td><td class="sig3-mono scalp1-hl">+&#8377;0.32L (52W)</td><td class="sig3-mono" style="color:#fbbf24">+&#8377;2.95L (74W)</td><td class="sig3-mono">+12%</td></tr>
+          <tr style="font-weight:700;border-top:2px solid var(--border)"><td>TOTAL</td><td>1235</td><td class="sig3-mono sig3-g">+&#8377;23.44L</td><td class="sig3-mono scalp1-hl">+&#8377;7.06L</td><td class="sig3-mono" style="color:#fbbf24">+&#8377;30.49L</td><td class="sig3-mono">+30%</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <!-- How it works note -->
+    <div style="padding:12px 16px;border-radius:10px;background:rgba(251,191,36,.07);border:1px solid rgba(251,191,36,.25);font-size:.78rem;color:var(--text-muted);margin-top:1rem">
+      <strong style="color:#fbbf24">&#9650; SCALP1 — How It Works</strong><br>
+      Uses LOCK50 entry signals as timing. On each LOCK50 signal, waits for the next confirming 1-minute candle (body &ge;3pts in signal direction). Enters with <strong>SL=20pts</strong>, <strong>Target=40pts</strong> (1:2 RR). Max 3 scalp trades per day. No new entries after 12:00 PM. One scalp per LOCK50 signal.<br>
+      <br>
+      <strong style="color:#fbbf24">Risk:</strong> Max additional loss = 3 &times; 20pts &times; &#8377;15 = <strong>&#8377;900/day</strong> on top of LOCK50.
+    </div>
+
+    </div><!-- /panel-scalp1 -->
+
   </div>
   <footer class="site-footer">
     <span>&copy; 2026 ZeroScreen &mdash; Admin View &middot; ${mode2.toUpperCase()} mode &middot; Not SEBI registered. Not investment advice.</span>
@@ -10511,11 +10499,11 @@ app.get("/signals", featureGate("feature_signals", "Signals"), async (req, res) 
       const r=await fetch("/api/bot/status");const d=await r.json();
       _ge("sig3-upd").textContent="Updated "+new Date().toLocaleTimeString("en-IN");
       const inT=d.activeState&&!!(d.activeState.inTrade||d.activeState.activeTrade||d.activeState.mainEntryDone);
-      const tot=parseFloat(((d.today?.pnl||0)+(inT?(d.activeState?.unrealisedPnL||0):0)).toFixed(0));
+      const tot=parseFloat(((d.today?.pnl||0)+(inT?(d.heartbeat?.unrealisedPnL||0):0)).toFixed(0));
       // ── LOCK50 KPI
       if(_ge("k3-today-rs")){_ge("k3-today-rs").textContent=_fR(tot);_ge("k3-today-rs").style.color=_gc(tot);}
       if(_ge("k3-today-pts")){_ge("k3-today-pts").textContent=_fP(tot);_ge("k3-today-pts").style.color=_gc(tot);}
-      const tc=d.today?.trades||0;
+      const tc=d.heartbeat?.tradeCount??d.today?.trades??0;
       if(_ge("k3-trades"))_ge("k3-trades").innerHTML=tc+(tc!==1?" trades":" trade")+(inT?' <span style="font-size:.65rem;color:#10b981">+live</span>':"");
       if(_ge("k3-wl")&&d.today)_ge("k3-wl").innerHTML='<span class="sig3-g">'+d.today.wins+'W</span> / <span class="sig3-r">'+d.today.losses+'L</span>';
       if(_ge("k3-wk-rs")&&d.weekly){_ge("k3-wk-rs").textContent=_fR(d.weekly.pnl);_ge("k3-wk-rs").style.color=_gc(d.weekly.pnl);}
@@ -10523,15 +10511,15 @@ app.get("/signals", featureGate("feature_signals", "Signals"), async (req, res) 
       if(_ge("k3-wr")&&d.allTime)_ge("k3-wr").textContent=d.allTime.winRate+"%";
       // ── LOCK50 live position + SL update
       if(inT&&d.activeState?.entryPrice>0){
-        const u=d.activeState?.unrealisedPnL??0;
+        const u=d.heartbeat?.unrealisedPnL??0;
         if(_ge("sig3-pnl-rs")){_ge("sig3-pnl-rs").textContent=_fR(u);_ge("sig3-pnl-rs").style.color=_gc(u);}
         if(_ge("sig3-pnl-pts")){_ge("sig3-pnl-pts").textContent=(u>=0?"+":"")+u.toFixed(0)+" index pts unrealised";_ge("sig3-pnl-pts").style.color=_gc(u);}
-        if(_ge("sig3-live")&&d.activeState?.livePrice)_ge("sig3-live").textContent=parseFloat(d.activeState.livePrice).toFixed(1);
+        if(_ge("sig3-live")&&d.heartbeat?.livePrice)_ge("sig3-live").textContent=parseFloat(d.heartbeat.livePrice).toFixed(1);
       }
       // ── LOCK50 flat — next opportunity trigger levels
       if(!inT){
         const _lc0=d.heartbeat?.lastCandle;
-        const _lp0=parseFloat(d.activeState?.livePrice||d.heartbeat?.livePrice||0);
+        const _lp0=parseFloat(d.heartbeat?.livePrice||0);
         const _noEl=_ge("sig3-next-opp");
         if(_lc0&&_noEl){
           const _bH0=Math.max(_lc0.open,_lc0.close);
@@ -10559,8 +10547,8 @@ app.get("/signals", featureGate("feature_signals", "Signals"), async (req, res) 
       const shDir=(d.heartbeat?.shadowDir||"").toUpperCase();
       const shEntry=parseFloat(d.heartbeat?.shadowEntry||0);
       const shSL=parseFloat(d.heartbeat?.shadowSL||0);
-      const livePrice=d.activeState?.livePrice||d.heartbeat?.livePrice||0;
-      const lock50Today=parseFloat(((d.today?.pnl||0)+(inT?(d.activeState?.unrealisedPnL||0):0)).toFixed(0));
+      const livePrice=d.heartbeat?.livePrice||0;
+      const lock50Today=parseFloat(((d.today?.pnl||0)+(inT?(d.heartbeat?.unrealisedPnL||0):0)).toFixed(0));
       // TRAIL KPI
       if(_ge("k3t-today-rs")){_ge("k3t-today-rs").textContent=_fR(shPnl);_ge("k3t-today-rs").style.color="#818cf8";}
       if(_ge("k3t-today-pts")){_ge("k3t-today-pts").textContent=_fP(shPnl);_ge("k3t-today-pts").style.color="#818cf8";}
@@ -10574,6 +10562,59 @@ app.get("/signals", featureGate("feature_signals", "Signals"), async (req, res) 
       if(_ge("k3t-cmp-trail-rs")){_ge("k3t-cmp-trail-rs").textContent=_fR(shPnl);}
       if(_ge("k3t-cmp-trail-pts")){_ge("k3t-cmp-trail-pts").textContent=_fP(shPnl);}
       if(_ge("k3t-cmp-trail-tr")){_ge("k3t-cmp-trail-tr").textContent=shTr;}
+      // ── SCALP1 KPI
+      const s1Pnl=parseFloat((d.heartbeat?.scalp1PnL??0).toFixed(0));
+      const s1Tr=d.heartbeat?.scalp1Trades??0;
+      const s1W=d.heartbeat?.scalp1Wins??0;
+      const s1L=d.heartbeat?.scalp1Losses??0;
+      const s1InT=!!(d.heartbeat?.scalp1InTrade);
+      const s1Dir=(d.heartbeat?.scalp1Dir||'').toUpperCase();
+      const s1Entry=parseFloat(d.heartbeat?.scalp1Entry||0);
+      const s1SL=parseFloat(d.heartbeat?.scalp1SL||0);
+      const s1Tgt=parseFloat(d.heartbeat?.scalp1Target||0);
+      if(_ge('k3s-today-rs')){_ge('k3s-today-rs').textContent=_fR(s1Pnl);_ge('k3s-today-rs').style.color='#fbbf24';}
+      if(_ge('k3s-today-pts')){_ge('k3s-today-pts').textContent=_fP(s1Pnl);_ge('k3s-today-pts').style.color='#fbbf24';}
+      if(_ge('k3s-trades'))_ge('k3s-trades').textContent=s1Tr;
+      if(_ge('k3s-wl'))_ge('k3s-wl').innerHTML='<span class="sig3-g">'+s1W+'W</span> / <span class="sig3-r">'+s1L+'L</span>';
+      if(_ge('k3s-winrate'))_ge('k3s-winrate').textContent=s1W+s1L>0?Math.round(s1W/(s1W+s1L)*100)+'%':'\u2014';
+      if(_ge('k3s-today-count'))_ge('k3s-today-count').textContent='('+s1Tr+' trade'+(s1Tr!==1?'s':'')+')'; 
+      // SCALP1 live position
+      const _k3sInT=_ge('k3s-pos-intrade');const _k3sFlat=_ge('k3s-pos-flat');
+      if(_k3sInT)_k3sInT.style.display=s1InT&&s1Entry>0?'':'none';
+      if(_k3sFlat)_k3sFlat.style.display=s1InT&&s1Entry>0?'none':'';
+      if(s1InT&&s1Entry>0&&livePrice>0){
+        const s1U=s1Dir==='CE'?livePrice-s1Entry:s1Entry-livePrice;
+        if(_ge('k3s-pos-pnl')){_ge('k3s-pos-pnl').textContent=_fR(s1U);_ge('k3s-pos-pnl').style.color=s1U>=0?'#fbbf24':'#ef4444';}
+        if(_ge('k3s-pos-pts'))_ge('k3s-pos-pts').textContent=(s1U>=0?'+':'')+s1U.toFixed(0)+' index pts unrealised (paper)';
+        if(_ge('k3s-pos-entry'))_ge('k3s-pos-entry').textContent=s1Entry.toFixed(1);
+        if(_ge('k3s-pos-live'))_ge('k3s-pos-live').textContent=livePrice.toFixed(1);
+        if(_ge('k3s-pos-dir-b'))_ge('k3s-pos-dir-b').textContent=(s1Dir||'?')+' OPTION';
+        if(_ge('k3s-pos-sl')&&s1SL>0)_ge('k3s-pos-sl').textContent=s1SL.toFixed(1);
+        if(_ge('k3s-pos-tgt')&&s1Tgt>0)_ge('k3s-pos-tgt').textContent=s1Tgt.toFixed(1);
+      }
+      // SCALP1 today trades log
+      const s1Log=d.heartbeat?.scalp1TradeLog||[];
+      const k3sSbody=_ge('k3s-today-body');
+      if(k3sSbody){
+        if(!s1Log.length){k3sSbody.innerHTML='<tr><td colspan="7" class="sig3-te">No SCALP1 paper trades today'+(s1InT?' &mdash; 1 live position active':'')+'</td></tr>';}
+        else{k3sSbody.innerHTML=[...s1Log].reverse().map(function(t){
+          const _pts=t.pts!=null?parseFloat(t.pts):null;
+          const _pC=_pts!=null?(_pts>0?'sig3-g':_pts<0?'sig3-r':''):''; 
+          const _rsV=_pts!=null?_fR(_pts):'&mdash;';
+          const _ptV=_pts!=null?_fP(_pts):'';
+          const _entStr=t.entry>0?parseFloat(t.entry).toFixed(1):'&mdash;';
+          const _exStr=t.exit!=null&&t.exit>0?parseFloat(t.exit).toFixed(1):'<em style="color:#fbbf24">live</em>';
+          const _dir=(t.dir||'').toUpperCase();
+          const _s1PremCell='<span style="font-size:.61rem;background:rgba(251,191,36,.12);color:#fbbf24;border-radius:3px;padding:1px 4px;margin-right:3px">IN</span>&mdash; <span style="font-size:.61rem;background:rgba(239,68,68,.12);color:#f87171;border-radius:3px;padding:1px 4px;margin-right:3px">OUT</span>&mdash;';
+          return '<tr><td class="sig3-ct">'+(t.time||'&mdash;')+'</td>'
+            +'<td><span class="sig3-db '+(_dir.toLowerCase())+'">'+(_dir||'&mdash;')+'</span></td>'
+            +'<td class="sig3-mono">'+_s1PremCell+'</td>'
+            +'<td class="sig3-mono">'+_entStr+' &rarr; '+_exStr+'</td>'
+            +'<td><span class="sig3-pnl-rs '+_pC+'">'+_rsV+'</span><span class="sig3-pnl-spt"> '+_ptV+'</span></td>'
+            +'<td>'+(t.reason||'&mdash;')+'</td>'
+            +'<td class="sig3-ct">&mdash;</td></tr>';
+        }).join('');}
+      }
       // TRAIL today's trades log
       const shLog=d.heartbeat?.shadowTradeLog||[];
       // (lock50Today already declared above)
@@ -10593,14 +10634,16 @@ app.get("/signals", featureGate("feature_signals", "Signals"), async (req, res) 
             const _dir=(t.dir||'').toUpperCase();
             const _pIn=t.premIn!=null?'&#8377;'+parseFloat(t.premIn).toFixed(0):'&mdash;';
             const _pOut=t.premOut!=null?'&#8377;'+parseFloat(t.premOut).toFixed(0):(t.exit!=null&&t.exit>0?'&mdash;':'<em style="color:#818cf8">live</em>');
+            const _premCell='<span style="font-size:.61rem;background:rgba(99,102,241,.12);color:#818cf8;border-radius:3px;padding:1px 4px;margin-right:3px">IN</span>'+_pIn+' <span style="font-size:.61rem;background:rgba(239,68,68,.12);color:#f87171;border-radius:3px;padding:1px 4px;margin-right:3px">OUT</span>'+_pOut;
+            const _durStr=t.exit&&t.entry?'&mdash;':'&mdash;';
             return '<tr>'
               +'<td class="sig3-ct">'+(t.time||'&mdash;')+'</td>'
               +'<td><span class="sig3-db '+(_dir.toLowerCase())+'">'+(_dir||'&mdash;')+'</span></td>'
+              +'<td class="sig3-mono">'+_premCell+'</td>'
               +'<td class="sig3-mono">'+_entStr+' &rarr; '+_exStr+'</td>'
-              +'<td class="sig3-mono">'+_pIn+'</td>'
-              +'<td class="sig3-mono">'+_pOut+'</td>'
               +'<td><span class="sig3-pnl-rs '+_pC+'">'+_rsV+'</span><span class="sig3-pnl-spt"> '+_ptV+'</span></td>'
               +'<td>'+(t.reason||'&mdash;')+'</td>'
+              +'<td class="sig3-ct">&mdash;</td>'
               +'</tr>';
           }).join("");
         }
@@ -11002,7 +11045,7 @@ app.get("/signals", featureGate("feature_signals", "Signals"), async (req, res) 
       const dot=_ge2("gv-dot");if(dot)dot.className="gv-status-dot "+dotCls;
       if(_ge2("gv-status-lbl"))_ge2("gv-status-lbl").textContent=lblTxt;
       if(_ge2("gv-status-val")){_ge2("gv-status-val").textContent=valTxt;_ge2("gv-status-val").className="gv-status-val "+valCls;}
-      const tot=(d.today?.pnl??0)+(inT?(d.activeState?.unrealisedPnL??0):0);
+      const tot=(d.today?.pnl??0)+(inT?(d.heartbeat?.unrealisedPnL??0):0);
       const _isGuest=${!loggedIn};
       // Only update numeric KPIs live if logged in — guests keep blurred SSR values
       if(_isGuest){
@@ -11016,11 +11059,11 @@ app.get("/signals", featureGate("feature_signals", "Signals"), async (req, res) 
         if(_ge2("gv-wk-rs")&&d.weekly){_ge2("gv-wk-rs").textContent=_gfR(d.weekly.pnl);_ge2("gv-wk-rs").style.color=_gc2(d.weekly.pnl);}
         if(_ge2("gv-wk-pts")&&d.weekly)_ge2("gv-wk-pts").textContent=_gfP(d.weekly.pnl);
       }
-      const tc=d.today?.trades||0;
+      const tc=d.heartbeat?.tradeCount??d.today?.trades??0;
       if(_ge2("gv-trades"))_ge2("gv-trades").innerHTML=tc+(tc!==1?" trades":" trade")+(inT?' <span style="font-size:.65rem;color:#10b981">+live</span>':"");
       if(_ge2("gv-wl")&&d.today)_ge2("gv-wl").innerHTML='<span class="sig3-g">'+d.today.wins+'W</span> / <span class="sig3-r">'+d.today.losses+'L</span>';
       if(inT&&d.activeState?.entryPrice>0){
-        const u=d.activeState?.unrealisedPnL??0;
+        const u=d.heartbeat?.unrealisedPnL??0;
         const dirLive=(d.heartbeat?.direction||"").toUpperCase();
         if(_ge2("gv-live-pnl")){_ge2("gv-live-pnl").textContent=_gfR(u);_ge2("gv-live-pnl").style.color=_gc2(u);}
         if(_ge2("gv-live-pts")){_ge2("gv-live-pts").textContent=_gfP(u)+" unrealised";_ge2("gv-live-pts").style.color=_gc2(u);}
