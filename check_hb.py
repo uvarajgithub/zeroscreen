@@ -1,0 +1,12 @@
+import json, sys, subprocess
+r = subprocess.run(['curl', '-s', 'http://localhost:4000/api/bot/status'], capture_output=True, text=True)
+d = json.loads(r.stdout)
+hb = d.get('heartbeat', {})
+print('scalp1InTrade:', hb.get('scalp1InTrade'))
+print('scalp1Entry:', hb.get('scalp1Entry'))
+print('scalp1Dir:', hb.get('scalp1Dir'))
+print('scalp1SL:', hb.get('scalp1SL'))
+print('shadowInTrade:', hb.get('shadowInTrade'))
+print('shadowEntry:', hb.get('shadowEntry'))
+print('inTrade:', hb.get('inTrade'))
+print('livePrice:', hb.get('livePrice'))

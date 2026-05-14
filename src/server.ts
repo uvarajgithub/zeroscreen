@@ -10007,16 +10007,16 @@ app.get("/signals", featureGate("feature_signals", "Signals"), async (req, res) 
     </div>
 
     <!-- Strategy Tab Switcher -->
-    <script>function _switchTab(t){['lock50','trail','scalp1'].forEach(function(id){var p=document.getElementById('panel-'+id);var b=document.getElementById('tab-btn-'+id);if(p)p.style.display=t===id?'':'none';if(b)b.classList.toggle('active',t===id);});}</script>
+    <script>function _switchTab(t){['lock50','trail','lock50old'].forEach(function(id){var p=document.getElementById('panel-'+id);var b=document.getElementById('tab-btn-'+id);if(p)p.style.display=t===id?'':'none';if(b)b.classList.toggle('active',t===id);});}</script>
     <div class="strat-tabs">
       <button class="strat-tab strat-tab-lock50 active" id="tab-btn-lock50" onclick="_switchTab('lock50')">
-        &#9679; LOCK50 <span class="strat-badge">LIVE</span>
+        &#9679; TICK TRAIL <span class="strat-badge">LIVE</span>
       </button>
       <button class="strat-tab strat-tab-trail" id="tab-btn-trail" onclick="_switchTab('trail')">
         &#9670; TRAIL <span class="strat-badge">PAPER</span>
       </button>
-      <button class="strat-tab strat-tab-scalp1" id="tab-btn-scalp1" onclick="_switchTab('scalp1')">
-        &#9650; SCALP1 <span class="strat-badge">BACKTEST</span>
+      <button class="strat-tab strat-tab-scalp1" id="tab-btn-lock50old" onclick="_switchTab('lock50old')">
+        &#9671; LOCK50 Old <span class="strat-badge">SHADOW</span>
       </button>
     </div>
 
@@ -10307,11 +10307,11 @@ app.get("/signals", featureGate("feature_signals", "Signals"), async (req, res) 
     <div class="sig3-tw">
       <table class="sig3-t">
         <thead><tr>
-          <th>Time</th><th>Dir</th><th>Prem In&#8594;Out</th><th>Entry &rarr; Exit (Index)</th>
+          <th>Time</th><th>Dir</th><th>Symbol</th><th>Premium In&#8594;Out</th><th>Entry &rarr; Exit (Index)</th>
           <th>P&amp;L (&#8377;)</th><th>Reason</th><th>Duration</th>
         </tr></thead>
         <tbody id="k3t-today-body">
-          <tr><td colspan="7" class="sig3-te">Loading&hellip;</td></tr>
+          <tr><td colspan="8" class="sig3-te">Loading&hellip;</td></tr>
         </tbody>
       </table>
     </div>
@@ -10362,10 +10362,10 @@ app.get("/signals", featureGate("feature_signals", "Signals"), async (req, res) 
 
     </div><!-- /panel-trail -->
 
-    <!-- ═══ SCALP1 PANEL (1-min scalp alongside LOCK50) ═══ -->
-    <div id="panel-scalp1" style="display:none">
+    <!-- ═══ LOCK50 OLD PANEL (old LOCK50 shadow: peak>=100, lock=peak-50) ═══ -->
+    <div id="panel-lock50old" style="display:none">
 
-    <!-- SCALP1 KPI cards -->
+    <!-- LOCK50 Old KPI cards -->
     <div class="sig3-kpis">
       <div class="sig3-kpi">
         <div class="sig3-kl">Today P&amp;L</div>
@@ -10383,105 +10383,88 @@ app.get("/signals", featureGate("feature_signals", "Signals"), async (req, res) 
         <div class="sig3-ks sig3-d">today</div>
       </div>
       <div class="sig3-kpi">
-        <div class="sig3-kl">5yr Backtest</div>
-        <div class="sig3-kv" style="color:#fbbf24">+&#8377;7.06L</div>
-        <div class="sig3-ks sig3-d">59% trade WR</div>
+        <div class="sig3-kl">2yr Backtest</div>
+        <div class="sig3-kv" style="color:#fbbf24">+&#8377;1.08L</div>
+        <div class="sig3-ks sig3-d">25% trade WR &nbsp;&#8226;&nbsp; 47% day WR</div>
       </div>
       <div class="sig3-kpi">
         <div class="sig3-kl">Strategy Rules</div>
-        <div class="sig3-kv sig3-d" style="font-size:.82rem">SCALP1</div>
-        <div class="sig3-ks sig3-d">SL=20pts &nbsp; Tgt=40pts &nbsp; max 3/day</div>
+        <div class="sig3-kv sig3-d" style="font-size:.82rem">LOCK50 Old</div>
+        <div class="sig3-ks sig3-d">Trail: peak&ge;100 &nbsp; lock=peak&minus;50</div>
       </div>
     </div>
 
-    <!-- SCALP1 Live Position -->
+    <!-- LOCK50 Old Live Position -->
     <div id="k3s-pos-wrap">
       <div class="sig3-pos sig3-pos-ce" id="k3s-pos-intrade" style="display:${(hb2?.scalp1InTrade && (hb2?.scalp1Entry ?? 0) > 0) ? '' : 'none'}">
         <div class="sig3-ph">
           <span class="sig3-dot"></span>
-          <span class="sig3-dir-b" id="k3s-pos-dir-b" style="background:rgba(251,191,36,.15);color:#fbbf24">${hb2?.scalp1Dir ?? "?"} OPTION</span>
-          <span class="sig3-mode-b" style="background:rgba(251,191,36,.15);color:#fbbf24">PAPER</span>
-          <span class="sig3-dur" style="color:#fbbf24">1-min scalp shadow</span>
+          <span class="sig3-dir-b" id="k3s-pos-dir-b" style="background:rgba(251,191,36,.15);color:#fbbf24">${hb2?.scalp1Dir ?? "?"}</span>
+          <span class="sig3-mode-b" style="background:rgba(251,191,36,.15);color:#fbbf24">SHADOW</span>
+          <span class="sig3-dur" style="color:#fbbf24">LOCK50 Old trail</span>
         </div>
         <div class="sig3-pnl-big" id="k3s-pos-pnl" style="color:#fbbf24">&mdash;</div>
         <div class="sig3-pnl-pts" id="k3s-pos-pts" style="color:#fbbf24">Unrealised (paper)</div>
         <div class="sig3-pg">
           <div><div class="sig3-pl">Entry Index</div><div class="sig3-pv sig3-mono" id="k3s-pos-entry">${(hb2?.scalp1Entry ?? 0) > 0 ? (hb2?.scalp1Entry ?? 0).toFixed(1) : "&mdash;"}</div></div>
           <div><div class="sig3-pl">Live Index</div><div class="sig3-pv sig3-g sig3-mono" id="k3s-pos-live">&hellip;</div></div>
-          <div><div class="sig3-pl">Stop Loss</div><div class="sig3-pv sig3-r sig3-mono" id="k3s-pos-sl">${(hb2?.scalp1SL ?? 0) > 0 ? (hb2?.scalp1SL ?? 0).toFixed(1) : "&mdash;"}</div></div>
-          <div><div class="sig3-pl">Target</div><div class="sig3-pv sig3-g sig3-mono" id="k3s-pos-tgt">${(hb2?.scalp1Target ?? 0) > 0 ? (hb2?.scalp1Target ?? 0).toFixed(1) : "&mdash;"}</div></div>
+          <div><div class="sig3-pl">SL (Shadow)</div><div class="sig3-pv sig3-r sig3-mono" id="k3s-pos-sl">${(hb2?.scalp1SL ?? 0) > 0 ? (hb2?.scalp1SL ?? 0).toFixed(1) : "&mdash;"}</div></div>
+          <div><div class="sig3-pl">vs Tick Trail live</div><div class="sig3-pv sig3-g sig3-mono" id="k3s-pos-tgt">compare</div></div>
         </div>
       </div>
       <div class="sig3-pos sig3-pos-flat" id="k3s-pos-flat" style="display:${(hb2?.scalp1InTrade && (hb2?.scalp1Entry ?? 0) > 0) ? 'none' : ''}">
         <div style="display:flex;align-items:center;gap:.75rem">
-          <span style="font-size:1.6rem">&#9203;</span>
+          <span style="font-size:1.6rem">&#9671;</span>
           <div>
-            <div style="font-weight:700;font-size:.95rem">SCALP1 &mdash; Watching for Signal</div>
-            <div class="sig3-ks sig3-d" style="margin-top:4px">Triggers after LOCK50 signal on confirming 1-min candle</div>
+            <div style="font-weight:700;font-size:.95rem">LOCK50 Old &mdash; Flat (shadow)</div>
+            <div class="sig3-ks sig3-d" style="margin-top:4px">Runs old trail: peak&ge;100 &rarr; lock=peak&minus;50. Comparison vs live Tick Trail.</div>
           </div>
         </div>
       </div>
     </div>
 
-    <!-- SCALP1 Today's Trades -->
+    <!-- LOCK50 Old Today's Trades -->
     <div class="sig3-sec" style="margin-top:1.2rem">
-      Today &mdash; SCALP1 Paper Trades
+      Today &mdash; LOCK50 Old Shadow Trades
       <span class="sig3-sec-count" id="k3s-today-count">(${hb2?.scalp1Trades ?? 0} trades)</span>
     </div>
     <div class="sig3-tw">
       <table class="sig3-t">
-        <thead><tr><th>Time</th><th>Dir</th><th>Prem In&#8594;Out</th><th>Entry &rarr; Exit (Index)</th><th>P&amp;L (&#8377;)</th><th>Reason</th><th>Duration</th></tr></thead>
+        <thead><tr><th>Time</th><th>Dir</th><th>Entry &rarr; Exit (Index)</th><th>P&amp;L pts</th><th>Reason</th></tr></thead>
         <tbody id="k3s-today-body">
-          <tr><td colspan="7" class="sig3-te">Loading&hellip;</td></tr>
+          <tr><td colspan="5" class="sig3-te">Loading&hellip;</td></tr>
         </tbody>
       </table>
     </div>
 
-    <!-- Three summary cards -->
+    <!-- 2yr comparison cards -->
     <div class="scalp1-row">
       <div class="scalp1-card">
-        <div class="scalp1-lbl">LOCK50 alone (1 lot)</div>
-        <div class="scalp1-val" style="color:#10b981">+&#8377;23.44L</div>
-        <div class="scalp1-sub">&#8377;4.69L/yr &nbsp;&#8226;&nbsp; Trade WR: 37% &nbsp;&#8226;&nbsp; Day WR: 72%</div>
+        <div class="scalp1-lbl">LOCK50 Old (2yr, 1 lot)</div>
+        <div class="scalp1-val" style="color:#10b981">+&#8377;1.08L</div>
+        <div class="scalp1-sub">&#8377;0.54L/yr &nbsp;&#8226;&nbsp; Trade WR: 25% &nbsp;&#8226;&nbsp; Day WR: 47%</div>
       </div>
       <div class="scalp1-card">
-        <div class="scalp1-lbl">SCALP1 adds (1 lot)</div>
-        <div class="scalp1-val" style="color:#fbbf24">+&#8377;7.06L</div>
-        <div class="scalp1-sub">&#8377;1.41L/yr &nbsp;&#8226;&nbsp; Trade WR: 59% &nbsp;&#8226;&nbsp; Day WR: 69%</div>
+        <div class="scalp1-lbl">TRAIL shadow (2yr, 1 lot)</div>
+        <div class="scalp1-val" style="color:#fbbf24">+&#8377;6.03L</div>
+        <div class="scalp1-sub">&#8377;3.01L/yr &nbsp;&#8226;&nbsp; Trade WR: 28% &nbsp;&#8226;&nbsp; Day WR: 50%</div>
       </div>
       <div class="scalp1-card comb">
-        <div class="scalp1-lbl">&#9650; Combined (2 lots)</div>
-        <div class="scalp1-val" style="color:#fbbf24">+&#8377;30.49L</div>
-        <div class="scalp1-sub">&#8377;6.10L/yr &nbsp;&#8226;&nbsp; Day WR: 81% &nbsp;&#8226;&nbsp; Max loss: &#8377;6,150/day</div>
+        <div class="scalp1-lbl">&#9733; Tick Trail live (2yr, 1 lot)</div>
+        <div class="scalp1-val" style="color:#10b981">+&#8377;34.11L</div>
+        <div class="scalp1-sub">&#8377;17.05L/yr &nbsp;&#8226;&nbsp; Trade WR: 57% &nbsp;&#8226;&nbsp; Day WR: 90%</div>
       </div>
     </div>
 
-    <!-- Year-by-year table -->
-    <div class="sig3-sec" style="margin-bottom:.5rem">Year-by-Year — SCALP1 Backtest (5 years)</div>
-    <div class="sig3-tw">
-      <table class="sig3-t">
-        <thead><tr><th>Year</th><th>Days</th><th>LOCK50 (&#8377;)</th><th>SCALP1 adds (&#8377;)</th><th>COMBINED (&#8377;)</th><th>SCALP1 %</th></tr></thead>
-        <tbody>
-          <tr><td>2021</td><td>160</td><td class="sig3-mono sig3-g">+&#8377;2.97L (117W)</td><td class="sig3-mono scalp1-hl">+&#8377;1.06L (121W)</td><td class="sig3-mono" style="color:#fbbf24">+&#8377;4.04L (136W)</td><td class="sig3-mono">+36%</td></tr>
-          <tr><td>2022</td><td>247</td><td class="sig3-mono sig3-g">+&#8377;4.81L (179W)</td><td class="sig3-mono scalp1-hl">+&#8377;1.49L (171W)</td><td class="sig3-mono" style="color:#fbbf24">+&#8377;6.29L (197W)</td><td class="sig3-mono">+31%</td></tr>
-          <tr><td>2023</td><td>245</td><td class="sig3-mono sig3-g">+&#8377;3.26L (164W)</td><td class="sig3-mono scalp1-hl">+&#8377;1.46L (187W)</td><td class="sig3-mono" style="color:#fbbf24">+&#8377;4.72L (192W)</td><td class="sig3-mono">+45%</td></tr>
-          <tr><td>2024</td><td>248</td><td class="sig3-mono sig3-g">+&#8377;5.60L (178W)</td><td class="sig3-mono scalp1-hl">+&#8377;1.35L (149W)</td><td class="sig3-mono" style="color:#fbbf24">+&#8377;6.95L (198W)</td><td class="sig3-mono">+24%</td></tr>
-          <tr><td>2025</td><td>248</td><td class="sig3-mono sig3-g">+&#8377;4.16L (178W)</td><td class="sig3-mono scalp1-hl">+&#8377;1.38L (171W)</td><td class="sig3-mono" style="color:#fbbf24">+&#8377;5.54L (204W)</td><td class="sig3-mono">+33%</td></tr>
-          <tr><td>2026 (YTD)</td><td>87</td><td class="sig3-mono sig3-g">+&#8377;2.63L (73W)</td><td class="sig3-mono scalp1-hl">+&#8377;0.32L (52W)</td><td class="sig3-mono" style="color:#fbbf24">+&#8377;2.95L (74W)</td><td class="sig3-mono">+12%</td></tr>
-          <tr style="font-weight:700;border-top:2px solid var(--border)"><td>TOTAL</td><td>1235</td><td class="sig3-mono sig3-g">+&#8377;23.44L</td><td class="sig3-mono scalp1-hl">+&#8377;7.06L</td><td class="sig3-mono" style="color:#fbbf24">+&#8377;30.49L</td><td class="sig3-mono">+30%</td></tr>
-        </tbody>
-      </table>
-    </div>
-
-    <!-- How it works note -->
+    <!-- Strategy rules note -->
     <div style="padding:12px 16px;border-radius:10px;background:rgba(251,191,36,.07);border:1px solid rgba(251,191,36,.25);font-size:.78rem;color:var(--text-muted);margin-top:1rem">
-      <strong style="color:#fbbf24">&#9650; SCALP1 — How It Works</strong><br>
-      Uses LOCK50 entry signals as timing. On each LOCK50 signal, waits for the next confirming 1-minute candle (body &ge;3pts in signal direction). Enters with <strong>SL=20pts</strong>, <strong>Target=40pts</strong> (1:2 RR). Max 3 scalp trades per day. No new entries after 12:00 PM. One scalp per LOCK50 signal.<br>
+      <strong style="color:#fbbf24">&#9671; LOCK50 Old &mdash; Shadow Rule</strong><br>
+      Uses identical entry signals as live Tick Trail. Trail activates only when peak profit &ge;100pts (lock = peak&minus;50pts). Compare this tab vs live LOCK50 to see how much Tick Trail (peak&ge;50, lock=peak&minus;25) adds.<br>
       <br>
-      <strong style="color:#fbbf24">Risk:</strong> Max additional loss = 3 &times; 20pts &times; &#8377;15 = <strong>&#8377;900/day</strong> on top of LOCK50.
+      <strong style="color:#fbbf24">2yr result:</strong> LOCK50 Old +&#8377;1.08L vs Tick Trail <strong>+&#8377;34.11L</strong> — 31x difference.
     </div>
 
-    </div><!-- /panel-scalp1 -->
+    </div><!-- /panel-lock50old -->
 
   </div>
   <footer class="site-footer">
@@ -10596,23 +10579,34 @@ app.get("/signals", featureGate("feature_signals", "Signals"), async (req, res) 
       const s1Log=d.heartbeat?.scalp1TradeLog||[];
       const k3sSbody=_ge('k3s-today-body');
       if(k3sSbody){
-        if(!s1Log.length){k3sSbody.innerHTML='<tr><td colspan="7" class="sig3-te">No SCALP1 paper trades today'+(s1InT?' &mdash; 1 live position active':'')+'</td></tr>';}
+        if(!s1Log.length){k3sSbody.innerHTML='<tr><td colspan="8" class="sig3-te">No SCALP1 paper trades today'+(s1InT?' &mdash; 1 live position active':'')+'</td></tr>';}
         else{k3sSbody.innerHTML=[...s1Log].reverse().map(function(t){
           const _pts=t.pts!=null?parseFloat(t.pts):null;
-          const _pC=_pts!=null?(_pts>0?'sig3-g':_pts<0?'sig3-r':''):''; 
-          const _rsV=_pts!=null?_fR(_pts):'&mdash;';
-          const _ptV=_pts!=null?_fP(_pts):'';
+          const _pC=_pts!=null?(_pts>0?'sig3-g':_pts<0?'sig3-r':''):'';
+          const _qty=d.heartbeat?.qty||30;
+          const _rs=_pts!=null?(_pts*_qty):null;
+          const _ptV=_pts!=null?(_pts>=0?'+':'')+_pts.toFixed(0)+' pts':'';
           const _entStr=t.entry>0?parseFloat(t.entry).toFixed(1):'&mdash;';
           const _exStr=t.exit!=null&&t.exit>0?parseFloat(t.exit).toFixed(1):'<em style="color:#fbbf24">live</em>';
           const _dir=(t.dir||'').toUpperCase();
-          const _s1PremCell='<span style="font-size:.61rem;background:rgba(251,191,36,.12);color:#fbbf24;border-radius:3px;padding:1px 4px;margin-right:3px">IN</span>&mdash; <span style="font-size:.61rem;background:rgba(239,68,68,.12);color:#f87171;border-radius:3px;padding:1px 4px;margin-right:3px">OUT</span>&mdash;';
-          return '<tr><td class="sig3-ct">'+(t.time||'&mdash;')+'</td>'
+          const _bBg='background:rgba(16,185,129,.12);color:#10b981';
+          const _sBg='background:rgba(239,68,68,.12);color:#f87171';
+          const _pIn=t.premIn!=null?parseFloat(t.premIn).toFixed(1):'&mdash;';
+          const _pOut=t.premOut!=null?parseFloat(t.premOut).toFixed(1):(t.exit!=null&&t.exit>0?'&mdash;':'<em style="color:#fbbf24">live</em>');
+          const _s1PremCell='<span style="font-size:.61rem;border-radius:3px;padding:1px 4px;margin-right:2px;'+_bBg+'">BUY</span>'+_pIn
+            +' <span style="font-size:.61rem;border-radius:3px;padding:1px 4px;margin-right:2px;'+_sBg+'">SELL</span>'+_pOut;
+          const _sym=t.symbol?('<span style="font-size:.68rem;font-family:monospace;color:var(--text-muted)">'+t.symbol+'</span>'):'&mdash;';
+          let _durStr='&mdash;';
+          if(t.entryMs&&t.exitMs){const _dm=Math.round((t.exitMs-t.entryMs)/60000);_durStr=_dm+'m';}
+          else if(t.entryMs&&!t.exitMs&&t.exit==null){const _dm=Math.round((Date.now()-t.entryMs)/60000);_durStr='<em style="color:#fbbf24">'+_dm+'m live</em>';}
+          return '<tr><td class="sig3-ct" style="white-space:nowrap">'+(t.time||'&mdash;')+'</td>'
             +'<td><span class="sig3-db '+(_dir.toLowerCase())+'">'+(_dir||'&mdash;')+'</span></td>'
-            +'<td class="sig3-mono">'+_s1PremCell+'</td>'
+            +'<td>'+_sym+'</td>'
+            +'<td class="sig3-mono" style="font-size:.72rem">'+_s1PremCell+'</td>'
             +'<td class="sig3-mono">'+_entStr+' &rarr; '+_exStr+'</td>'
-            +'<td><span class="sig3-pnl-rs '+_pC+'">'+_rsV+'</span><span class="sig3-pnl-spt"> '+_ptV+'</span></td>'
-            +'<td>'+(t.reason||'&mdash;')+'</td>'
-            +'<td class="sig3-ct">&mdash;</td></tr>';
+            +'<td><span class="sig3-pnl-rs '+_pC+'">'+((_rs!=null)?((_rs>=0?'+':'-')+'&#8377;'+Math.abs(_rs).toLocaleString('en-IN')):'&mdash;')+'</span><span class="sig3-pnl-spt"> '+_ptV+'</span></td>'
+            +'<td style="font-size:.72rem">'+(t.reason||'&mdash;')+'</td>'
+            +'<td class="sig3-ct">'+_durStr+'</td></tr>';
         }).join('');}
       }
       // TRAIL today's trades log
@@ -10622,28 +10616,38 @@ app.get("/signals", featureGate("feature_signals", "Signals"), async (req, res) 
       const k3tbody=_ge("k3t-today-body");
       if(k3tbody){
         if(!shLog.length){
-          k3tbody.innerHTML='<tr><td colspan="7" class="sig3-te">No TRAIL paper trades today'+(shInT?' &mdash; 1 live position active':'')+'</td></tr>';
+          k3tbody.innerHTML='<tr><td colspan="8" class="sig3-te">No TRAIL paper trades today'+(shInT?' &mdash; 1 live position active':'')+'</td></tr>';
         } else {
           k3tbody.innerHTML=[...shLog].reverse().map(function(t){
             const _pts=t.pts!=null?parseFloat(t.pts):null;
-            const _pC=_pts!=null?(_pts>0?'sig3-g':_pts<0?'sig3-r':''):''; 
-            const _rsV=_pts!=null?_fR(_pts):'&mdash;';
-            const _ptV=_pts!=null?_fP(_pts):'';
+            const _pC=_pts!=null?(_pts>0?'sig3-g':_pts<0?'sig3-r':''):'';
+            const _qty=d.heartbeat?.qty||30;
+            const _rs=_pts!=null?(_pts*_qty):null;
+            const _rsV=_rs!=null?('&#8377;'+(Math.abs(_rs).toLocaleString('en-IN'))):('&mdash;');
+            const _rsSign=_rs!=null?(_rs>=0?'+':'-'):'';
+            const _ptV=_pts!=null?(_pts>=0?'+':'')+_pts.toFixed(0)+' pts':'';
             const _entStr=t.entry>0?parseFloat(t.entry).toFixed(1):'&mdash;';
             const _exStr=t.exit!=null&&t.exit>0?parseFloat(t.exit).toFixed(1):'<em style="color:#818cf8">live</em>';
             const _dir=(t.dir||'').toUpperCase();
-            const _pIn=t.premIn!=null?'&#8377;'+parseFloat(t.premIn).toFixed(0):'&mdash;';
-            const _pOut=t.premOut!=null?'&#8377;'+parseFloat(t.premOut).toFixed(0):(t.exit!=null&&t.exit>0?'&mdash;':'<em style="color:#818cf8">live</em>');
-            const _premCell='<span style="font-size:.61rem;background:rgba(99,102,241,.12);color:#818cf8;border-radius:3px;padding:1px 4px;margin-right:3px">IN</span>'+_pIn+' <span style="font-size:.61rem;background:rgba(239,68,68,.12);color:#f87171;border-radius:3px;padding:1px 4px;margin-right:3px">OUT</span>'+_pOut;
-            const _durStr=t.exit&&t.entry?'&mdash;':'&mdash;';
+            const _sym=t.symbol?('<span style="font-size:.68rem;font-family:monospace;color:var(--text-muted)">'+t.symbol+'</span>'):'&mdash;';
+            const _pIn=t.premIn!=null?parseFloat(t.premIn).toFixed(1):'&mdash;';
+            const _pOut=t.premOut!=null?parseFloat(t.premOut).toFixed(1):(t.exit!=null&&t.exit>0?'&mdash;':'<em style="color:#818cf8">live</em>');
+            const _bBg='background:rgba(16,185,129,.12);color:#10b981';
+            const _sBg='background:rgba(239,68,68,.12);color:#f87171';
+            const _premCell='<span style="font-size:.61rem;border-radius:3px;padding:1px 4px;margin-right:2px;'+_bBg+'">BUY</span>'+_pIn
+              +' <span style="font-size:.61rem;border-radius:3px;padding:1px 4px;margin-right:2px;'+_sBg+'">SELL</span>'+_pOut;
+            let _durStr='&mdash;';
+            if(t.entryMs&&t.exitMs){const _dm=Math.round((t.exitMs-t.entryMs)/60000);_durStr=_dm+'m';}
+            else if(t.entryMs&&!t.exitMs&&t.exit==null){const _dm=Math.round((Date.now()-t.entryMs)/60000);_durStr='<em style="color:#818cf8">'+_dm+'m live</em>';}
             return '<tr>'
-              +'<td class="sig3-ct">'+(t.time||'&mdash;')+'</td>'
+              +'<td class="sig3-ct" style="white-space:nowrap">'+(t.time||'&mdash;')+'</td>'
               +'<td><span class="sig3-db '+(_dir.toLowerCase())+'">'+(_dir||'&mdash;')+'</span></td>'
-              +'<td class="sig3-mono">'+_premCell+'</td>'
+              +'<td>'+_sym+'</td>'
+              +'<td class="sig3-mono" style="font-size:.72rem">'+_premCell+'</td>'
               +'<td class="sig3-mono">'+_entStr+' &rarr; '+_exStr+'</td>'
-              +'<td><span class="sig3-pnl-rs '+_pC+'">'+_rsV+'</span><span class="sig3-pnl-spt"> '+_ptV+'</span></td>'
-              +'<td>'+(t.reason||'&mdash;')+'</td>'
-              +'<td class="sig3-ct">&mdash;</td>'
+              +'<td><span class="sig3-pnl-rs '+_pC+'">'+((_rs!=null)?(_rsSign+'&#8377;'+Math.abs(_rs).toLocaleString('en-IN')):'&mdash;')+'</span><span class="sig3-pnl-spt"> '+_ptV+'</span></td>'
+              +'<td style="font-size:.72rem">'+(t.reason||'&mdash;')+'</td>'
+              +'<td class="sig3-ct">'+_durStr+'</td>'
               +'</tr>';
           }).join("");
         }
