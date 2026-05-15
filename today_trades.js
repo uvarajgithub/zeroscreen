@@ -36,7 +36,7 @@ function processCandle(state, prev, curr, isEOD, trailFn) {
     if (state.isC1) {
       state.isC1=false;
       const p = state.dir==='CE' ? curr.close-state.entry : state.entry-curr.close;
-      if (p < -3) { state.inTrade=false; state.firstDone=false; state.waitReEntry=false; state.reUsed=false; return { action:'EXIT_EARLY', pts:-3 }; }
+      if (p < -3) { state.inTrade=false; state.firstDone=false; state.waitReEntry=false; state.reUsed=false; return { action:'EXIT_EARLY', pts:p }; }
     }
     const slHit = state.dir==='CE' ? curr.low<=state.sl : curr.high>=state.sl;
     if (slHit) {
@@ -233,7 +233,7 @@ function simDayVerbose(candles, trailFn, label) {
 }
 
 async function main() {
-  const today = '2026-05-13';
+  const today = '2026-05-15';
   const resp = await kiteGet(`/instruments/historical/260105/15minute?from=${today}+09:00:00&to=${today}+15:30:00&continuous=0&oi=0`);
   if (!resp.data || !resp.data.candles || resp.data.candles.length === 0) {
     console.log('No data for today yet (market closed or holiday)');
