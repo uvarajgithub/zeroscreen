@@ -1,0 +1,93 @@
+﻿      <!-- ═══ AMINA 100 Session Timeline ═══ -->
+      <div style="margin:1.5rem 0 1rem">
+        <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;flex-wrap:wrap">
+          <span style="font-size:.72rem;text-transform:uppercase;letter-spacing:1px;color:#8b949e;font-weight:700">&#9201; Today&rsquo;s Session Timeline</span>
+          <span class="pm-phase" id="atl-phase-badge">Loading&hellip;</span>
+        </div>
+        <div class="pm-tl" id="atl-tl">
+          <div class="pm-tl-row" id="atl-row-0">
+            <div class="pm-tl-dot" id="atl-dot-0"></div>
+            <div class="pm-tl-txt">
+              <div class="pm-tl-time">8:30 AM &mdash; Global Cues</div>
+              <div class="pm-tl-label">Check Gift Nifty / SGX Nifty for BNF gap-up or gap-down bias</div>
+            </div>
+          </div>
+          <div class="pm-tl-row" id="atl-row-1">
+            <div class="pm-tl-dot" id="atl-dot-1"></div>
+            <div class="pm-tl-txt">
+              <div class="pm-tl-time">9:15 AM &mdash; Market Opens &mdash; Bot Starts</div>
+              <div class="pm-tl-label">Bot resets daily state. First 15-min candle (C1) begins forming</div>
+            </div>
+          </div>
+          <div class="pm-tl-row" id="atl-row-2">
+            <div class="pm-tl-dot" id="atl-dot-2"></div>
+            <div class="pm-tl-txt">
+              <div class="pm-tl-time">9:15 &ndash; 9:30 AM &mdash; C1 Candle Watch</div>
+              <div class="pm-tl-label">Bot records C1 high &amp; low. No entries during this window</div>
+            </div>
+          </div>
+          <div class="pm-tl-row" id="atl-row-3">
+            <div class="pm-tl-dot" id="atl-dot-3"></div>
+            <div class="pm-tl-txt">
+              <div class="pm-tl-time">9:30 AM &mdash; C1 Level Locked</div>
+              <div class="pm-tl-label">C1 high/low fixed. C2 early-entry scan begins immediately</div>
+              <div class="pm-tl-note show" style="display:block;font-size:.61rem;color:#7c3aed;font-weight:600;margin-top:2px">C2 breaks C1 level at close &rarr; enter at C2.close &rarr; SL: &minus;60 pts, trail 100 pts behind peak</div>
+            </div>
+          </div>
+          <div class="pm-tl-row" id="atl-row-4">
+            <div class="pm-tl-dot" id="atl-dot-4"></div>
+            <div class="pm-tl-txt">
+              <div class="pm-tl-time">9:30 &ndash; 9:45 AM &mdash; C2 Early Entry Window</div>
+              <div class="pm-tl-label">If C2.close breaks C1 level &rarr; enter at C2.close. SL: &minus;60 pts</div>
+            </div>
+          </div>
+          <div class="pm-tl-row" id="atl-row-5">
+            <div class="pm-tl-dot" id="atl-dot-5"></div>
+            <div class="pm-tl-txt">
+              <div class="pm-tl-time">9:45 AM &mdash; C3+ Rolling Scan Active</div>
+              <div class="pm-tl-label">No C2 entry? Bot watches every candle to break max(C1, C2) level</div>
+            </div>
+          </div>
+          <div class="pm-tl-row" id="atl-row-6">
+            <div class="pm-tl-dot" id="atl-dot-6"></div>
+            <div class="pm-tl-txt">
+              <div class="pm-tl-time">3:14 PM &mdash; EOD Exit</div>
+              <div class="pm-tl-label">Bot exits all open positions at market. P&amp;L locked for the day</div>
+            </div>
+          </div>
+          <div class="pm-tl-row" id="atl-row-7">
+            <div class="pm-tl-dot" id="atl-dot-7"></div>
+            <div class="pm-tl-txt">
+              <div class="pm-tl-time">3:30 PM &mdash; Market Closes</div>
+              <div class="pm-tl-label">Session complete. Bot sleeping until next trading day</div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <script>
+      (function(){
+        var _ATL=[{id:0,h:8,m:30},{id:1,h:9,m:15},{id:2,h:9,m:15},{id:3,h:9,m:30},{id:4,h:9,m:30},{id:5,h:9,m:45},{id:6,h:15,m:14},{id:7,h:15,m:30}];
+        var _ATLPH=[[8,30,'Pre-Market',''],[9,15,'Global Cues',''],[9,30,'C1 Forming','live'],[9,45,'C2 Entry','live'],[15,14,'C3+ Scan','live'],[15,30,'EOD Exit','live'],[24,0,'Closed','closed']];
+        function _atlN(){var d=new Date(new Date().toLocaleString('en-US',{timeZone:'Asia/Kolkata'}));return{h:d.getHours(),m:d.getMinutes()};}
+        function _atlM(h,m){return h*60+m;}
+        function _atlUpd(){
+          var t=_atlN();var nowM=_atlM(t.h,t.m);
+          var closed=nowM>=_atlM(15,30);
+          _ATL.forEach(function(row){
+            var dot=document.getElementById('atl-dot-'+row.id);if(!dot)return;
+            if(closed){dot.className='pm-tl-dot';dot.textContent='';return;}
+            var isActive,isDone;
+            if(row.id===2){isActive=nowM>=_atlM(9,15)&&nowM<_atlM(9,30);isDone=nowM>=_atlM(9,30);}
+            else if(row.id===4){isActive=nowM>=_atlM(9,30)&&nowM<_atlM(9,45);isDone=nowM>=_atlM(9,45);}
+            else{var rowM=_atlM(row.h,row.m);isActive=nowM>=rowM&&nowM<rowM+3;isDone=nowM>=rowM+3;}
+            if(isDone){dot.className='pm-tl-dot done';dot.textContent='\u2714';}
+            else if(isActive){dot.className='pm-tl-dot active';dot.textContent='\u25c6';}
+            else{dot.className='pm-tl-dot';dot.textContent='';}
+          });
+          var badge=document.getElementById('atl-phase-badge');
+          if(badge){var lbl='Pre-Market',cls='';for(var i=0;i<_ATLPH.length;i++){if(nowM<_atlM(_ATLPH[i][0],_ATLPH[i][1])){lbl=_ATLPH[i][2];cls=_ATLPH[i][3];break;}}badge.textContent=lbl;badge.className='pm-phase'+(cls?' '+cls:'');}
+        }
+        _atlUpd();setInterval(_atlUpd,30000);
+      })();
+      </script>
+

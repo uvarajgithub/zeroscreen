@@ -1,5 +1,5 @@
 /**
- * dashboard.ts — Local web dashboard for live bot monitoring (Amina + legacy)
+ * dashboard.ts — Local web dashboard for live bot monitoring (AMINA 100 + legacy)
  *
  * Serves a browser UI at http://localhost:3001
  * The bot writes state to bot-heartbeat.json (Amina) or trade-state.json + trades.json (legacy)
@@ -68,7 +68,7 @@ const HTML = `<!DOCTYPE html>
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>BANKNIFTY Bot — Amina Dashboard</title>
+  <title>BANKNIFTY Bot — AMINA 100 Dashboard</title>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body { font-family: 'Segoe UI', sans-serif; background: #0d1117; color: #e6edf3; min-height: 100vh; }
@@ -117,7 +117,7 @@ const HTML = `<!DOCTYPE html>
   <header>
     <div style="display:flex;align-items:center;gap:10px">
       <h1><span id="status-dot"></span>BANKNIFTY Bot</h1>
-      <span id="strategy-badge">AMINA</span>
+      <span id="strategy-badge">AMINA 100</span>
     </div>
     <div style="display:flex;align-items:center;gap:14px">
       <span id="status-text">Loading...</span>
@@ -145,11 +145,11 @@ const HTML = `<!DOCTYPE html>
 
   <div class="amina-grid">
     <div class="amina-panel">
-      <h3>T1 Trade (SL: −50 pts)</h3>
+      <h3>T1 Trade (SL: −60 pts, trail)</h3>
       <div id="t1-rows"><div style="color:#8b949e;font-size:0.8rem">Scanning...</div></div>
     </div>
     <div class="amina-panel">
-      <h3>Re-entry (SL: −100 pts)</h3>
+      <h3>Re-entry (SL: −60 pts, trail)</h3>
       <div id="re-rows"><div style="color:#8b949e;font-size:0.8rem">Waiting for T1 SL hit...</div></div>
     </div>
   </div>
@@ -166,7 +166,7 @@ const HTML = `<!DOCTYPE html>
     </table>
   </div>
 
-  <footer>Refreshes every 3s &nbsp;·&nbsp; Amina Strategy — Rs +10,66,085 over 5 years ✅</footer>
+  <footer>Refreshes every 3s &nbsp;·&nbsp; AMINA 100 — Rs +19,25,692 over 5.5 years ✅</footer>
 
   <script>
     function fmt(v) { if (v == null) return '—'; return (v >= 0 ? '+' : '') + parseFloat(v).toFixed(0); }
@@ -189,12 +189,12 @@ const HTML = `<!DOCTYPE html>
         const hb = await hbR.json();
         const d  = await stR.json();
         document.getElementById('clock').textContent = d.timestamp;
-        const isAmina = hb && hb.strategy === 'AMINA';
+        const isAmina = hb && (hb.strategy === 'AMINA 100' || hb.strategy === 'AMINA');
         // strategy badge
         const sb = document.getElementById('strategy-badge');
         sb.textContent = hb && hb.strategy ? hb.strategy : 'BOT';
         sb.style.background = isAmina ? '#1a2840' : '#1f4620';
-        sb.style.color = isAmina ? '#58a6ff' : '#3fb950';
+        sb.style.color      = isAmina ? '#58a6ff' : '#3fb950';
         // status
         document.getElementById('status-text').textContent = hb && hb.status ? hb.status : '—';
         // price

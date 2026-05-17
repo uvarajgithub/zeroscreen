@@ -11,9 +11,13 @@
  *   - No trailing stop (hold to EOD)
  *
  * Tests all SL_T1 × SL_RE combinations + optional trail variant
+ *
+ * CACHE: After fetching, saves full dataset to bnf_candles_full.json
+ *        All other test scripts read from bnf_candles_full.json (33K candles)
  */
 require('dotenv').config();
 const https = require('https');
+const fs    = require('fs');
 const API_KEY = process.env.API_KEY, ACCESS_TOKEN = process.env.ACCESS_TOKEN;
 const RS_PER_PT = 15; // 30 qty × 0.5 delta × ₹1/pt
 
@@ -294,10 +298,17 @@ function runVariant(allDates, byDay, SL_T1, SL_RE, trailMode) {
 }
 
 async function main() {
-  const allCandles = await fetchAll('2021-01-01', '2026-05-16');
+  const today      = new Date().toISOString().slice(0, 10);
+  const allCandles = await fetchAll('2021-01-01', today);
+
+  // Save full dataset so all other test scripts use the same 33K candles
+  const FULL_CACHE = 'bnf_candles_full.json';
+  fs.writeFileSync(FULL_CACHE, JSON.stringify(allCandles));
+  console.log(`Saved ${allCandles.length} candles → ${FULL_CACHE}`);
+
   const byDay      = groupByDay(allCandles);
   const allDates   = Object.keys(byDay).sort().filter(d => byDay[d].length >= 5);
-  console.log(`\nTotal trading days: ${allDates.length}  (Jan 2021 – May 2026)\n`);
+  console.log(`\nTotal trading days: ${allDates.length}  (Jan 2021 – today)\n`);
 
   const variants = [
     { SL_T1: 50, SL_RE: 100, trail: 'none', label: 'SL50+RE100  NoTrail  [CURRENT AMINA]' },

@@ -1,18 +1,18 @@
 /**
- * amina-live.ts — Amina BankNifty Options Strategy (Live Engine)
+ * amina-live.ts — AMINA 100 BankNifty Options Strategy (Live Engine)
  *
  * Strategy Rules:
- *   Entry  : Rolling C1+C2 scan (Rule A: same-color pair | Rule B: C2 body > C1 opposite)
- *            Enter on first candle CLOSE that crosses breakout level. First signal only.
- *   T1 SL  : 50 pts fixed | LockBE: SL moves to entry once up 50 pts
- *   T1 Tgt : NONE — hold to 3:15 PM EOD exit
- *   Re-entry: Opposite direction, only if price-vs-dayOpen filter passes (moveAgainstRe < 0)
- *             Re-entry SL: 60 pts fixed | LockBE: SL moves to entry once up 60 pts | No target — hold to EOD
+ *   Entry  : Rolling C1+C2 scan. C2 breaks C1 level → enter at C2 close.
+ *            Else wait C3+ to break max(C1,C2) level. First signal only.
+ *   T1 SL  : 60 pts fixed. Once peak ≥ 60 → trail SL = entry + max(0, peak − 100)
+ *            SL ratchets in profit direction only, never reverses.
+ *   T1 Tgt : NONE — hold to 3:14 PM EOD exit
+ *   Re-entry: Always taken opposite direction when T1 SL hit. Same trail rules.
  *
- * 5yr backtest: Rs 14,24,023 | 1,325 days | Win rate 44.7% | MaxDD Rs 20,802
- * Max loss/day: Rs -1,650 (T1 -50 + Re -60 = -110 pts × Rs 15)
+ * 5.5yr backtest: Rs 19,25,692 | 1,325 days | Win rate 56.6% | MaxDD Rs 17,290
+ * Max loss/day: Rs -1,800 (T1 -60 + RE -60 = -120 pts × Rs 15)
  *
- * Deployed: 2026-05-17 — Sweet Spot config (was SL_RE=100 NoTrail → Rs 12,48,182)
+ * Deployed: 2026-05-17 — AMINA 100 (C2 early entry + trail 100pts behind peak)
  */
 
 import fs from "fs";
@@ -28,9 +28,9 @@ kite.setAccessToken(config.accessToken);
 
 const INSTRUMENT_TOKEN = config.instrument.token; // 260105
 const IST_OFFSET_MS    = (5 * 60 + 30) * 60 * 1000;
-const SL_T1            = 50;
-const SL_RE            = 60;   // sweet-spot (was 100)
-const RS_PER_PT        = 15; // 30 qty × 0.5 delta × Rs 1/pt
+const SL_INITIAL       = 60;  // fixed SL for both T1 and RE
+const TRAIL_GAP        = 100; // trail SL = entry + max(0, peak − TRAIL_GAP)
+const RS_PER_PT        = 15;  // 30 qty × 0.5 delta × Rs 1/pt
 
 // ── Types ────────────────────────────────────────────────────────────────────
 type Phase = "SCANNING" | "IN_T1" | "IN_RE" | "DONE";
@@ -118,7 +118,7 @@ function isEOD(): boolean {
 function log(event: string, d: Record<string, any> = {}) {
   const ts = nowIST();
   const msg = Object.entries(d).map(([k, v]) => `${k}:${v}`).join(" | ");
-  console.log(`[AMINA][${ts}] ${event}${msg ? "  " + msg : ""}`);
+  console.log(`[AMINA 100][${ts}] ${event}${msg ? "  " + msg : ""}`);
   try {
     fs.appendFileSync("amina.log", JSON.stringify({ time: ts, event, ...d }) + "\n");
   } catch (_) {}
@@ -131,8 +131,10 @@ function writeHeartbeat(price: number) {
   const entry   = state.phase === "IN_T1" ? state.t1Entry : state.phase === "IN_RE" ? state.reEntry : 0;
   const sym     = state.phase === "IN_T1" ? state.t1Symbol : state.phase === "IN_RE" ? state.reSymbol : "";
   const livePnl = inTrade && entry ? (dir === "CE" ? price - entry : entry - price) : state.dayPts;
-  const t1EffSLHb = state.t1Peak >= SL_T1 ? 0 : -SL_T1;
-  const reEffSLHb = state.rePeak >= SL_RE ? 0 : -SL_RE;
+  const t1TrailLocked = Math.max(0, state.t1Peak - TRAIL_GAP);
+  const t1EffSLHb     = state.t1Peak >= SL_INITIAL ? t1TrailLocked : -SL_INITIAL;
+  const reTrailLocked = Math.max(0, state.rePeak - TRAIL_GAP);
+  const reEffSLHb     = state.rePeak >= SL_INITIAL ? reTrailLocked : -SL_INITIAL;
   const t1SlPx    = state.t1Dir ? (state.t1Dir === "CE" ? state.t1Entry + t1EffSLHb : state.t1Entry - t1EffSLHb) : null;
   const reSlPx    = state.reDir ? (state.reDir === "CE" ? state.reEntry + reEffSLHb : state.reEntry - reEffSLHb) : null;
   const slLevel   = state.phase === "IN_T1" ? t1SlPx : state.phase === "IN_RE" ? reSlPx : null;
@@ -140,7 +142,7 @@ function writeHeartbeat(price: number) {
   try {
     fs.writeFileSync("bot-heartbeat.json", JSON.stringify({
       at           : new Date().toISOString(),
-      strategy     : "AMINA",
+      strategy     : "AMINA 100",
       status       : phaseLabel(),
       price,
       livePrice    : price,
@@ -172,7 +174,7 @@ function writeHeartbeat(price: number) {
       unrealisedPnL: inTrade ? parseFloat(livePnl.toFixed(0)) : 0,
       tradeCount   : (state.t1Dir ? 1 : 0) + (state.reDir ? 1 : 0),
       qty          : config.quantity,
-      slPts        : state.phase === "IN_T1" ? SL_T1 : SL_RE,
+      slPts        : SL_INITIAL,
       mode         : config.mode,
     }));
   } catch (_) {}
@@ -237,7 +239,7 @@ async function getToday15MinCandles(): Promise<C15[]> {
   }
 }
 
-// ── Rolling entry scan ────────────────────────────────────────────────────────
+// ── Rolling entry scan (C2 early entry + C3+ fallback) ───────────────────────
 function rollingEntryScan(cs: C15[]): {
   sig: "CE" | "PE"; px: number; bl: number; rule: string;
   pairIdx: number; entryIdx: number;
@@ -245,28 +247,35 @@ function rollingEntryScan(cs: C15[]): {
   for (let i = 0; i < cs.length - 1; i++) {
     const ca = cs[i], cb = cs[i + 1];
     let sig: "CE" | "PE" | null = null;
-    let bl = 0, rule = "";
+    let c2level = 0, c3level = 0, rule = "";
 
     if (ca.bull === cb.bull) {
       // Rule A — same color pair
-      sig  = ca.bull ? "CE" : "PE";
-      bl   = sig === "CE" ? Math.max(ca.high, cb.high) : Math.min(ca.low, cb.low);
-      rule = "A";
+      sig     = ca.bull ? "CE" : "PE";
+      c2level = sig === "CE" ? ca.high      : ca.low;
+      c3level = sig === "CE" ? Math.max(ca.high, cb.high) : Math.min(ca.low, cb.low);
+      rule    = "A";
     } else if (cb.body_size > ca.body_size) {
       // Rule B — opposite color, C2 body > C1 body
-      sig  = cb.bull ? "CE" : "PE";
-      bl   = sig === "CE"
+      sig     = cb.bull ? "CE" : "PE";
+      c2level = sig === "CE" ? ca.body_high : ca.body_low;
+      c3level = sig === "CE"
         ? Math.max(ca.body_high, cb.body_high)
         : Math.min(ca.body_low,  cb.body_low);
-      rule = "B";
+      rule    = "B";
     } else {
-      continue; // Rule C — skip this pair
+      continue; // skip this pair
     }
 
+    // C2 early entry: does C2 itself break the C1 level?
+    if (sig === "CE" && cb.close > c2level) return { sig, px: cb.close, bl: c2level, rule: rule + "(C2)", pairIdx: i, entryIdx: i + 1 };
+    if (sig === "PE" && cb.close < c2level) return { sig, px: cb.close, bl: c2level, rule: rule + "(C2)", pairIdx: i, entryIdx: i + 1 };
+
+    // C3+ fallback: wait for breakout above max(C1, C2) level
     for (let j = i + 2; j < cs.length; j++) {
       const c = cs[j];
-      if (sig === "CE" && c.close > bl) return { sig, px: c.close, bl, rule, pairIdx: i, entryIdx: j };
-      if (sig === "PE" && c.close < bl) return { sig, px: c.close, bl, rule, pairIdx: i, entryIdx: j };
+      if (sig === "CE" && c.close > c3level) return { sig, px: c.close, bl: c3level, rule, pairIdx: i, entryIdx: j };
+      if (sig === "PE" && c.close < c3level) return { sig, px: c.close, bl: c3level, rule, pairIdx: i, entryIdx: j };
     }
   }
   return null;
@@ -281,7 +290,7 @@ async function doExit(label: string, symbol: string) {
     const msg = e instanceof Error ? e.message : String(e);
     log(`EXIT_${label}_FAIL`, { error: msg });
     await sendTelegram(
-      `❌ *AMINA — EXIT FAILED* (${label})\n\`${symbol}\`\nManual exit required!\n${msg}`
+      `❌ *AMINA 100 — EXIT FAILED* (${label})\n\`${symbol}\`\nManual exit required!\n${msg}`
     ).catch(() => {});
   }
 }
@@ -306,7 +315,7 @@ async function eodSquareOff(price: number) {
 
   log("EOD_EXIT", { dir, entry: entry.toFixed(0), exit: price.toFixed(0), pts: pts.toFixed(0), dayPts: state.dayPts });
   await sendTelegram(
-    `🔔 *AMINA — EOD EXIT*\n`
+    `🔔 *AMINA 100 — EOD EXIT*\n`
     + `Dir: ${dir} | Entry: ${entry.toFixed(0)} | Exit: ${price.toFixed(0)}\n`
     + `Trade P&L: *${pts >= 0 ? "+" : ""}${pts.toFixed(0)} pts*\n`
     + `Day Total: *${state.dayPts >= 0 ? "+" : ""}${state.dayPts.toFixed(0)} pts`
@@ -376,13 +385,13 @@ async function tick() {
 
       await placeTrade(symbol, res.px, config.quantity);
 
-      const slLevel = res.sig === "CE" ? res.px - SL_T1 : res.px + SL_T1;
+      const slLevel = res.sig === "CE" ? res.px - SL_INITIAL : res.px + SL_INITIAL;
       log("T1_ENTRY", { sig: res.sig, entry: res.px.toFixed(0), bl: res.bl.toFixed(0), sl: slLevel.toFixed(0), rule: res.rule, symbol });
 
       await sendTelegram(
-        `🎯 *AMINA — T1 ENTRY*\n`
+        `🎯 *AMINA 100 — T1 ENTRY*\n`
         + `Dir: *${res.sig}* | Rule ${res.rule} | BL: ${res.bl.toFixed(0)}\n`
-        + `Entry: *${res.px.toFixed(0)}* | SL: ${slLevel.toFixed(0)} (−50 pts)\n`
+        + `Entry: *${res.px.toFixed(0)}* | SL: ${slLevel.toFixed(0)} (−60 pts, trail)\n`
         + `Symbol: \`${symbol}\`\n`
         + `Day Open: ${state.dayOpen.toFixed(0)}`
       ).catch(() => {});
@@ -395,67 +404,47 @@ async function tick() {
         : state.t1Entry - latest.close;
       state.t1Pts = t1Pts;
 
-      // LockBE: track peak; once up SL_T1 pts, SL locks at entry (breakeven)
+      // Trail SL: once peak ≥ 60 → SL = entry + max(0, peak − 100). Never reverses.
       if (t1Pts > state.t1Peak) state.t1Peak = t1Pts;
-      const t1EffSL = state.t1Peak >= SL_T1 ? 0 : -SL_T1;
+      const t1EffSL = state.t1Peak >= SL_INITIAL ? Math.max(0, state.t1Peak - TRAIL_GAP) : -SL_INITIAL;
 
       if (t1Pts <= t1EffSL) {
-        // SL hit (−50 pts fixed, or 0 pts breakeven if LockBE triggered)
+        // SL hit — fixed −60 or trail locked profit
         state.t1Pts = t1EffSL;
         await doExit("T1_SL", state.t1Symbol);
 
         state.slClose = latest.close;
         state.slTime  = nowIST();
-        log("T1_SL", { exit: latest.close.toFixed(0), pnl: t1EffSL, locked: state.t1Peak >= SL_T1 });
+        log("T1_SL", { exit: latest.close.toFixed(0), pnl: t1EffSL, peak: state.t1Peak.toFixed(0) });
 
-        // Re-entry filter
+        // Always take RE — no filter in AMINA 100
         const reDir: "CE" | "PE" = state.t1Dir === "CE" ? "PE" : "CE";
-        const moveFromOpen  = state.slClose - state.dayOpen;
-        const moveAgainstRe = reDir === "CE" ? moveFromOpen : -moveFromOpen;
+        const reSymbol = await getBestOptionSymbol(reDir);
+        state.reDir       = reDir;
+        state.reEntry     = state.slClose;
+        state.reSymbol    = reSymbol;
+        state.reEntryTime = nowIST();
+        state.rePeak      = 0;
+        state.phase       = "IN_RE";
+        saveState();
 
-        if (moveAgainstRe >= 0) {
-          // Filter failed — skip re-entry
-          state.dayPts = t1EffSL;
-          state.dayRs  = state.dayPts * RS_PER_PT;
-          state.phase  = "DONE";
-          saveState();
+        await placeTrade(reSymbol, state.slClose, config.quantity);
 
-          log("REENTRY_SKIP", { moveAgainstRe: moveAgainstRe.toFixed(0), slClose: state.slClose.toFixed(0), dayOpen: state.dayOpen.toFixed(0) });
-          await sendTelegram(
-            `🛑 *AMINA — T1 SL HIT* (${t1EffSL === 0 ? "BE exit" : "−50 pts"})\n`
-            + `Dir: ${state.t1Dir} | Entry: ${state.t1Entry.toFixed(0)} | Exit: ${state.slClose.toFixed(0)}\n`
-            + `⏭ *Re-entry SKIPPED* — price not favourable\n`
-            + `(${state.slClose.toFixed(0)} vs open ${state.dayOpen.toFixed(0)}: ${moveAgainstRe >= 0 ? "+" : ""}${moveAgainstRe.toFixed(0)} pts)\n`
-            + `Day P&L: *${t1EffSL >= 0 ? "+" : ""}${t1EffSL} pts (Rs ${(t1EffSL * RS_PER_PT) >= 0 ? "+" : ""}${(t1EffSL * RS_PER_PT).toFixed(0)})*`
-          ).catch(() => {});
-        } else {
-          // Take re-entry
-          const reSymbol = await getBestOptionSymbol(reDir);
-          state.reDir       = reDir;
-          state.reEntry     = state.slClose;
-          state.reSymbol    = reSymbol;
-          state.reEntryTime = nowIST();
-          state.rePeak      = 0;
-          state.phase       = "IN_RE";
-          saveState();
+        const t1Label = t1EffSL > 0 ? `+${t1EffSL} pts (trail)` : t1EffSL === 0 ? "BE exit" : `${t1EffSL} pts`;
+        const reSL    = reDir === "CE" ? state.slClose - SL_INITIAL : state.slClose + SL_INITIAL;
+        log("RE_ENTRY", { dir: reDir, entry: state.slClose.toFixed(0), sl: reSL.toFixed(0), symbol: reSymbol });
 
-          await placeTrade(reSymbol, state.slClose, config.quantity);
-
-          const reSL = reDir === "CE" ? state.slClose - SL_RE : state.slClose + SL_RE;
-          log("RE_ENTRY", { dir: reDir, entry: state.slClose.toFixed(0), sl: reSL.toFixed(0), symbol: reSymbol });
-
-          await sendTelegram(
-            `🛑 *AMINA — T1 SL HIT* (${t1EffSL === 0 ? "BE exit" : "−50 pts"})\n`
-            + `Dir: ${state.t1Dir} | Entry: ${state.t1Entry.toFixed(0)} | Exit: ${state.slClose.toFixed(0)}\n`
-            + `🔄 *RE-ENTRY TAKEN*\n`
-            + `Dir: *${reDir}* | Entry: *${state.slClose.toFixed(0)}*\n`
-            + `SL: ${reSL.toFixed(0)} (−60 pts, LockBE) | Filter: ✅ (${moveAgainstRe.toFixed(0)} pts)\n`
-            + `Symbol: \`${reSymbol}\``
-          ).catch(() => {});
-        }
+        await sendTelegram(
+          `🛑 *AMINA 100 — T1 SL HIT* (${t1Label})\n`
+          + `Dir: ${state.t1Dir} | Entry: ${state.t1Entry.toFixed(0)} | Exit: ${state.slClose.toFixed(0)}\n`
+          + `🔄 *RE-ENTRY TAKEN*\n`
+          + `Dir: *${reDir}* | Entry: *${state.slClose.toFixed(0)}*\n`
+          + `SL: ${reSL.toFixed(0)} (−60 pts, trail)\n`
+          + `Symbol: \`${reSymbol}\``
+        ).catch(() => {});
       } else {
         const t1SlPx = state.t1Dir === "CE" ? state.t1Entry + t1EffSL : state.t1Entry - t1EffSL;
-        log("T1_MONITOR", { close: latest.close.toFixed(0), unrealised: t1Pts.toFixed(0), sl: t1SlPx.toFixed(0), locked: state.t1Peak >= SL_T1 });
+        log("T1_MONITOR", { close: latest.close.toFixed(0), unrealised: t1Pts.toFixed(0), sl: t1SlPx.toFixed(0), peak: state.t1Peak.toFixed(0) });
       }
     }
 
@@ -466,9 +455,9 @@ async function tick() {
         : state.reEntry - latest.close;
       state.rePts = rePts;
 
-      // LockBE: track peak; once up SL_RE pts, SL locks at entry (breakeven)
+      // Trail SL: once peak ≥ 60 → SL = entry + max(0, peak − 100). Never reverses.
       if (rePts > state.rePeak) state.rePeak = rePts;
-      const reEffSL = state.rePeak >= SL_RE ? 0 : -SL_RE;
+      const reEffSL = state.rePeak >= SL_INITIAL ? Math.max(0, state.rePeak - TRAIL_GAP) : -SL_INITIAL;
 
       if (rePts <= reEffSL) {
         state.rePts  = reEffSL;
@@ -479,10 +468,10 @@ async function tick() {
         state.phase  = "DONE";
         saveState();
 
-        const locked = state.rePeak >= SL_RE;
-        log("RE_SL", { exit: latest.close.toFixed(0), pnl: reEffSL, locked, dayPts: state.dayPts });
+        const reLabel = reEffSL > 0 ? `+${reEffSL} pts (trail)` : reEffSL === 0 ? "BE exit" : `${reEffSL} pts`;
+        log("RE_SL", { exit: latest.close.toFixed(0), pnl: reEffSL, peak: state.rePeak.toFixed(0), dayPts: state.dayPts });
         await sendTelegram(
-          `🛑 *AMINA — RE-ENTRY SL HIT* (${locked ? "BE exit 0 pts" : "−60 pts"})\n`
+          `🛑 *AMINA 100 — RE-ENTRY SL HIT* (${reLabel})\n`
           + `Dir: ${state.reDir} | Entry: ${state.reEntry.toFixed(0)} | Exit: ${latest.close.toFixed(0)}\n`
           + `Day P&L: *${state.dayPts >= 0 ? "+" : ""}${state.dayPts} pts`
           + ` (Rs ${state.dayRs >= 0 ? "+" : ""}${state.dayRs.toFixed(0)})*\n`
@@ -490,7 +479,7 @@ async function tick() {
         ).catch(() => {});
       } else {
         const reSlPx = state.reDir === "CE" ? state.reEntry + reEffSL : state.reEntry - reEffSL;
-        log("RE_MONITOR", { close: latest.close.toFixed(0), unrealised: rePts.toFixed(0), sl: reSlPx.toFixed(0), locked: state.rePeak >= SL_RE });
+        log("RE_MONITOR", { close: latest.close.toFixed(0), unrealised: rePts.toFixed(0), sl: reSlPx.toFixed(0), peak: state.rePeak.toFixed(0) });
       }
     }
 
@@ -516,13 +505,13 @@ export async function startAmina(): Promise<void> {
   loadState();
   resetForNewDay();
 
-  log("BOT_START", { date: todayIST(), mode: config.mode, qty: config.quantity, strategy: "AMINA" });
+  log("BOT_START", { date: todayIST(), mode: config.mode, qty: config.quantity, strategy: "AMINA 100" });
 
   await sendTelegram(
-    `🚀 *AMINA Strategy Started*\n`
+    `🚀 *AMINA 100 Strategy Started*\n`
     + `Date: ${todayIST()} | Mode: *${config.mode}*\n`
-    + `Qty: ${config.quantity} | SL T1: 50 pts (LockBE) | SL Re: 60 pts (LockBE)\n`
-    + `5yr backtest: Rs +14,24,023 ✅`
+    + `Qty: ${config.quantity} | SL: 60 pts | Trail: 100 pts behind peak\n`
+    + `5.5yr backtest: Rs +19,25,692 ✅`
   ).catch(() => {});
 
   // Daily reset at midnight
