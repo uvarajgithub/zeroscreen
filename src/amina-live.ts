@@ -380,61 +380,65 @@ async function tick() {
     state.lastCandleKey = latest.key;
     log("NEW_CANDLE", { key: latest.key, o: latest.open, h: latest.high, l: latest.low, c: latest.close, phase: state.phase });
 
-    // --- 15-min candle Telegram update (same format as TICK TRAIL strategy) ---
+        // --- 15-min candle Telegram update (same format as TICK TRAIL strategy) ---
     try {
-      const _colour = latest.close >= latest.open ? '\U0001F7E2 Bullish' : '\U0001F534 Bearish';
+      const _colour = latest.close >= latest.open ? '🟢 Bullish' : '🔴 Bearish';
       const _ist = new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' });
-      const SEP = '\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500';
+      const SEP = '──────────────────';
+      const _fmt = (p: number) => (p >= 0 ? '🟢 +' : '🔴 ') + p.toFixed(0) + ' pts';
       let _stratCtx = '';
       if (state.phase === 'IN_T1' && state.t1Entry) {
         const _unr = state.t1Dir === 'CE' ? price - state.t1Entry : state.t1Entry - price;
-        const _unrS = _unr >= 0 ? '+' : '';
         const _slLvl = state.t1Dir === 'CE' ? (state.t1Entry - 60).toFixed(0) : (state.t1Entry + 60).toFixed(0);
         _stratCtx = `\n${SEP}\n` +
-          `\U0001F7E1 *AMINA 100 \u00B7 ${state.t1Dir} In Trade*\n` +
-          `Entry: ${state.t1Entry.toFixed(0)}  \u00B7  SL: ${_slLvl}  (\u221260 pts)\n` +
-          `${_unr >= 0 ? '\U0001F7E2' : '\U0001F534'} *${_unrS}${_unr.toFixed(0)} pts gathered*  \u00B7  Day: ${state.dayPts >= 0 ? '+' : ''}${state.dayPts.toFixed(0)} pts`;
+          `🟡 *AMINA 100 · ${state.t1Dir} In Trade*\n` +
+          `Entry: ${state.t1Entry.toFixed(0)}  ·  SL: ${_slLvl}  (−60 pts)\n` +
+          `T1 Unrealised: ${_fmt(_unr)}\n` +
+          `Day: ${_fmt(state.dayPts + _unr)}`;
       } else if (state.phase === 'IN_RE' && state.reEntry) {
         const _unr = state.reDir === 'CE' ? price - state.reEntry : state.reEntry - price;
-        const _unrS = _unr >= 0 ? '+' : '';
         const _slLvl = state.reDir === 'CE' ? (state.reEntry - 60).toFixed(0) : (state.reEntry + 60).toFixed(0);
         _stratCtx = `\n${SEP}\n` +
-          `\U0001F7E1 *AMINA 100 \u00B7 ${state.reDir} Re-Entry*\n` +
-          `Entry: ${state.reEntry.toFixed(0)}  \u00B7  SL: ${_slLvl}  (\u221260 pts)\n` +
-          `${_unr >= 0 ? '\U0001F7E2' : '\U0001F534'} *${_unrS}${_unr.toFixed(0)} pts gathered*  \u00B7  Day: ${state.dayPts >= 0 ? '+' : ''}${state.dayPts.toFixed(0)} pts`;
+          `🟡 *AMINA 100 · ${state.reDir} Re-Entry*\n` +
+          `Entry: ${state.reEntry.toFixed(0)}  ·  SL: ${_slLvl}  (−60 pts)\n` +
+          `T1 Closed: ${_fmt(state.t1Pts)}\n` +
+          `RE Unrealised: ${_fmt(_unr)}\n` +
+          `Day: ${_fmt(state.t1Pts + _unr)}`;
       } else if (state.phase === 'DONE') {
         const _rs = Math.round(state.dayPts * 30 * 0.5);
+        const _reeLine = state.rePts !== 0 ? `\nRE: ${_fmt(state.rePts)}` : '';
         _stratCtx = `\n${SEP}\n` +
-          `\u2705 *AMINA 100 \u00B7 Done for Day*\n` +
-          `\U0001F4C8 *${state.dayPts >= 0 ? '+' : ''}${state.dayPts.toFixed(0)} pts*  (\u20B9${_rs >= 0 ? '+' : ''}${_rs.toLocaleString('en-IN')})`;
+          `✅ *AMINA 100 · Done for Day*\n` +
+          `T1: ${_fmt(state.t1Pts)}` + _reeLine + `\n` +
+          `📈 *Day Total: ${state.dayPts >= 0 ? '+' : ''}${state.dayPts.toFixed(0)} pts*  (₹${_rs >= 0 ? '+' : ''}${_rs.toLocaleString('en-IN')})`;
       } else {
-        // SCANNING - show C1 high/low trigger levels
         const _c1 = candles[0];
         let _watchLine = '';
         if (_c1) {
-          const _ceT = (_c1.high + 0).toFixed(0);
-          const _peT = (_c1.low + 0).toFixed(0);
-          const _ceD = (price - _c1.high).toFixed(0);
-          const _peD = (_c1.low - price).toFixed(0);
-          const _ceInfo = price >= _c1.high ? `\u2191 ${Math.abs(Number(_ceD))} pts ahead` : `${Math.abs(Number(_ceD))} pts away`;
-          const _peInfo = price <= _c1.low  ? `\u2191 ${Math.abs(Number(_peD))} pts ahead` : `${Math.abs(Number(_peD))} pts away`;
-          _watchLine = `\U0001F4CD CE \u2265 *${_ceT}*  \u2014  ${_ceInfo}\n` +
-                       `\U0001F4CD PE \u2264 *${_peT}*  \u2014  ${_peInfo}\n` +
+          const _ceT = (_c1.high).toFixed(0);
+          const _peT = (_c1.low).toFixed(0);
+          const _ceDist = Math.abs(price - _c1.high).toFixed(0);
+          const _peDist = Math.abs(price - _c1.low).toFixed(0);
+          const _ceInfo = price >= _c1.high ? '↑ ' + _ceDist + ' pts ahead' : _ceDist + ' pts away';
+          const _peInfo = price <= _c1.low  ? '↑ ' + _peDist + ' pts ahead' : _peDist + ' pts away';
+          _watchLine = `📍 CE ≥ *${_ceT}*  —  ${_ceInfo}\n` +
+                       `📍 PE ≤ *${_peT}*  —  ${_peInfo}\n` +
                        `Live: *${price.toFixed(0)}*`;
         }
+        const _t1line = state.t1Pts !== 0 ? `\nT1 Closed: ${_fmt(state.t1Pts)}` : '';
         _stratCtx = `\n${SEP}\n` +
-          `\U0001F6A6 *AMINA 100 \u00B7 Scanning* (${candles.length} candle${candles.length > 1 ? 's' : ''})\n` +
+          `🚦 *AMINA 100 · Scanning* (${candles.length} candle${candles.length > 1 ? 's' : ''})\n` +
           _watchLine +
-          `  \u00B7  Day: ${state.dayPts >= 0 ? '+' : ''}${state.dayPts.toFixed(0)} pts`;
+          _t1line +
+          `\nDay: ${_fmt(state.dayPts)}`;
       }
       await sendTelegram(
-        `\U0001F56F *15-Min Candle*  ${_ist}  ${_colour}\n` +
+        `🕯 *15-Min Candle*  ${_ist}  ${_colour}\n` +
         `O: ${latest.open.toFixed(0)}  H: ${latest.high.toFixed(0)}  L: ${latest.low.toFixed(0)}  C: ${latest.close.toFixed(0)}` +
         _stratCtx +
         `\n${SEP}\n` +
-        `[\U0001F511 Token](https://139-59-18-52.nip.io/login)  \u00B7  [\U0001F4C8 Dashboard](https://139-59-18-52.nip.io/signals)`
+        `[🔑 Token](https://139-59-18-52.nip.io/login)  ·  [📈 Dashboard](https://139-59-18-52.nip.io/signals)`
       ).catch(() => {});
-      // Write lastCandle to heartbeat for dashboard watching card
       try {
         const _hbRaw = fs.existsSync('bot-heartbeat.json') ? fs.readFileSync('bot-heartbeat.json', 'utf-8') : '{}';
         const _hb = JSON.parse(_hbRaw);
