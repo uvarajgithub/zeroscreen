@@ -380,23 +380,67 @@ async function tick() {
     state.lastCandleKey = latest.key;
     log("NEW_CANDLE", { key: latest.key, o: latest.open, h: latest.high, l: latest.low, c: latest.close, phase: state.phase });
 
-    // --- 15-min candle Telegram update ---
+    // --- 15-min candle Telegram update (same format as TICK TRAIL strategy) ---
     try {
-      const _cDir = latest.close >= latest.open ? '\U0001F7E2 Bullish' : '\U0001F534 Bearish';
-      const _cTime = (() => { try { const d = new Date(latest.key); const ist = new Date(d.toLocaleString('en-US',{timeZone:'Asia/Kolkata'})); const h=ist.getHours(),m=ist.getMinutes(); return (h>12?h-12:h)+':'+(m<10?'0'+m:m)+(h>=12?'PM':'AM'); } catch(_){return '';} })();
-      let _scanMsg = '';
-      if (state.phase === 'SCANNING') {
-        _scanMsg = candles.length === 1 ? '\nC1 locked. Watching for C2 breakout...' : '\nScanning for entry signal...';
-      } else if (state.phase === 'IN_T1') {
-        _scanMsg = `\nIn T1 ${state.t1Dir} trade @ ${state.t1Entry}`;
-      } else if (state.phase === 'IN_RE') {
-        _scanMsg = `\nIn Re-entry ${state.reDir} trade @ ${state.reEntry}`;
+      const _colour = latest.close >= latest.open ? '\U0001F7E2 Bullish' : '\U0001F534 Bearish';
+      const _ist = new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' });
+      const SEP = '\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500';
+      let _stratCtx = '';
+      if (state.phase === 'IN_T1' && state.t1Entry) {
+        const _unr = state.t1Dir === 'CE' ? price - state.t1Entry : state.t1Entry - price;
+        const _unrS = _unr >= 0 ? '+' : '';
+        const _slLvl = state.t1Dir === 'CE' ? (state.t1Entry - 60).toFixed(0) : (state.t1Entry + 60).toFixed(0);
+        _stratCtx = `\n${SEP}\n` +
+          `\U0001F7E1 *AMINA 100 \u00B7 ${state.t1Dir} In Trade*\n` +
+          `Entry: ${state.t1Entry.toFixed(0)}  \u00B7  SL: ${_slLvl}  (\u221260 pts)\n` +
+          `${_unr >= 0 ? '\U0001F7E2' : '\U0001F534'} *${_unrS}${_unr.toFixed(0)} pts gathered*  \u00B7  Day: ${state.dayPts >= 0 ? '+' : ''}${state.dayPts.toFixed(0)} pts`;
+      } else if (state.phase === 'IN_RE' && state.reEntry) {
+        const _unr = state.reDir === 'CE' ? price - state.reEntry : state.reEntry - price;
+        const _unrS = _unr >= 0 ? '+' : '';
+        const _slLvl = state.reDir === 'CE' ? (state.reEntry - 60).toFixed(0) : (state.reEntry + 60).toFixed(0);
+        _stratCtx = `\n${SEP}\n` +
+          `\U0001F7E1 *AMINA 100 \u00B7 ${state.reDir} Re-Entry*\n` +
+          `Entry: ${state.reEntry.toFixed(0)}  \u00B7  SL: ${_slLvl}  (\u221260 pts)\n` +
+          `${_unr >= 0 ? '\U0001F7E2' : '\U0001F534'} *${_unrS}${_unr.toFixed(0)} pts gathered*  \u00B7  Day: ${state.dayPts >= 0 ? '+' : ''}${state.dayPts.toFixed(0)} pts`;
+      } else if (state.phase === 'DONE') {
+        const _rs = Math.round(state.dayPts * 30 * 0.5);
+        _stratCtx = `\n${SEP}\n` +
+          `\u2705 *AMINA 100 \u00B7 Done for Day*\n` +
+          `\U0001F4C8 *${state.dayPts >= 0 ? '+' : ''}${state.dayPts.toFixed(0)} pts*  (\u20B9${_rs >= 0 ? '+' : ''}${_rs.toLocaleString('en-IN')})`;
+      } else {
+        // SCANNING - show C1 high/low trigger levels
+        const _c1 = candles[0];
+        let _watchLine = '';
+        if (_c1) {
+          const _ceT = (_c1.high + 0).toFixed(0);
+          const _peT = (_c1.low + 0).toFixed(0);
+          const _ceD = (price - _c1.high).toFixed(0);
+          const _peD = (_c1.low - price).toFixed(0);
+          const _ceInfo = price >= _c1.high ? `\u2191 ${Math.abs(Number(_ceD))} pts ahead` : `${Math.abs(Number(_ceD))} pts away`;
+          const _peInfo = price <= _c1.low  ? `\u2191 ${Math.abs(Number(_peD))} pts ahead` : `${Math.abs(Number(_peD))} pts away`;
+          _watchLine = `\U0001F4CD CE \u2265 *${_ceT}*  \u2014  ${_ceInfo}\n` +
+                       `\U0001F4CD PE \u2264 *${_peT}*  \u2014  ${_peInfo}\n` +
+                       `Live: *${price.toFixed(0)}*`;
+        }
+        _stratCtx = `\n${SEP}\n` +
+          `\U0001F6A6 *AMINA 100 \u00B7 Scanning* (${candles.length} candle${candles.length > 1 ? 's' : ''})\n` +
+          _watchLine +
+          `  \u00B7  Day: ${state.dayPts >= 0 ? '+' : ''}${state.dayPts.toFixed(0)} pts`;
       }
       await sendTelegram(
-        `\U0001F4CA *AMINA 100 \u2014 Candle ${_cTime}*\n` +
-        `${_cDir} | O:${latest.open.toFixed(0)} H:${latest.high.toFixed(0)} L:${latest.low.toFixed(0)} C:${latest.close.toFixed(0)}` +
-        _scanMsg
+        `\U0001F56F *15-Min Candle*  ${_ist}  ${_colour}\n` +
+        `O: ${latest.open.toFixed(0)}  H: ${latest.high.toFixed(0)}  L: ${latest.low.toFixed(0)}  C: ${latest.close.toFixed(0)}` +
+        _stratCtx +
+        `\n${SEP}\n` +
+        `[\U0001F511 Token](https://139-59-18-52.nip.io/login)  \u00B7  [\U0001F4C8 Dashboard](https://139-59-18-52.nip.io/signals)`
       ).catch(() => {});
+      // Write lastCandle to heartbeat for dashboard watching card
+      try {
+        const _hbRaw = fs.existsSync('bot-heartbeat.json') ? fs.readFileSync('bot-heartbeat.json', 'utf-8') : '{}';
+        const _hb = JSON.parse(_hbRaw);
+        _hb.lastCandle = { open: latest.open, high: latest.high, low: latest.low, close: latest.close, colour: latest.close >= latest.open ? 'bull' : 'bear' };
+        fs.writeFileSync('bot-heartbeat.json', JSON.stringify(_hb));
+      } catch(_) {}
     } catch(_) {}
 
     // ── SCANNING ───────────────────────────────────────────────────────────────
