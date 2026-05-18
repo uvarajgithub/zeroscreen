@@ -232,7 +232,12 @@ async function getToday15MinCandles(): Promise<C15[]> {
       fmt(nowMs - 60_000), // exclude the candle currently forming
       false
     ) as any[];
-    return (data ?? []).map(enrich);
+    const nowReal = Date.now();
+    // Filter out any candle that hasn't completed yet (candle start + 15min > now)
+    return (data ?? []).filter((c: any) => {
+      try { return new Date(c.date).getTime() + 15 * 60 * 1000 < nowReal; }
+      catch (_) { return true; }
+    }).map(enrich);
   } catch (e) {
     log("CANDLE_FETCH_ERR", { error: e instanceof Error ? e.message : String(e) });
     return [];
