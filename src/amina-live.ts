@@ -326,7 +326,23 @@ async function eodSquareOff(price: number) {
 // ── Strategy tick (called every 30s) ──────────────────────────────────────────
 async function tick() {
   try {
-    if (!isMarketOpen()) return;
+    if (!isMarketOpen()) {
+      // Write pre-market heartbeat so dashboard shows Bot Online
+      try {
+        const existing = fs.existsSync(STATE_FILE) ? state : {};
+        fs.writeFileSync('bot-heartbeat.json', JSON.stringify({
+          at: new Date().toISOString(),
+          strategy: 'AMINA 100',
+          status: 'Pre-Market — Waiting',
+          mode: process.env.MODE || 'PAPER',
+          qty: parseInt(process.env.QUANTITY || '30'),
+          slPts: SL_INITIAL,
+          inTrade: false,
+          tradeCount: state.tradeCount || 0,
+        }));
+      } catch(_) {}
+      return;
+    }
 
     const price = await getCurrentPrice();
     if (!price || price <= 0) return;
