@@ -1,8 +1,9 @@
 # Dependencies
 node_modules/
 
-# Build output
-dist/
+# Build output - track compiled JS (VPS runs these directly)
+dist/*.tsbuildinfo
+dist/src/
 
 # Databases (sensitive - never commit)
 *.db
