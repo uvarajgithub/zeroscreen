@@ -48,3 +48,14 @@ zeroscreen-deploy.zip
 deploy.ps1
 picks_seed.sql
 picks_seed2.sql
+
+# Root-level working copies (tracked in src/)
+server.js
+amina-live.js
+amina-live.ts
+
+# Runtime state files
+amina-candle-log.json
+
+# Accidental files
+=
