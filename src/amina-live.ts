@@ -93,6 +93,27 @@ function loadState() {
   } catch (_) {}
 }
 
+// ── Append completed trade record to trades.json (for dashboard) ─────────────
+function appendTrade(tradeObj: Record<string, unknown>) {
+  try {
+    const TRADES_FILE = "trades.json";
+    const existing: unknown[] = fs.existsSync(TRADES_FILE)
+      ? JSON.parse(fs.readFileSync(TRADES_FILE, "utf-8"))
+      : [];
+    if (!Array.isArray(existing)) return;
+    existing.push(tradeObj);
+    fs.writeFileSync(TRADES_FILE, JSON.stringify(existing, null, 2));
+  } catch (e) {
+    log("APPEND_TRADE_ERROR", { error: e instanceof Error ? e.message : String(e) });
+  }
+}
+function entryToExitSecs(entryTimeIST?: string): number {
+  if (!entryTimeIST) return 0;
+  try {
+    return Math.round((Date.now() - new Date(entryTimeIST.replace(" ", "T") + "+05:30").getTime()) / 1000);
+  } catch (_) { return 0; }
+}
+
 // ── IST helpers ───────────────────────────────────────────────────────────────
 function nowIST(): string {
   return new Date(Date.now() + IST_OFFSET_MS)
@@ -319,6 +340,19 @@ async function eodSquareOff(price: number) {
   saveState();
 
   log("EOD_EXIT", { dir, entry: entry.toFixed(0), exit: price.toFixed(0), pts: pts.toFixed(0), dayPts: state.dayPts });
+  appendTrade({
+    date: isT1 ? state.t1EntryTime : state.reEntryTime,
+    direction: dir,
+    symbol: sym,
+    entryPrice: entry,
+    exitPrice: price,
+    premiumEntry: (isT1 ? state.t1EntryLTP : state.reEntryLTP) ?? 0,
+    premiumExit: 0,
+    pnl: pts,
+    pnlRs: (isT1 ? state.t1Rs : state.reRs) ?? Math.round(pts * RS_PER_PT),
+    reasonExit: "EOD",
+    duration: entryToExitSecs(isT1 ? state.t1EntryTime : state.reEntryTime),
+  });
   await sendTelegram(
     `🔔 *AMINA 100 — EOD EXIT*\n`
     + `Dir: ${dir} | Entry: ${entry.toFixed(0)} | Exit: ${price.toFixed(0)}\n`
@@ -504,6 +538,19 @@ async function tick() {
         state.slClose = latest.close;
         state.slTime  = nowIST();
         log("T1_SL", { exit: latest.close.toFixed(0), pnl: t1EffSL, peak: state.t1Peak.toFixed(0) });
+        appendTrade({
+          date: state.t1EntryTime,
+          direction: state.t1Dir,
+          symbol: state.t1Symbol,
+          entryPrice: state.t1Entry,
+          exitPrice: latest.close,
+          premiumEntry: state.t1EntryLTP ?? 0,
+          premiumExit: 0,
+          pnl: t1Pts,
+          pnlRs: state.t1Rs ?? 0,
+          reasonExit: "T1_SL",
+          duration: entryToExitSecs(state.t1EntryTime),
+        });
 
         // Always take RE — no filter in AMINA 100
         const reDir: "CE" | "PE" = state.t1Dir === "CE" ? "PE" : "CE";
@@ -558,6 +605,19 @@ async function tick() {
 
         const reLabel = reEffSL > 0 ? `+${reEffSL} pts (trail)` : reEffSL === 0 ? "BE exit" : `${reEffSL} pts`;
         log("RE_SL", { exit: latest.close.toFixed(0), pnl: reEffSL, peak: state.rePeak.toFixed(0), dayPts: state.dayPts });
+        appendTrade({
+          date: state.reEntryTime,
+          direction: state.reDir,
+          symbol: state.reSymbol,
+          entryPrice: state.reEntry,
+          exitPrice: latest.close,
+          premiumEntry: state.reEntryLTP ?? 0,
+          premiumExit: 0,
+          pnl: rePts,
+          pnlRs: state.reRs ?? 0,
+          reasonExit: "RE_SL",
+          duration: entryToExitSecs(state.reEntryTime),
+        });
         await sendTelegram(
           `🛑 *AMINA 100 — RE-ENTRY SL HIT* (${reLabel})\n`
           + `Dir: ${state.reDir} | Entry: ${state.reEntry.toFixed(0)} | Exit: ${latest.close.toFixed(0)}\n`
