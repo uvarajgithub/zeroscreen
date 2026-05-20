@@ -6376,11 +6376,14 @@ app.get("/api/bot/status", async (_req, res) => {
         : (useDb && (Date.now() - dbUpdatedAt) < 3 * 60 * 1000);
     const botStatus = isAlive ? (hb?.status ?? "RUNNING") : (hb ? "STOPPED" : "UNKNOWN");
     const botColor = isAlive ? (hb?.inTrade ? (hb.direction === "CE" ? "blue" : "red") : "green") : "red";
+    const todayStr = getTodayIST();
+    const todayTrades = fileTrades.filter((t) => (t.date || "").startsWith(todayStr));
     res.json({
         timestamp: new Date().toLocaleString("en-IN", { timeZone: "Asia/Kolkata" }),
         activeState: state,
         aminaState: readBotJSON("amina-state.json", null),
         candleLog: readBotJSON("amina-candle-log.json", []),
+        todayTrades,
         heartbeat: hb,
         botStatus,
         botColor,
@@ -12084,9 +12087,35 @@ app.get("/signals", featureGate("feature_signals", "Signals"), async (req, res) 
       if(d.todayTrades){
         const tbody=ge('tt-body-lock50');
         if(tbody){
+          const QM2=15;
           const cl=[...d.todayTrades].filter(function(t){return t.exitPrice&&t.exitPrice>0;});
           const cnt=ge('tt-count');
-          if(cnt)cnt.textContent='('+cl.length+' closed'+(inT?' + 1 live':'')+')';
+          if(cnt)cnt.textContent='('+cl.length+' closed'+(inT?' + 1 live':'')+')'+'';
+          if(cl.length>0){
+            tbody.innerHTML=[...cl].reverse().map(function(t){
+              const d3=(t.direction||'').toLowerCase();
+              const pts=t.pnl??0;
+              const rs=t.pnlRs!=null?t.pnlRs:Math.round(pts*QM2);
+              const reason=t.reasonExit||'—';
+              const rTag=reason.toLowerCase().includes('sl')||reason.toLowerCase().includes('stop')?'rc-sl':reason.toLowerCase().includes('trail')||reason.toLowerCase().includes('early')?'rc-trail':'rc-eod';
+              const dur=t.duration?(t.duration<60?t.duration+'s':Math.round(t.duration/60)+'m'):'—';
+              const pEntry=(t.premiumEntry??0)>0?(t.premiumEntry??0).toFixed(1):'—';
+              const pExit=(t.premiumExit??0)>0?(t.premiumExit??0).toFixed(1):'—';
+              return '<tr>'
+                +'<td class="tc">'+new Date(t.date).toLocaleTimeString('en-IN',{timeZone:'Asia/Kolkata',hour:'2-digit',minute:'2-digit'})+'</td>'
+                +'<td><span class="db-badge '+d3+'">'+(t.direction||'—')+'</span></td>'
+                +'<td class="mono">'+((t.entryPrice??0)>0?(t.entryPrice??0).toFixed(1):'—')+'</td>'
+                +'<td class="mono '+(d3==='ce'?'b':'r')+'">'+pEntry+'</td>'
+                +'<td class="tc mono">'+(t.symbol||'—')+'</td>'
+                +'<td class="mono">'+((t.exitPrice??0)>0?(t.exitPrice??0).toFixed(1):'—')+'</td>'
+                +'<td class="mono '+(d3==='ce'?'b':'r')+'">'+pExit+'</td>'
+                +'<td class="'+(pts>=0?'g':'r')+'" style="font-weight:800">'+(pts>=0?'+':'')+pts.toFixed(0)+' pts</td>'
+                +'<td><span class="pnl-rs '+(pts>=0?'g':'r')+'">'+(rs>=0?'+':'−')+'₹'+Math.abs(rs).toLocaleString('en-IN')+'</span></td>'
+                +'<td>'+(reason!=='—'?'<span class="rc-b '+rTag+'">'+reason+'</span>':'—')+'</td>'
+                +'<td class="tc">'+dur+'</td>'
+                +'</tr>';
+            }).join('');
+          }
         }
       }
 
