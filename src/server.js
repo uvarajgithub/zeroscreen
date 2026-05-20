@@ -4516,7 +4516,7 @@ function computeAnalytics(trades) {
             maxDD = dd;
         equityCurve.push(parseFloat(equity.toFixed(1)));
     }
-    let todayEq = 0, todayPeak = 0, todayMaxDD = 0;
+    let todayEq = 0, todayPeak = 0, todayMaxDD = 0, todayRs = 0;
     for (const t of todayTrades) {
         todayEq += t.pnl ?? 0;
         if (todayEq > todayPeak)
@@ -4524,6 +4524,9 @@ function computeAnalytics(trades) {
         const dd = todayPeak - todayEq;
         if (dd > todayMaxDD)
             todayMaxDD = dd;
+        // Premium-based ₹ P&L
+        if (t.pnlRs != null) { todayRs += t.pnlRs; }
+        else { const hp = (t.premiumEntry ?? 0) > 0 && (t.premiumExit ?? 0) > 0; todayRs += hp ? Math.round((t.premiumExit - t.premiumEntry) * 30) : Math.round((t.pnl ?? 0) * 15); }
     }
     // Weekly P&L (last 7 days)
     const nowIST = new Date(new Date().toLocaleString("en-US", { timeZone: "Asia/Kolkata" }));
@@ -4558,6 +4561,7 @@ function computeAnalytics(trades) {
             wins: todayTrades.filter((t) => t.pnl > 0).length,
             losses: todayTrades.filter((t) => t.pnl <= 0).length,
             pnl: parseFloat(todayEq.toFixed(1)),
+            rs: todayRs,
             maxDD: parseFloat(todayMaxDD.toFixed(1)),
         },
         weekly: {
@@ -10373,6 +10377,7 @@ app.get("/signals", featureGate("feature_signals", "Signals"), async (req, res) 
         function pnlCls2(v) { return v >= 0 ? "sig-green" : "sig-red"; }
         function fmtPts2(v) { return `${v >= 0 ? "+" : ""}${v.toFixed(0)} pts`; }
         function fmtRs2(v) { const r = Math.round(v * QTY_MULT2); return `${r >= 0 ? "+" : "−"}₹${Math.abs(r).toLocaleString("en-IN")}`; }
+        function fmtRsD2(rs) { return `${rs >= 0 ? "+" : "−"}₹${Math.abs(rs).toLocaleString("en-IN")}`; }
         function fmtBoth2(v) { return `${fmtPts2(v)} <span class="rs-sub">${fmtRs2(v)}</span>`; }
         function rcCls(r) {
             if (!r)
@@ -10693,7 +10698,7 @@ app.get("/signals", featureGate("feature_signals", "Signals"), async (req, res) 
       <button class="stab act" id="stab-lock50" type="button" onclick="_sTab('lock50')">
         <span class="stab-name">&#9679; AMINA 100</span>
         <span class="stab-sub">LIVE v2.0</span>
-        <span class="stab-pnl" id="stab-pnl-lock50" style="color:${an2.today.pnl>=0?'#059669':'#dc2626'}">${fmtRs2(an2.today.pnl)}</span>
+        <span class="stab-pnl" id="stab-pnl-lock50" style="color:${(an2.today.rs??an2.today.pnl)>=0?'#059669':'#dc2626'}">${fmtRsD2(an2.today.rs??Math.round(an2.today.pnl*QTY_MULT2))}</span>
       </button>
       <button class="stab" id="stab-vmt" type="button" onclick="_sTab('vmt')">
         <span class="stab-name">&#128161; VMT</span>
@@ -10857,8 +10862,8 @@ app.get("/signals", featureGate("feature_signals", "Signals"), async (req, res) 
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:10px">
           <div class="kpi-m">
             <div class="kpi-m-l">Today P&amp;L</div>
-            <div class="kpi-m-v ${pnlCls2(an2.today.pnl)}" id="ss-today-rs">${fmtRs2(an2.today.pnl)}</div>
-            <div class="kpi-m-s" id="ss-today-pts">${fmtPts2(an2.today.pnl)}</div>
+            <div class="kpi-m-v ${(an2.today.rs??an2.today.pnl)>=0?'sig-green':'sig-red'}" id="ss-today-rs">${fmtRsD2(an2.today.rs??Math.round(an2.today.pnl*QTY_MULT2))}</div>
+            <div class="kpi-m-s" id="ss-today-pts">${an2.today.rs!=null?((an2.today.rs/30)>=0?'+':'')+Math.round(an2.today.rs/30)+' prem pts':fmtPts2(an2.today.pnl)}</div>
           </div>
           <div class="kpi-m">
             <div class="kpi-m-l">Trades Today</div>
@@ -11781,14 +11786,16 @@ app.get("/signals", featureGate("feature_signals", "Signals"), async (req, res) 
           var slPts=parseFloat(ev.pts||0);
           var slClr=slPts>=0?'color:#059669':'color:#dc2626';
           var slRs=ev.pnlRs!=null?ev.pnlRs:Math.round(slPts*15);
+          var slPremPts=(ev.premiumEntry>0&&ev.premiumExit>=0)?+(ev.premiumExit-ev.premiumEntry).toFixed(2):slPts;
+          var slDispClr=slRs>=0?'color:#059669':'color:#dc2626';
           rows+='<div class="pm-tl-row">'
             +'<div class="atl-ev-dot ev-sl">SL</div>'
             +'<div class="pm-tl-txt">'
             +'<div class="pm-tl-time">'+(t?t+' &mdash; ':'')+'T1 SL Hit</div>'
             +'<div class="pm-tl-label">Entry: <b>'+parseFloat(ev.entryIndex||0).toFixed(1)+'</b> &rarr; Exit: <b>'+parseFloat(ev.exitIndex||0).toFixed(1)+'</b>'
             +(ev.premiumEntry>0?' &nbsp;&middot;&nbsp; Prem: <b>&#8377;'+parseFloat(ev.premiumEntry).toFixed(1)+'</b> &rarr; <b>&#8377;'+parseFloat(ev.premiumExit||0).toFixed(1)+'</b>':'')+'</div>'
-            +'<div class="pm-tl-label">T1 P&amp;L: <b style="'+slClr+'">'+(slPts>=0?'+':'')+slPts.toFixed(0)+' pts</b>'
-            +' &nbsp;&middot;&nbsp; <b style="'+slClr+'">'+(slRs>=0?'+':'&minus;')+'&#8377;'+Math.abs(slRs).toLocaleString('en-IN')+'</b>'
+            +'<div class="pm-tl-label">T1 P&amp;L: <b style="'+slDispClr+'">'+(slPremPts>=0?'+':'')+slPremPts.toFixed(0)+' prem pts</b>'
+            +' &nbsp;&middot;&nbsp; <b style="'+slDispClr+'">'+(slRs>=0?'+':'&minus;')+'&#8377;'+Math.abs(slRs).toLocaleString('en-IN')+'</b>'
             +(ev.peak>0?' &nbsp;&middot;&nbsp; <span style="color:#94a3b8">Peak: +'+parseFloat(ev.peak||0).toFixed(0)+' pts</span>':'')+'</div>'
             +'</div></div>';
         } else if(ev.type==='RE_ENTRY'){
@@ -11808,20 +11815,22 @@ app.get("/signals", featureGate("feature_signals", "Signals"), async (req, res) 
           var rePts2=parseFloat(ev.pts||0);
           var reClr2=rePts2>=0?'color:#059669':'color:#dc2626';
           var reRs2=ev.pnlRs!=null?ev.pnlRs:Math.round(rePts2*15);
-          var reReason2=rePts2>0?'RE Trail Exit':rePts2===0?'RE BE Exit':'RE SL Hit';
-          var dayPts2=parseFloat(ev.dayPts||0);
+          var rePremPts2=(ev.premiumEntry>0&&ev.premiumExit>=0)?+(ev.premiumExit-ev.premiumEntry).toFixed(2):rePts2;
+          var reReason2=rePremPts2>0?'RE Trail Exit':rePremPts2===0?'RE BE Exit':'RE SL Hit';
+          var reDispClr=reRs2>=0?'color:#059669':'color:#dc2626';
           var dayRs2=parseInt(ev.dayRs||0);
-          var dayClr2=dayPts2>=0?'color:#059669':'color:#dc2626';
+          var dayClr2=dayRs2>=0?'color:#059669':'color:#dc2626';
+          var dayPremPts2=dayRs2!==0?Math.round(dayRs2/30):parseFloat(ev.dayPts||0);
           rows+='<div class="pm-tl-row">'
-            +'<div class="atl-ev-dot '+(rePts2>=0?'ev-ok':'ev-sl')+'">'+(rePts2>=0?'&#x2713;':'SL')+'</div>'
+            +'<div class="atl-ev-dot '+(rePremPts2>=0?'ev-ok':'ev-sl')+'">'+(rePremPts2>=0?'&#x2713;':'SL')+'</div>'
             +'<div class="pm-tl-txt">'
             +'<div class="pm-tl-time">'+reReason2+'</div>'
             +'<div class="pm-tl-label">Entry: <b>'+parseFloat(ev.entryIndex||0).toFixed(1)+'</b> &rarr; Exit: <b>'+parseFloat(ev.exitIndex||0).toFixed(1)+'</b>'
             +(ev.premiumEntry>0?' &nbsp;&middot;&nbsp; Prem: <b>&#8377;'+parseFloat(ev.premiumEntry).toFixed(1)+'</b> &rarr; <b>&#8377;'+parseFloat(ev.premiumExit||0).toFixed(1)+'</b>':'')+'</div>'
-            +'<div class="pm-tl-label">RE P&amp;L: <b style="'+reClr2+'">'+(rePts2>=0?'+':'')+rePts2.toFixed(0)+' pts</b>'
-            +' &nbsp;&middot;&nbsp; <b style="'+reClr2+'">'+(reRs2>=0?'+':'&minus;')+'&#8377;'+Math.abs(reRs2).toLocaleString('en-IN')+'</b>'
-            +(ev.peak>0?' &nbsp;&middot;&nbsp; <span style="color:#94a3b8">Peak: +'+parseFloat(ev.peak||0).toFixed(0)+' pts</span>':'')+'</div>'
-            +'<div class="pm-tl-label">Day Total: <b style="'+dayClr2+'">'+(dayPts2>=0?'+':'')+dayPts2.toFixed(0)+' pts</b>'
+            +'<div class="pm-tl-label">RE P&amp;L: <b style="'+reDispClr+'">'+(rePremPts2>=0?'+':'')+rePremPts2.toFixed(0)+' prem pts</b>'
+            +' &nbsp;&middot;&nbsp; <b style="'+reDispClr+'">'+(reRs2>=0?'+':'&minus;')+'&#8377;'+Math.abs(reRs2).toLocaleString('en-IN')+'</b>'
+            +(ev.peak>0?' &nbsp;&middot;&nbsp; <span style="color:#94a3b8">Peak: +'+parseFloat(ev.peak||0).toFixed(0)+' prem pts</span>':'')+'</div>'
+            +'<div class="pm-tl-label">Day Total: <b style="'+dayClr2+'">'+(dayPremPts2>=0?'+':'')+dayPremPts2.toFixed(0)+' prem pts</b>'
             +' &nbsp;&middot;&nbsp; <b style="'+dayClr2+'">'+(dayRs2>=0?'+':'&minus;')+'&#8377;'+Math.abs(dayRs2).toLocaleString('en-IN')+'</b></div>'
             +'</div></div>';
         }
@@ -12021,7 +12030,8 @@ app.get("/signals", featureGate("feature_signals", "Signals"), async (req, res) 
       }
 
       // ── Tab P&L badges ──────────────────────────────────────
-      const totPnl=parseFloat(((d.today?.pnl||0)+(inT?unr:0)).toFixed(0));
+      const totRsLock=(d.today?.rs??0)+(inT?Math.round(unr*QM):0);
+      const totPnl=totRsLock/QM;
       const shPnl=parseFloat((hb.shadowPnL||0).toFixed(0));
       const s1Pnl=parseFloat((hb.scalp1PnL||0).toFixed(0));
       const tpLock=ge('stab-pnl-lock50');if(tpLock){tpLock.textContent=fR(totPnl);tpLock.style.color=gc(totPnl);}
@@ -12066,8 +12076,10 @@ app.get("/signals", featureGate("feature_signals", "Signals"), async (req, res) 
 
       // ── Session stats ───────────────────────────────────────
       if(d.today){
-        const tot=parseFloat(((d.today.pnl||0)+(inT?unr:0)).toFixed(0));
-        if(ge('ss-today-rs')){ge('ss-today-rs').textContent=fR(tot);ge('ss-today-rs').style.color=gc(tot);}
+        const totRs2=(d.today.rs??0)+(inT?Math.round(unr*QM):0);
+        const tot=totRs2/QM;
+        if(ge('ss-today-rs')){ge('ss-today-rs').textContent=fR(tot);ge('ss-today-rs').style.color=gc(totRs2);}
+        if(ge('ss-today-pts')&&d.today.rs!=null){const pPts=Math.round(d.today.rs/30);ge('ss-today-pts').textContent=(pPts>=0?'+':'')+pPts+' prem pts';}
         // Unrealised sub-row
         var unrRow=ge('ss-unr-row');
         if(unrRow){
