@@ -10333,6 +10333,21 @@ app.get("/signals", featureGate("feature_signals", "Signals"), async (req, res) 
         const durStr2 = durMin2 >= 60 ? `${Math.floor(durMin2 / 60)}h ${durMin2 % 60}m` : durMin2 > 0 ? `${durMin2}m` : "";
         const entryIST2 = entryMs2 > 0 ? new Date(entryMs2).toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata", hour: "2-digit", minute: "2-digit" }) : "";
         const mode2 = hb2.mode ?? state.mode ?? "PAPER";
+        // ── Amina state (premium P&L, phase) ──────────────────────────────────────
+        const as2 = readBotJSON("amina-state.json", null);
+        const phaseDone2 = (hb2?.status||'').includes('DONE') || as2?.phase === 'DONE';
+        const inREPhase2 = inTrade2 && (hb2?.reEntry ?? 0) > 0;
+        const t1Rs2ssr = as2?.t1Rs ?? null;
+        const t1PremPts2ssr = t1Rs2ssr != null ? Math.round(t1Rs2ssr / 30) : null;
+        const t1LTP2ssr = as2?.t1EntryLTP ?? 0;
+        const t1ExitLTP2ssr = t1LTP2ssr > 0 && t1Rs2ssr != null ? +(t1LTP2ssr + t1Rs2ssr/30).toFixed(1) : 0;
+        const reRs2ssr = as2?.reRs ?? null;
+        const rePremPts2ssr = reRs2ssr != null ? Math.round(reRs2ssr / 30) : null;
+        const reLTP2ssr = as2?.reEntryLTP ?? 0;
+        const reExitLTP2ssr = reLTP2ssr > 0 && reRs2ssr != null ? +(reLTP2ssr + reRs2ssr/30).toFixed(1) : 0;
+        const phaseLbl2 = inREPhase2 ? 'In RE' : inTrade2 ? 'In T1' : phaseDone2 ? 'Done for Day' : 'Watching';
+        const _rsFmt = (rs) => rs == null ? '—' : (rs>=0?'+':'−')+'\u20b9'+Math.abs(rs).toLocaleString('en-IN');
+        const _ptsFmt = (p) => p == null ? '—' : (p>=0?'+':'')+p+' prem pts';
         const kiteToken2 = await (0, db_1.getSetting)("kite_access_token").catch(() => "");
         const kiteTokenAt2 = await (0, db_1.getSetting)("kite_token_set_at").catch(() => "");
         const tokenMasked2 = kiteToken2 ? kiteToken2.slice(0, 6) + "\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022" + kiteToken2.slice(-4) : "";
@@ -10697,7 +10712,7 @@ app.get("/signals", featureGate("feature_signals", "Signals"), async (req, res) 
     <div class="stab-wrap">
       <button class="stab act" id="stab-lock50" type="button" onclick="_sTab('lock50')">
         <span class="stab-name">&#9679; AMINA 100</span>
-        <span class="stab-sub">LIVE v2.0</span>
+        <span class="stab-sub" id="stab-phase-lbl" style="color:${phaseDone2?'#059669':inTrade2?'#fbbf24':'var(--muted)'}">${phaseLbl2}</span>
         <span class="stab-pnl" id="stab-pnl-lock50" style="color:${(an2.today.rs??an2.today.pnl)>=0?'#059669':'#dc2626'}">${fmtRsD2(an2.today.rs??Math.round(an2.today.pnl*QTY_MULT2))}</span>
       </button>
       <button class="stab" id="stab-vmt" type="button" onclick="_sTab('vmt')">
@@ -10826,38 +10841,100 @@ app.get("/signals", featureGate("feature_signals", "Signals"), async (req, res) 
       <div>
         <div style="font-size:.72rem;text-transform:uppercase;letter-spacing:1px;color:#8b949e;font-weight:700;margin-bottom:8px">&#128203; Current Position</div>
         <div id="pos-lock50-wrap">
-          ${inTrade2 && ep2 > 0 ? `
-          <div class="pos-card pos-${(dir2||'ce').toLowerCase()}" id="pos-lock50-card">
-            <div class="pos-hdr">
-              <span class="pos-live-dot"></span>
-              <span class="pos-badge pos-b-${(dir2||'ce').toLowerCase()}">${dir2||'?'} OPTION</span>
-              <span class="pos-sym">${sym2||'BANKNIFTY'}</span>
-              <span class="pos-mode">${mode2}</span>
-              ${durStr2 ? `<span class="pos-dur">⏱ ${durStr2}</span>` : ''}
+
+          <!-- ── DONE FOR DAY card ── -->
+          <div id="pos-lock50-done" style="${phaseDone2&&!inTrade2?'':'display:none'}">
+            <div class="pos-card pos-flat" style="border-color:rgba(5,150,105,.3);background:rgba(5,150,105,.04)">
+              <div class="pos-hdr" style="margin-bottom:12px">
+                <span class="pos-badge" style="background:rgba(5,150,105,.15);color:#059669;border:1px solid rgba(5,150,105,.3)">&#x2713; DONE FOR DAY</span>
+                <span class="pos-mode">${mode2}</span>
+                <span style="margin-left:auto;font-size:.63rem;color:var(--muted)" id="pos-done-date">${new Date().toLocaleDateString('en-IN',{timeZone:'Asia/Kolkata',day:'2-digit',month:'short'})}</span>
+              </div>
+              ${hb2.t1Entry > 0 ? `
+              <div style="border:1px solid var(--border-c);border-radius:8px;padding:9px 12px;margin-bottom:8px">
+                <div style="display:flex;align-items:center;gap:7px;margin-bottom:5px">
+                  <span style="font-size:.58rem;font-weight:800;color:var(--muted);background:var(--border-c);padding:1px 5px;border-radius:3px">T1</span>
+                  <span class="db-badge ${(hb2.t1Dir||'ce').toLowerCase()}">${hb2.t1Dir||'?'}</span>
+                  <code style="font-size:.58rem;color:var(--muted);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${hb2.t1Symbol||''}</code>
+                  <span style="font-size:.58rem;font-weight:700;background:rgba(5,150,105,.1);color:#34d399;padding:1px 6px;border-radius:3px">REALISED</span>
+                </div>
+                ${t1LTP2ssr>0?`<div style="font-size:.68rem;color:var(--muted);margin-bottom:5px"><span class="prem-buy">BUY &#8377;${t1LTP2ssr.toFixed(1)}</span> &#8594; <span class="prem-sell">EXIT &#8377;${t1ExitLTP2ssr>0?t1ExitLTP2ssr.toFixed(1):'—'}</span></div>`:''}
+                <div style="display:flex;align-items:center;gap:10px">
+                  <span class="${(t1Rs2ssr??0)>=0?'g':'r'}" style="font-size:1rem;font-weight:800" id="pos-done-t1rs">${_rsFmt(t1Rs2ssr)}</span>
+                  <span class="${(t1PremPts2ssr??0)>=0?'g':'r'}" style="font-size:.75rem;font-weight:700" id="pos-done-t1pts">${_ptsFmt(t1PremPts2ssr)}</span>
+                </div>
+              </div>` : ''}
+              ${hb2.reEntry > 0 ? `
+              <div style="border:1px solid var(--border-c);border-radius:8px;padding:9px 12px;margin-bottom:10px">
+                <div style="display:flex;align-items:center;gap:7px;margin-bottom:5px">
+                  <span style="font-size:.58rem;font-weight:800;color:var(--muted);background:var(--border-c);padding:1px 5px;border-radius:3px">RE</span>
+                  <span class="db-badge ${(hb2.reDir||'ce').toLowerCase()}">${hb2.reDir||'?'}</span>
+                  <code style="font-size:.58rem;color:var(--muted);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${hb2.reSymbol||''}</code>
+                  <span style="font-size:.58rem;font-weight:700;background:rgba(5,150,105,.1);color:#34d399;padding:1px 6px;border-radius:3px">REALISED</span>
+                </div>
+                ${reLTP2ssr>0?`<div style="font-size:.68rem;color:var(--muted);margin-bottom:5px"><span class="prem-buy">BUY &#8377;${reLTP2ssr.toFixed(1)}</span> &#8594; <span class="prem-sell">EXIT &#8377;${reExitLTP2ssr>0?reExitLTP2ssr.toFixed(1):'—'}</span></div>`:''}
+                <div style="display:flex;align-items:center;gap:10px">
+                  <span class="${(reRs2ssr??0)>=0?'g':'r'}" style="font-size:1rem;font-weight:800" id="pos-done-rers">${_rsFmt(reRs2ssr)}</span>
+                  <span class="${(rePremPts2ssr??0)>=0?'g':'r'}" style="font-size:.75rem;font-weight:700" id="pos-done-repts">${_ptsFmt(rePremPts2ssr)}</span>
+                </div>
+              </div>` : ''}
+              <div style="display:flex;align-items:center;justify-content:space-between;border-top:1px solid var(--border-c);padding-top:8px">
+                <span style="font-size:.62rem;color:var(--muted);font-weight:700;text-transform:uppercase;letter-spacing:.06em">Day Total</span>
+                <div style="display:flex;align-items:center;gap:12px">
+                  <span class="${(hb2.dayRs??0)>=0?'g':'r'}" style="font-size:.8rem;font-weight:700" id="pos-done-daypts">${_ptsFmt(hb2.dayRs!=null?Math.round(hb2.dayRs/30):null)}</span>
+                  <span class="${(hb2.dayRs??0)>=0?'g':'r'}" style="font-size:1rem;font-weight:800" id="pos-done-dayrs">${_rsFmt(hb2.dayRs)}</span>
+                </div>
+              </div>
             </div>
-            <div class="pos-pnl-rs ${unreal2>=0?'g':'r'}" id="pos-lock50-rs">${fmtRs2(unreal2)}</div>
-            <div class="pos-pnl-pts ${unreal2>=0?'g':'r'}" id="pos-lock50-pts">${unreal2>=0?'+':''}${unreal2.toFixed(0)} index pts unrealised</div>
-            <div class="pos-gauge"><div class="pos-gauge-fill" id="pos-lock50-gauge" style="width:50%;background:${unreal2>=0?'#10b981':'#ef4444'}"></div></div>
-            <div class="pos-grid">
-              <div><div class="pos-lbl">Entry Index</div><div class="pos-val mono" id="pos-lock50-ep">${ep2.toFixed(1)}</div></div>
-              <div><div class="pos-lbl">Live Index</div><div class="pos-val g mono" id="pos-lock50-lp">${live2>0?live2.toFixed(1):'…'}</div></div>
-              <div><div class="pos-lbl">Stop Loss</div><div class="pos-val r mono">${sl2>0?sl2.toFixed(1):'—'}</div></div>
-              <div><div class="pos-lbl">SL Risk ₹</div><div class="pos-val r">−₹${_slRs2ssr}</div></div>
-              <div><div class="pos-lbl">Qty</div><div class="pos-val">${qty2>0?qty2:30}</div></div>
-              <div><div class="pos-lbl">Entry Time</div><div class="pos-val">${entryIST2||'—'}</div></div>
-            </div>
-            ${hb2.entryPremium||hb2.livePremium ? `
-            <div class="pos-divider"></div>
-            <div class="pos-prem-row">
-              ${hb2.entryPremium ? `<div class="pos-prem-cell"><span class="pos-prem-tag buy-tag">BUY Premium</span><span class="pos-prem-val">₹${hb2.entryPremium.toFixed(1)}</span></div>` : ''}
-              ${hb2.livePremium  ? `<div class="pos-prem-cell"><span class="pos-prem-tag" style="background:rgba(251,191,36,.15);color:#fbbf24">LIVE Premium</span><span class="pos-prem-val" id="pos-lock50-liveprem">₹${hb2.livePremium.toFixed(1)}</span></div>` : ''}
-            </div>` : ''}
           </div>
-          ` : `
-          <div class="watch-card" id="pos-lock50-flat">
-            <div class="watch-title"><span>⏳</span>Watching for Next Signal</div>
-            <div id="pos-lock50-watch" style="font-size:.78rem;color:var(--muted)"><span style="opacity:.4">Loading trigger levels…</span></div>
-          </div>`}
+
+          <!-- ── IN POSITION card ── -->
+          <div id="pos-lock50-card" style="${inTrade2&&ep2>0?'':'display:none'}">
+            <div class="pos-card pos-${(dir2||'ce').toLowerCase()}">
+              <div class="pos-hdr">
+                <span class="pos-live-dot"></span>
+                <span class="pos-badge pos-b-${(dir2||'ce').toLowerCase()}">${dir2||'?'} OPTION</span>
+                <span style="font-size:.62rem;font-weight:800;padding:2px 7px;border-radius:4px;background:rgba(251,191,36,.12);color:#fbbf24;border:1px solid rgba(251,191,36,.25)" id="pos-phase-badge">${inREPhase2?'&#9679; In RE':'&#9679; In T1'}</span>
+                <span class="pos-sym">${sym2||'BANKNIFTY'}</span>
+                <span class="pos-mode">${mode2}</span>
+                ${durStr2 ? `<span class="pos-dur">&#x23F1; ${durStr2}</span>` : ''}
+              </div>
+              ${inREPhase2 && hb2.t1Entry > 0 ? `
+              <div style="font-size:.68rem;color:var(--muted);background:var(--card);border:1px solid var(--border-c);border-radius:6px;padding:5px 9px;margin-bottom:8px;display:flex;align-items:center;gap:8px">
+                <span style="font-size:.58rem;font-weight:800;background:var(--border-c);padding:1px 5px;border-radius:3px;color:var(--muted)">T1</span>
+                <span class="db-badge ${(hb2.t1Dir||'ce').toLowerCase()}" style="font-size:.56rem">${hb2.t1Dir||'?'}</span>
+                <span style="font-size:.6rem;font-weight:700;background:rgba(5,150,105,.1);color:#34d399;padding:1px 5px;border-radius:3px">DONE</span>
+                <span class="${(t1Rs2ssr??0)>=0?'g':'r'}" style="font-weight:800;margin-left:auto">${_rsFmt(t1Rs2ssr)}</span>
+                <span class="${(t1PremPts2ssr??0)>=0?'g':'r'}">${_ptsFmt(t1PremPts2ssr)}</span>
+              </div>` : ''}
+              <div class="pos-pnl-rs ${unreal2>=0?'g':'r'}" id="pos-lock50-rs">${fmtRs2(unreal2)}</div>
+              <div class="pos-pnl-pts ${unreal2>=0?'g':'r'}" id="pos-lock50-pts">${unreal2>=0?'+':''}${unreal2.toFixed(0)} index pts unrealised</div>
+              <div class="pos-gauge"><div class="pos-gauge-fill" id="pos-lock50-gauge" style="width:50%;background:${unreal2>=0?'#10b981':'#ef4444'}"></div></div>
+              <div class="pos-grid">
+                <div><div class="pos-lbl">Entry Index</div><div class="pos-val mono" id="pos-lock50-ep">${ep2.toFixed(1)}</div></div>
+                <div><div class="pos-lbl">Live Index</div><div class="pos-val g mono" id="pos-lock50-lp">${live2>0?live2.toFixed(1):'…'}</div></div>
+                <div><div class="pos-lbl">Stop Loss</div><div class="pos-val r mono">${sl2>0?sl2.toFixed(1):'—'}</div></div>
+                <div><div class="pos-lbl">SL Risk &#8377;</div><div class="pos-val r">&#8722;&#8377;${_slRs2ssr}</div></div>
+                <div><div class="pos-lbl">Qty</div><div class="pos-val">${qty2>0?qty2:30}</div></div>
+                <div><div class="pos-lbl">Entry Time</div><div class="pos-val">${entryIST2||'—'}</div></div>
+              </div>
+              ${hb2.entryPremium||hb2.livePremium ? `
+              <div class="pos-divider"></div>
+              <div class="pos-prem-row">
+                ${hb2.entryPremium ? `<div class="pos-prem-cell"><span class="pos-prem-tag buy-tag">BUY Prem</span><span class="pos-prem-val">&#8377;${hb2.entryPremium.toFixed(1)}</span></div>` : ''}
+                ${hb2.livePremium  ? `<div class="pos-prem-cell"><span class="pos-prem-tag" style="background:rgba(251,191,36,.15);color:#fbbf24">LIVE Prem</span><span class="pos-prem-val" id="pos-lock50-liveprem">&#8377;${hb2.livePremium.toFixed(1)}</span></div>` : ''}
+              </div>` : ''}
+            </div>
+          </div>
+
+          <!-- ── WATCHING card ── -->
+          <div id="pos-lock50-flat" style="${!inTrade2&&!phaseDone2?'':'display:none'}">
+            <div class="watch-card">
+              <div class="watch-title"><span>&#x23F3;</span>Watching for Next Signal</div>
+              <div id="pos-lock50-watch" style="font-size:.78rem;color:var(--muted)"><span style="opacity:.4">Loading trigger levels&hellip;</span></div>
+            </div>
+          </div>
+
         </div>
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:10px">
           <div class="kpi-m">
@@ -10869,6 +10946,18 @@ app.get("/signals", featureGate("feature_signals", "Signals"), async (req, res) 
             <div class="kpi-m-l">Trades Today</div>
             <div class="kpi-m-v" id="ss-tc">${an2.today.trades}${inTrade2?'<span style="font-size:.6rem;color:#10b981"> +live</span>':''}</div>
             <div class="kpi-m-s"><span class="g" id="ss-wins">${an2.today.wins}W</span> / <span class="r" id="ss-losses">${an2.today.losses}L</span></div>
+          </div>
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:8px">
+          <div class="kpi-m" id="kpi-t1-cell" style="${hb2.t1Entry>0?'':'opacity:.4'}">
+            <div class="kpi-m-l">T1 P&amp;L <span style="font-size:.55rem;font-weight:600;padding:1px 4px;border-radius:3px;background:${(t1Rs2ssr??0)>=0?'rgba(5,150,105,.1)':'rgba(239,68,68,.1)'};color:${(t1Rs2ssr??0)>=0?'#34d399':'#f87171'}">${hb2.t1Entry>0?'REAL':'—'}</span></div>
+            <div class="kpi-m-v ${(t1Rs2ssr??0)>=0?'sig-green':'sig-red'}" id="kpi-t1-rs">${hb2.t1Entry>0?_rsFmt(t1Rs2ssr):'—'}</div>
+            <div class="kpi-m-s" id="kpi-t1-pts">${hb2.t1Entry>0?_ptsFmt(t1PremPts2ssr):'—'}</div>
+          </div>
+          <div class="kpi-m" id="kpi-re-cell" style="${hb2.reEntry>0?'':'opacity:.4'}">
+            <div class="kpi-m-l">RE P&amp;L <span style="font-size:.55rem;font-weight:600;padding:1px 4px;border-radius:3px;background:${(reRs2ssr??0)>=0?'rgba(5,150,105,.1)':'rgba(239,68,68,.1)'};color:${(reRs2ssr??0)>=0?'#34d399':'#f87171'}">${hb2.reEntry>0?'REAL':inREPhase2?'LIVE':'—'}</span></div>
+            <div class="kpi-m-v ${(reRs2ssr??0)>=0?'sig-green':'sig-red'}" id="kpi-re-rs">${hb2.reEntry>0?_rsFmt(reRs2ssr):'—'}</div>
+            <div class="kpi-m-s" id="kpi-re-pts">${hb2.reEntry>0?_ptsFmt(rePremPts2ssr):'—'}</div>
           </div>
         </div>
       </div>
@@ -12037,8 +12126,53 @@ app.get("/signals", featureGate("feature_signals", "Signals"), async (req, res) 
       const tpLock=ge('stab-pnl-lock50');if(tpLock){tpLock.textContent=fR(totPnl);tpLock.style.color=gc(totPnl);}
       const tpTrail=ge('stab-pnl-trail');if(tpTrail){tpTrail.textContent=fR(shPnl);tpTrail.style.color=gc(shPnl);}
       const tpL50o=ge('stab-pnl-l50o');if(tpL50o){tpL50o.textContent=fR(s1Pnl);tpL50o.style.color=gc(s1Pnl);}
+      const _phaseLblEl=ge('stab-phase-lbl');
+      if(_phaseLblEl){
+        var _isDone2=(hb.status||'').includes('DONE')||(d.aminaState?.phase==='DONE');
+        var _isRE2=inT&&(hb.reEntry??0)>0;
+        _phaseLblEl.textContent=_isDone2?'Done for Day':_isRE2?'In RE':inT?'In T1':'Watching';
+        _phaseLblEl.style.color=_isDone2?'#059669':inT?'#fbbf24':'var(--muted)';
+      }
 
-      // ── TICK TRAIL position card ────────────────────────────
+      // ── Position card state switching ──────────────────────────────────
+      var _pdone=ge('pos-lock50-done'),_plive=ge('pos-lock50-card'),_pwatch=ge('pos-lock50-flat');
+      var _isDonePhase=(hb.status||'').includes('DONE')||(d.aminaState?.phase==='DONE');
+      var _isREPhase=inT&&(hb.reEntry??0)>0;
+      if(_isDonePhase&&!inT){
+        if(_pdone)_pdone.style.display='';
+        if(_plive)_plive.style.display='none';
+        if(_pwatch)_pwatch.style.display='none';
+        // Update done card KPIs from aminaState
+        var _as=d.aminaState||{};
+        var _t1R=_as.t1Rs,_t1LP=_as.t1EntryLTP??0,_t1XP=_t1LP>0&&_t1R!=null?(+(_t1LP+_t1R/30).toFixed(1)):0;
+        var _reR=_as.reRs,_rLP=_as.reEntryLTP??0,_rXP=_rLP>0&&_reR!=null?(+(_rLP+_reR/30).toFixed(1)):0;
+        var _fmt=function(rs){return rs==null?'—':(rs>=0?'+':'−')+'₹'+Math.abs(rs).toLocaleString('en-IN');};
+        var _fpts=function(rs){if(rs==null)return'—';var p=Math.round(rs/30);return(p>=0?'+':'')+p+' prem pts';};
+        if(ge('pos-done-t1rs')&&_t1R!=null){ge('pos-done-t1rs').textContent=_fmt(_t1R);ge('pos-done-t1rs').className=_t1R>=0?'g':'r';}
+        if(ge('pos-done-t1pts')&&_t1R!=null){ge('pos-done-t1pts').textContent=_fpts(_t1R);ge('pos-done-t1pts').className=_t1R>=0?'g':'r';}
+        if(ge('pos-done-rers')&&_reR!=null){ge('pos-done-rers').textContent=_fmt(_reR);ge('pos-done-rers').className=_reR>=0?'g':'r';}
+        if(ge('pos-done-repts')&&_reR!=null){ge('pos-done-repts').textContent=_fpts(_reR);ge('pos-done-repts').className=_reR>=0?'g':'r';}
+        var _dR=hb.dayRs??0;var _dP=Math.round(_dR/30);
+        if(ge('pos-done-dayrs')){ge('pos-done-dayrs').textContent=_fmt(_dR);ge('pos-done-dayrs').className=_dR>=0?'g':'r';}
+        if(ge('pos-done-daypts')){ge('pos-done-daypts').textContent=_fpts(_dR);ge('pos-done-daypts').className=_dR>=0?'g':'r';}
+        // T1/RE KPI cells
+        if(ge('kpi-t1-rs')&&_t1R!=null){ge('kpi-t1-rs').textContent=_fmt(_t1R);ge('kpi-t1-rs').className='kpi-m-v '+((_t1R)>=0?'sig-green':'sig-red');}
+        if(ge('kpi-t1-pts')&&_t1R!=null)ge('kpi-t1-pts').textContent=_fpts(_t1R);
+        if(ge('kpi-re-rs')&&_reR!=null){ge('kpi-re-rs').textContent=_fmt(_reR);ge('kpi-re-rs').className='kpi-m-v '+((_reR)>=0?'sig-green':'sig-red');}
+        if(ge('kpi-re-pts')&&_reR!=null)ge('kpi-re-pts').textContent=_fpts(_reR);
+      }else if(inT&&ep>0){
+        if(_pdone)_pdone.style.display='none';
+        if(_plive)_plive.style.display='';
+        if(_pwatch)_pwatch.style.display='none';
+        var _phBadge=ge('pos-phase-badge');
+        if(_phBadge)_phBadge.textContent=_isREPhase?'● In RE':'● In T1';
+      }else{
+        if(_pdone)_pdone.style.display='none';
+        if(_plive)_plive.style.display='none';
+        if(_pwatch)_pwatch.style.display='';
+      }
+
+      // ── TICK TRAIL position card (live P&L update) ───────────────────
       if(inT&&ep>0){
         const g=ge('pos-lock50-rs');if(g){g.textContent=fR(unr);g.style.color=gc(unr);}
         const gp=ge('pos-lock50-pts');if(gp){gp.textContent=(unr>=0?'+':'')+unr.toFixed(0)+' index pts unrealised';gp.style.color=gc(unr);}
