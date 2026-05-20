@@ -10903,13 +10903,16 @@ app.get("/signals", featureGate("feature_signals", "Signals"), async (req, res) 
       <!-- DAILY panel (default visible) -->
       <div id="th-panel-d">
         <div class="tw"><table class="tt">
-          <thead><tr><th>Time</th><th>Dir</th><th>Buy Index</th><th>Buy Prem</th><th>Symbol</th><th>Sell Index</th><th>Sell Prem</th><th>Index P&amp;L</th><th>&#8377; P&amp;L</th><th>Reason</th><th>Dur</th></tr></thead>
+          <thead><tr><th>Time</th><th>Dir</th><th>Buy Index</th><th>Buy Prem</th><th>Symbol</th><th>Sell Index</th><th>Sell Prem</th><th>Prem P&amp;L</th><th>&#8377; P&amp;L</th><th>Reason</th><th>Dur</th></tr></thead>
           <tbody id="tt-body-lock50">
             ${closedToday2.length===0&&!inTrade2
               ? `<tr><td colspan="11" class="tt-e">No closed trades today</td></tr>`
               : [...closedToday2].reverse().map(t=>{
                   const d3=(t.direction||'').toLowerCase();
-                  const pts=t.pnl??0; const rs=t.pnlRs!=null?t.pnlRs:Math.round(pts*QTY_MULT2);
+                  const hasPrem2=(t.premiumEntry??0)>0&&(t.premiumExit??0)>0;
+                  const premPts2=hasPrem2?+(t.premiumExit-t.premiumEntry).toFixed(2):null;
+                  const pts=premPts2!==null?premPts2:(t.pnlRs!=null?t.pnlRs/30:(t.pnl??0));
+                  const rs=t.pnlRs!=null?t.pnlRs:(premPts2!==null?Math.round(premPts2*30):Math.round((t.pnl??0)*QTY_MULT2));
                   const reason=t.reasonExit||'—';
                   const rTag=reason.toLowerCase().includes('sl')||reason.toLowerCase().includes('stop')?'rc-sl':reason.toLowerCase().includes('trail')||reason.toLowerCase().includes('early')?'rc-trail':'rc-eod';
                   const dur=t.duration?(t.duration<60?t.duration+'s':Math.round(t.duration/60)+'m'):'—';
@@ -10935,7 +10938,7 @@ app.get("/signals", featureGate("feature_signals", "Signals"), async (req, res) 
       <!-- WEEKLY panel -->
       <div id="th-panel-w" style="display:none">
         <div class="tw"><table class="tt">
-          <thead><tr><th>Date</th><th>Dir</th><th>Buy Index</th><th>Buy Prem</th><th>Symbol</th><th>Sell Index</th><th>Sell Prem</th><th>Index P&amp;L</th><th>&#8377; P&amp;L</th><th>Reason</th></tr></thead>
+          <thead><tr><th>Date</th><th>Dir</th><th>Buy Index</th><th>Buy Prem</th><th>Symbol</th><th>Sell Index</th><th>Sell Prem</th><th>Prem P&amp;L</th><th>&#8377; P&amp;L</th><th>Reason</th></tr></thead>
           <tbody id="tt-body-weekly">
             ${(()=>{
               const _7d=new Date(); _7d.setDate(_7d.getDate()-7);
@@ -10943,7 +10946,10 @@ app.get("/signals", featureGate("feature_signals", "Signals"), async (req, res) 
               if(!wkT.length) return '<tr><td colspan="10" class="tt-e">No trades in last 7 days</td></tr>';
               return wkT.map(t=>{
                 const d3=(t.direction||'').toLowerCase();
-                const pts=t.pnl??0; const rs=t.pnlRs!=null?t.pnlRs:Math.round(pts*QTY_MULT2);
+                const hasPremW=(t.premiumEntry??0)>0&&(t.premiumExit??0)>0;
+                const premPtsW=hasPremW?+(t.premiumExit-t.premiumEntry).toFixed(2):null;
+                const pts=premPtsW!==null?premPtsW:(t.pnlRs!=null?t.pnlRs/30:(t.pnl??0));
+                const rs=t.pnlRs!=null?t.pnlRs:(premPtsW!==null?Math.round(premPtsW*30):Math.round((t.pnl??0)*QTY_MULT2));
                 const reason=t.reasonExit||'—';
                 const rTag=reason.toLowerCase().includes('sl')?'rc-sl':reason.toLowerCase().includes('trail')||reason.toLowerCase().includes('early')?'rc-trail':'rc-eod';
                 return `<tr>
@@ -12087,15 +12093,16 @@ app.get("/signals", featureGate("feature_signals", "Signals"), async (req, res) 
       if(d.todayTrades){
         const tbody=ge('tt-body-lock50');
         if(tbody){
-          const QM2=15;
           const cl=[...d.todayTrades].filter(function(t){return t.exitPrice&&t.exitPrice>0;});
           const cnt=ge('tt-count');
           if(cnt)cnt.textContent='('+cl.length+' closed'+(inT?' + 1 live':'')+')'+'';
           if(cl.length>0){
             tbody.innerHTML=[...cl].reverse().map(function(t){
               const d3=(t.direction||'').toLowerCase();
-              const pts=t.pnl??0;
-              const rs=t.pnlRs!=null?t.pnlRs:Math.round(pts*QM2);
+              const hasPremC=(t.premiumEntry??0)>0&&(t.premiumExit??0)>0;
+              const premPtsC=hasPremC?+(t.premiumExit-t.premiumEntry).toFixed(2):null;
+              const pts=premPtsC!==null?premPtsC:(t.pnlRs!=null?t.pnlRs/30:(t.pnl??0));
+              const rs=t.pnlRs!=null?t.pnlRs:(premPtsC!==null?Math.round(premPtsC*30):Math.round((t.pnl??0)*15));
               const reason=t.reasonExit||'—';
               const rTag=reason.toLowerCase().includes('sl')||reason.toLowerCase().includes('stop')?'rc-sl':reason.toLowerCase().includes('trail')||reason.toLowerCase().includes('early')?'rc-trail':'rc-eod';
               const dur=t.duration?(t.duration<60?t.duration+'s':Math.round(t.duration/60)+'m'):'—';
