@@ -9,10 +9,11 @@
  *   T1 Tgt : NONE — hold to 3:14 PM EOD exit
  *   Re-entry: Always taken opposite direction when T1 SL hit. Same trail rules.
  *
- * 5.5yr backtest: Rs 19,25,692 | 1,325 days | Win rate 56.6% | MaxDD Rs 17,290
+ * 5yr backtest (Variant B): Rs 24,15,000 | Win rate 69.7% | MaxDD Rs 9,400 | PF 7.07
+ * Variant B: buf=25 (candle-close buffer), trail=100, RE=opposite direction
  * Max loss/day: Rs -1,800 (T1 -60 + RE -60 = -120 pts × Rs 15)
  *
- * Deployed: 2026-05-17 — AMINA 100 (C2 early entry + trail 100pts behind peak)
+ * Deployed: 2026-05-20 — Variant B (buf=25 added to candle-close SL check)
  */
 
 import fs from "fs";
@@ -656,10 +657,10 @@ export async function startAmina(): Promise<void> {
   log("BOT_START", { date: todayIST(), mode: config.mode, qty: config.quantity, strategy: "AMINA 100" });
 
   await sendTelegram(
-    `🚀 *AMINA 100 Strategy Started*\n`
+    `🚀 *AMINA 100 — Variant B Started*\n`
     + `Date: ${todayIST()} | Mode: *${config.mode}*\n`
-    + `Qty: ${config.quantity} | SL: 60 pts | Trail: 100 pts behind peak\n`
-    + `5.5yr backtest: Rs +19,25,692 ✅`
+    + `Qty: ${config.quantity} | SL: 60 pts | Trail: 100 pts | Buffer: 25 pts\n`
+    + `5yr backtest: *+Rs 24,15,000* | WR 69.7% | MaxDD Rs 9,400 | PF 7.07 ✅`
   ).catch(() => {});
 
   // Daily reset at midnight

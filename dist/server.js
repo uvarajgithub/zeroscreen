@@ -4505,10 +4505,13 @@ function computeAnalytics(trades) {
     const todayTrades = trades.filter((t) => (t.date || "").startsWith(today));
     const allWins = trades.filter((t) => t.pnl > 0).length;
     const allTotal = trades.length;
-    let equity = 0, peak = 0, maxDD = 0;
+    // Prefer actual option premium P&L (pnlRs) when available, fall back to index pts × 15
+    const rsOf = (t) => (t.pnlRs != null && t.pnlRs !== 0) ? t.pnlRs : Math.round((t.pnl ?? 0) * 15);
+    let equity = 0, equityRs = 0, peak = 0, maxDD = 0;
     const equityCurve = [];
     for (const t of trades) {
         equity += t.pnl ?? 0;
+        equityRs += rsOf(t);
         if (equity > peak)
             peak = equity;
         const dd = peak - equity;
@@ -4516,9 +4519,10 @@ function computeAnalytics(trades) {
             maxDD = dd;
         equityCurve.push(parseFloat(equity.toFixed(1)));
     }
-    let todayEq = 0, todayPeak = 0, todayMaxDD = 0;
+    let todayEq = 0, todayEqRs = 0, todayPeak = 0, todayMaxDD = 0;
     for (const t of todayTrades) {
         todayEq += t.pnl ?? 0;
+        todayEqRs += rsOf(t);
         if (todayEq > todayPeak)
             todayPeak = todayEq;
         const dd = todayPeak - todayEq;
@@ -4532,6 +4536,7 @@ function computeAnalytics(trades) {
     const wkTrades = trades.filter((t) => t.date && new Date(t.date) >= wkAgo);
     const wkWins = wkTrades.filter((t) => t.pnl > 0).length;
     const wkPnl = parseFloat(wkTrades.reduce((s, t) => s + (t.pnl ?? 0), 0).toFixed(1));
+    const wkPnlRs = wkTrades.reduce((s, t) => s + rsOf(t), 0);
     // Monthly breakdown
     const monthMap = {};
     for (const t of trades) {
@@ -4539,9 +4544,10 @@ function computeAnalytics(trades) {
             continue;
         const mk = t.date.slice(0, 7);
         if (!monthMap[mk])
-            monthMap[mk] = { trades: 0, wins: 0, losses: 0, pnl: 0 };
+            monthMap[mk] = { trades: 0, wins: 0, losses: 0, pnl: 0, pnlRs: 0 };
         monthMap[mk].trades++;
         monthMap[mk].pnl = parseFloat((monthMap[mk].pnl + (t.pnl ?? 0)).toFixed(1));
+        monthMap[mk].pnlRs += rsOf(t);
         if ((t.pnl ?? 0) > 0)
             monthMap[mk].wins++;
         else
@@ -4553,11 +4559,13 @@ function computeAnalytics(trades) {
         winRate: monthMap[month].trades > 0 ? parseFloat(((monthMap[month].wins / monthMap[month].trades) * 100).toFixed(1)) : 0,
     }));
     return {
+        todayTrades,
         today: {
             trades: todayTrades.length,
             wins: todayTrades.filter((t) => t.pnl > 0).length,
             losses: todayTrades.filter((t) => t.pnl <= 0).length,
             pnl: parseFloat(todayEq.toFixed(1)),
+            pnlRs: todayEqRs,
             maxDD: parseFloat(todayMaxDD.toFixed(1)),
         },
         weekly: {
@@ -4565,6 +4573,7 @@ function computeAnalytics(trades) {
             wins: wkWins,
             losses: wkTrades.length - wkWins,
             pnl: wkPnl,
+            pnlRs: wkPnlRs,
         },
         monthly,
         allTime: {
@@ -4573,6 +4582,7 @@ function computeAnalytics(trades) {
             losses: allTotal - allWins,
             winRate: allTotal > 0 ? parseFloat(((allWins / allTotal) * 100).toFixed(1)) : 0,
             pnl: parseFloat(equity.toFixed(1)),
+            pnlRs: equityRs,
             maxDD: parseFloat(maxDD.toFixed(1)),
         },
         equityCurve,
@@ -6393,15 +6403,15 @@ app.post("/api/bot/action", requireAdmin, (req, res) => {
     const { action } = req.body;
     try {
         if (action === "restart") {
-            (0, child_process_1.execSync)("pm2 restart trading-bot", { stdio: "ignore" });
+            (0, child_process_1.execSync)("pm2 restart amina-100-variant-b", { stdio: "ignore" });
             res.json({ ok: true, msg: "Bot restarted" });
         }
         else if (action === "stop") {
-            (0, child_process_1.execSync)("pm2 stop trading-bot", { stdio: "ignore" });
+            (0, child_process_1.execSync)("pm2 stop amina-100-variant-b", { stdio: "ignore" });
             res.json({ ok: true, msg: "Bot stopped" });
         }
         else if (action === "start") {
-            (0, child_process_1.execSync)("pm2 start trading-bot", { stdio: "ignore" });
+            (0, child_process_1.execSync)("pm2 start amina-100-variant-b", { stdio: "ignore" });
             res.json({ ok: true, msg: "Bot started" });
         }
         else {
@@ -10314,6 +10324,7 @@ app.get("/signals", featureGate("feature_signals", "Signals"), async (req, res) 
         function pnlCls2(v) { return v >= 0 ? "sig-green" : "sig-red"; }
         function fmtPts2(v) { return `${v >= 0 ? "+" : ""}${v.toFixed(0)} pts`; }
         function fmtRs2(v) { const r = Math.round(v * QTY_MULT2); return `${r >= 0 ? "+" : "−"}₹${Math.abs(r).toLocaleString("en-IN")}`; }
+        function fmtActRs2(pnlRs, pnl) { const r = (pnlRs != null) ? pnlRs : Math.round((pnl ?? 0) * QTY_MULT2); return `${r >= 0 ? "+" : "−"}₹${Math.abs(r).toLocaleString("en-IN")}`; }
         function fmtBoth2(v) { return `${fmtPts2(v)} <span class="rs-sub">${fmtRs2(v)}</span>`; }
         function rcCls(r) {
             if (!r)
@@ -10626,7 +10637,7 @@ app.get("/signals", featureGate("feature_signals", "Signals"), async (req, res) 
       <button class="stab act" id="stab-lock50" type="button" onclick="_sTab('lock50')">
         <span class="stab-name">&#9679; AMINA 100</span>
         <span class="stab-sub">LIVE v2.0</span>
-        <span class="stab-pnl" id="stab-pnl-lock50" style="color:${an2.today.pnl>=0?'#059669':'#dc2626'}">${fmtRs2(an2.today.pnl)}</span>
+        <span class="stab-pnl" id="stab-pnl-lock50" style="color:${an2.today.pnl>=0?'#059669':'#dc2626'}">${fmtActRs2(an2.today.pnlRs, an2.today.pnl)}</span>
       </button>
       <button class="stab" id="stab-vmt" type="button" onclick="_sTab('vmt')">
         <span class="stab-name">&#128161; VMT</span>
@@ -10788,7 +10799,7 @@ app.get("/signals", featureGate("feature_signals", "Signals"), async (req, res) 
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:10px">
           <div class="kpi-m">
             <div class="kpi-m-l">Today P&amp;L</div>
-            <div class="kpi-m-v ${pnlCls2(an2.today.pnl)}" id="ss-today-rs">${fmtRs2(an2.today.pnl)}</div>
+            <div class="kpi-m-v ${pnlCls2(an2.today.pnl)}" id="ss-today-rs">${fmtActRs2(an2.today.pnlRs, an2.today.pnl)}</div>
             <div class="kpi-m-s" id="ss-today-pts">${fmtPts2(an2.today.pnl)}</div>
           </div>
           <div class="kpi-m">
@@ -10805,12 +10816,12 @@ app.get("/signals", featureGate("feature_signals", "Signals"), async (req, res) 
     <div class="kpi-mini" style="grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:8px;margin-bottom:1rem">
       <div class="kpi-m">
         <div class="kpi-m-l">This Week</div>
-        <div class="kpi-m-v ${pnlCls2(an2.weekly.pnl)}" id="ss-wk-rs">${fmtRs2(an2.weekly.pnl)}</div>
+        <div class="kpi-m-v ${pnlCls2(an2.weekly.pnl)}" id="ss-wk-rs">${fmtActRs2(an2.weekly.pnlRs, an2.weekly.pnl)}</div>
         <div class="kpi-m-s" id="ss-wk-pts">${fmtPts2(an2.weekly.pnl)}</div>
       </div>
       <div class="kpi-m">
         <div class="kpi-m-l">All-Time P&amp;L</div>
-        <div class="kpi-m-v ${pnlCls2(an2.allTime.pnl)}">${fmtRs2(an2.allTime.pnl)}</div>
+        <div class="kpi-m-v ${pnlCls2(an2.allTime.pnl)}">${fmtActRs2(an2.allTime.pnlRs, an2.allTime.pnl)}</div>
         <div class="kpi-m-s">${fmtPts2(an2.allTime.pnl)}</div>
       </div>
       <div class="kpi-m">
@@ -10840,7 +10851,7 @@ app.get("/signals", featureGate("feature_signals", "Signals"), async (req, res) 
               ? `<tr><td colspan="9" class="tt-e">No closed trades today</td></tr>`
               : [...closedToday2].reverse().map(t=>{
                   const d3=(t.direction||'').toLowerCase();
-                  const pts=t.pnl??0; const rs=Math.round(pts*QTY_MULT2);
+                  const pts=t.pnl??0; const rs=(t.pnlRs!=null&&t.pnlRs!==0)?t.pnlRs:Math.round(pts*QTY_MULT2);
                   const reason=t.reasonExit||'—';
                   const rTag=reason.toLowerCase().includes('sl')||reason.toLowerCase().includes('stop')?'rc-sl':reason.toLowerCase().includes('trail')||reason.toLowerCase().includes('early')?'rc-trail':'rc-eod';
                   const dur=t.duration?(t.duration<60?t.duration+'s':Math.round(t.duration/60)+'m'):'—';
@@ -10872,7 +10883,7 @@ app.get("/signals", featureGate("feature_signals", "Signals"), async (req, res) 
               if(!wkT.length) return '<tr><td colspan="7" class="tt-e">No trades in last 7 days</td></tr>';
               return wkT.map(t=>{
                 const d3=(t.direction||'').toLowerCase();
-                const pts=t.pnl??0; const rs=Math.round(pts*QTY_MULT2);
+                const pts=t.pnl??0; const rs=(t.pnlRs!=null&&t.pnlRs!==0)?t.pnlRs:Math.round(pts*QTY_MULT2);
                 const reason=t.reasonExit||'—';
                 const rTag=reason.toLowerCase().includes('sl')?'rc-sl':reason.toLowerCase().includes('trail')||reason.toLowerCase().includes('early')?'rc-trail':'rc-eod';
                 return `<tr>
@@ -10900,7 +10911,7 @@ app.get("/signals", featureGate("feature_signals", "Signals"), async (req, res) 
               : an2.monthly.map(m=>{
                   const [y,mo]=m.month.split('-');
                   const ml=new Date(parseInt(y),parseInt(mo)-1,1).toLocaleString('en-IN',{month:'long',year:'numeric'});
-                  const rs=Math.round(m.pnl*QTY_MULT2);
+                  const rs=(m.pnlRs!=null)?m.pnlRs:Math.round(m.pnl*QTY_MULT2);
                   return `<tr>
                     <td style="font-weight:600">${ml}</td>
                     <td class="${m.pnl>=0?'g':'r'}" style="font-weight:800">${rs>=0?'+':'&#8722;'}&#8377;${Math.abs(rs).toLocaleString('en-IN')}</td>
@@ -11765,9 +11776,10 @@ app.get("/signals", featureGate("feature_signals", "Signals"), async (req, res) 
 
       // ── Tab P&L badges ──────────────────────────────────────
       const totPnl=parseFloat(((d.today?.pnl||0)+(inT?unr:0)).toFixed(0));
+      const totPnlRs=d.today?.pnlRs!=null?(d.today.pnlRs+(inT?Math.round(unr*15):0)):Math.round(totPnl*15);
       const shPnl=parseFloat((hb.shadowPnL||0).toFixed(0));
       const s1Pnl=parseFloat((hb.scalp1PnL||0).toFixed(0));
-      const tpLock=ge('stab-pnl-lock50');if(tpLock){tpLock.textContent=fR(totPnl);tpLock.style.color=gc(totPnl);}
+      const tpLock=ge('stab-pnl-lock50');if(tpLock){const _s=totPnlRs>=0?'+':'\u2212';tpLock.textContent=_s+'\u20B9'+Math.abs(totPnlRs).toLocaleString('en-IN');tpLock.style.color=gc(totPnl);}
       const tpTrail=ge('stab-pnl-trail');if(tpTrail){tpTrail.textContent=fR(shPnl);tpTrail.style.color=gc(shPnl);}
       const tpL50o=ge('stab-pnl-l50o');if(tpL50o){tpL50o.textContent=fR(s1Pnl);tpL50o.style.color=gc(s1Pnl);}
 
@@ -11810,7 +11822,7 @@ app.get("/signals", featureGate("feature_signals", "Signals"), async (req, res) 
       // ── Session stats ───────────────────────────────────────
       if(d.today){
         const tot=parseFloat(((d.today.pnl||0)+(inT?unr:0)).toFixed(0));
-        if(ge('ss-today-rs')){ge('ss-today-rs').textContent=fR(tot);ge('ss-today-rs').style.color=gc(tot);}
+        if(ge('ss-today-rs')){const _totRs=d.today.pnlRs!=null?(d.today.pnlRs+(inT?Math.round(unr*15):0)):Math.round(tot*15);const _tsign=_totRs>=0?'+':'\u2212';ge('ss-today-rs').textContent=_tsign+'\u20B9'+Math.abs(_totRs).toLocaleString('en-IN');ge('ss-today-rs').style.color=gc(tot);}
         // Unrealised sub-row
         var unrRow=ge('ss-unr-row');
         if(unrRow){
@@ -11827,7 +11839,8 @@ app.get("/signals", featureGate("feature_signals", "Signals"), async (req, res) 
         if(ge('ss-losses'))ge('ss-losses').textContent=d.today.losses+'L';
       }
       if(d.weekly){
-        if(ge('ss-wk-rs')){ge('ss-wk-rs').textContent=fR(d.weekly.pnl);ge('ss-wk-rs').style.color=gc(d.weekly.pnl);}
+        const _wkRs=d.weekly.pnlRs!=null?d.weekly.pnlRs:Math.round((d.weekly.pnl||0)*15);
+        if(ge('ss-wk-rs')){const _wsign=_wkRs>=0?'+':'\u2212';ge('ss-wk-rs').textContent=_wsign+'\u20B9'+Math.abs(_wkRs).toLocaleString('en-IN');ge('ss-wk-rs').style.color=gc(d.weekly.pnl);}
         if(ge('ss-wk-pts'))ge('ss-wk-pts').textContent=fP(d.weekly.pnl);
       }
       if(d.allTime&&ge('ss-wr'))ge('ss-wr').textContent=d.allTime.winRate+'%';
@@ -12112,6 +12125,7 @@ app.get("/signals", featureGate("feature_signals", "Signals"), async (req, res) 
     const closedTodayG = trades.filter((t) => (t.date || "").startsWith(todayStrG) && t.exitPrice && t.exitPrice > 0);
     const QTY_MULT_G = 15;
     function fmtRsG(v) { const r = Math.round(v * QTY_MULT_G); return (r >= 0 ? "+" : "\u2212") + "\u20B9" + Math.abs(r).toLocaleString("en-IN"); }
+    function fmtActRsG(pnlRs, pnl) { const r = (pnlRs != null) ? pnlRs : Math.round((pnl ?? 0) * QTY_MULT_G); return (r >= 0 ? "+" : "\u2212") + "\u20B9" + Math.abs(r).toLocaleString("en-IN"); }
     function fmtPtsG(v) { return (v >= 0 ? "+" : "") + v.toFixed(0) + " pts"; }
     const tierLabel = loggedIn ? "\uD83D\uDD14 Member" : "\uD83D\uDC64 Guest";
     const tierClass = loggedIn ? "sig-tier-free" : "sig-tier-guest";
@@ -12224,7 +12238,7 @@ app.get("/signals", featureGate("feature_signals", "Signals"), async (req, res) 
     <div class="sig3-kpis">
       <div class="sig3-kpi">
         <div class="sig3-kl">Today P&amp;L</div>
-        <div class="sig3-kv ${analytics.today.pnl >= 0 ? 'sig3-g' : 'sig3-r'}" id="gv-today-rs"><span class="${!loggedIn ? 'sig-blur' : ''}">${fmtRsG(analytics.today.pnl)}</span></div>
+        <div class="sig3-kv ${analytics.today.pnl >= 0 ? 'sig3-g' : 'sig3-r'}" id="gv-today-rs"><span class="${!loggedIn ? 'sig-blur' : ''}">${fmtActRsG(analytics.today.pnlRs, analytics.today.pnl)}</span></div>
         <div class="sig3-ks sig3-d" id="gv-today-pts"><span class="${!loggedIn ? 'sig-blur' : ''}">${fmtPtsG(analytics.today.pnl)}</span></div>
       </div>
       <div class="sig3-kpi">
@@ -12234,12 +12248,12 @@ app.get("/signals", featureGate("feature_signals", "Signals"), async (req, res) 
       </div>
       <div class="sig3-kpi">
         <div class="sig3-kl">This Week</div>
-        <div class="sig3-kv ${analytics.weekly.pnl >= 0 ? 'sig3-g' : 'sig3-r'}" id="gv-wk-rs"><span class="${!loggedIn ? 'sig-blur' : ''}">${fmtRsG(analytics.weekly.pnl)}</span></div>
+        <div class="sig3-kv ${analytics.weekly.pnl >= 0 ? 'sig3-g' : 'sig3-r'}" id="gv-wk-rs"><span class="${!loggedIn ? 'sig-blur' : ''}">${fmtActRsG(analytics.weekly.pnlRs, analytics.weekly.pnl)}</span></div>
         <div class="sig3-ks sig3-d" id="gv-wk-pts"><span class="${!loggedIn ? 'sig-blur' : ''}">${fmtPtsG(analytics.weekly.pnl)}</span></div>
       </div>
       <div class="sig3-kpi">
         <div class="sig3-kl">All-Time P&amp;L</div>
-        <div class="sig3-kv ${analytics.allTime.pnl >= 0 ? 'sig3-g' : 'sig3-r'}"><span class="${!loggedIn ? 'sig-blur' : ''}">${fmtRsG(analytics.allTime.pnl)}</span></div>
+        <div class="sig3-kv ${analytics.allTime.pnl >= 0 ? 'sig3-g' : 'sig3-r'}"><span class="${!loggedIn ? 'sig-blur' : ''}">${fmtActRsG(analytics.allTime.pnlRs, analytics.allTime.pnl)}</span></div>
         <div class="sig3-ks sig3-d"><span class="${!loggedIn ? 'sig-blur' : ''}">${fmtPtsG(analytics.allTime.pnl)}</span></div>
       </div>
       <div class="sig3-kpi">
@@ -12387,6 +12401,7 @@ app.get("/signals", featureGate("feature_signals", "Signals"), async (req, res) 
   <script>
   const _GQM = 15;
   function _gfR(v){const r=Math.round(v*_GQM);return(r>=0?"+":"\u2212")+"\u20B9"+Math.abs(r).toLocaleString("en-IN");}
+  function _gfActR(pnlRs,pnl){const r=(pnlRs!=null)?pnlRs:Math.round((pnl??0)*_GQM);return(r>=0?"+":"\u2212")+"\u20B9"+Math.abs(r).toLocaleString("en-IN");}
   function _gfP(v){return(v>=0?"+":"")+v.toFixed(0)+" pts";}
   function _gc2(v){return v>=0?"#10b981":"#ef4444";}
   function _ge2(id){return document.getElementById(id);}
@@ -12413,14 +12428,14 @@ app.get("/signals", featureGate("feature_signals", "Signals"), async (req, res) 
       const _isGuest=${!loggedIn};
       // Only update numeric KPIs live if logged in — guests keep blurred SSR values
       if(_isGuest){
-        if(_ge2("gv-today-rs")){_ge2("gv-today-rs").innerHTML='<span class="sig-blur">'+_gfR(tot)+'</span>';_ge2("gv-today-rs").style.color=_gc2(tot);}
+        if(_ge2("gv-today-rs")){_ge2("gv-today-rs").innerHTML='<span class="sig-blur">'+_gfActR(d.today?.pnlRs,tot)+'</span>';_ge2("gv-today-rs").style.color=_gc2(tot);}
         if(_ge2("gv-today-pts"))_ge2("gv-today-pts").innerHTML='<span class="sig-blur">'+_gfP(tot)+(inT?" (incl. live)":"")+'</span>';
-        if(_ge2("gv-wk-rs")&&d.weekly){_ge2("gv-wk-rs").innerHTML='<span class="sig-blur">'+_gfR(d.weekly.pnl)+'</span>';_ge2("gv-wk-rs").style.color=_gc2(d.weekly.pnl);}
+        if(_ge2("gv-wk-rs")&&d.weekly){_ge2("gv-wk-rs").innerHTML='<span class="sig-blur">'+_gfActR(d.weekly?.pnlRs,d.weekly.pnl)+'</span>';_ge2("gv-wk-rs").style.color=_gc2(d.weekly.pnl);}
         if(_ge2("gv-wk-pts")&&d.weekly)_ge2("gv-wk-pts").innerHTML='<span class="sig-blur">'+_gfP(d.weekly.pnl)+'</span>';
       } else {
-        if(_ge2("gv-today-rs")){_ge2("gv-today-rs").textContent=_gfR(tot);_ge2("gv-today-rs").style.color=_gc2(tot);}
+        if(_ge2("gv-today-rs")){_ge2("gv-today-rs").textContent=_gfActR(d.today?.pnlRs,tot);_ge2("gv-today-rs").style.color=_gc2(tot);}
         if(_ge2("gv-today-pts"))_ge2("gv-today-pts").textContent=_gfP(tot)+(inT?" (incl. live)":"");
-        if(_ge2("gv-wk-rs")&&d.weekly){_ge2("gv-wk-rs").textContent=_gfR(d.weekly.pnl);_ge2("gv-wk-rs").style.color=_gc2(d.weekly.pnl);}
+        if(_ge2("gv-wk-rs")&&d.weekly){_ge2("gv-wk-rs").textContent=_gfActR(d.weekly?.pnlRs,d.weekly.pnl);_ge2("gv-wk-rs").style.color=_gc2(d.weekly.pnl);}
         if(_ge2("gv-wk-pts")&&d.weekly)_ge2("gv-wk-pts").textContent=_gfP(d.weekly.pnl);
       }
       const tc=d.heartbeat?.tradeCount??d.today?.trades??0;
