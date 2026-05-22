@@ -17,7 +17,7 @@
  */
 
 import fs from "fs";
-import { getBestOptionSymbol, getCurrentPrice, getDayOpenPrice } from "./market";
+import { getBestOptionSymbol, getCurrentPrice, getDayOpenPrice, getOptionLTP } from "./market";
 import { placeTrade, exitTrade } from "./order";
 import { sendTelegram } from "./notifier";
 import { config } from "./config";
@@ -29,12 +29,18 @@ kite.setAccessToken(config.accessToken);
 
 const INSTRUMENT_TOKEN = config.instrument.token; // 260105
 const IST_OFFSET_MS    = (5 * 60 + 30) * 60 * 1000;
-const SL_INITIAL       = 60;  // fixed SL for both T1 and RE
+const SL_INITIAL       = 60;  // fixed index-pts SL for both T1 and RE
 const TRAIL_GAP        = 100; // trail SL = entry + max(0, peak − TRAIL_GAP)
+const BUFFER           = 25;  // candle-close must be ≥ 25 pts past SL before exit (avoids wicks)
+const PREM_SL          = 50;  // fixed premium SL: exit if option LTP drops ≥ 50 from entry
 const RS_PER_PT        = 15;  // 30 qty × 0.5 delta × Rs 1/pt
 
 // ── Types ────────────────────────────────────────────────────────────────────
 type Phase = "SCANNING" | "IN_T1" | "IN_RE" | "DONE";
+function errStr(e: unknown): string {
+  if (e instanceof Error) return e.message;
+  try { return JSON.stringify(e); } catch (_) { return String(e); }
+}
 
 interface AminaState {
   date         : string;
@@ -50,6 +56,8 @@ interface AminaState {
   t1Rule       : string;
   // Peak tracking (LockBE trail)
   t1Peak       : number;
+  t1EntryLTP   : number;
+  t1Rs         : number;
   rePeak       : number;
   // SL candle snapshot
   slClose      : number;
@@ -60,25 +68,71 @@ interface AminaState {
   reSymbol     : string;
   reEntryTime  : string;
   rePts        : number;
+  reEntryLTP   : number;
+  reRs         : number;
   // Day totals
   dayPts       : number;
   dayRs        : number;
   // Candle tracking
   lastCandleKey: string;
+  t1SlConfirmPending: boolean;
+  reSlConfirmPending: boolean;
 }
 
 // ── State ────────────────────────────────────────────────────────────────────
-const STATE_FILE = "amina-state.json";
+const STATE_FILE      = "amina-state.json";
+const CANDLE_LOG_FILE = "amina-candle-log.json";
+const TRADES_FILE      = "trades.json";
 let state: AminaState = makeState();
 let _lastKey = "";
+let _candleHistory: Array<{t:number;open:number;high:number;low:number;close:number}> = [];
+
+function logCandleEvent(ev: Record<string, any>) {
+  try {
+    const existing: any[] = fs.existsSync(CANDLE_LOG_FILE)
+      ? JSON.parse(fs.readFileSync(CANDLE_LOG_FILE, "utf-8"))
+      : [];
+    existing.push({ ...ev, time: nowIST() });
+    fs.writeFileSync(CANDLE_LOG_FILE, JSON.stringify(existing));
+  } catch (_) {}
+}
+
+
+function saveTrade(opts: {
+  dir: 'CE' | 'PE'; symbol: string;
+  entryPrice: number; exitPrice: number;
+  premiumEntry: number; premiumExit: number;
+  pnl: number; pnlRs: number;
+  reasonExit: string; entryTime: string;
+}) {
+  try {
+    const existing: any[] = fs.existsSync(TRADES_FILE)
+      ? JSON.parse(fs.readFileSync(TRADES_FILE, 'utf-8'))
+      : [];
+    const exitTime = nowIST();
+    const dur = opts.entryTime
+      ? Math.round((new Date(exitTime).getTime() - new Date(opts.entryTime).getTime()) / 1000)
+      : 0;
+    existing.push({
+      date: opts.entryTime, direction: opts.dir, symbol: opts.symbol,
+      entryPrice: opts.entryPrice, exitPrice: opts.exitPrice,
+      premiumEntry: opts.premiumEntry, premiumExit: opts.premiumExit,
+      pnl: opts.pnl, pnlRs: opts.pnlRs, reasonExit: opts.reasonExit, duration: dur,
+    });
+    fs.writeFileSync(TRADES_FILE, JSON.stringify(existing, null, 2));
+  } catch (_) {}
+}
 
 function makeState(): AminaState {
   return {
     date: "", phase: "SCANNING", dayOpen: 0,
     t1Dir: null, t1Entry: 0, t1Symbol: "", t1EntryTime: "", t1Pts: 0, t1BreakLevel: 0, t1Rule: "", t1Peak: 0,
+    t1EntryLTP: 0, t1Rs: 0,
     slClose: 0, slTime: "",
     reDir: null, reEntry: 0, reSymbol: "", reEntryTime: "", rePts: 0, rePeak: 0,
-    dayPts: 0, dayRs: 0, lastCandleKey: "",
+    reEntryLTP: 0, reRs: 0,
+    dayPts: 0, dayRs: 0, lastCandleKey: "", t1SlConfirmPending: false, reSlConfirmPending: false,
+
   };
 }
 
@@ -92,27 +146,6 @@ function loadState() {
     const s = JSON.parse(fs.readFileSync(STATE_FILE, "utf-8")) as AminaState;
     if (s.date === todayIST()) { state = s; _lastKey = s.lastCandleKey; }
   } catch (_) {}
-}
-
-// ── Append completed trade record to trades.json (for dashboard) ─────────────
-function appendTrade(tradeObj: Record<string, unknown>) {
-  try {
-    const TRADES_FILE = "trades.json";
-    const existing: unknown[] = fs.existsSync(TRADES_FILE)
-      ? JSON.parse(fs.readFileSync(TRADES_FILE, "utf-8"))
-      : [];
-    if (!Array.isArray(existing)) return;
-    existing.push(tradeObj);
-    fs.writeFileSync(TRADES_FILE, JSON.stringify(existing, null, 2));
-  } catch (e) {
-    log("APPEND_TRADE_ERROR", { error: e instanceof Error ? e.message : String(e) });
-  }
-}
-function entryToExitSecs(entryTimeIST?: string): number {
-  if (!entryTimeIST) return 0;
-  try {
-    return Math.round((Date.now() - new Date(entryTimeIST.replace(" ", "T") + "+05:30").getTime()) / 1000);
-  } catch (_) { return 0; }
 }
 
 // ── IST helpers ───────────────────────────────────────────────────────────────
@@ -314,7 +347,7 @@ async function doExit(label: string, symbol: string) {
     await exitTrade(symbol, config.quantity);
     log(`EXIT_${label}`, { symbol, qty: config.quantity });
   } catch (e) {
-    const msg = e instanceof Error ? e.message : String(e);
+    const msg = errStr(e);
     log(`EXIT_${label}_FAIL`, { error: msg });
     await sendTelegram(
       `❌ *AMINA 100 — EXIT FAILED* (${label})\n\`${symbol}\`\nManual exit required!\n${msg}`
@@ -330,36 +363,29 @@ async function eodSquareOff(price: number) {
   const dir   = isT1 ? state.t1Dir! : state.reDir!;
   const entry = isT1 ? state.t1Entry : state.reEntry;
   const sym   = isT1 ? state.t1Symbol : state.reSymbol;
+  const entryLTP = isT1 ? state.t1EntryLTP : state.reEntryLTP;
   const pts   = dir === "CE" ? price - entry : entry - price;
+  const eodExitLTP = entryLTP > 0 ? await getOptionLTP(sym).catch(() => 0) : 0;
+  const tradeRs = eodExitLTP > 0
+    ? Math.round((eodExitLTP - entryLTP) * config.quantity)
+    : Math.round(pts * RS_PER_PT);
 
   await doExit("EOD", sym);
 
-  if (isT1) { state.t1Pts = pts; } else { state.rePts = pts; }
+  if (isT1) { state.t1Pts = pts; state.t1Rs = tradeRs; }
+  else       { state.rePts = pts; state.reRs = tradeRs; }
   state.dayPts = state.t1Pts + state.rePts;
-  state.dayRs  = state.dayPts * RS_PER_PT;
+  state.dayRs  = state.t1Rs + state.reRs;
   state.phase  = "DONE";
   saveState();
 
-  log("EOD_EXIT", { dir, entry: entry.toFixed(0), exit: price.toFixed(0), pts: pts.toFixed(0), dayPts: state.dayPts });
-  appendTrade({
-    date: isT1 ? state.t1EntryTime : state.reEntryTime,
-    direction: dir,
-    symbol: sym,
-    entryPrice: entry,
-    exitPrice: price,
-    premiumEntry: (isT1 ? state.t1EntryLTP : state.reEntryLTP) ?? 0,
-    premiumExit: 0,
-    pnl: pts,
-    pnlRs: (isT1 ? state.t1Rs : state.reRs) ?? Math.round(pts * RS_PER_PT),
-    reasonExit: "EOD",
-    duration: entryToExitSecs(isT1 ? state.t1EntryTime : state.reEntryTime),
-  });
+  log("EOD_EXIT", { dir, entry: entry.toFixed(0), exit: price.toFixed(0), pts: pts.toFixed(0), tradeRs, dayPts: state.dayPts, dayRs: state.dayRs });
   await sendTelegram(
     `🔔 *AMINA 100 — EOD EXIT*\n`
     + `Dir: ${dir} | Entry: ${entry.toFixed(0)} | Exit: ${price.toFixed(0)}\n`
-    + `Trade P&L: *${pts >= 0 ? "+" : ""}${pts.toFixed(0)} pts*\n`
+    + `Trade P&L: *${pts >= 0 ? "+" : ""}${pts.toFixed(0)} pts* (Rs ${tradeRs >= 0 ? "+" : ""}${tradeRs})\n`
     + `Day Total: *${state.dayPts >= 0 ? "+" : ""}${state.dayPts.toFixed(0)} pts`
-    + ` (Rs ${state.dayRs >= 0 ? "+" : ""}${state.dayRs.toFixed(0)})*`
+    + ` (Rs ${state.dayRs >= 0 ? "+" : ""}${state.dayRs})*`
   ).catch(() => {});
 }
 
@@ -378,7 +404,7 @@ async function tick() {
           qty: parseInt(process.env.QUANTITY || '30'),
           slPts: SL_INITIAL,
           inTrade: false,
-          tradeCount: state.tradeCount || 0,
+          tradeCount: (state.t1Dir ? 1 : 0) + (state.reDir ? 1 : 0),
         }));
       } catch(_) {}
       return;
@@ -407,12 +433,121 @@ async function tick() {
 
     writeHeartbeat(price);
 
+    // ── TICK-LEVEL SL CHECK (every 30s — index SL or premium SL, whichever hits first) ─
+    if (state.phase === "IN_T1" && state.t1Entry > 0) {
+      const t1LivePts = state.t1Dir === "CE" ? price - state.t1Entry : state.t1Entry - price;
+      // Update peak with live price (intrabar highs/lows)
+      if (t1LivePts > state.t1Peak) state.t1Peak = t1LivePts;
+      const t1EffSL  = state.t1Peak >= SL_INITIAL ? Math.max(0, state.t1Peak - TRAIL_GAP) : -SL_INITIAL;
+      const t1SlPx   = state.t1Dir === "CE" ? state.t1Entry + t1EffSL : state.t1Entry - t1EffSL;
+      const idxSlHit = state.t1Dir === "CE" ? price <= t1SlPx : price >= t1SlPx;
+      // Fetch current option LTP once — used for premium SL check and exit P&L
+      const t1CurrLTP   = state.t1EntryLTP > 0 ? await getOptionLTP(state.t1Symbol).catch(() => 0) : 0;
+      const t1PremLevel = state.t1EntryLTP > 0 ? state.t1EntryLTP - PREM_SL : 0;
+      const premSlHit   = t1CurrLTP > 0 && t1PremLevel > 0 && t1CurrLTP <= t1PremLevel;
+      if (!(idxSlHit || premSlHit)) {
+        if (state.t1SlConfirmPending) { state.t1SlConfirmPending = false; saveState(); }
+      } else if (!state.t1SlConfirmPending) {
+        state.t1SlConfirmPending = true;
+        saveState();
+        log("T1_SL_CONFIRM_1", { price: price.toFixed(0), slLevel: t1SlPx.toFixed(0) });
+        return;
+      } else {
+        state.t1SlConfirmPending = false;
+        state.t1Pts = t1LivePts;
+        state.t1Rs  = t1CurrLTP > 0
+          ? Math.round((t1CurrLTP - state.t1EntryLTP) * config.quantity)
+          : Math.round(t1LivePts * RS_PER_PT);
+        await doExit("T1_SL_TICK", state.t1Symbol);
+        state.slClose = price;
+        state.slTime  = nowIST();
+        saveTrade({ dir: state.t1Dir!, symbol: state.t1Symbol, entryPrice: state.t1Entry, exitPrice: price, premiumEntry: state.t1EntryLTP, premiumExit: t1CurrLTP, pnl: t1LivePts, pnlRs: state.t1Rs, reasonExit: "T1_SL_TICK", entryTime: state.t1EntryTime });
+        const trigger = premSlHit && !idxSlHit ? "PREM_SL" : "IDX_SL";
+        const t1Label = premSlHit && !idxSlHit
+          ? `prem −${PREM_SL} (${state.t1EntryLTP.toFixed(0)} → ${t1CurrLTP.toFixed(0)})`
+          : t1EffSL > 0 ? `+${t1EffSL.toFixed(0)} pts (trail)` : t1EffSL === 0 ? "BE exit" : `${t1EffSL.toFixed(0)} pts SL`;
+        log("T1_SL_TICK", { trigger, exitPrice: price.toFixed(0), pnl: t1LivePts.toFixed(0), entryLTP: state.t1EntryLTP, currLTP: t1CurrLTP, slLevel: t1SlPx.toFixed(0), peak: state.t1Peak.toFixed(0), t1Rs: state.t1Rs });
+        const reDir: "CE" | "PE" = state.t1Dir === "CE" ? "PE" : "CE";
+        const reSymbol = await getBestOptionSymbol(reDir);
+        state.reDir       = reDir;
+        state.reEntry     = price;
+        state.reSymbol    = reSymbol;
+        state.reEntryTime = nowIST();
+        state.rePeak      = 0;
+        state.phase       = "IN_RE";
+        saveState();
+        await placeTrade(reSymbol, price, config.quantity);
+        state.reEntryLTP = await getOptionLTP(reSymbol).catch(() => 0);
+        const reSL = reDir === "CE" ? price - SL_INITIAL : price + SL_INITIAL;
+        log("RE_ENTRY_TICK", { dir: reDir, entry: price.toFixed(0), sl: reSL.toFixed(0), symbol: reSymbol });
+        await sendTelegram(
+          `🚨 *AMINA 100 — T1 SL HIT (INTRABAR)* (${t1Label})\n`
+          + `Price: ${price.toFixed(0)} | Entry: ${state.t1Entry.toFixed(0)}\n`
+          + `T1 P&L: *${t1LivePts.toFixed(0)} pts* (₹${state.t1Rs >= 0 ? "+" : ""}${state.t1Rs})\n`
+          + `🔄 *RE-ENTRY TAKEN*\n`
+          + `Dir: *${reDir}* | Entry: *${price.toFixed(0)}*\n`
+          + `SL: ${reSL.toFixed(0)} (−60 pts, trail)\n`
+          + `Symbol: \`${reSymbol}\``
+        ).catch(() => {});
+        return;
+      }
+    }
+
+    if (state.phase === "IN_RE" && state.reEntry > 0) {
+      const reLivePts = state.reDir === "CE" ? price - state.reEntry : state.reEntry - price;
+      if (reLivePts > state.rePeak) state.rePeak = reLivePts;
+      const reEffSL  = state.rePeak >= SL_INITIAL ? Math.max(0, state.rePeak - TRAIL_GAP) : -SL_INITIAL;
+      const reSlPx   = state.reDir === "CE" ? state.reEntry + reEffSL : state.reEntry - reEffSL;
+      const idxSlHit = state.reDir === "CE" ? price <= reSlPx : price >= reSlPx;
+      // Fetch current option LTP once — used for premium SL check and exit P&L
+      const reCurrLTP   = state.reEntryLTP > 0 ? await getOptionLTP(state.reSymbol).catch(() => 0) : 0;
+      const rePremLevel = state.reEntryLTP > 0 ? state.reEntryLTP - PREM_SL : 0;
+      const premSlHit   = reCurrLTP > 0 && rePremLevel > 0 && reCurrLTP <= rePremLevel;
+      if (!(idxSlHit || premSlHit)) {
+        if (state.reSlConfirmPending) { state.reSlConfirmPending = false; saveState(); }
+      } else if (!state.reSlConfirmPending) {
+        state.reSlConfirmPending = true;
+        saveState();
+        log("RE_SL_CONFIRM_1", { price: price.toFixed(0), slLevel: reSlPx.toFixed(0) });
+        return;
+      } else {
+        state.reSlConfirmPending = false;
+        state.rePts = reLivePts;
+        state.reRs  = reCurrLTP > 0
+          ? Math.round((reCurrLTP - state.reEntryLTP) * config.quantity)
+          : Math.round(reLivePts * RS_PER_PT);
+        await doExit("RE_SL_TICK", state.reSymbol);
+        state.dayPts = state.t1Pts + state.rePts;
+        state.dayRs  = state.t1Rs  + state.reRs;
+        state.phase  = "DONE";
+        saveState();
+        saveTrade({ dir: state.reDir!, symbol: state.reSymbol, entryPrice: state.reEntry, exitPrice: price, premiumEntry: state.reEntryLTP, premiumExit: reCurrLTP, pnl: reLivePts, pnlRs: state.reRs, reasonExit: "RE_SL_TICK", entryTime: state.reEntryTime });
+        const trigger = premSlHit && !idxSlHit ? "PREM_SL" : "IDX_SL";
+        const reLabel = premSlHit && !idxSlHit
+          ? `prem −${PREM_SL} (${state.reEntryLTP.toFixed(0)} → ${reCurrLTP.toFixed(0)})`
+          : reEffSL > 0 ? `+${reEffSL.toFixed(0)} pts (trail)` : reEffSL === 0 ? "BE exit" : `${reEffSL.toFixed(0)} pts SL`;
+        log("RE_SL_TICK", { trigger, exitPrice: price.toFixed(0), pnl: reLivePts.toFixed(0), entryLTP: state.reEntryLTP, currLTP: reCurrLTP, slLevel: reSlPx.toFixed(0), peak: state.rePeak.toFixed(0), reRs: state.reRs, dayPts: state.dayPts, dayRs: state.dayRs });
+        await sendTelegram(
+          `🚨 *AMINA 100 — RE SL HIT (INTRABAR)* (${reLabel})\n`
+          + `Price: ${price.toFixed(0)} | Entry: ${state.reEntry.toFixed(0)}\n`
+          + `RE P&L: *${reLivePts.toFixed(0)} pts* (₹${state.reRs >= 0 ? "+" : ""}${state.reRs})\n`
+          + `Day P&L: *${state.dayPts >= 0 ? "+" : ""}${state.dayPts.toFixed(0)} pts`
+          + ` (₹${state.dayRs >= 0 ? "+" : ""}${state.dayRs})*\n`
+          + `Done for the day.`
+        ).catch(() => {});
+        return;
+      }
+    }
+
+    // ── End tick SL check ─────────────────────────────────────────────────────────
+
     const latest    = candles[candles.length - 1];
     const isNewCandle = latest.key !== _lastKey;
     if (!isNewCandle) return;
 
     _lastKey = latest.key;
     state.lastCandleKey = latest.key;
+    _candleHistory.push({t:new Date(latest.key).getTime(),open:latest.open,high:latest.high,low:latest.low,close:latest.close});
     log("NEW_CANDLE", { key: latest.key, o: latest.open, h: latest.high, l: latest.low, c: latest.close, phase: state.phase });
 
         // --- 15-min candle Telegram update (same format as TICK TRAIL strategy) ---
@@ -440,7 +575,7 @@ async function tick() {
           `RE Unrealised: ${_fmt(_unr)}\n` +
           `Day: ${_fmt(state.t1Pts + _unr)}`;
       } else if (state.phase === 'DONE') {
-        const _rs = Math.round(state.dayPts * 30 * 0.5);
+        const _rs = state.dayRs || Math.round(state.dayPts * RS_PER_PT);
         const _reeLine = state.rePts !== 0 ? `\nRE: ${_fmt(state.rePts)}` : '';
         _stratCtx = `\n${SEP}\n` +
           `✅ *AMINA 100 · Done for Day*\n` +
@@ -478,6 +613,7 @@ async function tick() {
         const _hbRaw = fs.existsSync('bot-heartbeat.json') ? fs.readFileSync('bot-heartbeat.json', 'utf-8') : '{}';
         const _hb = JSON.parse(_hbRaw);
         _hb.lastCandle = { open: latest.open, high: latest.high, low: latest.low, close: latest.close, colour: latest.close >= latest.open ? 'bull' : 'bear' };
+        _hb.candleHistory = _candleHistory.slice(-30);
         fs.writeFileSync('bot-heartbeat.json', JSON.stringify(_hb));
       } catch(_) {}
     } catch(_) {}
@@ -507,9 +643,11 @@ async function tick() {
       saveState();
 
       await placeTrade(symbol, res.px, config.quantity);
+      state.t1EntryLTP = await getOptionLTP(symbol).catch(() => 0);
 
       const slLevel = res.sig === "CE" ? res.px - SL_INITIAL : res.px + SL_INITIAL;
       log("T1_ENTRY", { sig: res.sig, entry: res.px.toFixed(0), bl: res.bl.toFixed(0), sl: slLevel.toFixed(0), rule: res.rule, symbol });
+      logCandleEvent({ type: "T1_ENTRY", dir: res.sig, index: res.px, symbol, premium: state.t1EntryLTP, sl: slLevel, breakLevel: res.bl, rule: res.rule, candleNum: candles.length });
 
       await sendTelegram(
         `🎯 *AMINA 100 — T1 ENTRY*\n`
@@ -531,27 +669,20 @@ async function tick() {
       if (t1Pts > state.t1Peak) state.t1Peak = t1Pts;
       const t1EffSL = state.t1Peak >= SL_INITIAL ? Math.max(0, state.t1Peak - TRAIL_GAP) : -SL_INITIAL;
 
-      if (t1Pts <= t1EffSL) {
-        // SL hit — fixed −60 or trail locked profit
-        state.t1Pts = t1EffSL;
+      if (t1Pts <= t1EffSL - BUFFER) {
+        // Use actual candle-close pts for P&L, not capped at SL
+        state.t1Pts = t1Pts;
+        const t1ExitLTP = state.t1EntryLTP > 0 ? await getOptionLTP(state.t1Symbol).catch(() => 0) : 0;
+        state.t1Rs = t1ExitLTP > 0
+          ? Math.round((t1ExitLTP - state.t1EntryLTP) * config.quantity)
+          : Math.round(t1Pts * RS_PER_PT);
         await doExit("T1_SL", state.t1Symbol);
 
         state.slClose = latest.close;
         state.slTime  = nowIST();
-        log("T1_SL", { exit: latest.close.toFixed(0), pnl: t1EffSL, peak: state.t1Peak.toFixed(0) });
-        appendTrade({
-          date: state.t1EntryTime,
-          direction: state.t1Dir,
-          symbol: state.t1Symbol,
-          entryPrice: state.t1Entry,
-          exitPrice: latest.close,
-          premiumEntry: state.t1EntryLTP ?? 0,
-          premiumExit: 0,
-          pnl: t1Pts,
-          pnlRs: state.t1Rs ?? 0,
-          reasonExit: "T1_SL",
-          duration: entryToExitSecs(state.t1EntryTime),
-        });
+        log("T1_SL", { exit: latest.close.toFixed(0), pnl: t1Pts.toFixed(0), slLevel: t1EffSL.toFixed(0), peak: state.t1Peak.toFixed(0), t1Rs: state.t1Rs });
+        saveTrade({ dir: state.t1Dir!, symbol: state.t1Symbol, entryPrice: state.t1Entry, exitPrice: state.slClose, premiumEntry: state.t1EntryLTP, premiumExit: t1ExitLTP, pnl: state.t1Pts, pnlRs: state.t1Rs, reasonExit: "T1_SL", entryTime: state.t1EntryTime });
+        logCandleEvent({ type: "T1_SL", entryIndex: state.t1Entry, exitIndex: state.slClose, pts: state.t1Pts, premiumEntry: state.t1EntryLTP, premiumExit: t1ExitLTP, pnlRs: state.t1Rs, peak: state.t1Peak, candleNum: candles.length });
 
         // Always take RE — no filter in AMINA 100
         const reDir: "CE" | "PE" = state.t1Dir === "CE" ? "PE" : "CE";
@@ -565,14 +696,18 @@ async function tick() {
         saveState();
 
         await placeTrade(reSymbol, state.slClose, config.quantity);
-
-        const t1Label = t1EffSL > 0 ? `+${t1EffSL} pts (trail)` : t1EffSL === 0 ? "BE exit" : `${t1EffSL} pts`;
+        state.reEntryLTP = await getOptionLTP(reSymbol).catch(() => 0);
         const reSL    = reDir === "CE" ? state.slClose - SL_INITIAL : state.slClose + SL_INITIAL;
+        logCandleEvent({ type: "RE_ENTRY", dir: reDir, index: state.slClose, symbol: reSymbol, premium: state.reEntryLTP, sl: reSL, candleNum: candles.length });
+
+        const t1Label = t1EffSL > 0 ? `+${t1EffSL} pts (trail)` : t1EffSL === 0 ? "BE exit" : `${t1EffSL} pts SL`;
+        const t1ActualLabel = t1Pts >= 0 ? `+${t1Pts.toFixed(0)}` : t1Pts.toFixed(0);
         log("RE_ENTRY", { dir: reDir, entry: state.slClose.toFixed(0), sl: reSL.toFixed(0), symbol: reSymbol });
 
         await sendTelegram(
-          `🛑 *AMINA 100 — T1 SL HIT* (${t1Label})\n`
+          `🛑 *AMINA 100 — T1 SL HIT* (${t1Label}, actual ${t1ActualLabel} pts)\n`
           + `Dir: ${state.t1Dir} | Entry: ${state.t1Entry.toFixed(0)} | Exit: ${state.slClose.toFixed(0)}\n`
+          + `T1 P&L: *${t1ActualLabel} pts* (Rs ${state.t1Rs >= 0 ? '+' : ''}${state.t1Rs})\n`
           + `🔄 *RE-ENTRY TAKEN*\n`
           + `Dir: *${reDir}* | Entry: *${state.slClose.toFixed(0)}*\n`
           + `SL: ${reSL.toFixed(0)} (−60 pts, trail)\n`
@@ -595,35 +730,31 @@ async function tick() {
       if (rePts > state.rePeak) state.rePeak = rePts;
       const reEffSL = state.rePeak >= SL_INITIAL ? Math.max(0, state.rePeak - TRAIL_GAP) : -SL_INITIAL;
 
-      if (rePts <= reEffSL) {
-        state.rePts  = reEffSL;
+      if (rePts <= reEffSL - BUFFER) {
+        // Use actual candle-close pts for P&L, not capped at SL
+        state.rePts = rePts;
+        const reExitLTP = state.reEntryLTP > 0 ? await getOptionLTP(state.reSymbol).catch(() => 0) : 0;
+        state.reRs = reExitLTP > 0
+          ? Math.round((reExitLTP - state.reEntryLTP) * config.quantity)
+          : Math.round(rePts * RS_PER_PT);
         await doExit("RE_SL", state.reSymbol);
 
-        state.dayPts = state.t1Pts + reEffSL;
-        state.dayRs  = state.dayPts * RS_PER_PT;
+        state.dayPts = state.t1Pts + state.rePts;
+        state.dayRs  = state.t1Rs + state.reRs;
         state.phase  = "DONE";
         saveState();
 
-        const reLabel = reEffSL > 0 ? `+${reEffSL} pts (trail)` : reEffSL === 0 ? "BE exit" : `${reEffSL} pts`;
-        log("RE_SL", { exit: latest.close.toFixed(0), pnl: reEffSL, peak: state.rePeak.toFixed(0), dayPts: state.dayPts });
-        appendTrade({
-          date: state.reEntryTime,
-          direction: state.reDir,
-          symbol: state.reSymbol,
-          entryPrice: state.reEntry,
-          exitPrice: latest.close,
-          premiumEntry: state.reEntryLTP ?? 0,
-          premiumExit: 0,
-          pnl: rePts,
-          pnlRs: state.reRs ?? 0,
-          reasonExit: "RE_SL",
-          duration: entryToExitSecs(state.reEntryTime),
-        });
+        const reLabel = reEffSL > 0 ? `+${reEffSL} pts (trail)` : reEffSL === 0 ? "BE exit" : `${reEffSL} pts SL`;
+        const reActualLabel = rePts >= 0 ? `+${rePts.toFixed(0)}` : rePts.toFixed(0);
+        log("RE_SL", { exit: latest.close.toFixed(0), pnl: rePts.toFixed(0), slLevel: reEffSL.toFixed(0), peak: state.rePeak.toFixed(0), reRs: state.reRs, dayPts: state.dayPts, dayRs: state.dayRs });
+        saveTrade({ dir: state.reDir!, symbol: state.reSymbol, entryPrice: state.reEntry, exitPrice: latest.close, premiumEntry: state.reEntryLTP, premiumExit: reExitLTP, pnl: state.rePts, pnlRs: state.reRs, reasonExit: "RE_SL", entryTime: state.reEntryTime });
+        logCandleEvent({ type: "RE_SL", entryIndex: state.reEntry, exitIndex: latest.close, pts: state.rePts, premiumEntry: state.reEntryLTP, premiumExit: reExitLTP, pnlRs: state.reRs, peak: state.rePeak, dayPts: state.dayPts, dayRs: state.dayRs, candleNum: candles.length });
         await sendTelegram(
-          `🛑 *AMINA 100 — RE-ENTRY SL HIT* (${reLabel})\n`
+          `🛑 *AMINA 100 — RE-ENTRY SL HIT* (${reLabel}, actual ${reActualLabel} pts)\n`
           + `Dir: ${state.reDir} | Entry: ${state.reEntry.toFixed(0)} | Exit: ${latest.close.toFixed(0)}\n`
-          + `Day P&L: *${state.dayPts >= 0 ? "+" : ""}${state.dayPts} pts`
-          + ` (Rs ${state.dayRs >= 0 ? "+" : ""}${state.dayRs.toFixed(0)})*\n`
+          + `RE P&L: *${reActualLabel} pts* (Rs ${state.reRs >= 0 ? '+' : ''}${state.reRs})\n`
+          + `Day P&L: *${state.dayPts >= 0 ? "+" : ""}${state.dayPts.toFixed(0)} pts`
+          + ` (Rs ${state.dayRs >= 0 ? "+" : ""}${state.dayRs})*\n`
           + `Done for the day.`
         ).catch(() => {});
       } else {
@@ -633,7 +764,7 @@ async function tick() {
     }
 
   } catch (e) {
-    log("TICK_ERROR", { error: e instanceof Error ? e.message : String(e) });
+    log("TICK_ERROR", { error: errStr(e) });
   }
 }
 
@@ -644,7 +775,9 @@ function resetForNewDay() {
     state  = makeState();
     state.date = today;
     _lastKey   = "";
+    _candleHistory = [];
     saveState();
+    try { fs.writeFileSync(CANDLE_LOG_FILE, "[]"); } catch (_) {}
     log("NEW_DAY_RESET", { date: today });
   }
 }
