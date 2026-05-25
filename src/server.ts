@@ -416,6 +416,7 @@ function nav(active: string, req?: Request): string {
     ["admin-content",   "/admin/content",   "📢 Content"],
     ["admin-signals",   "/admin/signals",   "🤖 Signal Control"],
     ["admin-subs",      "/admin/subs",      "💳 Subscriptions"],
+    ["holdings",        "/holdings",        "📊 My Holdings"],
   ] : [];
 
   const allTiered = [...beginnerLinks, ...traderLinks, ...investorLinks];
@@ -502,6 +503,7 @@ function nav(active: string, req?: Request): string {
       <a href="/signals" class="nav-signals-link${active === "signals" ? " active" : ""}"><span class="nav-live-dot"></span>🤖 Live Bot</a>
       <a href="/paper-trade" class="${active === "paper-trade" ? "active" : ""}">📋 Paper Trade</a>
       <a href="${isLoggedIn ? '/dashboard' : '/paper-trade'}" class="nav-hot-link${active === 'dashboard' || active === 'my-paper-trade' || active === 'my-portfolio' ? ' active' : ''}">💼 My Trade <span class="nav-hot-badge">HOT</span></a>
+      ${isAdmin ? `<a href="/holdings" class="nav-hot-link${active === 'holdings' ? ' active' : ''}" style="background:linear-gradient(90deg,rgba(16,185,129,.18),rgba(6,182,212,.12));border:1px solid rgba(16,185,129,.3)">📊 Holdings</a>` : ''}
       ${exploreDropHtml}
     </div>
     <div class="nav-links" id="nav-links">
@@ -514,6 +516,7 @@ function nav(active: string, req?: Request): string {
       <a href="/signals" class="nav-signals-link${active === "signals" ? " active" : ""}"><span class="nav-live-dot"></span>🤖 Live Bot</a>
       <a href="/paper-trade" class="${active === "paper-trade" ? "active" : ""}">📋 Paper Trade</a>
       <a href="${isLoggedIn ? '/dashboard' : '/paper-trade'}" class="nav-hot-link${active === 'dashboard' || active === 'my-paper-trade' || active === 'my-portfolio' ? ' active' : ''}">💼 My Trade <span class="nav-hot-badge">HOT</span></a>
+      ${isAdmin ? `<a href="/holdings" class="${active === 'holdings' ? 'active' : ''}">📊 My Holdings</a>` : ''}
       ${exploreDropHtml}
       ${mobileMobFooter}
         <input type="text" id="nav-search" class="nav-search-input" placeholder="Search stocks…" autocomplete="off" aria-label="Search stocks">
@@ -11040,6 +11043,626 @@ async function ensureAdminEmail() {
     [ADMIN_EMAIL]
   );
 }
+
+// ── Portfolio Holdings ─────────────────────────────────────────────────────────
+interface HoldingAlert { pct?: number; price?: number; label: string; urgency: string; buyMultiplier: number; }
+interface HoldingStock {
+  symbol: string; name: string; qty: number; avgPrice: number;
+  invested: number; currentVal: number;
+  targetAlloc: number; addAmountINR: number; priority: string;
+  dipAlerts: (HoldingAlert & { pct: number })[]; absoluteAlerts: (HoldingAlert & { price: number })[];
+  thesis: string;
+}
+const HOLDINGS: HoldingStock[] = [
+  // ── 🔥 HIGH PRIORITY ──────────────────────────────────────────────────────
+  { symbol:"NSE:BHEL",       name:"BHEL",                qty:40,  avgPrice:253,    invested:10120, currentVal:16342, targetAlloc:25000, addAmountINR:5000, priority:"🔥 HIGH",
+    dipAlerts:[{pct:-10,label:"10% correction — start buying",urgency:"⭐⭐",buyMultiplier:1},{pct:-18,label:"18% deep correction — accumulate",urgency:"⭐⭐⭐",buyMultiplier:1.5}],
+    absoluteAlerts:[], thesis:"Power sector capex + defense + railways — massive ₹1.2L Cr order book, PSU re-rating play" },
+  { symbol:"NSE:LT",         name:"L&T",                 qty:9,   avgPrice:3652,   invested:32867, currentVal:35339, targetAlloc:45000, addAmountINR:5000, priority:"🔥 HIGH",
+    dipAlerts:[{pct:-8,label:"8% dip — add to largest holding",urgency:"⭐⭐",buyMultiplier:1}],
+    absoluteAlerts:[{price:3200,label:"Below ₹3,200 — support zone",urgency:"⭐⭐",buyMultiplier:1},{price:3000,label:"Below ₹3,000 — strong accumulate",urgency:"⭐⭐⭐",buyMultiplier:1.5}],
+    thesis:"India #1 infra conglomerate — record ₹5L Cr order book, defense exports, IT services" },
+  { symbol:"NSE:SUZLON",     name:"Suzlon Energy",       qty:230, avgPrice:45.2,   invested:10396, currentVal:12363, targetAlloc:25000, addAmountINR:5000, priority:"🔥 HIGH",
+    dipAlerts:[{pct:-12,label:"12% dip — start adding",urgency:"⭐⭐",buyMultiplier:1},{pct:-20,label:"20% deep dip — add more",urgency:"⭐⭐⭐",buyMultiplier:1.5}],
+    absoluteAlerts:[], thesis:"Wind energy — India 500GW target, only integrated wind turbine maker, debt-free turnaround" },
+  { symbol:"NSE:HAL",        name:"HAL",                 qty:1,   avgPrice:3973,   invested:3973,  currentVal:4368,  targetAlloc:15000, addAmountINR:4500, priority:"🔥 HIGH",
+    dipAlerts:[{pct:-8,label:"8% dip — accumulate",urgency:"⭐⭐",buyMultiplier:1},{pct:-15,label:"15% dip — buy aggressively",urgency:"⭐⭐⭐",buyMultiplier:2}],
+    absoluteAlerts:[{price:4000,label:"Below ₹4,000 — strong buy",urgency:"⭐⭐⭐",buyMultiplier:1.5}],
+    thesis:"Defense PSU — ₹94,000Cr order book, 15yr revenue visibility, LCA Tejas + helicopters" },
+  { symbol:"NSE:HDFCBANK",   name:"HDFC Bank",           qty:11,  avgPrice:912.2,  invested:10034, currentVal:8435,  targetAlloc:20000, addAmountINR:5000, priority:"🔥 HIGH",
+    dipAlerts:[{pct:-5,label:"5% further dip — average down",urgency:"⭐⭐",buyMultiplier:1}],
+    absoluteAlerts:[{price:1600,label:"Below ₹1,600 — value zone",urgency:"⭐⭐",buyMultiplier:1},{price:1550,label:"Below ₹1,550 — strong accumulation",urgency:"⭐⭐⭐",buyMultiplier:1.5}],
+    thesis:"India largest private bank — HDFC merger overhang fading, NIM recovery in progress" },
+  // ── ⚡ MEDIUM PRIORITY ─────────────────────────────────────────────────────
+  { symbol:"NSE:NIFTYBEES",  name:"Nifty BeES (ETF)",   qty:86,  avgPrice:263.85, invested:22691, currentVal:23143, targetAlloc:50000, addAmountINR:5000, priority:"⚡ MEDIUM",
+    dipAlerts:[{pct:-5,label:"5% dip — buy more ETF",urgency:"⭐⭐",buyMultiplier:1},{pct:-10,label:"10% correction — accumulate aggressively",urgency:"⭐⭐⭐",buyMultiplier:2}],
+    absoluteAlerts:[], thesis:"Index ETF — low cost Nifty 50 exposure. Every dip is a buying opportunity. Long term wealth builder." },
+  { symbol:"NSE:GOLDBEES",   name:"Gold BeES (ETF)",    qty:75,  avgPrice:126.37, invested:9478,  currentVal:9788,  targetAlloc:20000, addAmountINR:3000, priority:"⚡ MEDIUM",
+    dipAlerts:[{pct:-5,label:"5% dip — add to gold position",urgency:"⭐⭐",buyMultiplier:1}],
+    absoluteAlerts:[], thesis:"Gold ETF — hedge against INR depreciation + geopolitical risk. 10-15% portfolio allocation target." },
+  { symbol:"NSE:ICICIBANK",  name:"ICICI Bank",          qty:5,   avgPrice:1216,   invested:6078,  currentVal:6322,  targetAlloc:15000, addAmountINR:3000, priority:"⚡ MEDIUM",
+    dipAlerts:[{pct:-8,label:"8% dip — add",urgency:"⭐⭐",buyMultiplier:1},{pct:-15,label:"15% dip — buy aggressively",urgency:"⭐⭐⭐",buyMultiplier:1.5}],
+    absoluteAlerts:[{price:1100,label:"Below ₹1,100 — strong buy",urgency:"⭐⭐⭐",buyMultiplier:1.5}],
+    thesis:"Best-run private bank — tech-first, strong retail + corporate mix, consistent 15%+ RoE. Better than HDFC Bank right now." },
+  { symbol:"NSE:CDSL",       name:"CDSL",                qty:4,   avgPrice:1169,   invested:4674,  currentVal:4816,  targetAlloc:10000, addAmountINR:2000, priority:"⚡ MEDIUM",
+    dipAlerts:[{pct:-15,label:"15% dip — demat growth story",urgency:"⭐⭐",buyMultiplier:1},{pct:-25,label:"25% deep correction — buy more",urgency:"⭐⭐⭐",buyMultiplier:1.5}],
+    absoluteAlerts:[{price:1000,label:"Below ₹1,000 — excellent entry",urgency:"⭐⭐⭐",buyMultiplier:1.5}],
+    thesis:"Demat account monopoly — every new investor adds recurring revenue. Duopoly with NSDL. Beneficiary of India financialization." },
+  { symbol:"NSE:BSE",        name:"BSE Ltd",             qty:1,   avgPrice:3563,   invested:3563,  currentVal:4194,  targetAlloc:10000, addAmountINR:3000, priority:"⚡ MEDIUM",
+    dipAlerts:[{pct:-10,label:"10% dip — add to position",urgency:"⭐⭐",buyMultiplier:1}],
+    absoluteAlerts:[{price:3800,label:"Below ₹3,800 — SEBI noise creates opportunity",urgency:"⭐⭐",buyMultiplier:1}],
+    thesis:"Exchange moat — SME IPO boom 80% YoY growth, derivatives comeback" },
+  { symbol:"NSE:M&M",        name:"M&M",                 qty:1,   avgPrice:3205,   invested:3205,  currentVal:3081,  targetAlloc:10000, addAmountINR:3500, priority:"⚡ MEDIUM",
+    dipAlerts:[{pct:-8,label:"8% dip — watch and accumulate",urgency:"⭐⭐",buyMultiplier:1}],
+    absoluteAlerts:[{price:2700,label:"Below ₹2,700 — add",urgency:"⭐⭐⭐",buyMultiplier:1},{price:2500,label:"Below ₹2,500 — deep value",urgency:"⭐⭐⭐",buyMultiplier:1.5}],
+    thesis:"SUV market leader + EV platform launch (BE 6e, XEV 9e) + tractor recovery upcoming" },
+  // ── 🔵 LOW PRIORITY (hold; only buy on clear signals) ─────────────────────
+  { symbol:"NSE:PIDILITIND", name:"Pidilite Industries", qty:1,   avgPrice:1357,   invested:1357,  currentVal:1478,  targetAlloc:5000,  addAmountINR:2000, priority:"🔵 LOW",
+    dipAlerts:[{pct:-10,label:"10% dip — quality compounder",urgency:"⭐⭐",buyMultiplier:1},{pct:-18,label:"18% dip — add strongly",urgency:"⭐⭐⭐",buyMultiplier:1.5}],
+    absoluteAlerts:[{price:1200,label:"Below ₹1,200 — compelling entry",urgency:"⭐⭐⭐",buyMultiplier:1.5}],
+    thesis:"Fevicol monopoly — 70% market share in adhesives. Pricing power + rural distribution moat. Quality compounder." },
+  { symbol:"NSE:RELIANCE",   name:"Reliance Industries", qty:7,   avgPrice:1410,   invested:9867,  currentVal:9482,  targetAlloc:15000, addAmountINR:3000, priority:"🔵 LOW",
+    dipAlerts:[{pct:-8,label:"8% dip — minor add",urgency:"⭐⭐",buyMultiplier:1}],
+    absoluteAlerts:[{price:1250,label:"Below ₹1,250 — deep value zone",urgency:"⭐⭐⭐",buyMultiplier:1}],
+    thesis:"Wait for Jio IPO announcement — that is the real trigger. Buy major dips only." },
+  { symbol:"NSE:TITAN",      name:"Titan Company",       qty:1,   avgPrice:4526,   invested:4526,  currentVal:4080,  targetAlloc:8000,  addAmountINR:3000, priority:"🔵 LOW",
+    dipAlerts:[{pct:-15,label:"15% dip — PE normalizing",urgency:"⭐⭐",buyMultiplier:1},{pct:-22,label:"22% deep correction — good PE entry",urgency:"⭐⭐⭐",buyMultiplier:1.5}],
+    absoluteAlerts:[{price:2800,label:"Below ₹2,800 — compelling entry",urgency:"⭐⭐⭐",buyMultiplier:1}],
+    thesis:"Jewelry + watches brand (Tanishq) — wait for wedding season recovery" },
+  { symbol:"NSE:INFY",       name:"Infosys",             qty:1,   avgPrice:1315,   invested:1315,  currentVal:1175,  targetAlloc:10000, addAmountINR:4000, priority:"🔵 LOW",
+    dipAlerts:[{pct:-10,label:"IT sector selloff — buy bigger or exit",urgency:"⭐⭐",buyMultiplier:1}],
+    absoluteAlerts:[{price:1400,label:"Below ₹1,400 — IT value zone",urgency:"⭐⭐",buyMultiplier:1}],
+    thesis:"Tier-1 IT — position too small. Either commit ₹10K total or exit and redeploy." },
+  { symbol:"NSE:ONGC",       name:"ONGC",                qty:1,   avgPrice:265.15, invested:265,   currentVal:290,   targetAlloc:3000,  addAmountINR:1000, priority:"🔵 LOW",
+    dipAlerts:[{pct:-10,label:"10% dip — dividend PSU",urgency:"⭐⭐",buyMultiplier:1}],
+    absoluteAlerts:[{price:240,label:"Below ₹240 — add for dividend",urgency:"⭐⭐",buyMultiplier:1}],
+    thesis:"PSU oil producer — 4%+ dividend yield. Hold for income. Add on major corrections only." },
+  { symbol:"NSE:COALINDIA",  name:"Coal India",          qty:1,   avgPrice:435.7,  invested:436,   currentVal:457,   targetAlloc:3000,  addAmountINR:1000, priority:"🔵 LOW",
+    dipAlerts:[{pct:-10,label:"10% dip — dividend play",urgency:"⭐⭐",buyMultiplier:1}],
+    absoluteAlerts:[{price:400,label:"Below ₹400 — strong dividend buy",urgency:"⭐⭐",buyMultiplier:1}],
+    thesis:"Coal monopoly PSU — 6%+ dividend yield, thermal power demand stays elevated. Income holding." },
+  { symbol:"NSE:DABUR",      name:"Dabur India",         qty:1,   avgPrice:445.05, invested:445,   currentVal:451,   targetAlloc:3000,  addAmountINR:1000, priority:"🔵 LOW",
+    dipAlerts:[{pct:-10,label:"10% dip — FMCG dip buy",urgency:"⭐⭐",buyMultiplier:1}],
+    absoluteAlerts:[{price:400,label:"Below ₹400 — FMCG value zone",urgency:"⭐⭐",buyMultiplier:1}],
+    thesis:"Ayurvedic FMCG — rural recovery play. Consistent dividend, low volatility. Small position, hold." },
+  { symbol:"NSE:POWERGRID",  name:"Power Grid",          qty:1,   avgPrice:318.7,  invested:319,   currentVal:294,   targetAlloc:3000,  addAmountINR:1000, priority:"🔵 LOW",
+    dipAlerts:[{pct:-10,label:"10% further dip — avg down",urgency:"⭐⭐",buyMultiplier:1}],
+    absoluteAlerts:[{price:270,label:"Below ₹270 — strong dividend buy",urgency:"⭐⭐⭐",buyMultiplier:1.5}],
+    thesis:"Transmission monopoly — regulated 15%+ ROE, 4% dividend yield. Dip from ₹318. Add on weakness." },
+];
+
+const STOCK_ALERTS_DIR    = process.env.STOCK_ALERTS_DIR    || "/root/stock-alerts";
+const TRADING_BOT_ENV     = process.env.TRADING_BOT_ENV_PATH || "/home/ubuntu/trading-bot/.env";
+
+function readKiteCredentials(): { apiKey: string; token: string } {
+  try {
+    const raw = fs.readFileSync(TRADING_BOT_ENV, "utf8");
+    let apiKey = "", token = "";
+    for (const line of raw.split("\n")) {
+      const eq = line.indexOf("=");
+      if (eq < 0) continue;
+      const k = line.slice(0, eq).trim();
+      const v = line.slice(eq + 1).trim();
+      if (k === "API_KEY")      apiKey = v;
+      if (k === "ACCESS_TOKEN") token  = v;
+    }
+    return { apiKey, token };
+  } catch { return { apiKey: "", token: "" }; }
+}
+
+function fetchKitePricesForHoldings(symbols: string[]): Promise<Map<string, { price: number; changePct: number; dayHigh: number; dayLow: number; prevClose: number }>> {
+  const { apiKey, token } = readKiteCredentials();
+  if (!apiKey || !token) return Promise.reject(new Error("Kite credentials not available"));
+  const query = symbols.map(s => `i=${encodeURIComponent(s)}`).join("&");
+  return new Promise((resolve, reject) => {
+    const req = https.request(
+      { hostname: "api.kite.trade", path: `/quote?${query}`, method: "GET",
+        headers: { "X-Kite-Version": "3", "Authorization": `token ${apiKey}:${token}` } },
+      res => {
+        let raw = "";
+        res.on("data", c => raw += c);
+        res.on("end", () => {
+          try {
+            const json = JSON.parse(raw) as any;
+            if (json.status === "error") return reject(new Error(`Kite: ${json.message}`));
+            const result = new Map<string, any>();
+            for (const [sym, q] of Object.entries(json.data as Record<string, any>)) {
+              const price = q.last_price as number;
+              const prevClose = (q.ohlc?.close as number) || price;
+              result.set(sym, { price, changePct: prevClose ? (price - prevClose) / prevClose * 100 : 0,
+                dayHigh: (q.ohlc?.high as number) || price, dayLow: (q.ohlc?.low as number) || price, prevClose });
+            }
+            resolve(result);
+          } catch (e: any) { reject(new Error(`Parse error: ${e.message}`)); }
+        });
+      }
+    );
+    req.on("error", reject);
+    req.end();
+  });
+}
+
+// GET /api/holdings/prices — live prices + baseline + alert state (admin only)
+app.get("/api/holdings/prices", (req: Request, res: Response) => {
+  if (!req.session?.userId || req.session?.userRole !== "admin") {
+    res.status(403).json({ ok: false, error: "Admin only" }); return;
+  }
+  const symbols = HOLDINGS.map(s => s.symbol);
+  let baseline:   Record<string, any>    = {};
+  let alertState: Record<string, string> = {};
+  try { baseline   = JSON.parse(fs.readFileSync(path.join(STOCK_ALERTS_DIR, "baseline.json"),    "utf8")); } catch {}
+  try { alertState = JSON.parse(fs.readFileSync(path.join(STOCK_ALERTS_DIR, "alert-state.json"), "utf8")); } catch {}
+
+  fetchKitePricesForHoldings(symbols)
+    .then(prices => {
+      const data = HOLDINGS.map(stock => {
+        const q     = prices.get(stock.symbol);
+        const base  = baseline[stock.symbol] || null;
+        // Find last fired alert for this stock
+        const fired = Object.entries(alertState)
+          .filter(([k]) => k.startsWith(stock.symbol + "_"))
+          .sort((a, b) => new Date(b[1]).getTime() - new Date(a[1]).getTime());
+        const lastDip = fired[0] ? { key: fired[0][0], time: fired[0][1] } : null;
+        // Check current opportunities
+        const opps: string[] = [];
+        if (q) {
+          for (const a of stock.absoluteAlerts) {
+            if (q.price <= a.price) opps.push(a.label);
+          }
+          if (base) {
+            for (const d of stock.dipAlerts) {
+              if (q.price <= base.price * (1 + d.pct / 100)) opps.push(d.label);
+            }
+          }
+        }
+        return { ...stock, price: q?.price ?? null, changePct: q?.changePct ?? null,
+          dayHigh: q?.dayHigh ?? null, dayLow: q?.dayLow ?? null,
+          baseline: base, lastDip, opportunities: opps };
+      });
+      const totInvested = HOLDINGS.reduce((s, h) => s + h.invested, 0);
+      const totTarget   = HOLDINGS.reduce((s, h) => s + h.targetAlloc, 0);
+      res.json({ ok: true, data, totInvested, totTarget, fetchedAt: new Date().toISOString() });
+    })
+    .catch(err => res.json({ ok: false, error: err.message, data: HOLDINGS.map(stock => {
+      const base  = baseline[stock.symbol] || null;
+      const fired = Object.entries(alertState)
+        .filter(([k]) => k.startsWith(stock.symbol + "_"))
+        .sort((a, b) => new Date(b[1]).getTime() - new Date(a[1]).getTime());
+      const lastDip = fired[0] ? { key: fired[0][0], time: fired[0][1] } : null;
+      return { ...stock, price: null, changePct: null, dayHigh: null, dayLow: null,
+        baseline: base, lastDip, opportunities: [] };
+    }), totInvested: HOLDINGS.reduce((s,h)=>s+h.invested,0),
+       totTarget:   HOLDINGS.reduce((s,h)=>s+h.targetAlloc,0),
+       fetchedAt: new Date().toISOString() }));
+});
+
+// GET /holdings — portfolio dashboard page (admin only)
+app.get("/holdings", requireAdmin, (_req: Request, res: Response) => {
+  const totInvested   = HOLDINGS.reduce((s, h) => s + h.invested,   0);
+  const totCurrentVal = HOLDINGS.reduce((s, h) => s + h.currentVal, 0);
+  const totTarget     = HOLDINGS.reduce((s, h) => s + h.targetAlloc, 0);
+  const totPnl        = totCurrentVal - totInvested;
+  const totPnlPct     = (totPnl / totInvested * 100).toFixed(1);
+  const pnlColor      = totPnl >= 0 ? "#34d399" : "#f87171";
+  const stocksJson    = JSON.stringify(HOLDINGS);
+  res.send(`<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>My Holdings — ZeroScreen</title>
+  <link rel="stylesheet" href="/public/css/style.css">
+  <style>
+    *{box-sizing:border-box}
+    body{background:#f1f5f9;color:#1e293b}
+    .hw{max-width:1300px;margin:0 auto;padding:16px 12px 60px}
+
+    /* ── Summary bar ── */
+    .hs{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:16px;align-items:center;
+        background:#fff;border:1px solid #e2e8f0;
+        border-radius:14px;padding:14px 18px;box-shadow:0 1px 4px rgba(0,0,0,.06)}
+    .hs-title{font-size:1.1rem;font-weight:800;color:#0f172a;flex:0 0 100%;
+              display:flex;align-items:center;gap:8px;margin-bottom:6px}
+    .hs-title small{font-size:.72rem;color:#94a3b8;font-weight:400;margin-left:auto}
+    .hs-s{background:#f8fafc;border:1px solid #e2e8f0;
+          border-radius:8px;padding:8px 14px;text-align:center;flex:1;min-width:88px}
+    .hs-v{font-size:1rem;font-weight:800;line-height:1.2;color:#0f172a}
+    .hs-l{font-size:.6rem;color:#94a3b8;text-transform:uppercase;letter-spacing:.5px;margin-top:1px}
+
+    /* ── Toolbar ── */
+    .htb{display:flex;align-items:center;gap:10px;margin-bottom:10px;flex-wrap:wrap}
+    .htb-btn{background:#7c3aed;border:none;
+             color:#fff;border-radius:7px;padding:5px 14px;font-size:.76rem;
+             font-weight:700;cursor:pointer;transition:.15s}
+    .htb-btn:hover{background:#6d28d9}
+    .htb-info{font-size:.73rem;color:#64748b}
+    .htb-mkt-open{color:#059669;font-weight:700;font-size:.73rem}
+    .htb-mkt-cl{color:#d97706;font-weight:700;font-size:.73rem}
+
+    /* ── Table ── */
+    .ht-wrap{overflow-x:auto;border-radius:12px;border:1px solid #e2e8f0;box-shadow:0 1px 4px rgba(0,0,0,.05)}
+    table{width:100%;border-collapse:collapse;font-size:.8rem;background:#fff}
+    thead tr{background:#f8fafc;border-bottom:2px solid #e2e8f0}
+    th{padding:9px 10px;text-align:left;font-size:.63rem;font-weight:800;
+       text-transform:uppercase;letter-spacing:.6px;color:#64748b;white-space:nowrap}
+    th:not(:first-child){text-align:right}
+    tbody tr{border-bottom:1px solid #f1f5f9;transition:.15s;cursor:default}
+    tbody tr:hover{background:#f8fafc}
+    tbody tr.opp{background:#ecfdf5;border-left:3px solid #10b981}
+    tbody tr.opp:hover{background:#d1fae5}
+    tbody tr.watch{background:#fffbeb;border-left:3px solid #f59e0b}
+    tbody tr.loss td.tdpnl{color:#dc2626}
+    td{padding:8px 10px;white-space:nowrap;color:#334155}
+    td:not(:first-child){text-align:right}
+    td.tdsym{text-align:left}
+    td.tdname{text-align:left;font-weight:700;color:#0f172a;max-width:130px}
+    td.tdname small{display:block;font-size:.63rem;color:#94a3b8;font-weight:400}
+    .pri{font-size:.6rem;padding:1px 6px;border-radius:10px;font-weight:700;white-space:nowrap;margin-left:4px}
+    .ph{background:#fee2e2;color:#b91c1c;border:1px solid #fca5a5}
+    .pm{background:#fef3c7;color:#92400e;border:1px solid #fde68a}
+    .pl{background:#ede9fe;color:#5b21b6;border:1px solid #c4b5fd}
+    .status-opp{background:#d1fae5;color:#065f46;border:1px solid #6ee7b7;
+                border-radius:6px;padding:2px 8px;font-size:.68rem;font-weight:800;
+                animation:blink 2s infinite;display:inline-block}
+    .status-watch{background:#fef3c7;color:#92400e;border:1px solid #fde68a;
+                  border-radius:6px;padding:2px 8px;font-size:.68rem;font-weight:700;display:inline-block}
+    .status-hold{color:#94a3b8;font-size:.72rem}
+    @keyframes blink{0%,100%{opacity:1}50%{opacity:.6}}
+    .tdpx{font-weight:800}
+    .trig-dist{font-size:.68rem;color:#64748b}
+    .trig-hit{color:#059669;font-weight:700}
+    .trig-near{color:#d97706;font-weight:700}
+
+    /* ── Detail panel (expandable) ── */
+    .det-row{display:none;background:#f8fafc}
+    .det-row.open{display:table-row}
+    .det-inner{padding:14px 16px;display:flex;flex-direction:column;gap:10px}
+    .det-top{display:flex;flex-wrap:wrap;gap:10px}
+    .det-box{background:#fff;border:1px solid #e2e8f0;
+             border-radius:8px;padding:10px 14px;flex:1;min-width:160px;box-shadow:0 1px 3px rgba(0,0,0,.04)}
+    .det-box-full{background:#fff;border:1px solid #e2e8f0;
+                  border-radius:8px;padding:10px 14px;width:100%;box-shadow:0 1px 3px rgba(0,0,0,.04)}
+    .det-lbl{font-size:.6rem;font-weight:800;text-transform:uppercase;letter-spacing:.5px;
+             color:#94a3b8;margin-bottom:6px}
+    .det-val{font-size:.8rem;color:#1e293b}
+    .det-dip{border-color:#c4b5fd;background:#faf5ff}
+    .det-opp{border-color:#6ee7b7;background:#f0fdf4}
+    .opp-item{font-size:.73rem;color:#065f46;font-weight:600;margin:2px 0}
+    .thesis{font-size:.74rem;color:#475569;line-height:1.6}
+    .trig-tags{display:flex;flex-wrap:wrap;gap:4px;margin-top:2px}
+    .trig-tag{font-size:.62rem;padding:3px 8px;border-radius:4px;white-space:nowrap}
+    .trig-abs{background:#ecfeff;color:#0e7490;border:1px solid #a5f3fc}
+    .trig-dip{background:#faf5ff;color:#6d28d9;border:1px solid #c4b5fd}
+    .buy-box{background:#f0fdf4;border:1px solid #86efac;
+             border-radius:6px;padding:6px 10px;font-size:.75rem;color:#166534;margin-top:6px}
+
+    /* ── Token status ── */
+    .tok-warn{background:#fffbeb;border:1px solid #fde68a;
+              color:#92400e;border-radius:8px;padding:8px 14px;font-size:.75rem;
+              margin-bottom:12px;display:flex;align-items:center;gap:8px}
+    .tok-ok{background:#f0fdf4;border:1px solid #86efac;
+            color:#166534;border-radius:8px;padding:8px 14px;font-size:.75rem;
+            margin-bottom:12px;display:none;align-items:center;gap:8px}
+
+    /* ── Opportunity panel ── */
+    .opp-panel{background:#f0fdf4;border:1px solid #86efac;
+               border-radius:10px;padding:12px 16px;margin-bottom:14px;display:none}
+    .opp-panel.has-opps{display:block}
+    .opp-panel-title{font-size:.75rem;font-weight:800;color:#059669;margin-bottom:8px}
+    .opp-pill{display:inline-block;background:#dcfce7;color:#166534;
+              border:1px solid #86efac;border-radius:6px;padding:3px 10px;
+              font-size:.72rem;font-weight:700;margin:2px}
+
+    @media(max-width:700px){
+      .hs-s{min-width:70px;padding:7px 8px}
+      .hs-v{font-size:.85rem}
+      td,th{padding:7px 6px}
+    }
+  </style>
+</head>
+<body>
+  ${nav("holdings", _req)}
+  <div class="hw">
+
+    <!-- Summary -->
+    <div class="hs">
+      <div class="hs-title">📊 My Portfolio
+        <small id="tok-time">Loading live prices…</small>
+      </div>
+      <div class="hs-s">
+        <div class="hs-v">₹${Math.round(totInvested/1000)}K</div>
+        <div class="hs-l">Invested</div>
+      </div>
+      <div class="hs-s">
+        <div class="hs-v" id="h-live" style="color:${pnlColor}">₹${Math.round(totCurrentVal/1000)}K</div>
+        <div class="hs-l">Live Value</div>
+      </div>
+      <div class="hs-s">
+        <div class="hs-v" id="h-pnl" style="color:${pnlColor}">${totPnl >= 0 ? '+' : ''}₹${Math.round(Math.abs(totPnl)).toLocaleString('en-IN')}</div>
+        <div class="hs-l">P&amp;L</div>
+      </div>
+      <div class="hs-s">
+        <div class="hs-v" id="h-pct" style="color:${pnlColor}">${totPnl >= 0 ? '+' : ''}${totPnlPct}%</div>
+        <div class="hs-l">Return</div>
+      </div>
+      <div class="hs-s">
+        <div class="hs-v" style="color:#f59e0b">₹${Math.round(totTarget/1000)}K</div>
+        <div class="hs-l">Target Alloc</div>
+      </div>
+      <div class="hs-s">
+        <div class="hs-v" id="h-opps" style="color:#64748b">—</div>
+        <div class="hs-l">Opportunities</div>
+      </div>
+    </div>
+
+    <!-- Toolbar -->
+    <div class="htb">
+      <button class="htb-btn" onclick="load()">↻ Refresh Prices</button>
+      <span id="htb-ts" class="htb-info"></span>
+      <span id="htb-mkt"></span>
+    </div>
+
+    <!-- Token warning (hidden when live) -->
+    <div class="tok-warn" id="tok-warn">
+      ⚠️ Prices shown below are your last known values (Zerodha Kite token refreshes automatically Mon–Fri at 7:30 AM IST)
+    </div>
+    <div class="tok-ok" id="tok-ok">
+      ✅ Live prices from Zerodha Kite
+    </div>
+
+    <!-- Opportunities panel -->
+    <div class="opp-panel" id="opp-panel">
+      <div class="opp-panel-title">🎯 Buy Opportunities Right Now</div>
+      <div id="opp-pills"></div>
+    </div>
+
+    <!-- Table -->
+    <div class="ht-wrap">
+      <table id="htbl">
+        <thead>
+          <tr>
+            <th>#</th>
+            <th style="text-align:left">Stock</th>
+            <th>Qty</th>
+            <th>Avg ₹</th>
+            <th>Invested</th>
+            <th>Live Price</th>
+            <th>Live Val</th>
+            <th>P&amp;L</th>
+            <th>P&amp;L %</th>
+            <th>Nearest Trigger</th>
+            <th>Status</th>
+          </tr>
+        </thead>
+        <tbody id="htb-body"></tbody>
+      </table>
+    </div>
+    <div style="font-size:.68rem;color:#64748b;margin-top:8px;padding-left:4px">
+      Click any row to expand triggers, thesis &amp; last dip alert
+    </div>
+  </div>
+
+  <script src="/public/js/app.js"></script>
+  <script>
+  const _H = ${stocksJson};
+
+  const inr   = n => '₹'+Math.round(n).toLocaleString('en-IN');
+  const inrd  = (n,d=2) => '₹'+n.toFixed(d);
+  const pct   = n => (n>=0?'+':'')+n.toFixed(2)+'%';
+  const fdt   = iso => {
+    if(!iso) return '—';
+    const d=new Date(iso), M=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+    const h=d.getHours(),m=d.getMinutes();
+    return d.getDate()+' '+M[d.getMonth()]+' '+(h<10?'0'+h:h)+':'+(m<10?'0'+m:m);
+  };
+  const isMO = () => {
+    const ist=new Date(Date.now()+5.5*3600000), day=ist.getUTCDay();
+    if(day===0||day===6) return false;
+    const mins=ist.getUTCHours()*60+ist.getUTCMinutes();
+    return mins>=555&&mins<=930;
+  };
+  const priCls = p => p.includes('HIGH')?'ph':p.includes('MEDIUM')?'pm':'pl';
+  const parseKey = (key,sym) => {
+    const r=key.replace(sym+'_','');
+    if(r.startsWith('dip_')) return 'Dip '+r.replace('dip_','')+'%';
+    if(r.startsWith('abs_')) return 'Below ₹'+parseFloat(r.replace('abs_','')).toLocaleString('en-IN');
+    return r;
+  };
+
+  // Find nearest trigger and distance
+  function nearestTrigger(s, price, base){
+    let best=null, bestDist=Infinity;
+    if(price===null) price = s.avgPrice; // fallback
+    for(const a of s.absoluteAlerts){
+      const dist=(price-a.price)/price*100; // positive = above trigger (need to fall)
+      if(dist>0 && dist<bestDist){ bestDist=dist; best={label:'₹'+a.price.toLocaleString('en-IN'),dist,hit:false}; }
+      if(dist<=0){ best={label:'₹'+a.price.toLocaleString('en-IN'),dist,hit:true}; bestDist=0; break; }
+    }
+    if(base){
+      for(const d of s.dipAlerts){
+        const thresh=base.price*(1+d.pct/100);
+        const dist=(price-thresh)/price*100;
+        if(dist>0 && dist<bestDist){ bestDist=dist; best={label:d.pct+'% dip',dist,hit:false}; }
+        if(dist<=0 && bestDist>0){ best={label:d.pct+'% dip',dist,hit:true}; bestDist=0; break; }
+      }
+    }
+    return best;
+  }
+
+  function rowClass(opps, pnlPct, trig){
+    if(opps && opps.length>0) return 'opp';
+    if(trig && !trig.hit && trig.dist<5) return 'watch';
+    return pnlPct<0?'loss':'';
+  }
+
+  function renderTable(data){
+    const body = document.getElementById('htb-body');
+    const sorted=[...data].sort((a,b)=>{
+      const oa=a.opportunities.length, ob=b.opportunities.length;
+      if(oa!==ob) return ob-oa;
+      const p=['HIGH','MEDIUM','LOW'];
+      return p.findIndex(x=>a.priority.includes(x))-p.findIndex(x=>b.priority.includes(x));
+    });
+
+    let html='', oppPills='', oppCount=0;
+    sorted.forEach((s,i)=>{
+      const hasPx  = s.price!==null;
+      const px     = hasPx ? s.price : s.avgPrice;
+      const lv     = hasPx ? s.qty * s.price : s.currentVal;
+      const pnlA   = lv - s.invested;
+      const pnlP   = pnlA / s.invested * 100;
+      const pnlClr = pnlP>=0?'#34d399':'#f87171';
+      const trig   = nearestTrigger(s, px, s.baseline);
+      const rc     = rowClass(s.opportunities, pnlP, trig);
+      const isOpp  = rc==='opp';
+      const isWatch= rc==='watch';
+      const rid    = 'r'+i;
+
+      // Trigger cell
+      let trigHtml='<span class="trig-dist">—</span>';
+      if(trig){
+        if(trig.hit){
+          trigHtml=\`<span class="trig-hit">● \${trig.label}</span>\`;
+        } else {
+          const distStr=trig.dist.toFixed(1)+'% away';
+          const cls=trig.dist<5?'trig-near':'trig-dist';
+          trigHtml=\`<span class="\${cls}">\${trig.label} · \${distStr}</span>\`;
+        }
+      }
+
+      // Status
+      let statusHtml='<span class="status-hold">Hold</span>';
+      if(isOpp) statusHtml='<span class="status-opp">🎯 BUY</span>';
+      else if(isWatch) statusHtml='<span class="status-watch">⚠️ Watch</span>';
+
+      // Price cell
+      const pxColor = hasPx ? (s.changePct>=0?'#34d399':'#f87171') : '#64748b';
+      const pxHtml  = hasPx
+        ? \`<span class="tdpx" style="color:\${pxColor}">\${inrd(s.price)}</span> <small style="color:\${pxColor}">\${pct(s.changePct)}</small>\`
+        : \`<span style="color:#64748b">\${inrd(s.avgPrice)} <small>(stale)</small></span>\`;
+
+      if(isOpp){ oppCount++; oppPills+=\`<span class="opp-pill">\${s.name}: \${s.opportunities[0]}</span>\`; }
+
+      // Detail row content
+      const trigTags=[
+        ...s.absoluteAlerts.map(a=>\`<span class="trig-tag trig-abs">₹\${a.price.toLocaleString('en-IN')} — \${a.label}</span>\`),
+        ...s.dipAlerts.map(d=>\`<span class="trig-tag trig-dip">\${d.pct}% — \${d.label}</span>\`)
+      ].join('');
+      const lastDipHtml = s.lastDip
+        ? \`<strong style="color:#c4b5fd">\${parseKey(s.lastDip.key,s.symbol)}</strong><br><span style="color:#64748b">\${fdt(s.lastDip.time)}</span>\`
+        : '<span style="color:#64748b;font-style:italic">No alert fired yet — bot starts Mon 9:30 AM</span>';
+      const oppDetail = isOpp
+        ? \`<div class="det-box det-opp">
+            <div class="det-lbl">🟢 Buy Now</div>
+            \${s.opportunities.map(o=>\`<div class="opp-item">✅ \${o}</div>\`).join('')}
+            <div class="buy-box">Buy \${Math.max(1,Math.floor(s.addAmountINR/px))} shares × \${inrd(px)} ≈ \${inr(Math.round(Math.max(1,Math.floor(s.addAmountINR/px))*px))}</div>
+          </div>\`
+        : '';
+
+      html+=\`<tr class="\${rc}" onclick="tog('\${rid}')">
+        <td style="color:#64748b;width:28px">\${i+1}</td>
+        <td class="tdname">\${s.name}<small>\${s.symbol} <span class="pri \${priCls(s.priority)}">\${s.priority.replace(/[^\w\s]/g,'').trim()}</span></small></td>
+        <td style="color:#94a3b8">\${s.qty}</td>
+        <td style="color:#94a3b8">\${inrd(s.avgPrice,s.avgPrice<100?2:0)}</td>
+        <td>\${inr(s.invested)}</td>
+        <td>\${pxHtml}</td>
+        <td style="color:\${pnlClr}">\${inr(lv)}</td>
+        <td class="tdpnl" style="color:\${pnlClr}">\${pnlA>=0?'+':''}\${inr(Math.abs(pnlA))}</td>
+        <td style="color:\${pnlClr};font-weight:700">\${pct(pnlP)}</td>
+        <td>\${trigHtml}</td>
+        <td>\${statusHtml}</td>
+      </tr>
+      <tr class="det-row" id="\${rid}">
+        <td colspan="11">
+          <div class="det-inner">
+            <div class="det-top">
+              <div class="det-box det-dip">
+                <div class="det-lbl">📉 Last Dip Alert</div>
+                <div class="det-val">\${lastDipHtml}</div>
+              </div>
+              <div class="det-box">
+                <div class="det-lbl">🎯 Triggers</div>
+                <div class="trig-tags">\${trigTags||'<span style="color:#94a3b8">No triggers set</span>'}</div>
+              </div>
+              \${oppDetail}
+            </div>
+            <div class="det-box-full">
+              <div class="det-lbl">💡 Thesis</div>
+              <div class="thesis">\${s.thesis}</div>
+            </div>
+          </div>
+        </td>
+      </tr>\`;
+    });
+
+    body.innerHTML=html;
+
+    // Opportunities panel
+    const panel=document.getElementById('opp-panel');
+    document.getElementById('opp-pills').innerHTML=oppPills;
+    panel.classList.toggle('has-opps', oppCount>0);
+    document.getElementById('h-opps').textContent=oppCount?oppCount+' stock'+(oppCount>1?'s':''):'None';
+    document.getElementById('h-opps').style.color=oppCount?'#10b981':'#64748b';
+
+    // Hero live totals
+    let lv2=0, pnl2=0;
+    for(const s of data){ const v=s.price!==null?s.qty*s.price:s.currentVal; lv2+=v; pnl2+=v-s.invested; }
+    document.getElementById('h-live').textContent='₹'+Math.round(lv2/1000)+'K';
+    document.getElementById('h-live').style.color=lv2>${totInvested}?'#34d399':'#f87171';
+    const ps=pnl2>=0?'+':'';
+    document.getElementById('h-pnl').textContent=ps+'₹'+Math.round(Math.abs(pnl2)).toLocaleString('en-IN');
+    document.getElementById('h-pnl').style.color=pnl2>=0?'#34d399':'#f87171';
+    document.getElementById('h-pct').textContent=ps+(pnl2/${totInvested}*100).toFixed(1)+'%';
+    document.getElementById('h-pct').style.color=pnl2>=0?'#34d399':'#f87171';
+  }
+
+  function tog(id){
+    const el=document.getElementById(id);
+    if(el) el.classList.toggle('open');
+  }
+
+  function mktStatus(){
+    const el=document.getElementById('htb-mkt');
+    el.innerHTML=isMO()?'<span class="htb-mkt-open">🟢 Market OPEN</span>':'<span class="htb-mkt-cl">🟡 Market CLOSED</span>';
+  }
+
+  let _live=false;
+  async function load(){
+    document.getElementById('htb-ts').textContent='Fetching…';
+    try{
+      const r=await fetch('/api/holdings/prices');
+      const j=await r.json();
+      if(!j.data){document.getElementById('htb-ts').textContent='Failed: '+j.error; return;}
+      _live=j.ok;
+      // Merge live data into static holdings
+      const merged=_H.map(h=>{
+        const d=j.data.find(x=>x.symbol===h.symbol)||{};
+        return {...h, price:d.price??null, changePct:d.changePct??null,
+          dayHigh:d.dayHigh??null, dayLow:d.dayLow??null,
+          baseline:d.baseline??null, lastDip:d.lastDip??null,
+          opportunities:d.opportunities??[]};
+      });
+      renderTable(merged);
+      const t=new Date(j.fetchedAt).toLocaleTimeString('en-IN');
+      document.getElementById('htb-ts').textContent=j.ok?('Updated '+t):('Stale — '+t);
+      document.getElementById('tok-ok').style.display  = j.ok?'flex':'none';
+      document.getElementById('tok-warn').style.display= j.ok?'none':'flex';
+    }catch(e){
+      document.getElementById('htb-ts').textContent='Error: '+e.message;
+    }
+  }
+
+  // Init — static data first (no live prices yet)
+  const staticData=_H.map(h=>({...h,price:null,changePct:null,dayHigh:null,dayLow:null,
+    baseline:null,lastDip:null,opportunities:[]}));
+  renderTable(staticData);
+  mktStatus();
+  load();
+  setInterval(()=>{load();mktStatus();}, isMO()?60000:300000);
+  </script>
+</body>
+</html>`);
+});
 
 initDb().then(async () => {
   await ensureAdminEmail();

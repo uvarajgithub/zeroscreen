@@ -183,7 +183,8 @@ function runBacktest(allDates, byDay) {
   const yearly = {};
 
   for (const date of allDates) {
-    const { dayPts, t1Dir } = simDay(byDay[date]);
+    const res = simDay(byDay[date]);
+    const { dayPts, t1Dir } = res;
     if (!t1Dir) { flat++; continue; }
 
     totalPts += dayPts;
@@ -194,6 +195,7 @@ function runBacktest(allDates, byDay) {
     const yr = date.slice(0, 4);
     yearly[yr] = (yearly[yr] || 0) + dayPts;
     if (dayPts > 0) wins++; else losses++;
+
   }
 
   const tradeDays = wins + losses;

@@ -10,16 +10,34 @@
 
 const https = require('https');
 const http  = require('http');
+const { execSync } = require('child_process');
 const crypto = require('crypto');
 require('dotenv').config({ path: '/home/ubuntu/trading-bot/.env' });
 
-// ── FILL THESE IN ─────────────────────────────────────────────────────────────
-const ZERODHA_USER_ID  = 'YOUR_USER_ID';       // e.g. ZE1234
-const ZERODHA_PASSWORD = 'YOUR_PASSWORD';       // your Zerodha login password
-const TOTP_SECRET      = 'YOUR_TOTP_SECRET';   // base32 key from Zerodha 2FA setup page
-// ──────────────────────────────────────────────────────────────────────────────
+// ── CONFIG ────────────────────────────────────────────────────────────────────
+const ZERODHA_USER_ID  = 'TR4758';
+const ZERODHA_PASSWORD = 'Uvi@janya123456';
+const TOTP_SECRET      = '5WPWF3RZSEHY3B5KM2VVEHTU3JQWBXNS';
+const BOT_PM2_NAME     = 'amina-100-variant-b';   // correct PM2 process name
+// ─────────────────────────────────────────────────────────────────────────────
 
 const API_KEY = process.env.API_KEY;
+
+// -- Telegram notification helper --
+function sendTelegram(msg) {
+  const token = process.env.TELEGRAM_BOT_TOKEN;
+  const chat  = process.env.TELEGRAM_CHAT_ID;
+  if (!token || !chat) return;
+  const data = JSON.stringify({ chat_id: chat, text: msg });
+  const req = https.request({
+    hostname: 'api.telegram.org',
+    path: `/bot${token}/sendMessage`,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(data) }
+  }, () => {});
+  req.on('error', () => {});
+  req.write(data); req.end();
+}
 
 // ── TOTP (RFC 6238) using only built-in crypto ────────────────────────────────
 function base32Decode(s) {
@@ -111,11 +129,6 @@ async function main() {
   const now = new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' });
   console.log(`\n[auto_token] Starting at ${now} IST`);
 
-  if (ZERODHA_USER_ID === 'YOUR_USER_ID') {
-    console.error('[auto_token] ERROR: Fill in your credentials in auto_token.js first');
-    process.exit(1);
-  }
-
   // Step 1: GET login page (establishes api_key session context)
   console.log('[auto_token] Step 1: Establishing session...');
   const r0 = await httpsGet(`/connect/login?api_key=${API_KEY}&v=3`, '');
@@ -159,8 +172,37 @@ async function main() {
     if (m2) requestToken = m2[1];
   }
 
+  // Step 3b: After 2FA success, GET connect/login again to trigger OAuth redirect
   if (!requestToken) {
-    throw new Error(`No request_token found.\nStatus: ${r2.status}\nLocation: ${loc}\nBody: ${r2.body.slice(0,300)}`);
+    console.log('[auto_token] Step 3b: Triggering OAuth redirect...');
+    const r3 = await httpsGet(`/connect/login?api_key=${API_KEY}&v=3`, cookies);
+    cookies = mergeCookies(cookies, r3.headers);
+    const loc3 = r3.headers['location'] || '';
+    const m3 = loc3.match(/request_token=([^&]+)/);
+    if (m3) requestToken = m3[1];
+    if (!requestToken) {
+      const m4 = r3.body.match(/request_token=([A-Za-z0-9]+)/);
+      if (m4) requestToken = m4[1];
+    }
+    // Step 3c: Follow /connect/finish to get request_token
+    if (!requestToken && loc3.includes('/connect/finish')) {
+      console.log('[auto_token] Step 3c: Following /connect/finish...');
+      const finishPath = loc3.replace('https://kite.zerodha.com', '');
+      const r4 = await httpsGet(finishPath, cookies);
+      cookies = mergeCookies(cookies, r4.headers);
+      const loc4 = r4.headers['location'] || '';
+      const m5 = loc4.match(/request_token=([^&]+)/);
+      if (m5) requestToken = m5[1];
+      if (!requestToken) {
+        const m6 = r4.body.match(/request_token=([A-Za-z0-9]+)/);
+        if (m6) requestToken = m6[1];
+      }
+      if (!requestToken) {
+        throw new Error(`No request_token found.\nFinish status: ${r4.status}\nFinish loc: ${loc4}\nFinish body: ${r4.body.slice(0,300)}`);
+      }
+    } else if (!requestToken) {
+      throw new Error(`No request_token found.\nTOTP status: ${r2.status}\nTOTP body: ${r2.body.slice(0,200)}\nRedirect loc: ${loc3}\nRedirect body: ${r3.body.slice(0,200)}`);
+    }
   }
   console.log('[auto_token] Got request_token:', requestToken.slice(0, 12) + '...');
 
@@ -186,15 +228,22 @@ async function main() {
     req.write(payload); req.end();
   });
 
-  if (response.body.includes('success') || response.body.includes('restart') ||
-      response.body.includes('Token') || response.status === 200) {
-    console.log('[auto_token] ✓ Token refreshed and bot restarted successfully');
-  } else {
-    console.log('[auto_token] token-server response:', response.body.slice(0, 300));
+  console.log('[auto_token] Token-server response status:', response.status);
+
+  // Step 5: Direct PM2 restart with correct process name
+  // (token-server has BOT_NAME='trading-bot' which is wrong — we fix it here)
+  try {
+    execSync(`pm2 restart ${BOT_PM2_NAME} --update-env`, { stdio: 'pipe' });
+    console.log(`[auto_token] \u2714 ${BOT_PM2_NAME} restarted with new token`);
+    sendTelegram(`\u2705 Token refreshed & bot restarted\n${now} IST`);
+  } catch (pmErr) {
+    console.warn('[auto_token] PM2 restart warning:', pmErr.message ? pmErr.message.slice(0, 200) : pmErr);
+    sendTelegram(`\u26a0\ufe0f Token updated but PM2 restart failed: ${(pmErr.message || '').slice(0, 100)}`);
   }
 }
 
 main().catch(e => {
   console.error('[auto_token] FAILED:', e.message);
-  process.exit(1);
+  sendTelegram('\u274c Token refresh FAILED: ' + e.message.slice(0, 200) + '\n\nLogin manually: http://139.59.18.52:3001/login');
+  setTimeout(() => process.exit(1), 2000);
 });

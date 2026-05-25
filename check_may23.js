@@ -1,0 +1,10 @@
+const d = require('./cache/banknifty_2026.json');
+const cs = d['2026-05-22'];
+const hi = Math.max.apply(null, cs.map(function(c){ return c.high; }));
+const lo = Math.min.apply(null, cs.map(function(c){ return c.low; }));
+const pdc = cs[cs.length-1].close;
+console.log('May 22 (yesterday):');
+console.log('  PDH:', hi.toFixed(2));
+console.log('  PDL:', lo.toFixed(2));
+console.log('  PDC:', pdc.toFixed(2));
+console.log('  C0 (9:15-9:30):', JSON.stringify(cs[0]));

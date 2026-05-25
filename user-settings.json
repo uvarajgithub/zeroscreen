@@ -1,0 +1,11 @@
+{
+  "activeStrategy": "HYBRID_REVERSE",
+  "quantity": 30,
+  "mode": "PAPER",
+  "risk": {
+    "maxDailyLossPoints": 150,
+    "maxTradesPerDay": 5,
+    "dailyLossCap": 150,
+    "riskPerTradePercent": 1
+  }
+}
