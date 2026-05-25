@@ -56,26 +56,12 @@ const child_process_1 = require("child_process");
 // ── Telegram notify helper ─────────────────────────────────────────────────────
 const TG_BOT = process.env.TELEGRAM_BOT_TOKEN || "";
 const TG_CHAT = process.env.TELEGRAM_CHAT_ID || "";
-// Legacy sync version (used for env-var based fallback)
-function notifyTelegram(text, toggleKey) {
-    sendTelegramNotification(text, toggleKey).catch(() => {});
-}
-// Async version — reads token/chat from DB (admin panel) with env fallback
-async function sendTelegramNotification(text, toggleKey) {
-    try {
-        if (toggleKey) {
-            const enabled = await (0, db_1.getSetting)(toggleKey);
-            if (enabled === 'false') return;
-        }
-        const token  = (await (0, db_1.getSetting)('tg_bot_token'))  || TG_BOT;
-        const chatId = (await (0, db_1.getSetting)('tg_chat_id'))    || TG_CHAT;
-        if (!token || !chatId) return;
-        await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ chat_id: chatId, text, parse_mode: 'HTML' })
-        });
-    } catch(e) { /* silent */ }
+function notifyTelegram(text) {
+    if (!TG_BOT || !TG_CHAT)
+        return;
+    const encoded = encodeURIComponent(text);
+    const url = `https://api.telegram.org/bot${TG_BOT}/sendMessage?chat_id=${TG_CHAT}&text=${encoded}`;
+    https_1.default.get(url, (r) => { r.resume(); }).on("error", () => { });
 }
 const app = (0, express_1.default)();
 const PORT = parseInt(process.env.PORT || "4000", 10);
@@ -421,7 +407,7 @@ function nav(active, req) {
     const traderLinks = [
         ["today", "/today", "🔥 Today's Picks"],
         ["signals", "/signals", "🤖 Live Bot Signals"],
-        ["bot-analytics", "/bot-analytics", "📈 Bot Analytics"],
+        ["dashboard", "/dashboard", "📈 Bot Analytics"],
         ["strategy-builder", "/strategy-builder", "🏗️ Strategy Builder"],
     ];
     // 🔴 INVESTORS (advanced) — do your own research
@@ -444,7 +430,7 @@ function nav(active, req) {
         ["admin-content", "/admin/content", "📢 Content"],
         ["admin-signals", "/admin/signals", "🤖 Signal Control"],
         ["admin-subs", "/admin/subs", "💳 Subscriptions"],
-        ["admin-notifications", "/admin/notifications", "&#x1F4E3; Notifications"],
+        ["holdings", "/holdings", "📊 My Holdings"],
     ] : [];
     const allTiered = [...beginnerLinks, ...traderLinks, ...investorLinks];
     const beginnerActive = beginnerLinks.some(([k]) => k === active);
@@ -520,6 +506,7 @@ function nav(active, req) {
       <a href="/signals" class="nav-signals-link${active === "signals" ? " active" : ""}"><span class="nav-live-dot"></span>🤖 Live Bot</a>
       <a href="/paper-trade" class="${active === "paper-trade" ? "active" : ""}">📋 Paper Trade</a>
       <a href="${isLoggedIn ? '/dashboard' : '/paper-trade'}" class="nav-hot-link${active === 'dashboard' || active === 'my-paper-trade' || active === 'my-portfolio' ? ' active' : ''}">💼 My Trade <span class="nav-hot-badge">HOT</span></a>
+      ${isAdmin ? `<a href="/holdings" class="nav-hot-link${active === 'holdings' ? ' active' : ''}" style="background:linear-gradient(90deg,rgba(16,185,129,.18),rgba(6,182,212,.12));border:1px solid rgba(16,185,129,.3)">📊 Holdings</a>` : ''}
       ${exploreDropHtml}
     </div>
     <div class="nav-links" id="nav-links">
@@ -532,6 +519,7 @@ function nav(active, req) {
       <a href="/signals" class="nav-signals-link${active === "signals" ? " active" : ""}"><span class="nav-live-dot"></span>🤖 Live Bot</a>
       <a href="/paper-trade" class="${active === "paper-trade" ? "active" : ""}">📋 Paper Trade</a>
       <a href="${isLoggedIn ? '/dashboard' : '/paper-trade'}" class="nav-hot-link${active === 'dashboard' || active === 'my-paper-trade' || active === 'my-portfolio' ? ' active' : ''}">💼 My Trade <span class="nav-hot-badge">HOT</span></a>
+      ${isAdmin ? `<a href="/holdings" class="${active === 'holdings' ? 'active' : ''}">📊 My Holdings</a>` : ''}
       ${exploreDropHtml}
       ${mobileMobFooter}
         <input type="text" id="nav-search" class="nav-search-input" placeholder="Search stocks…" autocomplete="off" aria-label="Search stocks">
@@ -860,18 +848,7 @@ app.get("/signup", featureGate("registration_open", "New Registrations"), (req, 
     </div>
 
   </div>
-  <script>
-    fetch('/admin/settings/telegram/status').then(r=>r.json()).then(d=>{
-      const el = document.getElementById('tg-status-home');
-      if (!el) return;
-      if (d.configured) {
-        el.innerHTML = '<span style="color:#16a34a">&#x2705; Bot configured</span><br><span style="font-size:11px">' + d.notifications_on + ' notifications ON</span>';
-      } else {
-        el.innerHTML = '<span style="color:#f59e0b">&#x26A0;&#xFE0F; Not configured</span><br><span style="font-size:11px">Add bot token &amp; chat ID in Settings</span>';
-      }
-    }).catch(()=>{});
-  </script>
-  </body>
+</body>
 </html>`);
 });
 // POST /signup
@@ -910,7 +887,7 @@ app.post("/signup", featureGate("registration_open", "New Registrations"), async
     // Send welcome email (non-blocking)
     (0, mailer_1.sendWelcomeEmail)(name.trim(), email.trim()).catch(() => { });
     // Notify admin on Telegram
-    notifyTelegram(`🆕 New ZeroScreen signup!\nName: ${name.trim()}\nEmail: ${email.trim()}\nRole: ${role}\nTime: ${new Date().toLocaleString("en-IN", { timeZone: "Asia/Kolkata" })} IST`, 'tg_notify_new_user');
+    notifyTelegram(`🆕 New ZeroScreen signup!\nName: ${name.trim()}\nEmail: ${email.trim()}\nRole: ${role}\nTime: ${new Date().toLocaleString("en-IN", { timeZone: "Asia/Kolkata" })} IST`);
     res.redirect("/");
 });
 // GET /login
@@ -1387,7 +1364,7 @@ app.get("/auth/google/callback", async (req, res) => {
             const role = (userCount === 0 || isAdminEmail) ? "admin" : "user";
             await (0, db_1.dbRun)("UPDATE users SET google_id=?, avatar_url=?, role=? WHERE id=?", [gUser.id, gUser.picture || "", role, id]);
             user = await (0, db_1.getUserById)(id);
-            notifyTelegram(`🆕 New ZeroScreen signup via Google!\nName: ${gUser.name}\nEmail: ${gUser.email}`, 'tg_notify_new_user');
+            notifyTelegram(`🆕 New ZeroScreen signup via Google!\nName: ${gUser.name}\nEmail: ${gUser.email}`);
         }
         else {
             // Update google_id if not set
@@ -3023,7 +3000,7 @@ app.get("/admin", requireAdmin, async (req, res) => {
       <div class="admin-quick-card">
         <h3>🤖 Bot Status</h3>
         <p>Position: <strong class="${botActive ? "sig-green" : "text-dim"}">${botActive ? "● " + (botStatus.direction || "ACTIVE") : "💤 FLAT"}</strong></p>
-        <p>Strategy: <strong>${botStatus.strategy || botStatus.type || "LOCK50 Candle-SL"}</strong></p>
+        <p>Strategy: <strong>${botStatus.strategy || botStatus.type || "—"}</strong></p>
         <a href="/admin/signals" class="btn-secondary" style="margin-top:8px">⚙️ Signal Control</a>
       </div>
       <div class="admin-quick-card">
@@ -3038,17 +3015,148 @@ app.get("/admin", requireAdmin, async (req, res) => {
           <a href="/admin/analytics" class="btn-secondary">📊 Analytics</a>
           <a href="/admin/content" class="btn-secondary">📢 Content</a>
           <a href="/admin/settings" class="btn-secondary">⚙️ Settings</a>
-          <a href="/admin/settings#tg" class="btn-secondary">&#x1F4E3; Telegram</a>
         </div>
-      </div>
-      <div class="admin-quick-card">
-        <h3>&#x1F4E3; Telegram</h3>
-        <p id="tg-status-home" style="font-size:13px;color:var(--text-dim)">Loading…</p>
-        <a href="/admin/settings#tg" class="btn-secondary" style="margin-top:8px">Configure &amp; Test</a>
       </div>
     </div>
 
+    <!-- ─── System Health Monitor ─────────────────────────────────── -->
+    <style>
+      .hm-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(145px,1fr));gap:10px;margin-bottom:1rem}
+      .hm-card{background:var(--card-bg,#1e293b);border:1px solid var(--border,#334155);border-radius:10px;padding:13px 16px;display:flex;align-items:center;gap:11px;transition:border-color .3s}
+      .hm-card.hm-ok{border-color:rgba(16,185,129,.4)}
+      .hm-card.hm-warn{border-color:rgba(251,191,36,.5)}
+      .hm-card.hm-err{border-color:rgba(239,68,68,.5)}
+      .hm-card.hm-dim{border-color:var(--border,#334155)}
+      .hm-dot{width:10px;height:10px;border-radius:50%;flex-shrink:0;background:#475569}
+      .hm-ok .hm-dot{background:#10b981}
+      .hm-warn .hm-dot{background:#fbbf24;box-shadow:0 0 6px rgba(251,191,36,.6)}
+      .hm-err .hm-dot{background:#ef4444;box-shadow:0 0 7px rgba(239,68,68,.7);animation:hm-blink 1s infinite}
+      @keyframes hm-blink{0%,100%{opacity:1}50%{opacity:.25}}
+      .hm-label{font-size:.67rem;color:var(--text-muted,#94a3b8);text-transform:uppercase;letter-spacing:.05em;line-height:1}
+      .hm-val{font-size:.82rem;font-weight:700;margin-top:4px;line-height:1.2}
+      .hm-section-title{font-size:.85rem;font-weight:700;color:var(--text-muted,#94a3b8);text-transform:uppercase;letter-spacing:.07em;margin:1.4rem 0 .7rem}
+      .hm-alerts{display:flex;flex-direction:column;gap:8px;margin-bottom:1rem}
+      .hm-alert{border-radius:10px;padding:13px 18px;border:1px solid;display:flex;align-items:flex-start;gap:12px;position:relative}
+      .hm-alert-err{background:rgba(239,68,68,.07);border-color:rgba(239,68,68,.4);color:#fca5a5}
+      .hm-alert-warn{background:rgba(251,191,36,.07);border-color:rgba(251,191,36,.4);color:#fde68a}
+      .hm-alert-title{font-weight:700;font-size:.85rem}
+      .hm-alert-msg{font-size:.75rem;opacity:.8;margin-top:3px}
+      .hm-alert-btn{display:inline-block;margin-top:9px;padding:4px 13px;border-radius:5px;font-size:.73rem;font-weight:700;cursor:pointer;border:1px solid currentColor;background:transparent;color:inherit;text-decoration:none}
+      .hm-alert-upd{font-size:.7rem;color:var(--text-muted,#64748b);margin-top:.5rem}
+      .hm-fix{margin-top:5px}.hm-fix a,.hm-fix button{font-size:.63rem;font-weight:700;padding:2px 9px;border-radius:4px;border:1px solid currentColor;cursor:pointer;background:transparent;color:inherit;text-decoration:none;display:inline-block}
+      .hm-sub{font-size:.7rem;opacity:.65;margin-top:3px;line-height:1.2}
+    </style>
+    <div class="hm-section-title">&#x26A1; System Health <span id="hm-upd" style="font-weight:400;font-size:.7rem;opacity:.6">Loading&hellip;</span></div>
+    <div class="hm-grid">
+      <div class="hm-card hm-dim" id="hm-bot"><div class="hm-dot"></div><div><div class="hm-label">Bot Heartbeat</div><div class="hm-val" id="hm-bot-v">&mdash;</div><div class="hm-fix" id="hm-bot-fix" style="display:none"></div></div></div>
+      <div class="hm-card hm-dim" id="hm-tok"><div class="hm-dot"></div><div><div class="hm-label">Zerodha Token</div><div class="hm-val" id="hm-tok-v">&mdash;</div><div class="hm-fix" id="hm-tok-fix" style="display:none"></div></div></div>
+      <div class="hm-card hm-dim" id="hm-mkt"><div class="hm-dot"></div><div><div class="hm-label">Market</div><div class="hm-val" id="hm-mkt-v">&mdash;</div></div></div>
+      <div class="hm-card hm-dim" id="hm-pos"><div class="hm-dot"></div><div><div class="hm-label">Position (LOCK50)</div><div class="hm-val" id="hm-pos-v">&mdash;</div></div></div>
+      <div class="hm-card hm-dim" id="hm-cnd"><div class="hm-dot"></div><div><div class="hm-label">Last 15-Min Candle</div><div class="hm-val" id="hm-cnd-v">&mdash;</div><div class="hm-sub" id="hm-cnd-s"></div></div></div>
+      <div class="hm-card hm-dim" id="hm-pnl"><div class="hm-dot"></div><div><div class="hm-label">Today P&amp;L (LOCK50)</div><div class="hm-val" id="hm-pnl-v">&mdash;</div></div></div>
+      <div class="hm-card hm-dim" id="hm-trl"><div class="hm-dot"></div><div><div class="hm-label">TRAIL (shadow)</div><div class="hm-val" id="hm-trl-v">&mdash;</div><div class="hm-sub" id="hm-trl-s"></div></div></div>
+      <div class="hm-card hm-dim" id="hm-trds"><div class="hm-dot"></div><div><div class="hm-label">Trades Today</div><div class="hm-val" id="hm-trds-v">&mdash;</div></div></div>
+    </div>
+    <div class="hm-alerts" id="hm-alerts"></div>
+    <script>
+    (function(){
+      function hg(id){return document.getElementById(id);}
+      var _hmu=hg('hm-upd');if(_hmu)_hmu.textContent='Connecting\u2026';
+      function hmSet(id,state,val){var c=hg(id);if(!c)return;c.className="hm-card hm-"+state;var v=hg(id+"-v");if(v)v.textContent=val;}
+      function hmAlert(container,issues){
+        container.innerHTML="";
+        issues.forEach(function(iss){
+          var d=document.createElement("div");
+          d.className="hm-alert hm-alert-"+iss.type;
+          var btns="";
+          if(iss.href)btns='<a class="hm-alert-btn" href="'+iss.href+'" target="_blank">'+iss.btnLabel+'</a>';
+          else if(iss.fn)btns='<button class="hm-alert-btn" onclick="'+iss.fn+'">'+iss.btnLabel+'</button>';
+          d.innerHTML='<div><div class="hm-alert-title">'+iss.icon+" "+iss.title+'</div><div class="hm-alert-msg">'+iss.msg+'</div>'+btns+'</div>';
+          container.appendChild(d);
+        });
+        container.style.display=issues.length?"flex":"none";
+      }
+      function doHmRefresh(){
+        fetch("/api/bot/status").then(function(r){return r.json();}).then(function(d){
+          var hbAt=d.heartbeat&&d.heartbeat.at?new Date(d.heartbeat.at).getTime():0;
+          var hbAgo=hbAt?(Date.now()-hbAt):Infinity;
+          var hbMin=Math.round(hbAgo/60000);
+          var alive=d.isAlive!==false;
+          var tkOK=!!d.tokenOK;
+          var nowIST=new Date(new Date().toLocaleString("en-US",{timeZone:"Asia/Kolkata"}));
+          var iH=nowIST.getHours(),iM=nowIST.getMinutes();
+          var mktOpen=(iH>9||(iH===9&&iM>=15))&&(iH<15||(iH===15&&iM<=30));
+          var after915=iH>9||(iH===9&&iM>=15);
+          var inPos=d.activeState&&!!(d.activeState.inTrade||d.activeState.activeTrade||d.activeState.mainEntryDone);
+          var posDir=(d.activeState&&(d.activeState.tradeDirection||d.activeState.direction)||"").toUpperCase();
+          var lc=d.heartbeat&&d.heartbeat.lastCandle;
+          var todayPnl=parseFloat(((d.today&&d.today.pnl||0)+(inPos?(d.activeState&&d.activeState.unrealisedPnL||0):0)).toFixed(0));
+          var todayRs=Math.round(todayPnl*15);
+          var shadowPnl=parseFloat((d.heartbeat&&d.heartbeat.shadowPnL||0).toFixed(0));
+          var shadowTr=d.heartbeat&&d.heartbeat.shadowTrades||0;
+          var shadowInTrade=!!(d.heartbeat&&d.heartbeat.shadowInTrade);
+          var shadowDir=(d.heartbeat&&d.heartbeat.shadowDir||"").toUpperCase();
+          var shadowMaxed=shadowTr>=5;
+          var shadowMissed=after915&&mktOpen&&(d.today&&d.today.trades||0)>0&&shadowTr===0;
+          var trades=d.today&&d.today.trades||0;
 
+          // ── Bot heartbeat card + inline fix button
+          hmSet("hm-bot",alive?"ok":"err",alive?(hbAgo<90000?"Just now":hbMin+"m ago"):"Offline"+(hbAt?" ("+hbMin+"m ago)":""));
+          var bf=hg("hm-bot-fix");if(bf){bf.innerHTML=alive?"":"<button onclick=\"doHmAction('restart')\">\u21BB Restart Bot</button>";bf.style.display=alive?"none":"";}
+
+          // ── Token card + inline fix link
+          hmSet("hm-tok",tkOK?"ok":"err",tkOK?"Valid \u2713":"Expired \u2717");
+          var tf=hg("hm-tok-fix");if(tf){tf.innerHTML=tkOK?"":"<a href=\"https://139-59-18-52.nip.io/login\" target=\"_blank\">\uD83D\uDD11 Refresh Token</a>";tf.style.display=tkOK?"none":"";}
+
+          // ── Market card
+          hmSet("hm-mkt",mktOpen?"ok":"dim",mktOpen?"Open \u2014 closes 3:30 PM":"Closed");
+
+          // ── Position (LOCK50) card
+          var unrealised=inPos&&d.activeState&&d.activeState.unrealisedPnL?d.activeState.unrealisedPnL:0;
+          var posLabel=inPos?(posDir||"?")+" OPTION \u25CF":"Flat \u2014 watching";
+          hmSet("hm-pos",inPos?"ok":"dim",posLabel);
+
+          // ── Last 15-min candle card with trade-status sub-line
+          var cndBull=lc&&lc.colour==="bull";
+          var cndMain=lc?lc.time+" ("+(cndBull?"\u25B2 Bull":"\u25BC Bear")+")":mktOpen?"Awaiting next candle":"No candle (mkt closed)";
+          var cndSub=inPos?((posDir||"")+" In Trade \u25CF"):(alive&&mktOpen?"Watching for opportunity":"");
+          hmSet("hm-cnd",lc?"ok":(mktOpen?"warn":"dim"),cndMain);
+          var cs=hg("hm-cnd-s");if(cs)cs.textContent=cndSub;
+
+          // ── Today P&L (LOCK50) card
+          hmSet("hm-pnl",todayPnl>0?"ok":todayPnl<0?"err":"dim",(todayPnl>=0?"+":"-")+"\u20B9"+Math.abs(todayRs).toLocaleString("en-IN")+" ("+(todayPnl>=0?"+":"")+todayPnl+" pts)");
+
+          // ── TRAIL (shadow) card — show position status + P&L as sub-line
+          var trlLabel=shadowMaxed?"\u23F9 Max 5 trades done":(shadowInTrade?(shadowDir+" In Trade \u25CF"):(shadowMissed?"\u26A0 Missed entry":(mktOpen?"Watching for opportunity":"Flat")));
+          var trlState=shadowInTrade?"ok":(shadowMissed?"warn":(shadowMaxed?"dim":(shadowPnl<0?"err":"dim")));
+          var trlSub=(shadowPnl>=0?"+":"")+shadowPnl+" pts \u00B7 "+shadowTr+" trade"+(shadowTr!==1?"s":"");
+          hmSet("hm-trl",trlState,trlLabel);
+          var ts=hg("hm-trl-s");if(ts)ts.textContent=trlSub;
+
+          // ── Trades today card
+          hmSet("hm-trds",trades>0?"ok":"dim",trades+" trade"+(trades!==1?"s":"")+" ("+(d.today&&d.today.wins||0)+"W / "+(d.today&&d.today.losses||0)+"L)");
+
+          var upd=hg("hm-upd");if(upd)upd.textContent="Updated "+new Date().toLocaleTimeString("en-IN");
+          var ac=hg("hm-alerts");if(!ac)return;
+          var issues=[];
+          if(after915&&mktOpen){
+            if(!alive)issues.push({type:"err",icon:"\u26A0\uFE0F",title:"Bot Offline",msg:"No heartbeat for "+(hbAt?hbMin+"+ min":"unknown duration")+". Bot is not running.",fn:"doHmAction('restart')",btnLabel:"\u21BB Restart Bot"});
+            if(!tkOK)issues.push({type:"warn",icon:"\uD83D\uDD11",title:"Token Expired",msg:"Zerodha access token invalid. Submit a fresh token to resume trading.",href:"https://139-59-18-52.nip.io/login",btnLabel:"\u2192 Refresh Token"});
+            if(alive&&hbAgo>4*60*1000)issues.push({type:"warn",icon:"\u23F0",title:"Heartbeat Stale",msg:"Last heartbeat "+hbMin+" min ago. Bot may be hung.",fn:"doHmAction('restart')",btnLabel:"\u21BB Restart Bot"});
+            if(alive&&!lc)issues.push({type:"warn",icon:"\uD83D\uDCC9",title:"No Candle Data",msg:"Bot is alive but no 15-min candle received yet. Normal before 9:30 AM."});
+          }
+          hmAlert(ac,issues);
+        }).catch(function(e){var upd=hg("hm-upd");if(upd)upd.textContent="Error: "+e.message;});
+      }
+      window.doHmAction=function(action){
+        if(!confirm(action==="restart"?"Restart the trading bot?":"Perform: "+action+"?"))return;
+        fetch('/api/bot/action',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:action})})
+          .then(function(r){return r.json();}).then(function(d){alert(d.ok?"\u2713 "+d.msg:"Error: "+d.msg);doHmRefresh();}).catch(function(){alert("Request failed");});
+      };
+      doHmRefresh();setInterval(doHmRefresh,10000);
+    })();
+    </script>
+    <!-- ─────────────────────────────────────────────────────────── -->
   </div>
   <script src="/public/js/app.js"></script>
 </body>
@@ -3259,11 +3367,6 @@ app.post("/admin/settings/toggle", requireAdmin, async (req, res) => {
         "feature_watchlists", "feature_alerts", "feature_compare",
         "feature_strategy_builder", "feature_contact",
         "watchlists_premium_only", "alerts_premium_only", "paper_trade_premium_only",
-        "tg_notify_pick_entry", "tg_notify_pick_exit", "tg_notify_new_user",
-        "tg_notify_daily_picks", "tg_notify_sl_breach", "tg_notify_system",
-        "tg_notify_bot_started", "tg_notify_bot_stopped", "tg_notify_candle",
-        "tg_notify_trade_entry", "tg_notify_trade_exit",
-        "tg_notify_token_expired", "tg_notify_token_refresh",
     ];
     const { key, value } = req.body;
     if (!allowed.includes(key) || !["true", "false"].includes(value)) {
@@ -3273,232 +3376,11 @@ app.post("/admin/settings/toggle", requireAdmin, async (req, res) => {
     await (0, db_1.setSetting)(key, value);
     res.json({ ok: true });
 });
-// ── GET /admin/notifications ────────────────────────────────────────────────
-app.get("/admin/notifications", requireAdmin, async (req, res) => {
-    const keys = [
-        "tg_bot_token", "tg_chat_id",
-        "tg_notify_pick_entry", "tg_notify_pick_exit", "tg_notify_new_user",
-        "tg_notify_daily_picks", "tg_notify_sl_breach", "tg_notify_system",
-        "tg_notify_bot_started", "tg_notify_bot_stopped", "tg_notify_candle",
-        "tg_notify_trade_entry", "tg_notify_trade_exit",
-        "tg_notify_token_expired", "tg_notify_token_refresh",
-    ];
-    const cfg = {};
-    await Promise.all(keys.map(async (k) => { cfg[k] = await (0, db_1.getSetting)(k) || ""; }));
-    const isOn = (k) => cfg[k] !== "false";
-    function toggle(key, label, desc) {
-        const on = isOn(key);
-        return `
-    <div class="setting-row">
-      <div class="setting-info">
-        <div class="setting-title">${label}</div>
-        <div class="setting-desc">${desc}</div>
-      </div>
-      <div class="toggle-wrap">
-        <span class="toggle-label ${on ? "on" : "off"}" id="lbl-${key}">${on ? "ON" : "OFF"}</span>
-        <label class="toggle-btn">
-          <input type="checkbox" id="tog-${key}" ${on ? "checked" : ""} onchange="save('${key}', this.checked)">
-          <span class="toggle-slider"></span>
-        </label>
-      </div>
-    </div>`;
-    }
-    res.send(`<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>Notifications - ZeroScreen Admin</title>
-  <link rel="stylesheet" href="/public/css/style.css">
-  <style>
-    .settings-section{margin-top:28px}
-    .settings-section h2{font-size:15px;font-weight:700;margin-bottom:14px;color:var(--text-main);padding-bottom:8px;border-bottom:1px solid var(--border)}
-    .section-sub{font-size:12px;color:var(--text-dim);margin:-8px 0 14px;line-height:1.5}
-    .setting-row{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:14px 18px;background:var(--card-bg);border:1px solid var(--border);border-radius:10px;margin-bottom:10px}
-    .setting-info{flex:1;min-width:0}
-    .setting-title{font-weight:600;font-size:14px;color:var(--text-main)}
-    .setting-desc{font-size:12px;color:var(--text-dim);margin-top:3px;line-height:1.5}
-    .toggle-wrap{display:flex;align-items:center;gap:10px;flex-shrink:0}
-    .toggle-label{font-size:13px;font-weight:700;min-width:28px;text-align:right}
-    .toggle-label.on{color:#16a34a}.toggle-label.off{color:#dc2626}
-    .toggle-btn{position:relative;width:52px;height:28px;cursor:pointer}
-    .toggle-btn input{opacity:0;width:0;height:0;position:absolute}
-    .toggle-slider{position:absolute;inset:0;border-radius:28px;background:#cbd5e1;transition:.25s}
-    .toggle-slider:before{content:"";position:absolute;height:20px;width:20px;left:4px;bottom:4px;border-radius:50%;background:#fff;transition:.25s}
-    .toggle-btn input:checked + .toggle-slider{background:#16a34a}
-    .toggle-btn input:checked + .toggle-slider:before{transform:translateX(24px)}
-    .tg-cred-box{background:var(--card-bg);border:1px solid var(--border);border-radius:10px;padding:20px 22px;margin-bottom:18px}
-    .tg-cred-grid{display:grid;gap:12px;margin-bottom:16px}
-    .tg-cred-label{font-size:12px;font-weight:600;color:var(--text-dim);display:block;margin-bottom:4px}
-    .tg-cred-input{width:100%;padding:9px 13px;border-radius:7px;border:1px solid var(--border);background:var(--input-bg);color:var(--text);font-size:13px;font-family:monospace;box-sizing:border-box}
-    .tg-cred-input:focus{outline:none;border-color:var(--accent)}
-    .tg-btn-row{display:flex;gap:10px;flex-wrap:wrap}
-    .tg-btn-save{background:var(--accent);color:#fff;border:none;border-radius:7px;padding:9px 20px;font-size:13px;font-weight:600;cursor:pointer}
-    .tg-btn-test{background:var(--card-bg);color:var(--text);border:1px solid var(--border);border-radius:7px;padding:9px 20px;font-size:13px;font-weight:600;cursor:pointer}
-    .tg-status{margin-top:10px;font-size:12px;min-height:18px}
-    .toast{position:fixed;bottom:24px;right:24px;background:#1e293b;color:#fff;padding:10px 18px;border-radius:8px;font-size:13px;opacity:0;transition:opacity .3s;pointer-events:none;z-index:9999}
-    .toast.show{opacity:1}
-  </style>
-</head>
-<body>
-  ${nav("admin-notifications", req)}
-  <div class="container" style="max-width:720px">
-    <div class="page-header">
-      <div>
-        <a href="/admin" class="back-link">&#x2190; Admin</a>
-        <h1>&#x1F4E3; Notifications</h1>
-        <p class="page-sub">Configure Telegram alerts for all events across ZeroScreen &amp; the trading bot</p>
-      </div>
-    </div>
-
-    <!-- BOT CREDENTIALS -->
-    <div class="settings-section">
-      <h2>&#x1F916; Telegram Bot Credentials</h2>
-      <div class="tg-cred-box">
-        <div style="font-size:13px;color:var(--text-dim);margin-bottom:14px;line-height:1.6">
-          &#x2139;&#xFE0F; <strong>Setup:</strong> Create a bot via
-          <a href="https://t.me/BotFather" target="_blank" style="color:var(--accent)">@BotFather</a> &rarr;
-          copy the token &rarr; send your bot any message &rarr;
-          visit <code style="font-size:11px">api.telegram.org/bot&lt;TOKEN&gt;/getUpdates</code> to find your Chat ID.
-        </div>
-        <div class="tg-cred-grid">
-          <div>
-            <label class="tg-cred-label">Bot Token</label>
-            <input id="tg-token-inp" type="text" class="tg-cred-input" value="${cfg.tg_bot_token || ""}" placeholder="1234567890:ABCdef...">
-          </div>
-          <div>
-            <label class="tg-cred-label">Chat ID / Channel ID</label>
-            <input id="tg-chatid-inp" type="text" class="tg-cred-input" value="${cfg.tg_chat_id || ""}" placeholder="-1001234567890 or @yourchannel">
-          </div>
-        </div>
-        <div class="tg-btn-row">
-          <button class="tg-btn-save" onclick="saveCreds()">&#x1F4BE; Save Credentials</button>
-          <button class="tg-btn-test" onclick="testTelegram()">&#x1F4E8; Send Test Message</button>
-        </div>
-        <div class="tg-status" id="tg-status"></div>
-      </div>
-    </div>
-
-    <!-- PAPER PICKS & TRADES -->
-    <div class="settings-section">
-      <h2>&#x1F4C8; Paper Picks &amp; Trades</h2>
-      <p class="section-sub">Alerts from ZeroScreen's pick engine and paper portfolio.</p>
-      ${toggle("tg_notify_pick_entry", "&#x1F4CD; Pick Entry Triggered", "When a pick enters the buy zone and a paper trade is opened automatically.")}
-      ${toggle("tg_notify_pick_exit", "&#x1F3AF; Pick Exit &mdash; Target / SL Hit", "When a pick hits its target price or stop-loss and the paper position closes.")}
-      ${toggle("tg_notify_sl_breach", "&#x26A0;&#xFE0F; SL Breach / Target Hit (Tracker)", "From the pick result tracker: sends when any active pick's SL or target is breached.")}
-      ${toggle("tg_notify_daily_picks", "&#x1F4C5; Daily Picks Summary", "Morning reminder (8:30 AM) + EOD summary (6:45 PM) with all active picks.")}
-      ${toggle("tg_notify_new_user", "&#x1F465; New User Registration", "When a new user signs up via email or Google OAuth.")}
-      ${toggle("tg_notify_system", "&#x2699;&#xFE0F; System Alerts", "Server errors and non-fatal issues. Keep OFF to reduce noise.")}
-    </div>
-
-    <!-- BANKNIFTY TRADING BOT -->
-    <div class="settings-section">
-      <h2>&#x1F916; BANKNIFTY Trading Bot</h2>
-      <p class="section-sub">Alerts from the live Zerodha options trading bot.</p>
-      ${toggle("tg_notify_bot_started", "&#x1F7E2; Bot Started / Restarted", "When the trading bot starts fresh or restarts (with or without an active trade restored).")}
-      ${toggle("tg_notify_bot_stopped", "&#x1F534; Bot Stopped / Crashed / Daily Loss Limit", "When the bot stops due to daily loss limit, API failures, or a crash.")}
-      ${toggle("tg_notify_candle", "&#x1F4CA; 15-Min Candle Update", "Status message after every 15-minute candle closes during market hours.")}
-      ${toggle("tg_notify_trade_entry", "&#x1F680; Trade Entry Executed", "When a BANKNIFTY options trade is entered (breakout, reverse, or ITM hold).")}
-      ${toggle("tg_notify_trade_exit", "&#x1F3F3;&#xFE0F; Trade Exit &mdash; SL / Target / Trail", "When a trade exits via stop-loss hit, trail SL, LOCK50, or ITM hold exit.")}
-    </div>
-
-    <!-- TOKEN & SYSTEM -->
-    <div class="settings-section">
-      <h2>&#x1F511; Token &amp; System</h2>
-      <p class="section-sub">Zerodha API token lifecycle alerts.</p>
-      ${toggle("tg_notify_token_expired", "&#x1F534; Token Expired &mdash; Action Required", "When the Zerodha API token expires during live trading. Urgent — keep ON.")}
-      ${toggle("tg_notify_token_refresh", "&#x2705; Token Refreshed Successfully", "When a new Zerodha access token is submitted and the bot is restarted.")}
-    </div>
-
-  </div>
-  <div class="toast" id="toast"></div>
-  <script>
-    async function saveCreds() {
-      const token  = document.getElementById('tg-token-inp').value.trim();
-      const chatId = document.getElementById('tg-chatid-inp').value.trim();
-      const st = document.getElementById('tg-status');
-      try {
-        const r = await fetch('/admin/settings/telegram', {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ tg_bot_token: token, tg_chat_id: chatId })
-        });
-        if (r.ok) { st.innerHTML = '<span style="color:#16a34a">&#x2705; Saved</span>'; showToast('&#x2705; Credentials saved'); }
-        else { st.innerHTML = '<span style="color:#dc2626">&#x26A0; Save failed</span>'; }
-      } catch(e) { st.innerHTML = '<span style="color:#dc2626">&#x26A0; Network error</span>'; }
-    }
-    async function testTelegram() {
-      const st = document.getElementById('tg-status');
-      st.innerHTML = '<span style="color:var(--text-dim)">Sending...</span>';
-      try {
-        const r = await fetch('/admin/settings/telegram/test', { method: 'POST' });
-        const d = await r.json();
-        if (r.ok && d.ok) st.innerHTML = '<span style="color:#16a34a">&#x2705; Test sent! Check Telegram.</span>';
-        else st.innerHTML = '<span style="color:#dc2626">&#x274C; ' + (d.error || 'Failed') + '</span>';
-      } catch(e) { st.innerHTML = '<span style="color:#dc2626">&#x274C; Network error</span>'; }
-    }
-    async function save(key, value) {
-      const lbl = document.getElementById('lbl-' + key);
-      const chk = document.getElementById('tog-' + key);
-      try {
-        const r = await fetch('/admin/settings/toggle', {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ key, value: value ? 'true' : 'false' })
-        });
-        if (r.ok) {
-          lbl.textContent = value ? 'ON' : 'OFF';
-          lbl.className = 'toggle-label ' + (value ? 'on' : 'off');
-          showToast('&#x2705; Saved');
-        } else { chk.checked = !value; showToast('&#x26A0; Failed to save'); }
-      } catch(e) { chk.checked = !value; showToast('&#x26A0; Network error'); }
-    }
-    function showToast(msg) {
-      const t = document.getElementById('toast');
-      t.innerHTML = msg; t.classList.add('show');
-      setTimeout(() => t.classList.remove('show'), 2200);
-    }
-  </script>
-  <script src="/public/js/app.js"></script>
-</body>
-</html>`);
-});
-// ── GET /admin/settings/telegram/status ────────────────────────────────────────
-app.get("/admin/settings/telegram/status", requireAdmin, async (req, res) => {
-    const token  = await (0, db_1.getSetting)('tg_bot_token');
-    const chatId = await (0, db_1.getSetting)('tg_chat_id');
-    const keys = ['tg_notify_pick_entry','tg_notify_pick_exit','tg_notify_new_user','tg_notify_daily_picks','tg_notify_sl_breach','tg_notify_system'];
-    const vals = await Promise.all(keys.map(k => (0, db_1.getSetting)(k)));
-    const notifications_on = vals.filter(v => v !== 'false').length;
-    res.json({ configured: !!(token && chatId), notifications_on });
-});
-// ── POST /admin/settings/telegram ───────────────────────────────────────────────
-app.post("/admin/settings/telegram", requireAdmin, async (req, res) => {
-    const { tg_bot_token, tg_chat_id } = req.body;
-    if (typeof tg_bot_token === 'string') await (0, db_1.setSetting)('tg_bot_token', tg_bot_token.trim());
-    if (typeof tg_chat_id === 'string') await (0, db_1.setSetting)('tg_chat_id', tg_chat_id.trim());
-    res.json({ ok: true });
-});
-// ── POST /admin/settings/telegram/test ───────────────────────────────────────────
-app.post("/admin/settings/telegram/test", requireAdmin, async (req, res) => {
-    const token = await (0, db_1.getSetting)('tg_bot_token');
-    const chatId = await (0, db_1.getSetting)('tg_chat_id');
-    if (!token || !chatId) { res.status(400).json({ error: 'Bot token or Chat ID not configured' }); return; }
-    try {
-        const r = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
-            method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ chat_id: chatId, text: '✅ ZeroScreen Admin: Telegram notifications are working!', parse_mode: 'HTML' })
-        });
-        const data = await r.json();
-        if (data.ok) res.json({ ok: true });
-        else res.status(400).json({ error: data.description || 'Telegram API error' });
-    } catch(e) { res.status(500).json({ error: e.message }); }
-});
 // ── GET /admin/settings ────────────────────────────────────────────────────────
 app.get("/admin/settings", requireAdmin, async (req, res) => {
     const s = {};
     const keys = [
         "otp_required", "registration_open",
-        "tg_bot_token", "tg_chat_id",
-        "tg_notify_pick_entry", "tg_notify_pick_exit", "tg_notify_new_user",
-        "tg_notify_daily_picks", "tg_notify_sl_breach", "tg_notify_system",
         "feature_signals", "feature_dashboard", "feature_strategies",
         "feature_paper_trade_bot", "feature_my_paper_trade",
         "feature_watchlists", "feature_alerts", "feature_compare",
@@ -3589,66 +3471,11 @@ app.get("/admin/settings", requireAdmin, async (req, res) => {
       ${toggle("alerts_premium_only", "🔔 Alerts — Premium Only", "Restrict Alerts to Premium subscribers and admins.")}
       ${toggle("paper_trade_premium_only", "👤 My Paper Trade — Premium Only", "Restrict personal Paper Trading to Premium subscribers and admins.", "Users on the free plan will be redirected to the upgrade page.")}
     </div>
-
-    <div class="settings-section">
-      <h2>📣 Telegram Notifications</h2>
-      <div style="background:var(--card-bg);border:1px solid var(--border);border-radius:10px;padding:18px 20px;margin-bottom:14px">
-        <div style="font-size:13px;color:var(--text-dim);margin-bottom:14px">
-          Configure your Telegram bot to receive real-time alerts.<br>
-          <a href="https://core.telegram.org/bots#botfather" target="_blank" style="color:var(--accent)">Create a bot via @BotFather</a> → copy the token → send a message to your bot → get chat ID via <code>getUpdates</code>.
-        </div>
-        <div style="display:grid;gap:10px;margin-bottom:14px">
-          <div>
-            <label style="font-size:12px;font-weight:600;color:var(--text-dim);display:block;margin-bottom:4px">Bot Token</label>
-            <input id="tg-token-inp" type="text" value="${s["tg_bot_token"] || ""}" placeholder="1234567890:ABCdef..." style="width:100%;padding:8px 12px;border-radius:7px;border:1px solid var(--border);background:var(--input-bg);color:var(--text);font-size:13px;font-family:monospace;box-sizing:border-box">
-          </div>
-          <div>
-            <label style="font-size:12px;font-weight:600;color:var(--text-dim);display:block;margin-bottom:4px">Chat ID / Channel ID</label>
-            <input id="tg-chatid-inp" type="text" value="${s["tg_chat_id"] || ""}" placeholder="-1001234567890 or @yourchannel" style="width:100%;padding:8px 12px;border-radius:7px;border:1px solid var(--border);background:var(--input-bg);color:var(--text);font-size:13px;font-family:monospace;box-sizing:border-box">
-          </div>
-        </div>
-        <div style="display:flex;gap:10px;flex-wrap:wrap">
-          <button onclick="saveTelegram()" style="background:var(--accent);color:#fff;border:none;border-radius:7px;padding:8px 18px;font-size:13px;font-weight:600;cursor:pointer">💾 Save Credentials</button>
-          <button onclick="testTelegram()" style="background:var(--card-bg);color:var(--text);border:1px solid var(--border);border-radius:7px;padding:8px 18px;font-size:13px;font-weight:600;cursor:pointer">📨 Send Test Message</button>
-        </div>
-        <div id="tg-status" style="margin-top:10px;font-size:12px"></div>
-      </div>
-      <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--text-dim);margin-bottom:10px;margin-top:4px">Notification Events</div>
-      ${toggle("tg_notify_pick_entry", "📍 Pick Entry Triggered", "Alert when a pick enters the buy zone and a paper trade is opened.")}
-      ${toggle("tg_notify_pick_exit", "🎯 Pick Exit (Target / SL Hit)", "Alert when a pick hits its target price or stop-loss.")}
-      ${toggle("tg_notify_sl_breach", "⚠️ SL Breach Warning", "Alert when any open paper position breaches stop-loss level.")}
-      ${toggle("tg_notify_daily_picks", "📅 Daily Picks Summary", "Send a morning summary of today’s active picks at market open (9:15 AM).")}
-      ${toggle("tg_notify_new_user", "👥 New User Registration", "Alert when a new user signs up on the platform.")}
-      ${toggle("tg_notify_system", "⚙️ System Alerts", "Send alerts on server errors, PM2 restarts, and DB issues. Disable to reduce noise.")}
-    </div>
   </div>
 
   <div class="toast" id="toast"></div>
 
   <script>
-    async function saveTelegram() {
-      const token = document.getElementById('tg-token-inp').value.trim();
-      const chatId = document.getElementById('tg-chatid-inp').value.trim();
-      const st = document.getElementById('tg-status');
-      try {
-        const r = await fetch('/admin/settings/telegram', {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ tg_bot_token: token, tg_chat_id: chatId })
-        });
-        if (r.ok) { st.innerHTML = '<span style="color:#16a34a">✅ Saved successfully</span>'; showToast('✅ Telegram credentials saved'); }
-        else       { st.innerHTML = '<span style="color:#dc2626">⚠️ Save failed</span>'; }
-      } catch(e) { st.innerHTML = '<span style="color:#dc2626">⚠️ Network error</span>'; }
-    }
-    async function testTelegram() {
-      const st = document.getElementById('tg-status');
-      st.innerHTML = '<span style="color:var(--text-dim)">Sending…</span>';
-      try {
-        const r = await fetch('/admin/settings/telegram/test', { method: 'POST' });
-        const d = await r.json();
-        if (r.ok && d.ok) { st.innerHTML = '<span style="color:#16a34a">✅ Test message sent! Check your Telegram.</span>'; }
-        else { st.innerHTML = '<span style="color:#dc2626">❌ ' + (d.error || 'Failed') + '</span>'; }
-      } catch(e) { st.innerHTML = '<span style="color:#dc2626">❌ Network error</span>'; }
-    }
     async function save(key, value) {
       const lbl  = document.getElementById('lbl-' + key);
       const chk  = document.getElementById('tog-' + key);
@@ -4505,13 +4332,10 @@ function computeAnalytics(trades) {
     const todayTrades = trades.filter((t) => (t.date || "").startsWith(today));
     const allWins = trades.filter((t) => t.pnl > 0).length;
     const allTotal = trades.length;
-    // Prefer actual option premium P&L (pnlRs) when available, fall back to index pts × 15
-    const rsOf = (t) => (t.pnlRs != null && t.pnlRs !== 0) ? t.pnlRs : Math.round((t.pnl ?? 0) * 15);
-    let equity = 0, equityRs = 0, peak = 0, maxDD = 0;
+    let equity = 0, peak = 0, maxDD = 0;
     const equityCurve = [];
     for (const t of trades) {
         equity += t.pnl ?? 0;
-        equityRs += rsOf(t);
         if (equity > peak)
             peak = equity;
         const dd = peak - equity;
@@ -4519,10 +4343,9 @@ function computeAnalytics(trades) {
             maxDD = dd;
         equityCurve.push(parseFloat(equity.toFixed(1)));
     }
-    let todayEq = 0, todayEqRs = 0, todayPeak = 0, todayMaxDD = 0;
+    let todayEq = 0, todayPeak = 0, todayMaxDD = 0;
     for (const t of todayTrades) {
         todayEq += t.pnl ?? 0;
-        todayEqRs += rsOf(t);
         if (todayEq > todayPeak)
             todayPeak = todayEq;
         const dd = todayPeak - todayEq;
@@ -4536,7 +4359,6 @@ function computeAnalytics(trades) {
     const wkTrades = trades.filter((t) => t.date && new Date(t.date) >= wkAgo);
     const wkWins = wkTrades.filter((t) => t.pnl > 0).length;
     const wkPnl = parseFloat(wkTrades.reduce((s, t) => s + (t.pnl ?? 0), 0).toFixed(1));
-    const wkPnlRs = wkTrades.reduce((s, t) => s + rsOf(t), 0);
     // Monthly breakdown
     const monthMap = {};
     for (const t of trades) {
@@ -4544,10 +4366,9 @@ function computeAnalytics(trades) {
             continue;
         const mk = t.date.slice(0, 7);
         if (!monthMap[mk])
-            monthMap[mk] = { trades: 0, wins: 0, losses: 0, pnl: 0, pnlRs: 0 };
+            monthMap[mk] = { trades: 0, wins: 0, losses: 0, pnl: 0 };
         monthMap[mk].trades++;
         monthMap[mk].pnl = parseFloat((monthMap[mk].pnl + (t.pnl ?? 0)).toFixed(1));
-        monthMap[mk].pnlRs += rsOf(t);
         if ((t.pnl ?? 0) > 0)
             monthMap[mk].wins++;
         else
@@ -4559,13 +4380,11 @@ function computeAnalytics(trades) {
         winRate: monthMap[month].trades > 0 ? parseFloat(((monthMap[month].wins / monthMap[month].trades) * 100).toFixed(1)) : 0,
     }));
     return {
-        todayTrades,
         today: {
             trades: todayTrades.length,
             wins: todayTrades.filter((t) => t.pnl > 0).length,
             losses: todayTrades.filter((t) => t.pnl <= 0).length,
             pnl: parseFloat(todayEq.toFixed(1)),
-            pnlRs: todayEqRs,
             maxDD: parseFloat(todayMaxDD.toFixed(1)),
         },
         weekly: {
@@ -4573,7 +4392,6 @@ function computeAnalytics(trades) {
             wins: wkWins,
             losses: wkTrades.length - wkWins,
             pnl: wkPnl,
-            pnlRs: wkPnlRs,
         },
         monthly,
         allTime: {
@@ -4582,7 +4400,6 @@ function computeAnalytics(trades) {
             losses: allTotal - allWins,
             winRate: allTotal > 0 ? parseFloat(((allWins / allTotal) * 100).toFixed(1)) : 0,
             pnl: parseFloat(equity.toFixed(1)),
-            pnlRs: equityRs,
             maxDD: parseFloat(maxDD.toFixed(1)),
         },
         equityCurve,
@@ -6403,15 +6220,15 @@ app.post("/api/bot/action", requireAdmin, (req, res) => {
     const { action } = req.body;
     try {
         if (action === "restart") {
-            (0, child_process_1.execSync)("pm2 restart amina-100-variant-b", { stdio: "ignore" });
+            (0, child_process_1.execSync)("pm2 restart trading-bot", { stdio: "ignore" });
             res.json({ ok: true, msg: "Bot restarted" });
         }
         else if (action === "stop") {
-            (0, child_process_1.execSync)("pm2 stop amina-100-variant-b", { stdio: "ignore" });
+            (0, child_process_1.execSync)("pm2 stop trading-bot", { stdio: "ignore" });
             res.json({ ok: true, msg: "Bot stopped" });
         }
         else if (action === "start") {
-            (0, child_process_1.execSync)("pm2 start amina-100-variant-b", { stdio: "ignore" });
+            (0, child_process_1.execSync)("pm2 start trading-bot", { stdio: "ignore" });
             res.json({ ok: true, msg: "Bot started" });
         }
         else {
@@ -6452,6 +6269,12 @@ app.post("/internal/bot-update", async (req, res) => {
 });
 // ── GET /internal/kite-token ── bot polls here to get the Zerodha access token ─
 app.get("/internal/kite-token", async (req, res) => {
+    const secret = req.headers["x-bot-secret"] || req.query.secret;
+    const expected = process.env.INTERNAL_BOT_SECRET || "";
+    if (!expected || secret !== expected) {
+        res.status(401).json({ ok: false, error: "Unauthorized" });
+        return;
+    }
     const token = await (0, db_1.getSetting)("kite_access_token").catch(() => "");
     const setAt = await (0, db_1.getSetting)("kite_token_set_at").catch(() => "");
     if (!token) {
@@ -7324,7 +7147,6 @@ app.get("/paper-trade", featureGate("feature_paper_trade_bot", "Paper Trade"), a
       </div>
 
 
-
       <!-- Recent Trades -->
       ${closed.length > 0 ? `
       <div style="font-size:0.72rem;font-weight:700;text-transform:uppercase;letter-spacing:.1em;color:var(--text-muted);border-bottom:1px solid var(--border);padding-bottom:8px;margin-bottom:12px">Recent Bot Trades</div>
@@ -7719,7 +7541,7 @@ async function paperPortfolioPage(req, res) {
     const [port, positions, trades, tradeCount, ptConfig, activeSub, allPicksForTrade] = await Promise.all([
         (0, db_1.getPaperPortfolio)(userId),
         (0, db_1.getPaperPositions)(userId),
-        (0, db_1.getPaperTrades)(userId, 9999),
+        (0, db_1.getPaperTrades)(userId, 60),
         (0, db_1.countPaperTrades)(userId),
         (0, db_1.getPaperTradeConfig)(userId),
         (0, db_1.getActiveSubscription)(userId),
@@ -7743,15 +7565,6 @@ async function paperPortfolioPage(req, res) {
     const adminSchTriggered = adminScheduled.filter((s) => s.status === "triggered");
     const adminBotPnl = parseFloat(adminBotClosed.reduce((s, t) => s + (t.pnl ?? 0), 0).toFixed(2));
     const adminBotWins = adminBotClosed.filter((t) => (t.pnl ?? 0) > 0).length;
-    // Admin-only: penny/long-term paper holdings
-    const adminPennyOpen = isAdmin ? (() => { try {
-        const all = JSON.parse(fs_1.default.readFileSync(`${BOT_DIR}/paper-trades.json`, "utf-8"));
-        return all.filter((t) => t.status === 'OPEN');
-    } catch { return []; } })() : [];
-    const adminPennyClosed = isAdmin ? (() => { try {
-        const all = JSON.parse(fs_1.default.readFileSync(`${BOT_DIR}/paper-trades.json`, "utf-8"));
-        return all.filter((t) => t.status !== 'OPEN');
-    } catch { return []; } })() : [];
     // ── Credits ─────────────────────────────────────────────────────────────────
     const freeLimit = parseInt(await (0, db_1.getSetting)("paper_free_limit") || "10", 10);
     const isPremium = !!activeSub || req.session.userRole === "premium" || req.session.userRole === "admin";
@@ -7801,8 +7614,8 @@ async function paperPortfolioPage(req, res) {
     const investedTotal = posRows.reduce((s, p) => s + p.invested, 0);
     const curValTotal = posRows.reduce((s, p) => s + p.curVal, 0);
     const portfolioValue = parseFloat((port.balance + curValTotal).toFixed(2));
-    const totalPnl = parseFloat((portfolioValue - 1000000).toFixed(2));
-    const totalPnlPct = parseFloat(((totalPnl / 1000000) * 100).toFixed(2));
+    const totalPnl = parseFloat((portfolioValue - 100000).toFixed(2));
+    const totalPnlPct = parseFloat(((totalPnl / 100000) * 100).toFixed(2));
     const sellTrades = trades.filter(t => t.action === "SELL");
     const realizedPnl = parseFloat(sellTrades.reduce((s, t) => s + (t.pnl ?? 0), 0).toFixed(2));
     const wins = sellTrades.filter(t => (t.pnl ?? 0) > 0).length;
@@ -8069,7 +7882,7 @@ async function paperPortfolioPage(req, res) {
             return `<tr>
                 <td><strong style="color:var(--accent)">${esc(p.stock_symbol)}</strong>${p.company_name ? `<br><span class="dim" style="font-size:.64rem">${esc(p.company_name)}</span>` : ''}</td>
                 <td><span class="${p.direction === 'BULLISH' ? 'pb-bullish' : 'pb-bearish'}">${p.direction}</span></td>
-                <td style="font-weight:600;color:var(--text-muted)">${(() => { const _pc = ptConfig && ptConfig.picks_capital || 0; const _dq = ptConfig && ptConfig.default_qty || 1; return _pc > 0 && ep > 0 ? Math.max(1, Math.floor(_pc / ep)) : _dq; })()}</td>
+                <td style="font-weight:600;color:var(--text-muted)">1</td>
                 <td style="font-size:.82rem">₹${ep.toFixed(2)}</td>
                 <td style="color:#10b981;font-size:.74rem">${p.target ? '₹' + p.target : '—'}</td>
                 <td style="color:#ef4444;font-size:.74rem">${p.stop_loss ? '₹' + p.stop_loss : '—'}</td>
@@ -8097,7 +7910,7 @@ async function paperPortfolioPage(req, res) {
                 <td><strong>${esc(p.stock_symbol)}</strong>${p.company_name ? `<br><span class="dim" style="font-size:.64rem">${esc(p.company_name)}</span>` : ''}</td>
                 <td style="font-size:.72rem">${(p.pick_type || 'intraday').toUpperCase()}</td>
                 <td><span class="${p.direction === 'BULLISH' ? 'pb-bullish' : 'pb-bearish'}">${p.direction}</span></td>
-                <td style="font-weight:600;color:var(--text-muted)">${(() => { const _mid = (p.entry_low + p.entry_high) / 2; const _pc = ptConfig && ptConfig.picks_capital || 0; const _dq = ptConfig && ptConfig.default_qty || 1; return _pc > 0 && _mid > 0 ? Math.max(1, Math.floor(_pc / _mid)) : _dq; })()}</td>
+                <td style="font-weight:600;color:var(--text-muted)">1</td>
                 <td class="dim" style="font-size:.74rem;white-space:nowrap">₹${p.entry_low}–${p.entry_high}</td>
                 <td style="color:#10b981;font-size:.74rem">${p.target ? '₹' + p.target : '—'}</td>
                 <td style="color:#ef4444;font-size:.74rem">${p.stop_loss ? '₹' + p.stop_loss : '—'}</td>
@@ -8127,7 +7940,7 @@ async function paperPortfolioPage(req, res) {
             return `<tr>
                 <td><strong style="color:var(--accent)">${esc(p.stock_symbol)}</strong>${p.company_name ? `<br><span class="dim" style="font-size:.64rem">${esc(p.company_name)}</span>` : ''}</td>
                 <td><span class="${p.direction === 'BULLISH' ? 'pb-bullish' : 'pb-bearish'}">${p.direction}</span></td>
-                <td style="font-weight:600;color:var(--text-muted)">${(() => { const _ep2 = ep || (p.entry_low + p.entry_high) / 2; const _pc = ptConfig && ptConfig.picks_capital || 0; const _dq = ptConfig && ptConfig.default_qty || 1; return _pc > 0 && _ep2 > 0 ? Math.max(1, Math.floor(_pc / _ep2)) : _dq; })()}</td>
+                <td style="font-weight:600;color:var(--text-muted)">1</td>
                 <td><span style="background:${isWin ? '#10b98122' : '#ef444422'};color:${isWin ? '#10b981' : '#ef4444'};border:1px solid ${isWin ? '#10b98144' : '#ef444444'};border-radius:20px;padding:3px 10px;font-size:.72rem;font-weight:700;white-space:nowrap">${isWin ? '✅ Target Hit' : '⛔ SL Hit'}</span></td>
                 <td class="dim" style="font-size:.74rem">${ep ? '₹' + ep : '—'}</td>
                 <td style="font-weight:700">${rp ? '₹' + rp : '—'}</td>
@@ -8151,7 +7964,7 @@ async function paperPortfolioPage(req, res) {
     <div class="mpt-kpi-row">
       <div class="mpt-kpi">
         <div class="mpt-kpi-label">Portfolio Value</div>
-        <div class="mpt-kpi-val ${portfolioValue >= 1000000 ? "mpt-green" : "mpt-red"}">₹${portfolioValue.toLocaleString("en-IN", { maximumFractionDigits: 0 })}</div>
+        <div class="mpt-kpi-val ${portfolioValue >= 100000 ? "mpt-green" : "mpt-red"}">₹${portfolioValue.toLocaleString("en-IN", { maximumFractionDigits: 0 })}</div>
       </div>
       <div class="mpt-kpi">
         <div class="mpt-kpi-label">Total PnL</div>
@@ -8261,38 +8074,6 @@ async function paperPortfolioPage(req, res) {
       <a href="/paper-trade?tab=autobot" style="background:#7c3aed22;color:#a78bfa;border:1px solid #7c3aed55;border-radius:8px;padding:7px 16px;font-size:.83rem;font-weight:700;text-decoration:none">+ New Schedule</a>
     </div>
     ${adminScheduledHtml}
-
-    <!-- ── ADMIN: PENNY / LONG-TERM HOLDINGS ── -->
-    ${isAdmin && adminPennyOpen.length > 0 ? `
-    <div class="mpt-section" style="margin-top:32px">📈 Penny / Long-Term Holdings (${adminPennyOpen.length} open)
-      <span style="font-size:.72rem;font-weight:400;margin-left:10px;color:#f59e0b">paper · auto-exit on SL/Target each evening</span>
-    </div>
-    <div class="mpt-tbl-wrap" style="margin-bottom:8px"><table class="mpt-history-table">
-      <thead><tr>
-        <th>Entry Date</th><th>Symbol</th><th>Strategy</th><th>Qty</th>
-        <th>Entry ₹</th><th>SL ₹</th><th>T1 ₹</th><th>T2 ₹</th><th>Capital ₹</th>
-      </tr></thead>
-      <tbody>
-        ${adminPennyOpen.map(t => `<tr>
-          <td style="color:var(--text-muted);font-size:.78rem">${t.entryDate||'—'}</td>
-          <td style="font-weight:700;color:#f59e0b">${t.symbol||'—'}</td>
-          <td><span style="font-size:.7rem;padding:2px 7px;border-radius:4px;background:rgba(245,158,11,.12);color:#f59e0b;font-weight:700">${t.strategy||'PENNY'}</span></td>
-          <td>${t.qty||'—'}</td>
-          <td style="font-family:monospace">₹${(t.entryPrice||0).toFixed(2)}</td>
-          <td style="font-family:monospace;color:#f87171">₹${(t.sl||0).toFixed(2)}</td>
-          <td style="font-family:monospace;color:#34d399">₹${(t.target1||0).toFixed(2)}</td>
-          <td style="font-family:monospace;color:#6ee7b7">${t.target2?'₹'+(t.target2).toFixed(2):'—'}</td>
-          <td style="font-family:monospace">₹${(t.capital||0).toLocaleString('en-IN',{maximumFractionDigits:0})}</td>
-        </tr>`).join('')}
-      </tbody>
-    </table></div>
-    ${adminPennyClosed.length > 0 ? `
-    <div style="font-size:.72rem;color:var(--text-muted);margin-bottom:20px">
-      ${adminPennyClosed.length} closed ·
-      ₹${adminPennyClosed.reduce((sum,t)=>sum+(t.pnl||0),0).toLocaleString('en-IN',{maximumFractionDigits:0})} realized ·
-      ${adminPennyClosed.filter(t=>(t.pnl||0)>0).length}W / ${adminPennyClosed.filter(t=>(t.pnl||0)<=0).length}L
-    </div>` : ''}
-    ` : ""}
 
     <!-- ── ADMIN: BOT TRADE HISTORY ──────────────────────────────────────── -->
     <div class="mpt-section" style="margin-top:32px">🤖 Auto Bot Trade History (${adminBotClosed.length})
@@ -8520,7 +8301,7 @@ app.get("/dashboard", requireAuth, async (req, res) => {
         const [port, positions, trades, activeSub, allPicks] = await Promise.all([
             (0, db_1.getPaperPortfolio)(userId),
             (0, db_1.getPaperPositions)(userId),
-            (0, db_1.getPaperTrades)(userId, 9999),
+            (0, db_1.getPaperTrades)(userId, 200),
             (0, db_1.getActiveSubscription)(userId),
             (0, db_1.getAllPicks)(),
         ]);
@@ -8570,7 +8351,7 @@ app.get("/dashboard", requireAuth, async (req, res) => {
         const investedTotal = posRows.reduce((s, p) => s + p.invested, 0);
         const curValTotal = posRows.reduce((s, p) => s + (p.livePrice * p.qty), 0);
         const portfolioValue = parseFloat((port.balance + curValTotal).toFixed(2));
-        const totalPnl = parseFloat((portfolioValue - 1000000).toFixed(2));
+        const totalPnl = parseFloat((portfolioValue - 100000).toFixed(2));
         // Weekly P&L (last 7 days)
         const _7dAgo = new Date(Date.now() - 7 * 86400000).toISOString().slice(0, 10);
         const weekTrades = sellTrades.filter((t) => t.traded_at >= _7dAgo);
@@ -8652,15 +8433,6 @@ app.get("/dashboard", requireAuth, async (req, res) => {
                 botMonthMap[mo].wins += 1;
         }
         const botMonthKeys = Object.keys(botMonthMap).sort().slice(-6);
-        // Penny / long-term bot holdings
-        const pennyOpen = isAdmin ? (() => { try {
-            const all = JSON.parse(fs_1.default.readFileSync(`${BOT_DIR}/paper-trades.json`, "utf-8"));
-            return all.filter((t) => t.status === 'OPEN');
-        } catch { return []; } })() : [];
-        const pennyClosed = isAdmin ? (() => { try {
-            const all = JSON.parse(fs_1.default.readFileSync(`${BOT_DIR}/paper-trades.json`, "utf-8"));
-            return all.filter((t) => t.status !== 'OPEN');
-        } catch { return []; } })() : [];
         const marketOpen = isMarketHours();
         // ── AI INSIGHTS COMPUTATIONS ───────────────────────────────────────────────
         // 1. P&L Pattern Detector
@@ -8842,7 +8614,7 @@ app.get("/dashboard", requireAuth, async (req, res) => {
       </button>
       <div class="db-kpi-collapsible" style="overflow:hidden;max-height:0;transition:max-height .3s ease">
         <div class="db-kpi-grid" style="margin-top:10px">
-          <div class="db-kpi"><div class="db-kpi-lbl">Portfolio Value</div><div class="db-kpi-val ${portfolioValue >= 1000000 ? 'db-green' : 'db-red'}">₹${portfolioValue.toLocaleString("en-IN", { maximumFractionDigits: 0 })}</div></div>
+          <div class="db-kpi"><div class="db-kpi-lbl">Portfolio Value</div><div class="db-kpi-val ${portfolioValue >= 100000 ? 'db-green' : 'db-red'}">₹${portfolioValue.toLocaleString("en-IN", { maximumFractionDigits: 0 })}</div></div>
           <div class="db-kpi"><div class="db-kpi-lbl">Cash Balance</div><div class="db-kpi-val">₹${port.balance.toLocaleString("en-IN", { maximumFractionDigits: 0 })}</div></div>
           <div class="db-kpi"><div class="db-kpi-lbl">Total P&L</div><div class="db-kpi-val ${totalPnl >= 0 ? 'db-green' : 'db-red'}">${totalPnl >= 0 ? "+" : ""}₹${Math.abs(totalPnl).toLocaleString("en-IN", { maximumFractionDigits: 0 })}</div></div>
           <div class="db-kpi"><div class="db-kpi-lbl">This Week (Manual)</div><div class="db-kpi-val ${weekPnl >= 0 ? 'db-green' : 'db-red'}">${weekPnl >= 0 ? "+" : ""}₹${Math.abs(weekPnl).toLocaleString("en-IN", { maximumFractionDigits: 0 })}</div></div>
@@ -8920,42 +8692,6 @@ app.get("/dashboard", requireAuth, async (req, res) => {
             }).join("")}
             </tbody></table></div>`}
     </div>
-
-    <!-- ── PANEL: PENNY / LONG-TERM BOT HOLDINGS ── -->
-    ${isAdmin && pennyOpen.length > 0 ? `
-    <div class="db-panel" id="dbp-penny" style="margin-bottom:20px">
-      <div class="db-section" style="color:#f59e0b">
-        📈 Penny / Long-Term Holdings
-        <span style="font-size:.72rem;font-weight:400;color:var(--text-muted);margin-left:8px">paper · ${pennyOpen.length} open${pennyClosed.length > 0 ? ' · '+pennyClosed.length+' closed' : ''}</span>
-      </div>
-      <div style="overflow-x:auto">
-        <table class="db-tbl">
-          <thead><tr>
-            <th>Entry Date</th><th>Symbol</th><th>Strategy</th><th>Qty</th>
-            <th>Entry ₹</th><th>SL ₹</th><th>T1 ₹</th><th>T2 ₹</th><th>Capital ₹</th>
-          </tr></thead>
-          <tbody>
-            ${pennyOpen.map(t => `<tr>
-              <td class="db-muted" style="font-size:.78rem">${t.entryDate||'—'}</td>
-              <td style="font-weight:700;color:#f59e0b">${t.symbol||'—'}</td>
-              <td><span style="font-size:.7rem;padding:2px 7px;border-radius:4px;background:rgba(245,158,11,.15);color:#f59e0b;font-weight:700">${t.strategy||'PENNY'}</span></td>
-              <td>${t.qty||'—'}</td>
-              <td style="font-family:monospace">₹${(t.entryPrice||0).toFixed(2)}</td>
-              <td style="font-family:monospace;color:#f87171">₹${(t.sl||0).toFixed(2)}</td>
-              <td style="font-family:monospace;color:#34d399">₹${(t.target1||0).toFixed(2)}</td>
-              <td style="font-family:monospace;color:#6ee7b7">${t.target2?'₹'+(t.target2).toFixed(2):'—'}</td>
-              <td style="font-family:monospace">₹${(t.capital||0).toLocaleString('en-IN',{maximumFractionDigits:0})}</td>
-            </tr>`).join('')}
-          </tbody>
-        </table>
-      </div>
-      ${pennyClosed.length > 0 ? `<div class="db-muted" style="font-size:.72rem;margin-top:8px">
-        ${pennyClosed.length} closed · 
-        ₹${pennyClosed.reduce((sum,t)=>sum+(t.pnl||0),0).toLocaleString('en-IN',{maximumFractionDigits:0})} realized ·
-        ${pennyClosed.filter(t=>(t.pnl||0)>0).length}W / ${pennyClosed.filter(t=>(t.pnl||0)<=0).length}L
-      </div>` : ''}
-    </div>
-    ` : ""}
 
     <!-- ── PANEL: BOT TRADES (removed - admin uses /my-paper-trade) ── -->
     ${false ? `<div class="db-panel" id="dbp-bot">
@@ -9298,7 +9034,7 @@ app.get("/dashboard", requireAuth, async (req, res) => {
                 const tableHtml = `<div class="db-tbl-wrap"><table class="db-tbl">
                 <thead><tr><th>Symbol</th><th>Direction</th><th>Qty</th><th>Entry Price</th><th>Target</th><th>SL</th><th>CMP</th><th>P&amp;L</th><th>Entry At</th></tr></thead>
                 <tbody>${rows.map(({ p, lp, ep, pnlPct }) => {
-                    const qty = (() => { const _pc = ptConfig && ptConfig.picks_capital || 0; const _dq = ptConfig && ptConfig.default_qty || 1; return _pc > 0 && ep > 0 ? Math.max(1, Math.floor(_pc / ep)) : _dq; })();
+                    const qty = 1;
                     const pnlAmt = lp && ep ? parseFloat(((lp - ep) * ((p.direction === "BULLISH" || p.direction === "LONG") ? 1 : -1) * qty).toFixed(2)) : null;
                     return `<tr>
                   <td><strong style="color:var(--accent)">${esc(p.stock_symbol)}</strong>${p.company_name ? `<br><span style="color:var(--text-muted);font-size:.7rem">${esc(p.company_name)}</span>` : ""}</td>
@@ -9329,7 +9065,7 @@ app.get("/dashboard", requireAuth, async (req, res) => {
                   <td><strong>${esc(p.stock_symbol)}</strong>${p.company_name ? `<br><span style="color:var(--text-muted);font-size:.7rem">${esc(p.company_name)}</span>` : ""}</td>
                   <td style="font-size:.78rem">${(p.pick_type || "intraday").toUpperCase()}</td>
                   <td><span class="${p.direction === "BULLISH" ? "pb-bullish" : "pb-bearish"}">${p.direction}</span></td>
-                  <td style="font-weight:600;color:var(--text-muted)">${(() => { const _mid2 = (p.entry_low + p.entry_high) / 2; const _pc = ptConfig && ptConfig.picks_capital || 0; const _dq = ptConfig && ptConfig.default_qty || 1; return _pc > 0 && _mid2 > 0 ? Math.max(1, Math.floor(_pc / _mid2)) : _dq; })()}</td>
+                  <td style="font-weight:600;color:var(--text-muted)">1</td>
                   <td style="color:var(--text-muted);font-size:.8rem;white-space:nowrap">₹${p.entry_low}–${p.entry_high}</td>
                   <td style="color:#10b981;font-size:.8rem">${p.target ? "₹" + p.target : "—"}</td>
                   <td style="color:#ef4444;font-size:.8rem">${p.stop_loss ? "₹" + p.stop_loss : "—"}</td>
@@ -9346,7 +9082,7 @@ app.get("/dashboard", requireAuth, async (req, res) => {
               <thead><tr><th>Symbol</th><th>Direction</th><th>Qty</th><th>Result</th><th>Entry ₹</th><th>Result ₹</th><th>P&amp;L</th><th>Date</th></tr></thead>
               <tbody>${resolvedPicks.slice(0, 50).map((p) => {
                 const isWin = p.result === "target_hit";
-                const qty = (() => { const _ep = p.entry_price; const _pc = ptConfig && ptConfig.picks_capital || 0; const _dq = ptConfig && ptConfig.default_qty || 1; return _pc > 0 && _ep > 0 ? Math.max(1, Math.floor(_pc / _ep)) : _dq; })();
+                const qty = 1;
                 const ep = p.entry_price;
                 const rp = p.result_price;
                 const mult = (p.direction === "BULLISH" || p.direction === "LONG") ? 1 : -1;
@@ -9395,7 +9131,7 @@ app.get("/dashboard", requireAuth, async (req, res) => {
         res.status(500).send(`<!DOCTYPE html><html><head><title>Error</title><link rel="stylesheet" href="/public/css/style.css"></head><body>${nav("dashboard", req)}<div class="container" style="padding:40px 0;text-align:center"><h2 style="color:#ef4444">⚠️ Dashboard Error</h2><p style="color:var(--text-muted)">${err?.message || "Unknown error"}</p><a href="/" class="btn-primary" style="margin-top:16px;display:inline-block">Back to Screener</a></div></body></html>`);
     }
 });
-// Redirect old bot-stats URL to unified dashboard
+// Redirect old bot-stats and portfolio URLs to unified dashboard
 app.get("/paper-trade/bot-stats", requireAuth, (_req, res) => res.redirect("/dashboard"));
 // ── GET /api/picks/live — quick counts for JS refresh ─────────────────────────
 app.get("/api/picks/live", requireAuth, async (_req, res) => {
@@ -9517,21 +9253,6 @@ app.get("/my-paper-trade/config", requireAuth, async (req, res) => {
         <input class="cfg-input" type="number" name="default_qty" min="1" max="10000" value="${cfg.default_qty}">
       </div>
       <div class="cfg-row">
-        <label class="cfg-label">Capital per Pick <span style="font-size:.75rem;font-weight:400;color:var(--text-muted)">(fixed Rs per trade · qty = capital ÷ price · 0 = use risk% or default qty)</span></label>
-        <div style="display:flex;align-items:center;gap:8px">
-          <span style="color:var(--text-muted);font-size:.85rem">Rs</span>
-          <input class="cfg-input" type="number" name="picks_capital" min="0" max="500000" step="500" value="${cfg.picks_capital || 5000}" style="width:100px">
-          <span style="color:var(--text-muted);font-size:.82rem">(e.g. 5000 = Rs5K per pick)</span>
-        </div>
-      </div>
-      <div class="cfg-row">
-        <label class="cfg-label">Risk % per Trade <span style="font-size:.75rem;font-weight:400;color:var(--text-muted)">(advanced · used only if capital/pick = 0)</span></label>
-        <div style="display:flex;align-items:center;gap:8px">
-          <input class="cfg-input" type="number" name="risk_pct" min="0" max="10" step="0.1" value="${cfg.risk_pct || 0}" style="width:90px">
-          <span style="color:var(--text-muted);font-size:.82rem">% of portfolio per trade</span>
-        </div>
-      </div>
-      <div class="cfg-row">
         <label class="cfg-label">Default Stop Loss %</label>
         <input class="cfg-input" type="number" name="default_sl_pct" min="0.1" max="50" step="0.1" value="${cfg.default_sl_pct}">
       </div>
@@ -9572,9 +9293,7 @@ app.post("/my-paper-trade/config", requireAuth, async (req, res) => {
     const default_sl_pct = Math.max(0.1, Math.min(50, parseFloat(req.body.default_sl_pct) || 2));
     const default_tgt_pct = Math.max(0.1, Math.min(200, parseFloat(req.body.default_tgt_pct) || 4));
     const max_positions = Math.max(1, Math.min(50, parseInt(req.body.max_positions, 10) || 10));
-    const picks_capital = Math.max(0, Math.min(500000, parseFloat(req.body.picks_capital) || 0));
-    const risk_pct = Math.max(0, Math.min(10, parseFloat(req.body.risk_pct) || 0));
-    await (0, db_1.savePaperTradeConfig)(userId, { trade_type, default_qty, default_sl_pct, default_tgt_pct, max_positions, picks_capital, risk_pct });
+    await (0, db_1.savePaperTradeConfig)(userId, { trade_type, default_qty, default_sl_pct, default_tgt_pct, max_positions });
     // Only premium/admin can enable auto-trade picks
     const activeSub = await (0, db_1.getActiveSubscription)(userId);
     const isPremium = !!activeSub || req.session.userRole === "premium" || req.session.userRole === "admin";
@@ -9805,8 +9524,8 @@ app.get("/strategies", featureGate("feature_strategies", "Strategies"), (req, re
 </body>
 </html>`);
 });
-// ── GET /bot-analytics ────────────────────────────────────────────────────────
-app.get("/bot-analytics", featureGate("feature_dashboard", "Dashboard"), async (req, res) => {
+// ── GET /dashboard ─────────────────────────────────────────────────────────────
+app.get("/dashboard", featureGate("feature_dashboard", "Dashboard"), async (req, res) => {
     const trades = readBotJSON("trades.json", []);
     const backtest = readBotJSON("5year-backtest-result.json", {});
     const analytics = computeAnalytics(trades);
@@ -9847,7 +9566,7 @@ app.get("/bot-analytics", featureGate("feature_dashboard", "Dashboard"), async (
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.2/dist/chart.umd.min.js"></script>
 </head>
 <body class="page-theme-dashboard">
-  ${nav("bot-analytics", req)}
+  ${nav("dashboard", req)}
   <div class="container" style="max-width:1100px">
     <div class="dash-header">
       <div>
@@ -9928,7 +9647,7 @@ app.get("/bot-analytics", featureGate("feature_dashboard", "Dashboard"), async (
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.2/dist/chart.umd.min.js"></script>
 </head>
 <body class="page-theme-dashboard">
-  ${nav("bot-analytics", req)}
+  ${nav("dashboard", req)}
   <div class="container" style="max-width:1100px">
     <div class="dash-hero">
       <div class="dash-hero-inner">
@@ -10165,16 +9884,6 @@ app.get("/bot-analytics", featureGate("feature_dashboard", "Dashboard"), async (
 </html>`);
 });
 // ── GET /signals ────────────────────────────────────────────────────────────────
-// ─── VMT Shadow proxy ───────────────────────────────────────────────────────
-app.get('/api/vmt-shadow', async (_req, res) => {
-    try {
-        const VMT_FILE = '/home/ubuntu/trading-bot/dist/src/vmt-shadow.json';
-        const fs2 = require('fs');
-        if (!fs2.existsSync(VMT_FILE)) return res.json({ status: 'IDLE', error: 'VMT shadow not running' });
-        res.json(JSON.parse(fs2.readFileSync(VMT_FILE, 'utf8')));
-    } catch(e) { res.json({ status: 'IDLE', error: e.message }); }
-});
-
 app.get("/signals", featureGate("feature_signals", "Signals"), async (req, res) => {
     res.setHeader("Cache-Control", "no-store");
     const state = readBotJSON("trade-state.json", {});
@@ -10324,7 +10033,6 @@ app.get("/signals", featureGate("feature_signals", "Signals"), async (req, res) 
         function pnlCls2(v) { return v >= 0 ? "sig-green" : "sig-red"; }
         function fmtPts2(v) { return `${v >= 0 ? "+" : ""}${v.toFixed(0)} pts`; }
         function fmtRs2(v) { const r = Math.round(v * QTY_MULT2); return `${r >= 0 ? "+" : "−"}₹${Math.abs(r).toLocaleString("en-IN")}`; }
-        function fmtActRs2(pnlRs, pnl) { const r = (pnlRs != null) ? pnlRs : Math.round((pnl ?? 0) * QTY_MULT2); return `${r >= 0 ? "+" : "−"}₹${Math.abs(r).toLocaleString("en-IN")}`; }
         function fmtBoth2(v) { return `${fmtPts2(v)} <span class="rs-sub">${fmtRs2(v)}</span>`; }
         function rcCls(r) {
             if (!r)
@@ -10372,1739 +10080,707 @@ app.get("/signals", featureGate("feature_signals", "Signals"), async (req, res) 
   <title>Live Bot Dashboard — ZeroScreen</title>
   <link rel="stylesheet" href="/public/css/style.css">
   <style>
-    /* ═══ Base Layout ═══════════════════════════════════════════ */
-    :root{--green:#059669;--red:#dc2626;--blue:#2563eb;--amber:#d97706;--card:var(--card-bg,#fff);--border-c:var(--border,#dde3f5);--muted:var(--text-muted,#5b6490);--text-main:var(--text,#0a0e27)}
-    .db{max-width:1080px;margin:0 auto;padding:0 .75rem 3rem}
-    /* ═══ Health Bar ════════════════════════════════════════════ */
-    .hb{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:10px 16px;border-radius:12px;background:var(--card);border:1px solid var(--border-c);margin-bottom:1.1rem}
-    .hb-pill{display:inline-flex;align-items:center;gap:5px;padding:3px 10px;border-radius:20px;font-size:.7rem;font-weight:700;border:1px solid transparent;white-space:nowrap}
-    .hb-pill.ok{background:rgba(16,185,129,.12);border-color:rgba(16,185,129,.3);color:var(--green)}
-    .hb-pill.warn{background:rgba(245,158,11,.1);border-color:rgba(245,158,11,.3);color:var(--amber)}
-    .hb-pill.err{background:rgba(239,68,68,.1);border-color:rgba(239,68,68,.35);color:var(--red)}
-    .hb-pill.dim{background:rgba(100,116,139,.1);border-color:rgba(100,116,139,.2);color:var(--muted)}
-    .hb-dot{width:7px;height:7px;border-radius:50%;background:currentColor;flex-shrink:0}
-    .hb-dot.blink{animation:hb-blink 1s infinite}
-    @keyframes hb-blink{0%,100%{opacity:1}50%{opacity:.25}}
-    .hb-sep{width:1px;height:16px;background:var(--border-c);margin:0 2px}
-    .hb-age{font-size:.63rem;color:var(--muted);margin-left:auto}
-    /* ═══ Header row ════════════════════════════════════════════ */
-    .db-hdr{display:flex;align-items:flex-start;justify-content:space-between;flex-wrap:wrap;gap:.5rem;margin:0 0 1rem}
-    .db-title{font-size:1.15rem;font-weight:800;color:var(--text-main)}
-    .db-sub{font-size:.7rem;color:var(--muted);margin-top:3px}
-    .db-live{display:flex;align-items:center;gap:.4rem;font-size:.7rem;color:var(--muted)}
-    .db-pulse{width:7px;height:7px;border-radius:50%;background:var(--green);box-shadow:0 0 6px #10b98188;animation:dbp 1.4s infinite}
-    @keyframes dbp{0%,100%{opacity:1}50%{opacity:.3}}
-    /* ═══ 2-col main area ═══════════════════════════════════════ */
-    .db-main{display:grid;grid-template-columns:1fr;gap:12px;margin-bottom:1rem}
-    @media(min-width:700px){.db-main{grid-template-columns:minmax(0,1.6fr) minmax(0,1fr)}}
-    /* ═══ Position Hero Card ════════════════════════════════════ */
-    .pos-card{border-radius:14px;padding:20px 22px;border:1.5px solid;position:relative;overflow:hidden}
-    .pos-ce{background:linear-gradient(135deg,rgba(219,234,254,.55),rgba(219,234,254,.25));border-color:rgba(37,99,235,.3)}
-    .pos-pe{background:linear-gradient(135deg,rgba(254,226,226,.55),rgba(254,226,226,.25));border-color:rgba(220,38,38,.3)}
-    .pos-flat{background:var(--card);border-color:var(--border-c)}
-    .pos-hdr{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:16px}
-    .pos-badge{font-size:.75rem;font-weight:800;padding:.22rem .6rem;border-radius:6px}
-    .pos-b-ce{background:#dbeafe;color:#1d4ed8}
-    .pos-b-pe{background:#fee2e2;color:#dc2626}
-    .pos-b-flat{background:rgba(100,116,139,.18);color:var(--muted)}
-    .pos-mode{font-size:.6rem;background:rgba(255,255,255,.07);color:var(--muted);padding:.1rem .4rem;border-radius:4px;font-weight:700;letter-spacing:.04em}
-    .pos-sym{font-size:.72rem;font-family:monospace;color:var(--muted)}
-    .pos-dur{margin-left:auto;font-size:.65rem;color:var(--muted)}
-    .pos-live-dot{width:8px;height:8px;border-radius:50%;background:var(--green);box-shadow:0 0 7px #10b98188;animation:dbp 1.4s infinite;flex-shrink:0}
-    /* P&L big display */
-    .pos-pnl-rs{font-size:2.6rem;font-weight:800;letter-spacing:-.5px;line-height:1;font-variant-numeric:tabular-nums}
-    .pos-pnl-pts{font-size:.85rem;font-weight:600;margin:.3rem 0 16px;opacity:.85}
-    /* P&L gauge bar */
-    .pos-gauge{height:6px;border-radius:3px;background:rgba(100,116,139,.2);margin-bottom:16px;position:relative;overflow:hidden}
-    .pos-gauge-fill{height:100%;border-radius:3px;transition:width .6s ease,background .4s}
-    /* 6-cell detail grid */
-    .pos-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:10px 14px}
-    @media(min-width:400px){.pos-grid{grid-template-columns:repeat(3,1fr)}}
-    @media(min-width:520px){.pos-grid{grid-template-columns:repeat(6,1fr)}}
-    .pos-lbl{font-size:.56rem;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;margin-bottom:2px}
-    .pos-val{font-size:.88rem;font-weight:700;font-variant-numeric:tabular-nums;line-height:1.3}
-    .pos-divider{height:1px;background:rgba(255,255,255,.06);margin:14px 0}
-    /* Premium info rows */
-    .pos-prem-row{display:flex;gap:14px;flex-wrap:wrap;margin-top:4px}
-    .pos-prem-cell{display:flex;flex-direction:column;gap:2px}
-    .pos-prem-tag{font-size:.55rem;font-weight:800;letter-spacing:.06em;text-transform:uppercase;padding:1px 5px;border-radius:3px}
-    .buy-tag{background:rgba(16,185,129,.15);color:#34d399}
-    .sell-tag{background:rgba(239,68,68,.15);color:#fca5a5}
-    .pos-prem-val{font-size:.9rem;font-weight:700;font-family:monospace}
-    /* Watching card */
-    .watch-card{padding:18px 22px;background:var(--card);border:1.5px solid var(--border-c);border-radius:14px}
-    .watch-title{font-size:.92rem;font-weight:700;margin-bottom:8px;display:flex;align-items:center;gap:8px}
-    .watch-lvl-row{display:flex;align-items:center;gap:10px;padding:9px 12px;border-radius:8px;margin-bottom:6px}
-    .watch-ce-row{background:rgba(37,99,235,.08);border:1px solid rgba(59,130,246,.2)}
-    .watch-pe-row{background:rgba(185,28,28,.08);border:1px solid rgba(239,68,68,.2)}
-    .watch-lvl-dir{font-size:.73rem;font-weight:800;min-width:30px}
-    .watch-lvl-val{font-size:1rem;font-weight:800;font-family:monospace;flex:1}
-    .watch-lvl-dist{font-size:.72rem;font-weight:600}
-    /* ═══ Session Stats (right column) ═════════════════════════ */
-    .ss-card{background:var(--card);border:1px solid var(--border-c);border-radius:12px;padding:14px 16px;margin-bottom:10px}
-    .ss-row{display:flex;align-items:center;justify-content:space-between;padding:6px 0;border-bottom:1px solid rgba(51,65,85,.5)}
-    .ss-row:last-child{border-bottom:none}
-    .ss-lbl{font-size:.67rem;color:var(--muted);text-transform:uppercase;letter-spacing:.06em}
-    .ss-val{font-size:.9rem;font-weight:800;font-variant-numeric:tabular-nums}
-    .ss-sub{font-size:.62rem;color:var(--muted);margin-top:1px;text-align:right}
-    .g{color:var(--green)}.r{color:var(--red)}.d{color:var(--muted)}.b{color:#60a5fa}.am{color:var(--amber)}
-    /* KPI mini grid */
-    .kpi-mini{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:10px}
-    .kpi-m{background:var(--card);border:1px solid var(--border-c);border-radius:10px;padding:11px 13px}
-    .kpi-m-l{font-size:.6rem;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;margin-bottom:4px}
-    .kpi-m-v{font-size:1.2rem;font-weight:800;line-height:1;font-variant-numeric:tabular-nums}
-    .kpi-m-s{font-size:.62rem;color:var(--muted);margin-top:3px}
-    /* ═══ Candle Timeline ═══════════════════════════════════════ */
-    .ctl-wrap{background:var(--card);border:1px solid var(--border-c);border-radius:12px;padding:14px 16px;margin-bottom:1rem;overflow-x:auto}
-    .ctl-hdr{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px}
-    .ctl-title{font-size:.67rem;font-weight:700;text-transform:uppercase;letter-spacing:.1em;color:var(--muted)}
-    .ctl-legend{display:flex;gap:10px;font-size:.6rem;color:var(--muted)}
-    .ctl-legend-dot{width:8px;height:8px;border-radius:2px;display:inline-block;margin-right:3px}
-    .ctl-grid{display:flex;gap:4px;align-items:flex-end;min-width:max-content;padding-bottom:22px;position:relative;min-height:80px}
-    .ctl-slot{display:flex;flex-direction:column;align-items:center;gap:2px;min-width:28px;position:relative;cursor:pointer}
-    .ctl-slot:hover .ctl-tooltip{display:block}
-    .ctl-bar-wrap{height:56px;display:flex;align-items:flex-end;width:100%}
-    .ctl-bar{width:100%;border-radius:2px 2px 0 0;min-height:4px;transition:height .3s}
-    .ctl-bar.bull{background:#10b981}
-    .ctl-bar.bear{background:#ef4444}
-    .ctl-bar.doji{background:#64748b}
-    .ctl-bar.empty{background:rgba(100,116,139,.15);border:1px dashed rgba(100,116,139,.3)}
-    .ctl-bar.current{outline:2px solid #fbbf24;outline-offset:1px}
-    .ctl-time{font-size:.52rem;color:var(--muted);white-space:nowrap;transform:rotate(-45deg);transform-origin:top left;margin-top:6px;margin-left:6px;width:28px}
-    .ctl-marker{position:absolute;top:-8px;left:50%;transform:translateX(-50%);font-size:.65rem;line-height:1}
-    .ctl-tooltip{display:none;position:absolute;bottom:100%;left:50%;transform:translateX(-50%);background:#fff;border:1px solid var(--border-c);border-radius:8px;padding:7px 10px;font-size:.68rem;white-space:nowrap;z-index:10;margin-bottom:6px;box-shadow:0 4px 12px rgba(0,0,0,.1);color:var(--text-main)}
-    .ctl-tooltip::after{content:'';position:absolute;top:100%;left:50%;transform:translateX(-50%);border:5px solid transparent;border-top-color:#fff}
-    /* ═══ Section headers ═══════════════════════════════════════ */
-    .sec{font-size:.65rem;font-weight:700;text-transform:uppercase;letter-spacing:.1em;color:var(--muted);border-bottom:1px solid var(--border-c);padding-bottom:7px;margin:1.3rem 0 .75rem;display:flex;align-items:center;gap:.5rem;flex-wrap:wrap}
-    .sec-count{font-size:.8rem;font-weight:700;text-transform:none;letter-spacing:0;color:var(--text-main)}
-    /* ═══ Trade table ═══════════════════════════════════════════ */
-    .tw{overflow-x:auto;border:1px solid var(--border-c);border-radius:12px;margin-bottom:4px}
-    table.tt{width:100%;border-collapse:collapse;font-size:.82rem}
-    .tt th{text-align:left;padding:9px 11px;font-size:.6rem;text-transform:uppercase;letter-spacing:.07em;color:var(--muted);border-bottom:1px solid var(--border-c);font-weight:700;white-space:nowrap;background:rgba(240,244,255,.8)}
-    .tt td{padding:9px 11px;border-bottom:1px solid rgba(51,65,85,.5);vertical-align:middle}
-    .tt tr:last-child td{border-bottom:none}
-    .tt tr:hover td{background:rgba(240,244,255,.5)}
-    .tt-e{text-align:center;padding:24px 16px;color:var(--muted);font-size:.82rem}
-    .tc{font-size:.7rem;color:var(--muted);white-space:nowrap}
-    .db-badge{font-size:.67rem;font-weight:800;padding:.1rem .34rem;border-radius:3px}
-    .db-badge.ce{background:#dbeafe;color:#1d4ed8}
-    .db-badge.pe{background:#fee2e2;color:#dc2626}
-    .pnl-rs{font-size:.95rem;font-weight:800;display:block;font-variant-numeric:tabular-nums;line-height:1.2}
-    .pnl-pt{font-size:.63rem;display:block;color:var(--muted);margin-top:1px}
-    .rc-b{font-size:.62rem;padding:.09rem .3rem;border-radius:3px;font-weight:700;white-space:nowrap}
-    .rc-sl{background:rgba(239,68,68,.12);color:#f87171}
-    .rc-trail{background:rgba(16,185,129,.12);color:#34d399}
-    .rc-eod{background:rgba(99,102,241,.12);color:#818cf8}
-    .mono{font-family:monospace;font-size:.8rem}
-    /* Premium / buy columns */
-    .prem-buy{font-size:.68rem;background:rgba(5,150,105,.1);color:#059669;border-radius:3px;padding:1px 4px;margin-right:2px;font-weight:700}
-    .prem-sell{font-size:.68rem;background:rgba(220,38,38,.1);color:#dc2626;border-radius:3px;padding:1px 4px;margin-right:2px;font-weight:700}
-    /* Pre-Market Card */
-    .pm-card{background:var(--card);border:1.5px solid var(--border-c);border-radius:14px;padding:0;margin-bottom:1rem;overflow:hidden}
-    .pm-hdr{display:flex;align-items:center;justify-content:space-between;padding:12px 18px;cursor:pointer;user-select:none;gap:10px;flex-wrap:wrap}
-    .pm-hdr-left{display:flex;align-items:center;gap:10px}
-    .pm-title{font-size:.73rem;font-weight:800;text-transform:uppercase;letter-spacing:.09em;color:var(--text-main)}
-    .pm-phase{font-size:.62rem;font-weight:700;padding:2px 9px;border-radius:4px;background:rgba(251,191,36,.12);color:#fbbf24;border:1px solid rgba(251,191,36,.25)}
-    .pm-phase.live{background:rgba(16,185,129,.1);color:#10b981;border-color:rgba(16,185,129,.3)}
-    .pm-phase.closed{background:rgba(100,116,139,.1);color:#64748b;border-color:rgba(100,116,139,.2)}
-    .pm-toggle{font-size:.68rem;color:var(--muted);transition:transform .2s}
-    .pm-toggle.open{transform:rotate(180deg)}
-    .pm-body{padding:14px 18px 16px;border-top:1px solid var(--border-c)}
-    .pm-grid{display:grid;grid-template-columns:1fr;gap:14px}
-    @media(min-width:700px){.pm-grid{grid-template-columns:1.1fr 1fr}}
-    .pm-tl{display:flex;flex-direction:column;gap:0}
-    .pm-tl-row{display:flex;align-items:flex-start;gap:10px;padding:5px 0;position:relative}
-    .pm-tl-row:not(:last-child)::before{content:'';position:absolute;left:9px;top:20px;bottom:-4px;width:1.5px;background:var(--border-c)}
-    .pm-tl-dot{width:20px;height:20px;border-radius:50%;border:2px solid var(--border-c);background:var(--bg);display:flex;align-items:center;justify-content:center;font-size:.6rem;flex-shrink:0;margin-top:1px;z-index:1;position:relative}
-    .pm-tl-dot.done{background:#059669;border-color:#059669;color:#fff}
-    .pm-tl-dot.active{background:rgba(251,191,36,.15);border-color:#fbbf24;color:#fbbf24;box-shadow:0 0 0 3px rgba(251,191,36,.15);animation:pm-pulse 1.5s infinite}
-    @keyframes pm-pulse{0%,100%{box-shadow:0 0 0 3px rgba(251,191,36,.15)}50%{box-shadow:0 0 0 6px rgba(251,191,36,.05)}}
-    .pm-tl-txt{flex:1}
-    .pm-tl-time{font-size:.63rem;font-weight:800;color:var(--text-main);font-variant-numeric:tabular-nums}
-    .pm-tl-label{font-size:.68rem;color:var(--muted);margin-top:1px}
-    .pm-tl-note{font-size:.62rem;color:#7c3aed;font-weight:600;margin-top:2px;display:none}
-    .pm-tl-note.show{display:block}
-    .pm-pred{display:flex;flex-direction:column;gap:10px}
-    .pm-pred-label{font-size:.62rem;font-weight:700;text-transform:uppercase;letter-spacing:.07em;color:var(--muted);margin-bottom:4px}
+    /* ── Layout ───────────────────────────────────────────────── */
+    .sig3{max-width:980px;margin:0 auto;padding:0 .75rem 3rem}
+    .sig3-hdr{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:.5rem;margin:1rem 0 .85rem}
+    .sig3-title{font-size:1.1rem;font-weight:800;color:var(--text)}
+    .sig3-sub{font-size:.72rem;color:var(--text-muted);margin-top:2px}
+    .sig3-live{display:flex;align-items:center;gap:.4rem;font-size:.72rem;color:var(--text-muted)}
+    .sig3-dot{width:8px;height:8px;border-radius:50%;background:#10b981;box-shadow:0 0 6px #10b98188;animation:sig3p 1.4s infinite}
+    @keyframes sig3p{0%,100%{opacity:1;box-shadow:0 0 6px #10b98188}50%{opacity:.3;box-shadow:none}}
+    /* ── Bot status dot ───────────────────────────────────────── */
+    .gv-status-dot{width:9px;height:9px;border-radius:50%;flex-shrink:0}
+    .gv-status-dot.active{background:#10b981;box-shadow:0 0 0 3px rgba(16,185,129,.3);animation:gvpulse-green 1.6s ease-in-out infinite}
+    .gv-status-dot.scanning{background:#3b82f6;box-shadow:0 0 0 3px rgba(59,130,246,.25);animation:gvpulse-blue 2.2s ease-in-out infinite}
+    .gv-status-dot.waiting{background:#f59e0b;box-shadow:0 0 0 3px rgba(245,158,11,.2);animation:gvpulse-amber 2.8s ease-in-out infinite}
+    .gv-status-dot.offline{background:#ef4444;box-shadow:none}
+    @keyframes gvpulse-green{0%,100%{box-shadow:0 0 0 3px rgba(16,185,129,.3)}50%{box-shadow:0 0 0 7px rgba(16,185,129,.07)}}
+    @keyframes gvpulse-blue{0%,100%{box-shadow:0 0 0 3px rgba(59,130,246,.25)}50%{box-shadow:0 0 0 6px rgba(59,130,246,.06)}}
+    @keyframes gvpulse-amber{0%,100%{box-shadow:0 0 0 3px rgba(245,158,11,.2)}50%{box-shadow:0 0 0 5px rgba(245,158,11,.05)}}
+    .gv-status-val.active-col{color:#10b981}
+    .gv-status-val.scanning-col{color:#3b82f6}
+    .gv-status-val.waiting-col{color:#f59e0b}
+    .gv-status-val.offline-col{color:#ef4444}
+    /* ── KPI Cards (matching paper trade style) ───────────────── */
+    .sig3-kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(135px,1fr));gap:10px;margin-bottom:1rem}
+    .sig3-kpi{background:var(--card-bg);border:1px solid var(--border);border-radius:10px;padding:13px 16px}
+    .sig3-kl{font-size:.65rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:.07em;margin-bottom:5px}
+    .sig3-kv{font-size:1.35rem;font-weight:800;font-variant-numeric:tabular-nums;line-height:1.15}
+    .sig3-ks{font-size:.72rem;font-weight:600;margin-top:3px;opacity:.85}
+    .sig3-g{color:#10b981}.sig3-r{color:#ef4444}.sig3-d{color:var(--text-muted)}
 
-    .pm-inp-row{display:grid;grid-template-columns:1fr 1fr;gap:8px}
-    .pm-inp{width:100%;background:var(--bg);border:1.5px solid var(--border-c);border-radius:7px;padding:6px 10px;font-size:.78rem;color:var(--text-main);outline:none;font-family:monospace;box-sizing:border-box}
-    .pm-inp:focus{border-color:#7c3aed}
-    .pm-notes{width:100%;background:var(--bg);border:1.5px solid var(--border-c);border-radius:7px;padding:8px 10px;font-size:.73rem;color:var(--text-main);outline:none;resize:none;min-height:64px;box-sizing:border-box;font-family:inherit}
-    .pm-notes:focus{border-color:#7c3aed}
-    .pm-trade-card{border-radius:9px;padding:10px 12px;margin-top:2px}
-    .pm-trade-card.ce-card{background:rgba(5,150,105,.07);border:1.5px solid rgba(5,150,105,.25)}
-    .pm-trade-card.pe-card{background:rgba(239,68,68,.07);border:1.5px solid rgba(239,68,68,.22)}
-    .pm-trade-hdr{font-size:.62rem;font-weight:800;letter-spacing:.09em;text-transform:uppercase;margin-bottom:8px;display:flex;align-items:center;gap:6px}
-    .pm-trade-hdr.ce-hdr{color:#059669}
-    .pm-trade-hdr.pe-hdr{color:#ef4444}
-    .pm-3col{display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px}
-    .pm-lbl{font-size:.56rem;font-weight:700;text-transform:uppercase;letter-spacing:.06em;margin-bottom:3px}
-    .pm-lbl.green{color:#10b981}
-    .pm-lbl.red{color:#ef4444}
-    .pm-lbl.amber{color:#f59e0b}
-    .pm-lbl.blue{color:#6366f1}
-    .pm-lbl.muted{color:var(--muted)}
-    .pm-inp-sm{width:100%;background:var(--bg);border:1.5px solid var(--border-c);border-radius:6px;padding:5px 8px;font-size:.74rem;color:var(--text-main);outline:none;font-family:monospace;box-sizing:border-box}
-    .pm-inp-sm:focus{border-color:#7c3aed}
-    .pm-inp-sm.pm-ro{cursor:default;user-select:none;color:var(--text-main);opacity:.85}
-    .pm-levels-auto{background:rgba(99,102,241,.06);border:1px solid rgba(99,102,241,.2);border-radius:10px;padding:12px 14px;margin-top:2px}
-    .pm-levels-auto-hdr{font-size:.58rem;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:#818cf8;margin-bottom:10px;display:flex;align-items:center;justify-content:space-between}
-    .pm-auto-row{display:flex;justify-content:space-between;align-items:center;margin-bottom:4px}
-    .pm-auto-lbl{font-size:.65rem;color:var(--muted)}
-    .pm-auto-val{font-size:.75rem;font-weight:800;color:var(--text-main);font-family:monospace}
-    .pm-setup-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:8px}
-    .pm-setup-side{border-radius:8px;padding:10px 11px;border:1.5px solid}
-    .pm-setup-side.ce-side{background:rgba(37,99,235,.06);border-color:rgba(37,99,235,.25)}
-    .pm-setup-side.pe-side{background:rgba(220,38,38,.06);border-color:rgba(220,38,38,.2)}
-    .pm-setup-dir{font-size:.62rem;font-weight:800;text-transform:uppercase;letter-spacing:.07em;margin-bottom:8px}
-    .pm-setup-dir.ce{color:#60a5fa}.pm-setup-dir.pe{color:#fca5a5}
-    .pm-setup-row{display:flex;justify-content:space-between;align-items:center;margin-bottom:5px}
-    .pm-setup-row:last-child{margin-bottom:0}
-    .pm-setup-lbl{font-size:.6rem;color:var(--muted)}
-    .pm-setup-val{font-size:.72rem;font-weight:800;font-family:monospace;color:var(--text-main)}
-    .pm-setup-val.entry{color:#fbbf24}
-    .pm-setup-val.sl{color:#ef4444}
-    .pm-setup-val.tgt{color:#10b981}
-    .pm-setup-divider{height:1px;background:rgba(255,255,255,.08);margin:6px 0}
-    .pm-rr-badge{font-size:.62rem;font-weight:800;padding:2px 7px;border-radius:4px;background:rgba(99,102,241,.15);color:#818cf8}
-    /* ═══ Strategy Tab switcher ══════════════════════════════════ */
-    .stab-wrap{display:flex;gap:6px;margin-bottom:.85rem;flex-wrap:wrap}
-    .stab{flex:1;min-width:100px;padding:9px 10px;border-radius:10px;border:1.5px solid var(--border-c);background:var(--card);color:var(--muted);font-size:.75rem;font-weight:700;cursor:pointer;text-align:center;transition:all .17s;user-select:none;-webkit-tap-highlight-color:transparent}
-    .stab:hover{border-color:var(--accent,#059669);color:var(--text-main);background:rgba(5,150,105,.06)}
-    .stab.act{border-color:var(--accent,#059669);background:rgba(5,150,105,.1);color:var(--accent,#059669)}
-    .stab-name{display:block;font-size:.75rem;font-weight:700}
-    .stab-sub{display:block;font-size:.58rem;font-weight:600;opacity:.7;margin-top:1px}
-    .stab-pnl{display:block;font-size:.72rem;font-weight:800;margin-top:3px}
-    /* Shadow strategy card */
-    .sh-pos{border-radius:12px;padding:16px 20px;border:1.5px solid;margin-bottom:1rem}
-    .sh-pos-watch{background:rgba(248,250,252,0.95);border-color:var(--border-c);box-shadow:0 1px 6px rgba(0,0,0,.06)}
-    .sh-pos-ce{background:rgba(219,234,254,.45);border-color:rgba(37,99,235,.25)}
-    .sh-pos-pe{background:rgba(254,226,226,.45);border-color:rgba(220,38,38,.25)}
-    /* Bot control menu */
-    .bot-ctl-wrap{position:relative;margin-left:8px}
-    .bot-ctl-menu{display:none;position:absolute;right:0;top:110%;background:#fff;border:1px solid var(--border-c);border-radius:9px;min-width:150px;z-index:999;box-shadow:0 4px 16px rgba(0,0,0,.12);overflow:hidden}
+    /* ── Active Position Hero Card ────────────────────────────── */
+    .sig3-pos{border-radius:12px;padding:18px 22px;margin-bottom:1rem;border:1.5px solid}
+    .sig3-pos-ce{background:rgba(31,58,95,.2);border-color:rgba(59,130,246,.5)}
+    .sig3-pos-pe{background:rgba(80,18,18,.22);border-color:rgba(239,68,68,.5)}
+    .sig3-pos-flat{background:var(--card-bg);border-color:var(--border)}
+    .sig3-ph{display:flex;align-items:center;gap:.5rem;flex-wrap:wrap;margin-bottom:14px}
+    .sig3-dir-b{font-size:.8rem;font-weight:800;padding:.2rem .55rem;border-radius:5px}
+    .sig3-dir-ce{background:#1f3a5f;color:#60a5fa}
+    .sig3-dir-pe{background:#3b1010;color:#f87171}
+    .sig3-mode-b{font-size:.62rem;background:rgba(255,255,255,.07);color:var(--text-muted);padding:.12rem .42rem;border-radius:4px}
+    .sig3-dur{margin-left:auto;font-size:.68rem;color:var(--text-muted)}
+    /* Big P&L */
+    .sig3-pnl-big{font-size:2.4rem;font-weight:800;letter-spacing:-.5px;line-height:1.1;margin-bottom:3px;font-variant-numeric:tabular-nums}
+    .sig3-pnl-pts{font-size:.88rem;font-weight:600;margin-bottom:16px}
+    /* 6-cell detail grid */
+    .sig3-pg{display:grid;grid-template-columns:repeat(3,1fr);gap:10px 16px}
+    @media(min-width:520px){.sig3-pg{grid-template-columns:repeat(6,1fr)}}
+    .sig3-pl{font-size:.58rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:.05em}
+    .sig3-pv{font-size:.9rem;font-weight:700;margin-top:2px;font-variant-numeric:tabular-nums}
+
+    /* ── Section headers ──────────────────────────────────────── */
+    .sig3-sec{font-size:.67rem;font-weight:700;text-transform:uppercase;letter-spacing:.1em;
+      color:var(--text-muted);border-bottom:1px solid var(--border);
+      padding-bottom:7px;margin:1.4rem 0 .75rem;display:flex;align-items:center;gap:.5rem;flex-wrap:wrap}
+    .sig3-sec-count{font-size:.8rem;font-weight:700;text-transform:none;letter-spacing:0;color:var(--text)}
+
+    /* ── Tables ───────────────────────────────────────────────── */
+    .sig3-tw{overflow-x:auto;border:1px solid var(--border);border-radius:10px;margin-bottom:4px}
+    table.sig3-t{width:100%;border-collapse:collapse;font-size:.85rem}
+    .sig3-t th{text-align:left;padding:9px 11px;font-size:.63rem;text-transform:uppercase;
+      letter-spacing:.06em;color:var(--text-muted);border-bottom:1px solid var(--border);
+      font-weight:600;white-space:nowrap;background:var(--bg2)}
+    .sig3-t td{padding:10px 11px;border-bottom:1px solid var(--border);vertical-align:middle}
+    .sig3-t tr:last-child td{border-bottom:none}
+    .sig3-t tr:hover td{background:var(--hover-bg)}
+    .sig3-te{text-align:center;padding:24px 16px;color:var(--text-muted);font-size:.85rem}
+
+    /* ── Cell styles ──────────────────────────────────────────── */
+    .sig3-ct{font-size:.72rem;color:var(--text-muted);white-space:nowrap}
+    .sig3-db{font-size:.7rem;font-weight:800;padding:.12rem .36rem;border-radius:3px}
+    .sig3-db.ce{background:#1f3a5f;color:#60a5fa}
+    .sig3-db.pe{background:#3b1010;color:#f87171}
+    /* P&L cell: big ₹ on line 1, small pts on line 2 */
+    .sig3-pnl-rs{font-size:1rem;font-weight:800;display:block;font-variant-numeric:tabular-nums;line-height:1.2}
+    .sig3-pnl-spt{font-size:.68rem;display:block;color:var(--text-muted);margin-top:1px}
+    .sig3-rc{font-size:.65rem;padding:.1rem .32rem;border-radius:3px;font-weight:600;white-space:nowrap}
+    .sig3-rc-sl{background:rgba(239,68,68,.12);color:#f87171}
+    .sig3-rc-early{background:rgba(245,158,11,.12);color:#f59e0b}
+    .sig3-rc-eod{background:rgba(99,102,241,.12);color:#818cf8}
+    .sig3-mono{font-family:monospace;font-size:.82rem}
+    /* Strategy tab switcher */
+    .strat-tabs{display:flex;gap:6px;margin-bottom:.85rem}
+    .strat-tab{flex:1;padding:9px 12px;border-radius:9px;border:1.5px solid var(--border);background:var(--card-bg);color:var(--text-muted);font-size:.78rem;font-weight:700;cursor:pointer;text-align:center;transition:all .18s}
+    .strat-tab.active{border-color:#7c3aed;background:rgba(124,58,237,.13);color:#a78bfa}
+    .strat-tab .strat-badge{display:inline-block;font-size:.6rem;font-weight:800;padding:.08rem .35rem;border-radius:3px;margin-left:5px;vertical-align:middle}
+    .strat-tab-lock50 .strat-badge{background:rgba(16,185,129,.15);color:#10b981}
+    .strat-tab-trail .strat-badge{background:rgba(99,102,241,.15);color:#818cf8}
+    .strat-compare{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:.85rem}
+    .sc-card{background:var(--card-bg);border:1.5px solid var(--border);border-radius:10px;padding:14px 16px}
+    .sc-card.live{border-color:rgba(16,185,129,.4)}
+    .sc-card.shadow{border-color:rgba(99,102,241,.3)}
+    .sc-label{font-size:.6rem;font-weight:800;text-transform:uppercase;letter-spacing:.08em;margin-bottom:8px;display:flex;align-items:center;gap:5px}
+    .sc-dot-live{width:7px;height:7px;border-radius:50%;background:#10b981;display:inline-block}
+    .sc-dot-shadow{width:7px;height:7px;border-radius:50%;background:#818cf8;display:inline-block}
+    .sc-pnl{font-size:1.5rem;font-weight:800;font-variant-numeric:tabular-nums;line-height:1.1}
+    .sc-pts{font-size:.72rem;font-weight:600;margin-top:2px;opacity:.85}
+    .sc-meta{font-size:.68rem;color:var(--text-muted);margin-top:7px}
+    .sc-diff{text-align:center;padding:10px;background:var(--card-bg);border:1px dashed var(--border);border-radius:8px;margin-bottom:.85rem;font-size:.75rem;color:var(--text-muted)}
+    /* ── Health Monitor ── */
+    .hm-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:8px;margin-bottom:1rem}
+    .hm-card{background:var(--card-bg);border:1px solid var(--border);border-radius:9px;padding:11px 14px;display:flex;align-items:center;gap:10px;transition:border-color .3s}
+    .hm-card.hm-ok{border-color:rgba(16,185,129,.35)}
+    .hm-card.hm-warn{border-color:rgba(251,191,36,.45)}
+    .hm-card.hm-err{border-color:rgba(239,68,68,.45)}
+    .hm-card.hm-dim{border-color:var(--border)}
+    .hm-dot{width:9px;height:9px;border-radius:50%;flex-shrink:0;background:#475569}
+    .hm-ok .hm-dot{background:#10b981}
+    .hm-warn .hm-dot{background:#fbbf24;box-shadow:0 0 6px rgba(251,191,36,.6)}
+    .hm-err .hm-dot{background:#ef4444;box-shadow:0 0 6px rgba(239,68,68,.6);animation:hm-blink 1s infinite}
+    @keyframes hm-blink{0%,100%{opacity:1}50%{opacity:.3}}
+    .hm-label{font-size:.67rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:.04em;line-height:1}
+    .hm-val{font-size:.8rem;font-weight:700;margin-top:3px;line-height:1.2}
+    /* ── Alert Banners ── */
+    .sig3-alerts{display:flex;flex-direction:column;gap:8px;margin-bottom:1rem}
+    .sig3-alert{border-radius:10px;padding:13px 18px;border:1px solid;position:relative;display:flex;align-items:flex-start;gap:12px}
+    .sig3-alert-err{background:rgba(239,68,68,.08);border-color:rgba(239,68,68,.4);color:#fca5a5}
+    .sig3-alert-warn{background:rgba(251,191,36,.07);border-color:rgba(251,191,36,.4);color:#fde68a}
+    .sig3-alert-icon{font-size:1.1rem;flex-shrink:0;margin-top:1px}
+    .sig3-alert-body{flex:1}
+    .sig3-alert-title{font-weight:700;font-size:.85rem;line-height:1.2}
+    .sig3-alert-msg{font-size:.75rem;opacity:.8;margin-top:3px}
+    .sig3-alert-btns{display:flex;gap:6px;flex-wrap:wrap;margin-top:9px}
+    .sig3-alert-btn{padding:4px 12px;border-radius:5px;font-size:.73rem;font-weight:700;cursor:pointer;border:1px solid currentColor;background:transparent;color:inherit;transition:opacity .2s}
+    .sig3-alert-btn:hover{opacity:.7}
+    .sig3-alert-close{position:absolute;top:9px;right:12px;background:none;border:none;color:inherit;opacity:.5;cursor:pointer;font-size:1rem;line-height:1;padding:0}
   </style>
 </head>
 <body class="page-theme-signals">
   ${nav("signals", req)}
-  <div class="db">
+  <div class="sig3">
 
-    <!-- ── Header ────────────────────────────────────────────── -->
-    <div class="db-hdr">
+    <!-- Header -->
+    <div class="sig3-hdr">
       <div>
-        <div class="db-title">📡 Live Bot Dashboard</div>
-        <div class="db-sub">BANKNIFTY · BODY_BREAKOUT · <strong>${mode2}</strong> · 30 qty · ₹ P&L = pts × 15</div>
+        <div class="sig3-title">📡 Live Bot Dashboard</div>
+        <div class="sig3-sub">BANKNIFTY &middot; HYBRID_REVERSE &middot; <strong>${mode2.toUpperCase()}</strong> &middot; 30 qty &middot; &#8377; P&amp;L = index pts &times; 30 qty &times; 0.5&#948; = pts &times; 15</div>
       </div>
-      <div class="db-live"><span class="db-pulse"></span><span id="db-upd">Connecting…</span></div>
+      <div class="sig3-live"><span class="sig3-dot"></span><span id="sig3-upd">Connecting&hellip;</span></div>
     </div>
-
-    <!-- ── Health Bar ─────────────────────────────────────────── -->
-    <div class="hb" id="hb-bar">
-      <span class="hb-pill ${isAlive2 ? 'ok' : (_sleeping2ssr ? 'warn' : 'err')}" id="hb-bot">
-        <span class="hb-dot${isAlive2 ? '' : ' blink'}"></span>
-        Bot ${isAlive2 ? '● Online' : (_sleeping2ssr ? '● Sleeping' : '● Offline')}
-      </span>
-      <span class="hb-pill ${kiteToken2Valid ? 'ok' : 'err'}" id="hb-token">
-        <span class="hb-dot"></span>
-        Token ${kiteToken2Valid ? '✓ Valid' : '✗ Expired'}
-        ${kiteTokenAt2 ? (() => { const ageH = Math.round((Date.now() - new Date(kiteTokenAt2).getTime()) / 3600000); return `<span style="opacity:.65;font-weight:400;margin-left:3px">${ageH}h ago</span>`; })() : ''}
-      </span>
-      ${!kiteToken2Valid ? `<a href="https://139-59-18-52.nip.io/login" target="_blank" class="hb-pill warn" style="text-decoration:none">⚡ Refresh Token →</a>` : ''}
-      <span class="hb-pill ${isAlive2 ? 'ok' : 'dim'}" id="hb-hb">
-        <span class="hb-dot"></span>
-        Heartbeat <span id="hb-age-txt" style="opacity:.65;font-weight:400;margin-left:3px">${isAlive2 ? 'live' : (hb2?.at ? Math.round((Date.now()-new Date(hb2.at).getTime())/60000)+'m ago' : 'never')}</span>
-      </span>
-      <span class="hb-pill ${mode2 === 'LIVE' ? 'ok' : 'warn'}">
-        <span class="hb-dot"></span>
-        ${mode2}
-      </span>
-      <div class="bot-ctl-wrap">
-        <button onclick="_toggleBotMenu(event)" type="button" style="padding:3px 11px;border-radius:6px;font-size:.7rem;font-weight:700;cursor:pointer;background:rgba(5,150,105,.1);border:1px solid rgba(5,150,105,.4);color:#059669">⚙ Bot ▾</button>
-        <div class="bot-ctl-menu" id="bot-ctl-menu">
-          <div onclick="_botAction('start')"   style="padding:10px 16px;font-size:.78rem;font-weight:600;cursor:pointer;color:#10b981;display:flex;align-items:center;gap:8px" onmouseover="this.style.background='#f0f4ff'" onmouseout="this.style.background=''">▶ Start</div>
-          <div onclick="_botAction('restart')" style="padding:10px 16px;font-size:.78rem;font-weight:600;cursor:pointer;color:#2563eb;display:flex;align-items:center;gap:8px" onmouseover="this.style.background='#f0f4ff'" onmouseout="this.style.background=''">↻ Restart</div>
+    <!-- Bot Status Bar (same as guest view) -->
+    <div class="gv-status" id="sig3-bot-status" style="margin-bottom:1rem;padding:10px 16px;border-radius:10px;background:var(--card-bg,#1e293b);border:1px solid var(--border);display:flex;align-items:center;gap:10px">
+      <span class="gv-status-dot ${!isAlive2 ? (_sleeping2ssr ? 'waiting' : 'offline') : inTrade2 ? 'active' : (hb2?.status?.toUpperCase().includes('WAIT') || hb2?.status?.toUpperCase().includes('9:25') ? 'waiting' : 'scanning')}" id="sig3-status-dot"></span>
+      <span style="font-size:.82rem;color:var(--text-muted)" id="sig3-status-lbl">${!isAlive2 ? (_sleeping2ssr ? 'Bot sleeping \u2014 market closed' : 'Bot offline \u2014 not responding') : inTrade2 ? 'Bot is running a trade' : hb2?.status?.toUpperCase().includes('WAIT') ? 'Bot alive \u2014 waiting for market to open (9:15 IST)' : 'Bot alive \u2014 monitoring the options market'}</span>
+      <span style="font-size:.75rem;margin-left:12px;padding:2px 8px;border-radius:4px;font-weight:600;${kiteToken2Valid ? 'background:rgba(16,185,129,.15);color:#10b981' : 'background:rgba(239,68,68,.15);color:#ef4444'}" id="sig3-token-status">${kiteToken2Valid ? '&#10003; Token OK' : '&#10007; Token Expired'}</span>
+      <a href="https://139-59-18-52.nip.io/login" target="_blank" id="sig3-token-link" style="font-size:.72rem;margin-left:6px;padding:2px 8px;border-radius:4px;font-weight:700;text-decoration:none;background:rgba(251,191,36,.12);border:1px solid #fbbf24;color:#fbbf24;${kiteToken2Valid ? 'display:none' : ''}" title="Submit Zerodha token">&#8594; Refresh Token</a>
+      <span style="font-size:.82rem;font-weight:700;margin-left:auto" class="${!isAlive2 ? (_sleeping2ssr ? 'sig3-d' : 'sig3-r') : inTrade2 ? 'sig3-g' : 'sig3-d'}" id="sig3-status-val">${!isAlive2 ? (_sleeping2ssr ? 'Sleeping' : 'Offline') : inTrade2 ? '&#x25CF;&nbsp;ACTIVE' : hb2?.status?.toUpperCase().includes('WAIT') ? 'Waiting' : 'Monitoring'}</span>
+      <div style="position:relative;margin-left:10px" id="bot-ctl-wrap">
+        <button onclick="_toggleBotMenu(event)" style="padding:3px 10px;border-radius:5px;font-size:.72rem;font-weight:700;cursor:pointer;background:rgba(99,102,241,.12);border:1px solid #6366f1;color:#a5b4fc" id="bot-ctl-btn">&#9881; Bot &#9660;</button>
+        <div id="bot-ctl-menu" style="display:none;position:absolute;right:0;top:110%;background:#1e293b;border:1px solid #334155;border-radius:8px;min-width:150px;z-index:999;box-shadow:0 8px 24px rgba(0,0,0,.5);overflow:hidden">
+          <div onclick="_botAction('start')"   style="padding:9px 16px;font-size:.78rem;font-weight:600;cursor:pointer;color:#10b981;display:flex;align-items:center;gap:8px" onmouseover="this.style.background='#0f172a'" onmouseout="this.style.background=''">&#9654; Start</div>
+          <div onclick="_botAction('restart')" style="padding:9px 16px;font-size:.78rem;font-weight:600;cursor:pointer;color:#6366f1;display:flex;align-items:center;gap:8px" onmouseover="this.style.background='#0f172a'" onmouseout="this.style.background=''">&#x21BB; Restart</div>
           <div style="height:1px;background:#334155;margin:2px 0"></div>
-          <div onclick="_botAction('stop')"    style="padding:10px 16px;font-size:.78rem;font-weight:600;cursor:pointer;color:#ef4444;display:flex;align-items:center;gap:8px" onmouseover="this.style.background='#f0f4ff'" onmouseout="this.style.background=''">■ Stop</div>
+          <div onclick="_botAction('stop')"    style="padding:9px 16px;font-size:.78rem;font-weight:600;cursor:pointer;color:#ef4444;display:flex;align-items:center;gap:8px" onmouseover="this.style.background='#0f172a'" onmouseout="this.style.background=''">&#9632; Stop</div>
         </div>
       </div>
-      <span class="hb-age" id="hb-last-seen">${isAlive2 ? 'Last seen just now' : ''}</span>
     </div>
 
-    <!-- ── Strategy Tab Switcher ──────────────────────────────── -->
-
-    <div class="stab-wrap">
-      <button class="stab act" id="stab-lock50" type="button" onclick="_sTab('lock50')">
-        <span class="stab-name">&#9679; AMINA 100</span>
-        <span class="stab-sub">LIVE v2.0</span>
-        <span class="stab-pnl" id="stab-pnl-lock50" style="color:${an2.today.pnl>=0?'#059669':'#dc2626'}">${fmtActRs2(an2.today.pnlRs, an2.today.pnl)}</span>
+    <!-- Strategy Tab Switcher -->
+    <script>function _switchTab(t){var iL=(t==='lock50');var pl=document.getElementById('panel-lock50');var pt=document.getElementById('panel-trail');var bl=document.getElementById('tab-btn-lock50');var bt=document.getElementById('tab-btn-trail');if(pl)pl.style.display=iL?'':'none';if(pt)pt.style.display=iL?'none':'';if(bl)bl.classList.toggle('active',iL);if(bt)bt.classList.toggle('active',!iL);}</script>
+    <div class="strat-tabs">
+      <button class="strat-tab strat-tab-lock50 active" id="tab-btn-lock50" onclick="_switchTab('lock50')">
+        &#9679; LOCK50 <span class="strat-badge">LIVE</span>
       </button>
-      <button class="stab" id="stab-vmt" type="button" onclick="_sTab('vmt')">
-        <span class="stab-name">&#128161; VMT</span>
-        <span class="stab-sub">Option shadow</span>
-        <span class="stab-pnl" id="stab-pnl-vmt" style="color:#8b949e">&#8212;</span>
+      <button class="strat-tab strat-tab-trail" id="tab-btn-trail" onclick="_switchTab('trail')">
+        &#9670; TRAIL <span class="strat-badge">PAPER</span>
       </button>
     </div>
-    <script>/* _sTab defined in main script below */</script>
 
-
-    <!-- ════════════════════════════════════════════════════════
-         TICK TRAIL PANEL
-         ════════════════════════════════════════════════════════ -->
+    <!-- ═══ LOCK50 PANEL (original page, unchanged) ═══ -->
     <div id="panel-lock50">
 
-    <!-- === AMINA 100: 2-col top (Timeline + Position) === -->
-    <div style="display:grid;grid-template-columns:1fr;gap:14px;margin-bottom:1rem;align-items:start">
-      <style>@media(min-width:700px){#atl-top-grid{grid-template-columns:1.15fr 1fr!important}}</style>
-    </div>
-    <div id="atl-top-grid" style="display:grid;grid-template-columns:1fr;gap:14px;margin-bottom:1.2rem;align-items:start">
-
-      <!-- LEFT: Session Timeline -->
-      <div>
-        <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;flex-wrap:wrap">
-          <span style="font-size:.72rem;text-transform:uppercase;letter-spacing:1px;color:#8b949e;font-weight:700">&#9201; Today&#8217;s Session Timeline</span>
-          <span class="pm-phase" id="atl-phase-badge">Loading&hellip;</span>
-        </div>
-<div class="pm-tl" id="atl-tl">
-                    <div class="pm-tl-row" id="atl-row-0">
-            <div class="pm-tl-dot" id="atl-dot-0"></div>
-            <div class="pm-tl-txt">
-              <div class="pm-tl-time">7:30 AM &mdash; Token Auto-Refreshed &mdash; Bot Ready</div>
-              <div class="pm-tl-label">Kite access token refreshed via TOTP. Bot restarted with fresh session</div>
-            </div>
-          </div>
-          <div class="pm-tl-row" id="atl-row-1">
-            <div class="pm-tl-dot" id="atl-dot-1"></div>
-            <div class="pm-tl-txt">
-              <div class="pm-tl-time">8:30 AM &mdash; Global Cues</div>
-              <div class="pm-tl-label">Check Gift Nifty / SGX Nifty for BNF gap-up or gap-down bias</div>
-            </div>
-          </div>
-          <div class="pm-tl-row" id="atl-row-2">
-            <div class="pm-tl-dot" id="atl-dot-2"></div>
-            <div class="pm-tl-txt">
-              <div class="pm-tl-time">9:15 AM &mdash; Market Opens &mdash; Bot Active</div>
-              <div class="pm-tl-label">Bot begins scanning. First 15-min candle (C1) starts forming</div>
-            </div>
-          </div>
-          <div class="pm-tl-row" id="atl-row-3">
-            <div class="pm-tl-dot" id="atl-dot-3"></div>
-            <div class="pm-tl-txt">
-              <div class="pm-tl-time">9:15 &ndash; 9:30 AM &mdash; C1 Candle Watch</div>
-              <div class="pm-tl-label">Bot records C1 high &amp; low. No entries during this window</div>
-            </div>
-          </div>
-          <div class="pm-tl-row" id="atl-row-4">
-            <div class="pm-tl-dot" id="atl-dot-4"></div>
-            <div class="pm-tl-txt">
-              <div class="pm-tl-time">9:30 AM &mdash; C1 Level Locked</div>
-              <div class="pm-tl-label">C1 high/low fixed. C2 early-entry scan begins immediately</div>
-              <div class="pm-tl-note show" style="display:block;font-size:.61rem;color:#7c3aed;font-weight:600;margin-top:2px">C2 breaks C1 level at close &rarr; enter at C2.close &rarr; SL: &minus;60 pts, trail 100 pts behind peak</div>
-            </div>
-          </div>
-          <div class="pm-tl-row" id="atl-row-5">
-            <div class="pm-tl-dot" id="atl-dot-5"></div>
-            <div class="pm-tl-txt">
-              <div class="pm-tl-time">9:30 &ndash; 9:45 AM &mdash; C2 Early Entry Window</div>
-              <div class="pm-tl-label">If C2.close breaks C1 level &rarr; enter at C2.close. SL: &minus;60 pts</div>
-            </div>
-          </div>
-          <div class="pm-tl-row" id="atl-row-6">
-            <div class="pm-tl-dot" id="atl-dot-6"></div>
-            <div class="pm-tl-txt">
-              <div class="pm-tl-time">9:45 AM &mdash; C3+ Rolling Scan Active</div>
-              <div class="pm-tl-label">No C2 entry? Bot watches every candle to break max(C1, C2) level</div>
-            </div>
-          </div>
-          <div class="pm-tl-row" id="atl-row-7">
-            <div class="pm-tl-dot" id="atl-dot-7"></div>
-            <div class="pm-tl-txt">
-              <div class="pm-tl-time">3:14 PM &mdash; EOD Exit</div>
-              <div class="pm-tl-label">Bot exits all open positions at market. P&amp;L locked for the day</div>
-            </div>
-          </div>
-          <div class="pm-tl-row" id="atl-row-8">
-            <div class="pm-tl-dot" id="atl-dot-8"></div>
-            <div class="pm-tl-txt">
-              <div class="pm-tl-time">3:30 PM &mdash; Market Closes</div>
-              <div class="pm-tl-label">Session complete. Bot sleeping until next trading day</div>
-            </div>
-          </div>
-        </div>
+    <!-- KPI Stats (paper-trade card style) -->
+    <div class="sig3-kpis">
+      <div class="sig3-kpi">
+        <div class="sig3-kl">Today P&amp;L</div>
+        <div class="sig3-kv ${pnlCls2(an2.today.pnl)}" id="k3-today-rs">${fmtRs2(an2.today.pnl)}</div>
+        <div class="sig3-ks ${pnlCls2(an2.today.pnl)}" id="k3-today-pts">${fmtPts2(an2.today.pnl)}</div>
       </div>
-      <script>
-      (function(){
-        var _ATL=[{id:0,h:7,m:30},{id:1,h:8,m:30},{id:2,h:9,m:15},{id:3,h:9,m:15},{id:4,h:9,m:30},{id:5,h:9,m:30},{id:6,h:9,m:45},{id:7,h:15,m:14},{id:8,h:15,m:30}];
-        var _ATLPH=[[7,30,'Token Refresh',''],[8,30,'Pre-Market',''],[9,15,'Global Cues',''],[9,30,'C1 Forming','live'],[9,45,'C2 Entry','live'],[15,14,'C3+ Scan','live'],[15,30,'EOD Exit','live'],[24,0,'Closed','closed']];
-        function _atlN(){var d=new Date(new Date().toLocaleString('en-US',{timeZone:'Asia/Kolkata'}));return{h:d.getHours(),m:d.getMinutes()};}
-        function _atlM(h,m){return h*60+m;}
-        function _atlUpd(){
-          var t=_atlN();var nowM=_atlM(t.h,t.m);
-          var closed=nowM>=_atlM(15,30);
-          _ATL.forEach(function(row){
-            var dot=document.getElementById('atl-dot-'+row.id);if(!dot)return;
-            if(closed){dot.className='pm-tl-dot';dot.textContent='';return;}
-            var isActive,isDone;
-            if(row.id===2){isActive=nowM>=_atlM(9,15)&&nowM<_atlM(9,30);isDone=nowM>=_atlM(9,30);}
-            else if(row.id===4){isActive=nowM>=_atlM(9,30)&&nowM<_atlM(9,45);isDone=nowM>=_atlM(9,45);}
-            else{var rowM=_atlM(row.h,row.m);isActive=nowM>=rowM&&nowM<rowM+3;isDone=nowM>=rowM+3;}
-            if(isDone){dot.className='pm-tl-dot done';dot.textContent='\u2714';}
-            else if(isActive){dot.className='pm-tl-dot active';dot.textContent='\u25c6';}
-            else{dot.className='pm-tl-dot';dot.textContent='';}
-          });
-          var badge=document.getElementById('atl-phase-badge');
-          if(badge){var lbl='Pre-Market',cls='';for(var i=0;i<_ATLPH.length;i++){if(nowM<_atlM(_ATLPH[i][0],_ATLPH[i][1])){lbl=_ATLPH[i][2];cls=_ATLPH[i][3];break;}}badge.textContent=lbl;badge.className='pm-phase'+(cls?' '+cls:'');}
-        }
-        _atlUpd();setInterval(_atlUpd,30000);
-      })();
-      </script>
-
-      <!-- RIGHT: Position / Watching card -->
-      <div>
-        <div style="font-size:.72rem;text-transform:uppercase;letter-spacing:1px;color:#8b949e;font-weight:700;margin-bottom:8px">&#128203; Current Position</div>
-        <div id="pos-lock50-wrap">
-          ${inTrade2 && ep2 > 0 ? `
-          <div class="pos-card pos-${(dir2||'ce').toLowerCase()}" id="pos-lock50-card">
-            <div class="pos-hdr">
-              <span class="pos-live-dot"></span>
-              <span class="pos-badge pos-b-${(dir2||'ce').toLowerCase()}">${dir2||'?'} OPTION</span>
-              <span class="pos-sym">${sym2||'BANKNIFTY'}</span>
-              <span class="pos-mode">${mode2}</span>
-              ${durStr2 ? `<span class="pos-dur">⏱ ${durStr2}</span>` : ''}
-            </div>
-            <div class="pos-pnl-rs ${unreal2>=0?'g':'r'}" id="pos-lock50-rs">${fmtRs2(unreal2)}</div>
-            <div class="pos-pnl-pts ${unreal2>=0?'g':'r'}" id="pos-lock50-pts">${unreal2>=0?'+':''}${unreal2.toFixed(0)} index pts unrealised</div>
-            <div class="pos-gauge"><div class="pos-gauge-fill" id="pos-lock50-gauge" style="width:50%;background:${unreal2>=0?'#10b981':'#ef4444'}"></div></div>
-            <div class="pos-grid">
-              <div><div class="pos-lbl">Entry Index</div><div class="pos-val mono" id="pos-lock50-ep">${ep2.toFixed(1)}</div></div>
-              <div><div class="pos-lbl">Live Index</div><div class="pos-val g mono" id="pos-lock50-lp">${live2>0?live2.toFixed(1):'…'}</div></div>
-              <div><div class="pos-lbl">Stop Loss</div><div class="pos-val r mono">${sl2>0?sl2.toFixed(1):'—'}</div></div>
-              <div><div class="pos-lbl">SL Risk ₹</div><div class="pos-val r">−₹${_slRs2ssr}</div></div>
-              <div><div class="pos-lbl">Qty</div><div class="pos-val">${qty2>0?qty2:30}</div></div>
-              <div><div class="pos-lbl">Entry Time</div><div class="pos-val">${entryIST2||'—'}</div></div>
-            </div>
-            ${hb2.entryPremium||hb2.livePremium ? `
-            <div class="pos-divider"></div>
-            <div class="pos-prem-row">
-              ${hb2.entryPremium ? `<div class="pos-prem-cell"><span class="pos-prem-tag buy-tag">BUY Premium</span><span class="pos-prem-val">₹${hb2.entryPremium.toFixed(1)}</span></div>` : ''}
-              ${hb2.livePremium  ? `<div class="pos-prem-cell"><span class="pos-prem-tag" style="background:rgba(251,191,36,.15);color:#fbbf24">LIVE Premium</span><span class="pos-prem-val" id="pos-lock50-liveprem">₹${hb2.livePremium.toFixed(1)}</span></div>` : ''}
-            </div>` : ''}
-          </div>
-          ` : `
-          <div class="watch-card" id="pos-lock50-flat">
-            <div class="watch-title"><span>⏳</span>Watching for Next Signal</div>
-            <div id="pos-lock50-watch" style="font-size:.78rem;color:var(--muted)"><span style="opacity:.4">Loading trigger levels…</span></div>
-          </div>`}
-        </div>
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:10px">
-          <div class="kpi-m">
-            <div class="kpi-m-l">Today P&amp;L</div>
-            <div class="kpi-m-v ${pnlCls2(an2.today.pnl)}" id="ss-today-rs">${fmtActRs2(an2.today.pnlRs, an2.today.pnl)}</div>
-            <div class="kpi-m-s" id="ss-today-pts">${fmtPts2(an2.today.pnl)}</div>
-          </div>
-          <div class="kpi-m">
-            <div class="kpi-m-l">Trades Today</div>
-            <div class="kpi-m-v" id="ss-tc">${an2.today.trades}${inTrade2?'<span style="font-size:.6rem;color:#10b981"> +live</span>':''}</div>
-            <div class="kpi-m-s"><span class="g" id="ss-wins">${an2.today.wins}W</span> / <span class="r" id="ss-losses">${an2.today.losses}L</span></div>
-          </div>
-        </div>
+      <div class="sig3-kpi">
+        <div class="sig3-kl">Today Trades</div>
+        <div class="sig3-kv" id="k3-trades">${an2.today.trades}${inTrade2 ? '<span style="font-size:.65rem;color:#10b981"> +live</span>' : ""}</div>
+        <div class="sig3-ks sig3-d" id="k3-wl"><span class="sig3-g">${an2.today.wins}W</span> / <span class="sig3-r">${an2.today.losses}L</span></div>
       </div>
-
-    </div><!-- /atl-top-grid -->
-
-    <!-- Stats strip -->
-    <div class="kpi-mini" style="grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:8px;margin-bottom:1rem">
-      <div class="kpi-m">
-        <div class="kpi-m-l">This Week</div>
-        <div class="kpi-m-v ${pnlCls2(an2.weekly.pnl)}" id="ss-wk-rs">${fmtActRs2(an2.weekly.pnlRs, an2.weekly.pnl)}</div>
-        <div class="kpi-m-s" id="ss-wk-pts">${fmtPts2(an2.weekly.pnl)}</div>
+      <div class="sig3-kpi">
+        <div class="sig3-kl">This Week</div>
+        <div class="sig3-kv ${pnlCls2(an2.weekly.pnl)}" id="k3-wk-rs">${fmtRs2(an2.weekly.pnl)}</div>
+        <div class="sig3-ks ${pnlCls2(an2.weekly.pnl)}" id="k3-wk-pts">${fmtPts2(an2.weekly.pnl)}</div>
       </div>
-      <div class="kpi-m">
-        <div class="kpi-m-l">All-Time P&amp;L</div>
-        <div class="kpi-m-v ${pnlCls2(an2.allTime.pnl)}">${fmtActRs2(an2.allTime.pnlRs, an2.allTime.pnl)}</div>
-        <div class="kpi-m-s">${fmtPts2(an2.allTime.pnl)}</div>
+      <div class="sig3-kpi">
+        <div class="sig3-kl">All-Time P&amp;L</div>
+        <div class="sig3-kv ${pnlCls2(an2.allTime.pnl)}">${fmtRs2(an2.allTime.pnl)}</div>
+        <div class="sig3-ks ${pnlCls2(an2.allTime.pnl)}">${fmtPts2(an2.allTime.pnl)}</div>
       </div>
-      <div class="kpi-m">
-        <div class="kpi-m-l">Win Rate</div>
-        <div class="kpi-m-v" id="ss-wr">${an2.allTime.winRate}%</div>
-        <div class="kpi-m-s">${an2.allTime.wins}W / ${an2.allTime.losses}L</div>
+      <div class="sig3-kpi">
+        <div class="sig3-kl">Win Rate</div>
+        <div class="sig3-kv" id="k3-wr">${an2.allTime.winRate}%</div>
+        <div class="sig3-ks sig3-d">${an2.allTime.wins}W / ${an2.allTime.losses}L all-time</div>
+      </div>
+      <div class="sig3-kpi">
+        <div class="sig3-kl">Max Loss / Trade</div>
+        <div class="sig3-kv sig3-r">&#8722;&#8377;${_slRs2ssr}</div>
+        <div class="sig3-ks sig3-d">${_slPts2ssr} pts SL &times; ${_qty2ssr} qty</div>
+      </div>
+      <div class="sig3-kpi">
+        <div class="sig3-kl">Daily Loss Cap</div>
+        <div class="sig3-kv sig3-r">&#8722;&#8377;${Math.round((hb2?.dailyCapPts ?? 350) * _qty2ssr * 0.5).toLocaleString("en-IN")}</div>
+        <div class="sig3-ks sig3-d">${hb2?.dailyCapPts ?? 350} pts max per day</div>
       </div>
     </div>
 
-      <!-- ── Trade History (Daily / Weekly / Monthly) ── -->
-      <div style="display:flex;align-items:center;gap:8px;margin-top:1.5rem;margin-bottom:.6rem;flex-wrap:wrap">
-        <span style="font-size:.72rem;text-transform:uppercase;letter-spacing:1px;color:#8b949e;font-weight:700">Trade History</span>
-        <div style="display:flex;gap:4px;margin-left:auto">
-          <button id="th-btn-d" onclick="_thFilter('d')" style="padding:3px 12px;border-radius:5px;font-size:.72rem;font-weight:700;cursor:pointer;border:1px solid #7c3aed;background:rgba(124,58,237,.2);color:#a78bfa">Daily</button>
-          <button id="th-btn-w" onclick="_thFilter('w')" style="padding:3px 12px;border-radius:5px;font-size:.72rem;font-weight:700;cursor:pointer;border:1px solid var(--border);background:transparent;color:var(--text-muted)">Weekly</button>
-          <button id="th-btn-m" onclick="_thFilter('m')" style="padding:3px 12px;border-radius:5px;font-size:.72rem;font-weight:700;cursor:pointer;border:1px solid var(--border);background:transparent;color:var(--text-muted)">Monthly</button>
+    <!-- Active Position Card -->
+    <div id="sig3-pos-wrap">
+      ${inTrade2 && ep2 > 0 ? `
+      <div class="sig3-pos sig3-pos-${(dir2 || "flat").toLowerCase()}">
+        <div class="sig3-ph">
+          <span class="sig3-dot"></span>
+          <span class="sig3-dir-b sig3-dir-${(dir2 || "").toLowerCase()}">${dir2} OPTION</span>
+          <span class="sig3-mono" style="color:var(--text-muted)">${sym2 || "BANKNIFTY"}</span>
+          <span class="sig3-mode-b">${mode2.toUpperCase()}</span>
+          ${durStr2 ? `<span class="sig3-dur">${durStr2} in trade</span>` : ""}
         </div>
-        <span class="sec-count" id="th-count" style="margin:0"></span>
-      </div>
+        <div class="sig3-pnl-big ${pnlCls2(unreal2)}" id="sig3-pnl-rs">${fmtRs2(unreal2)}</div>
+        <div class="sig3-pnl-pts ${pnlCls2(unreal2)}" id="sig3-pnl-pts">${unreal2 >= 0 ? "+" : ""}${unreal2.toFixed(0)} index pts unrealised</div>
+        <div class="sig3-pg">
+          <div>
+            <div class="sig3-pl">Entry Index</div>
+            <div class="sig3-pv sig3-mono">${ep2.toFixed(1)}</div>
+          </div>
+          <div>
+            <div class="sig3-pl">Live Index</div>
+            <div class="sig3-pv sig3-g sig3-mono" id="sig3-live">${live2 > 0 ? live2.toFixed(1) : "&hellip;"}</div>
+          </div>
+          <div>
+            <div class="sig3-pl">Stop Loss</div>
+            <div class="sig3-pv sig3-r sig3-mono">${sl2 > 0 ? sl2.toFixed(1) : "&mdash;"}</div>
+          </div>
+          <div>
+            <div class="sig3-pl">SL Loss (&#8377;)</div>
+            <div class="sig3-pv sig3-r">&#8722;&#8377;${_slRs2ssr}</div>
+          </div>
+          <div>
+            <div class="sig3-pl">Qty / Lot</div>
+            <div class="sig3-pv">${qty2 > 0 ? qty2 : 30} / 1</div>
+          </div>
+          <div>
+            <div class="sig3-pl">Entry Time</div>
+            <div class="sig3-pv">${entryIST2 || "&mdash;"}</div>
+          </div>
+        </div>
+      </div>` : `
+      <div class="sig3-pos sig3-pos-flat" id="sig3-pos-flat">
+        <div style="display:flex;align-items:center;gap:.75rem;margin-bottom:.6rem">
+          <span style="font-size:1.3rem">&#9203;</span>
+          <div style="font-weight:700;font-size:.93rem">Watching for Next Opportunity</div>
+        </div>
+        <div id="sig3-next-opp" style="font-size:.78rem;color:var(--text-muted);line-height:1.8">
+          <span style="opacity:.5">Loading trigger levels&hellip;</span>
+        </div>
+      </div>`}
+    </div>
 
-      <!-- DAILY panel (default visible) -->
-      <div id="th-panel-d">
-        <div class="tw"><table class="tt">
-          <thead><tr><th>Time</th><th>Dir</th><th>Buy Index</th><th>Symbol</th><th>Sell Index</th><th>Index P&amp;L</th><th>&#8377; P&amp;L</th><th>Reason</th><th>Dur</th></tr></thead>
-          <tbody id="tt-body-lock50">
-            ${closedToday2.length===0&&!inTrade2
-              ? `<tr><td colspan="9" class="tt-e">No closed trades today</td></tr>`
-              : [...closedToday2].reverse().map(t=>{
-                  const d3=(t.direction||'').toLowerCase();
-                  const pts=t.pnl??0; const rs=(t.pnlRs!=null&&t.pnlRs!==0)?t.pnlRs:Math.round(pts*QTY_MULT2);
-                  const reason=t.reasonExit||'—';
-                  const rTag=reason.toLowerCase().includes('sl')||reason.toLowerCase().includes('stop')?'rc-sl':reason.toLowerCase().includes('trail')||reason.toLowerCase().includes('early')?'rc-trail':'rc-eod';
-                  const dur=t.duration?(t.duration<60?t.duration+'s':Math.round(t.duration/60)+'m'):'—';
-                  return `<tr>
-                    <td class="tc">${fmtTime2(t.date)}</td>
-                    <td><span class="db-badge ${d3}">${t.direction||'—'}</span></td>
-                    <td class="mono">${(t.entryPrice??0)>0?(t.entryPrice??0).toFixed(1):'—'}</td>
-                    <td class="tc mono">${t.symbol||'—'}</td>
-                    <td class="mono">${(t.exitPrice??0)>0?(t.exitPrice??0).toFixed(1):'—'}</td>
-                    <td class="${pts>=0?'g':'r'}" style="font-weight:800">${pts>=0?'+':''}${pts.toFixed(0)} pts</td>
-                    <td><span class="pnl-rs ${pts>=0?'g':'r'}">${rs>=0?'+':'&#8722;'}&#8377;${Math.abs(rs).toLocaleString('en-IN')}</span></td>
-                    <td>${reason!=='—'?`<span class="rc-b ${rTag}">${reason}</span>`:'—'}</td>
-                    <td class="tc">${dur}</td>
-                  </tr>`;
-                }).join('')
-            }
-          </tbody>
-        </table></div>
+    <!-- LAST 15-MIN CANDLE -->
+    <div id="sig3-candle-wrap" style="margin-bottom:1rem;display:none">
+      <div class="sig3-sec" style="margin-bottom:.5rem">Last 15-Min Candle <span id="sig3-candle-time" style="font-weight:400;font-size:.72rem;color:var(--text-muted)"></span></div>
+      <div style="background:var(--card-bg);border:1px solid var(--border);border-radius:10px;padding:14px 18px;display:flex;flex-wrap:wrap;gap:1.2rem;align-items:center">
+        <span id="sig3-candle-colour" style="font-size:1.1rem;font-weight:700"></span>
+        <span style="font-size:.8rem;color:var(--text-muted)">O: <b id="sig3-c-o" style="color:var(--text)"></b></span>
+        <span style="font-size:.8rem;color:var(--text-muted)">H: <b id="sig3-c-h" style="color:#10b981"></b></span>
+        <span style="font-size:.8rem;color:var(--text-muted)">L: <b id="sig3-c-l" style="color:#ef4444"></b></span>
+        <span style="font-size:.8rem;color:var(--text-muted)">C: <b id="sig3-c-c" style="color:var(--text)"></b></span>
+        <span id="sig3-candle-status" style="font-size:.78rem;margin-left:auto;color:var(--text-muted)"></span>
       </div>
+    </div>
 
-      <!-- WEEKLY panel -->
-      <div id="th-panel-w" style="display:none">
-        <div class="tw"><table class="tt">
-          <thead><tr><th>Date</th><th>Dir</th><th>Buy Index</th><th>Sell Index</th><th>Index P&amp;L</th><th>&#8377; P&amp;L</th><th>Reason</th></tr></thead>
-          <tbody id="tt-body-weekly">
-            ${(()=>{
-              const _7d=new Date(); _7d.setDate(_7d.getDate()-7);
-              const wkT=an2.recentTrades.filter(t=>t.date&&new Date(t.date)>=_7d&&(t.exitPrice??0)>0);
-              if(!wkT.length) return '<tr><td colspan="7" class="tt-e">No trades in last 7 days</td></tr>';
-              return wkT.map(t=>{
-                const d3=(t.direction||'').toLowerCase();
-                const pts=t.pnl??0; const rs=(t.pnlRs!=null&&t.pnlRs!==0)?t.pnlRs:Math.round(pts*QTY_MULT2);
-                const reason=t.reasonExit||'—';
-                const rTag=reason.toLowerCase().includes('sl')?'rc-sl':reason.toLowerCase().includes('trail')||reason.toLowerCase().includes('early')?'rc-trail':'rc-eod';
-                return `<tr>
-                  <td class="tc">${t.date?fmtDate2(t.date):'—'}</td>
-                  <td><span class="db-badge ${d3}">${t.direction||'—'}</span></td>
-                  <td class="mono">${(t.entryPrice??0)>0?(t.entryPrice??0).toFixed(1):'—'}</td>
-                  <td class="mono">${(t.exitPrice??0)>0?(t.exitPrice??0).toFixed(1):'—'}</td>
-                  <td class="${pts>=0?'g':'r'}" style="font-weight:800">${pts>=0?'+':''}${pts.toFixed(0)} pts</td>
-                  <td><span class="pnl-rs ${pts>=0?'g':'r'}">${rs>=0?'+':'&#8722;'}&#8377;${Math.abs(rs).toLocaleString('en-IN')}</span></td>
-                  <td>${reason!=='—'?`<span class="rc-b ${rTag}">${reason}</span>`:'—'}</td>
-                </tr>`;
-              }).join('');
-            })()}
-          </tbody>
-        </table></div>
-      </div>
+    <!-- TODAY'S TRADES -->
+    <div class="sig3-sec">
+      Today &mdash; ${todayStr2}
+      <span class="sig3-sec-count">(${closedToday2.length} closed${inTrade2 ? " + 1 live" : ""})</span>
+    </div>
+    <div class="sig3-tw">
+      <table class="sig3-t">
+        <thead><tr>
+          <th>Time</th><th>Dir</th>${isAdmin ? `<th>Symbol</th><th>Premium In&#8594;Out</th><th>Entry &#8594; Exit (Index)</th>` : ``}
+          <th>P&amp;L (&#8377;)</th>${isAdmin ? `<th>Reason</th>` : ``}<th>Duration</th>
+        </tr></thead>
+        <tbody id="sig3-today-body">
+          ${[...closedToday2].reverse().map((t) => `<tr>
+            <td class="sig3-ct">${fmtTime2(t.date)}</td>
+            <td><span class="sig3-db ${(t.direction || "").toLowerCase()}">${t.direction || "&mdash;"}</span></td>
+            ${isAdmin ? `<td class="sig3-mono" style="font-size:.72rem;color:var(--text-muted)">${t.symbol || "&mdash;"}</td>
+            <td class="sig3-mono">${t.premiumEntry > 0 ? `<span style="font-size:.61rem;background:rgba(16,185,129,.15);color:#34d399;border-radius:3px;padding:1px 4px;margin-right:3px">BUY</span>${t.premiumEntry.toFixed(1)}` : ""} ${t.premiumExit > 0 ? `<span style="font-size:.61rem;background:rgba(239,68,68,.15);color:#f87171;border-radius:3px;padding:1px 4px;margin-right:3px;margin-left:4px">SELL</span>${t.premiumExit.toFixed(1)}` : ""}</td>
+            <td class="sig3-mono">${(t.entryPrice ?? 0) > 0 ? (t.entryPrice ?? 0).toFixed(1) : "&mdash;"} &#8594; ${(t.exitPrice ?? 0) > 0 ? (t.exitPrice ?? 0).toFixed(1) : "&mdash;"}</td>` : ``}
+            <td>
+              <span class="sig3-pnl-rs ${pnlCls2(t.pnl ?? 0)}">${fmtRs2(t.pnl ?? 0)}</span>
+              <span class="sig3-pnl-spt">${fmtPts2(t.pnl ?? 0)}</span>
+            </td>
+            ${isAdmin ? `<td>${t.reasonExit ? `<span class="sig3-rc ${rcCls(t.reasonExit).replace("rc-", "sig3-rc-")}">${t.reasonExit}</span>` : "&mdash;"}</td>` : ``}
+            <td class="sig3-ct">${t.duration ? (t.duration < 60 ? t.duration + "s" : Math.round(t.duration / 60) + "m") : "&mdash;"}</td>
+          </tr>`).join("") || `<tr><td colspan="${isAdmin ? 8 : 4}" class="sig3-te">No closed trades today${inTrade2 ? " &mdash; 1 live position active" : ""}</td></tr>`}
+        </tbody>
+      </table>
+    </div>
 
-      <!-- MONTHLY panel -->
-      <div id="th-panel-m" style="display:none">
-        <div class="tw"><table class="tt">
-          <thead><tr><th>Month</th><th>&#8377; P&amp;L</th><th>Index P&amp;L</th><th>Trades</th><th>W/L</th><th>Win%</th></tr></thead>
-          <tbody>
-            ${!an2.monthly.length
-              ? '<tr><td colspan="6" class="tt-e">No monthly data yet</td></tr>'
-              : an2.monthly.map(m=>{
-                  const [y,mo]=m.month.split('-');
-                  const ml=new Date(parseInt(y),parseInt(mo)-1,1).toLocaleString('en-IN',{month:'long',year:'numeric'});
-                  const rs=(m.pnlRs!=null)?m.pnlRs:Math.round(m.pnl*QTY_MULT2);
-                  return `<tr>
-                    <td style="font-weight:600">${ml}</td>
-                    <td class="${m.pnl>=0?'g':'r'}" style="font-weight:800">${rs>=0?'+':'&#8722;'}&#8377;${Math.abs(rs).toLocaleString('en-IN')}</td>
-                    <td class="${m.pnl>=0?'g':'r'}">${m.pnl>=0?'+':''}${m.pnl.toFixed(0)} pts</td>
-                    <td>${m.trades}</td>
-                    <td><span class="g">${m.wins}W</span> / <span class="r">${m.losses}L</span></td>
-                    <td>${m.trades>0?m.winRate+'%':'—'}</td>
-                  </tr>`;
-                }).join('')
-            }
-          </tbody>
-        </table></div>
-      </div>
+    <!-- THIS WEEK (last 7 days) -->
+    <div class="sig3-sec">
+      This Week &mdash; Last 7 Days
+      <span class="sig3-sec-count">(${an2.weekly.trades} trades &nbsp;<span class="${pnlCls2(an2.weekly.pnl)}">${fmtRs2(an2.weekly.pnl)}</span>)</span>
+    </div>
+    <div class="sig3-tw">
+      <table class="sig3-t">
+        <thead><tr>
+          <th>Date / Time</th><th>Dir</th>${isAdmin ? `<th>Symbol</th><th>Premium In&#8594;Out</th><th>Entry &#8594; Exit (Index)</th>` : ``}
+          <th>P&amp;L (&#8377;)</th>${isAdmin ? `<th>Reason</th>` : ``}
+        </tr></thead>
+        <tbody>
+          ${(() => {
+            const _now = new Date(new Date().toLocaleString("en-US", { timeZone: "Asia/Kolkata" }));
+            const _wAgo = new Date(_now);
+            _wAgo.setDate(_now.getDate() - 7);
+            const _wk = an2.recentTrades.filter((t) => t.date && new Date(t.date) >= _wAgo);
+            if (!_wk.length)
+                return `<tr><td colspan="${isAdmin ? 7 : 3}" class="sig3-te">No trades in the past 7 days</td></tr>`;
+            return _wk.map((t) => `<tr>
+              <td class="sig3-ct">${fmtDate2(t.date)}</td>
+              <td><span class="sig3-db ${(t.direction || "").toLowerCase()}">${t.direction || "&mdash;"}</span></td>
+              ${isAdmin ? `<td class="sig3-mono" style="font-size:.72rem;color:var(--text-muted)">${t.symbol || "&mdash;"}</td>
+              <td class="sig3-mono">${t.premiumEntry > 0 ? `<span style="font-size:.61rem;background:rgba(16,185,129,.15);color:#34d399;border-radius:3px;padding:1px 4px;margin-right:3px">BUY</span>${t.premiumEntry.toFixed(1)}` : ""} ${t.premiumExit > 0 ? `<span style="font-size:.61rem;background:rgba(239,68,68,.15);color:#f87171;border-radius:3px;padding:1px 4px;margin-right:3px;margin-left:4px">SELL</span>${t.premiumExit.toFixed(1)}` : ""}</td>
+              <td class="sig3-mono">${(t.entryPrice ?? 0) > 0 ? (t.entryPrice ?? 0).toFixed(0) : "&mdash;"} &#8594; ${(t.exitPrice ?? 0) > 0 ? (t.exitPrice ?? 0).toFixed(0) : "&mdash;"}</td>` : ``}
+              <td>
+                <span class="sig3-pnl-rs ${pnlCls2(t.pnl ?? 0)}">${fmtRs2(t.pnl ?? 0)}</span>
+                <span class="sig3-pnl-spt">${fmtPts2(t.pnl ?? 0)}</span>
+              </td>
+              ${isAdmin ? `<td>${t.reasonExit ? `<span class="sig3-rc ${rcCls(t.reasonExit).replace("rc-", "sig3-rc-")}">${t.reasonExit}</span>` : "&mdash;"}</td>` : ``}
+            </tr>`).join("");
+        })()}
+        </tbody>
+      </table>
+    </div>
 
-      <script>
-      (function(){
-        function _thFilter(f){
-          ['d','w','m'].forEach(function(x){
-            var p=document.getElementById('th-panel-'+x);
-            var b=document.getElementById('th-btn-'+x);
-            if(p) p.style.display=(x===f)?'':'none';
-            if(b){
-              if(x===f){b.style.background='rgba(124,58,237,.2)';b.style.borderColor='#7c3aed';b.style.color='#a78bfa';}
-              else{b.style.background='transparent';b.style.borderColor='';b.style.color='';}
-            }
-          });
-          var rows=document.querySelectorAll('#th-panel-'+f+' tbody tr:not(.tt-e)');
-          var cnt=document.getElementById('th-count');
-          if(cnt) cnt.textContent=rows.length?'('+rows.length+' trades)':'';
-        }
-        window._thFilter=_thFilter;
-        _thFilter('d');
-      })();
-      </script>
+    <!-- MONTH-WISE P&L -->
+    ${an2.monthly.length > 0 ? `
+    <div class="sig3-sec">
+      Month-wise P&amp;L
+      <span class="sig3-sec-count">(${an2.monthly.length} month${an2.monthly.length !== 1 ? "s" : ""})</span>
+    </div>
+    <div class="sig3-tw">
+      <table class="sig3-t">
+        <thead><tr>
+          <th>Month</th><th>P&amp;L (&#8377;)</th><th>P&amp;L (pts)</th><th>Trades</th><th>W / L</th><th>Win %</th>
+        </tr></thead>
+        <tbody>
+          ${an2.monthly.map((m) => {
+            const [_my, _mm] = m.month.split("-");
+            const _ml = new Date(parseInt(_my), parseInt(_mm) - 1, 1)
+                .toLocaleString("en-IN", { month: "long", year: "numeric" });
+            return `<tr>
+              <td style="font-weight:600;white-space:nowrap">${_ml}</td>
+              <td>
+                <span class="sig3-pnl-rs ${pnlCls2(m.pnl)}" style="font-size:.95rem">${fmtRs2(m.pnl)}</span>
+              </td>
+              <td class="sig3-mono" style="font-size:.76rem;color:var(--text-muted)">${fmtPts2(m.pnl)}</td>
+              <td>${m.trades}</td>
+              <td><span class="sig3-g">${m.wins}W</span>&nbsp;/&nbsp;<span class="sig3-r">${m.losses}L</span></td>
+              <td class="${m.winRate >= 55 ? "sig3-g" : m.winRate >= 40 ? "" : "sig3-r"}">${m.trades > 0 ? m.winRate + "%" : "&mdash;"}</td>
+            </tr>`;
+        }).join("")}
+        </tbody>
+      </table>
+    </div>` : ""}
 
     </div><!-- /panel-lock50 -->
 
-    <!-- ════════════════════════════════════════════════════════
-         VMT SHADOW PANEL (Option Premium Breakout)
-         ════════════════════════════════════════════════════════ -->
-    <div id="panel-vmt" style="display:none">
+    <!-- ═══ TRAIL PANEL (paper shadow dashboard) ═══ -->
+    <div id="panel-trail" style="display:none">
 
-    <!-- ── Pre-Market Analysis Card ─────────────────────────────────────────── -->
-    <div class="pm-card" id="pm-card">
-      <div class="pm-hdr" onclick="_pmToggle()">
-        <div class="pm-hdr-left">
-          <span>&#128197;</span>
-          <span class="pm-title">Pre-Market &amp; Session Plan</span>
-          <span class="pm-phase" id="pm-phase-badge">Loading&hellip;</span>
-        </div>
-        <span class="pm-toggle" id="pm-toggle-arrow">&#9650;</span>
+    <!-- TRAIL KPI cards -->
+    <div class="sig3-kpis">
+      <div class="sig3-kpi">
+        <div class="sig3-kl">Today P&amp;L</div>
+        <div class="sig3-kv" id="k3t-today-rs" style="color:#818cf8">${fmtRs2(hb2?.shadowPnL ?? 0)}</div>
+        <div class="sig3-ks" id="k3t-today-pts" style="color:#818cf8">${fmtPts2(hb2?.shadowPnL ?? 0)}</div>
       </div>
-      <div class="pm-body" id="pm-body">
-        <div class="pm-grid">
+      <div class="sig3-kpi">
+        <div class="sig3-kl">Today Trades</div>
+        <div class="sig3-kv" id="k3t-trades">${hb2?.shadowTrades ?? 0}</div>
+        <div class="sig3-ks sig3-d" id="k3t-wl"><span class="sig3-g">${hb2?.shadowWins ?? 0}W</span> / <span class="sig3-r">${hb2?.shadowLosses ?? 0}L</span></div>
+      </div>
+      <div class="sig3-kpi">
+        <div class="sig3-kl">Win Rate</div>
+        <div class="sig3-kv sig3-d" id="k3t-winrate">${hb2 && ((hb2.shadowWins ?? 0) + (hb2.shadowLosses ?? 0)) > 0 ? Math.round(((hb2.shadowWins ?? 0) / ((hb2.shadowWins ?? 0) + (hb2.shadowLosses ?? 0))) * 100) + '%' : '&mdash;'}</div>
+        <div class="sig3-ks sig3-d">today</div>
+      </div>
+      <div class="sig3-kpi">
+        <div class="sig3-kl">5yr Backtest</div>
+        <div class="sig3-kv sig3-d">+&#8377;26.1L</div>
+        <div class="sig3-ks sig3-d">vs LOCK50 +&#8377;31.5L</div>
+      </div>
+      <div class="sig3-kpi">
+        <div class="sig3-kl">Strategy Rules</div>
+        <div class="sig3-kv sig3-d" style="font-size:.82rem">TRAIL</div>
+        <div class="sig3-ks sig3-d">peak&ge;100&#8594;+20 &nbsp; peak&ge;200&#8594;+100</div>
+      </div>
+    </div>
 
-          <!-- LEFT: Session Timeline -->
+    <!-- TRAIL Live Position Card -->
+    <div id="k3t-pos-wrap">
+      <!-- In-trade card: always rendered, JS shows/hides -->
+      <div class="sig3-pos sig3-pos-ce" id="k3t-pos-intrade" style="display:${(hb2?.shadowInTrade && (hb2?.shadowEntry ?? 0) > 0) ? '' : 'none'}">
+        <div class="sig3-ph">
+          <span class="sig3-dot"></span>
+          <span class="sig3-dir-b" id="k3t-pos-dir-b" style="background:rgba(99,102,241,.15);color:#818cf8">${hb2?.shadowDir ?? "?"} OPTION</span>
+          <span class="sig3-mode-b" style="background:rgba(99,102,241,.15);color:#818cf8">PAPER</span>
+          <span class="sig3-dur" style="color:#818cf8">Shadow only</span>
+        </div>
+        <div class="sig3-pnl-big" id="k3t-pos-pnl" style="color:#818cf8">&mdash;</div>
+        <div class="sig3-pnl-pts" id="k3t-pos-pts" style="color:#818cf8">Unrealised (paper)</div>
+        <div class="sig3-pg">
           <div>
-            <div class="pm-pred-label" style="margin-bottom:8px">&#128336; Today&rsquo;s Session Timeline</div>
-            <div class="pm-tl" id="pm-tl">
-              <div class="pm-tl-row" id="pm-tl-0">
-                <div class="pm-tl-dot" id="pm-dot-0"></div>
-                <div class="pm-tl-txt">
-                  <div class="pm-tl-time">8:30 AM &mdash; Gift Nifty / Global Cues</div>
-                  <div class="pm-tl-label">Check SGX Nifty / Dow futures for gap-up or gap-down bias</div>
-                </div>
-              </div>
-              <div class="pm-tl-row" id="pm-tl-1">
-                <div class="pm-tl-dot" id="pm-dot-1"></div>
-                <div class="pm-tl-txt">
-                  <div class="pm-tl-time">8:55 AM &mdash; NSE Pre-Open Session</div>
-                  <div class="pm-tl-label">Pre-open call auction begins &mdash; IEP starts forming</div>
-                </div>
-              </div>
-              <div class="pm-tl-row" id="pm-tl-2">
-                <div class="pm-tl-dot" id="pm-dot-2"></div>
-                <div class="pm-tl-txt">
-                  <div class="pm-tl-time">9:00 AM &mdash; Fill Predictions</div>
-                  <div class="pm-tl-label">Set your bias, key resistance / support levels, and notes</div>
-                  <div class="pm-tl-note" id="pm-note-2">&#128276; Predictions panel on the right &#8594;</div>
-                </div>
-              </div>
-              <div class="pm-tl-row" id="pm-tl-3">
-                <div class="pm-tl-dot" id="pm-dot-3"></div>
-                <div class="pm-tl-txt">
-                  <div class="pm-tl-time">9:07 AM &mdash; Pre-Open Auction Ends</div>
-                  <div class="pm-tl-label">IEP locked. Orders in queue. Final pre-open price visible</div>
-                </div>
-              </div>
-              <div class="pm-tl-row" id="pm-tl-4">
-                <div class="pm-tl-dot" id="pm-dot-4"></div>
-                <div class="pm-tl-txt">
-                  <div class="pm-tl-time">9:15 AM &mdash; Market Opens</div>
-                  <div class="pm-tl-label">Bot resets. VMT shadow calculates ATM strike + option premiums</div>
-                  <div class="pm-tl-note" id="pm-note-4">ATM levels auto-appear in &ldquo;Today&rsquo;s Setup&rdquo; below</div>
-                </div>
-              </div>
-              <div class="pm-tl-row" id="pm-tl-5">
-                <div class="pm-tl-dot" id="pm-dot-5"></div>
-                <div class="pm-tl-txt">
-                  <div class="pm-tl-time">9:15 &ndash; 9:45 AM &mdash; VMT Entry Window</div>
-                  <div class="pm-tl-label">Watching which side (CE or PE) hits entry premium first</div>
-                </div>
-              </div>
-              <div class="pm-tl-row" id="pm-tl-6">
-                <div class="pm-tl-dot" id="pm-dot-6"></div>
-                <div class="pm-tl-txt">
-                  <div class="pm-tl-time">9:45 AM &mdash; Entry Window Closes</div>
-                  <div class="pm-tl-label">If no trigger fired, VMT marks NO_TRADE for today</div>
-                </div>
-              </div>
-              <div class="pm-tl-row" id="pm-tl-7">
-                <div class="pm-tl-dot" id="pm-dot-7"></div>
-                <div class="pm-tl-txt">
-                  <div class="pm-tl-time">11:30 AM &mdash; VMT Time Exit</div>
-                  <div class="pm-tl-label">If trade is open at 11:30, force-close at market premium</div>
-                </div>
-              </div>
-              <div class="pm-tl-row" id="pm-tl-8">
-                <div class="pm-tl-dot" id="pm-dot-8"></div>
-                <div class="pm-tl-txt">
-                  <div class="pm-tl-time">3:15 PM &mdash; AMINA Trail / SL Check</div>
-                  <div class="pm-tl-label">If AMINA is still in trade, final trail tightens significantly</div>
-                </div>
-              </div>
-              <div class="pm-tl-row" id="pm-tl-9">
-                <div class="pm-tl-dot" id="pm-dot-9"></div>
-                <div class="pm-tl-txt">
-                  <div class="pm-tl-time">3:30 PM &mdash; Market Closes</div>
-                  <div class="pm-tl-label">All positions squared off. Daily P&amp;L finalised</div>
-                </div>
-              </div>
-            </div>
+            <div class="sig3-pl">Entry Index</div>
+            <div class="sig3-pv sig3-mono" id="k3t-pos-entry">${(hb2?.shadowEntry ?? 0) > 0 ? (hb2?.shadowEntry ?? 0).toFixed(1) : "&mdash;"}</div>
           </div>
-
-          <!-- RIGHT: Predictions -->
           <div>
-            <div class="pm-pred">
-              <!-- BIAS (auto from tradeDir) -->
-              <div>
-                <div class="pm-pred-label">&#127919; Today&rsquo;s Bias</div>
-                <div id="pm-bias-display" style="display:flex;align-items:center;gap:8px;padding:8px 12px;border-radius:8px;background:var(--bg);border:1.5px solid var(--border-c)">
-                  <span id="pm-bias-icon" style="font-size:1rem">&#8987;</span>
-                  <span id="pm-bias-text" style="font-size:.78rem;font-weight:700;color:var(--muted)">Waiting for market open&hellip;</span>
-                </div>
-              </div>
-              <!-- CE SETUP (read-only, auto-filled at 9:15) -->
-              <div class="pm-trade-card ce-card">
-                <div class="pm-trade-hdr ce-hdr">&#128200; CE Setup</div>
-                <div class="pm-inp-row" style="margin-bottom:6px">
-                  <div>
-                    <div class="pm-lbl green">Range High</div>
-                    <div class="pm-inp-sm pm-ro" id="pm-cc-rh">&mdash;</div>
-                  </div>
-                  <div>
-                    <div class="pm-lbl red">Range Low</div>
-                    <div class="pm-inp-sm pm-ro" id="pm-cc-rl">&mdash;</div>
-                  </div>
-                </div>
-                <div class="pm-inp-row" style="margin-bottom:6px">
-                  <div>
-                    <div class="pm-lbl muted">Premium (Open)</div>
-                    <div class="pm-inp-sm pm-ro" id="pm-cc-prem">&mdash;</div>
-                  </div>
-                  <div>
-                    <div class="pm-lbl amber">Entry</div>
-                    <div class="pm-inp-sm pm-ro" id="pm-cc-entry">&mdash;</div>
-                  </div>
-                </div>
-                <div class="pm-inp-row" style="margin-bottom:6px">
-                  <div>
-                    <div class="pm-lbl red">SL</div>
-                    <div class="pm-inp-sm pm-ro" id="pm-cc-sl">&mdash;</div>
-                  </div>
-                  <div></div>
-                </div>
-                <div class="pm-3col">
-                  <div>
-                    <div class="pm-lbl green">T1</div>
-                    <div class="pm-inp-sm pm-ro" id="pm-cc-t1">&mdash;</div>
-                  </div>
-                  <div>
-                    <div class="pm-lbl green">T2</div>
-                    <div class="pm-inp-sm pm-ro" id="pm-cc-t2">&mdash;</div>
-                  </div>
-                  <div>
-                    <div class="pm-lbl green">T3</div>
-                    <div class="pm-inp-sm pm-ro" id="pm-cc-t3">&mdash;</div>
-                  </div>
-                </div>
-              </div>
-              <!-- PE SETUP (read-only, auto-filled at 9:15) -->
-              <div class="pm-trade-card pe-card">
-                <div class="pm-trade-hdr pe-hdr">&#128201; PE Setup</div>
-                <div class="pm-inp-row" style="margin-bottom:6px">
-                  <div>
-                    <div class="pm-lbl green">Range High</div>
-                    <div class="pm-inp-sm pm-ro" id="pm-cp-rh">&mdash;</div>
-                  </div>
-                  <div>
-                    <div class="pm-lbl red">Range Low</div>
-                    <div class="pm-inp-sm pm-ro" id="pm-cp-rl">&mdash;</div>
-                  </div>
-                </div>
-                <div class="pm-inp-row" style="margin-bottom:6px">
-                  <div>
-                    <div class="pm-lbl muted">Premium (Open)</div>
-                    <div class="pm-inp-sm pm-ro" id="pm-cp-prem">&mdash;</div>
-                  </div>
-                  <div>
-                    <div class="pm-lbl amber">Entry</div>
-                    <div class="pm-inp-sm pm-ro" id="pm-cp-entry">&mdash;</div>
-                  </div>
-                </div>
-                <div class="pm-inp-row" style="margin-bottom:6px">
-                  <div>
-                    <div class="pm-lbl red">SL</div>
-                    <div class="pm-inp-sm pm-ro" id="pm-cp-sl">&mdash;</div>
-                  </div>
-                  <div></div>
-                </div>
-                <div class="pm-3col">
-                  <div>
-                    <div class="pm-lbl green">T1</div>
-                    <div class="pm-inp-sm pm-ro" id="pm-cp-t1">&mdash;</div>
-                  </div>
-                  <div>
-                    <div class="pm-lbl green">T2</div>
-                    <div class="pm-inp-sm pm-ro" id="pm-cp-t2">&mdash;</div>
-                  </div>
-                  <div>
-                    <div class="pm-lbl green">T3</div>
-                    <div class="pm-inp-sm pm-ro" id="pm-cp-t3">&mdash;</div>
-                  </div>
-                </div>
-              </div>
-              <!-- NOTES -->
-              <div>
-                <div class="pm-pred-label">&#128221; Pre-Market Notes</div>
-                <textarea class="pm-notes" id="pm-notes" placeholder="e.g. BNF flat open expected. If 49800 holds as support, CE trade. Gap down risk if Gift Nifty negative..." oninput="_pmSave()"></textarea>
-              </div>
-
-              <!-- Auto-filled from VMT shadow once 9:15 hits -->
-              <div class="pm-levels-auto" id="pm-auto-box" style="display:none">
-                <div class="pm-levels-auto-hdr">
-                  <span>&#9889; Today&rsquo;s Trade Setup &mdash; Calculated at 9:15 AM</span>
-                  <span id="pm-auto-dte" style="font-size:.6rem;color:var(--muted);font-weight:600;text-transform:none;letter-spacing:0">&mdash;</span>
-                </div>
-
-                <!-- Top row: Open + ATM -->
-                <div style="display:flex;gap:12px;margin-bottom:10px;flex-wrap:wrap">
-                  <div>
-                    <div class="pm-auto-lbl">BNF Open</div>
-                    <div class="pm-auto-val" id="pm-auto-spot">&mdash;</div>
-                  </div>
-                  <div>
-                    <div class="pm-auto-lbl">ATM Strike</div>
-                    <div class="pm-auto-val" id="pm-auto-strike">&mdash;</div>
-                  </div>
-                  <div style="margin-left:auto;text-align:right">
-                    <div class="pm-auto-lbl">Lot size &times; Risk per pt</div>
-                    <div style="font-size:.7rem;font-weight:700;color:var(--muted)">15 qty &times; &#8377;1</div>
-                  </div>
-                </div>
-
-                <!-- CE + PE side-by-side setup cards -->
-                <div class="pm-setup-grid">
-
-                  <!-- CE side -->
-                  <div class="pm-setup-side ce-side">
-                    <div class="pm-setup-dir ce">&#9651; CE Option</div>
-                    <div class="pm-setup-row">
-                      <span class="pm-setup-lbl">Open Premium</span>
-                      <span class="pm-setup-val" id="pm-ce-open">&mdash;</span>
-                    </div>
-                    <div class="pm-setup-row">
-                      <span class="pm-setup-lbl">Entry Trigger</span>
-                      <span class="pm-setup-val entry" id="pm-ce-entry">&mdash;</span>
-                    </div>
-                    <div class="pm-setup-divider"></div>
-                    <div class="pm-setup-row">
-                      <span class="pm-setup-lbl">Stop Loss</span>
-                      <span class="pm-setup-val sl" id="pm-ce-sl">&mdash;</span>
-                    </div>
-                    <div class="pm-setup-row">
-                      <span class="pm-setup-lbl">T1 &nbsp;<span style="font-size:.55rem;opacity:.6">(1R)</span></span>
-                      <span class="pm-setup-val tgt" id="pm-ce-t1">&mdash;</span>
-                    </div>
-                    <div class="pm-setup-row">
-                      <span class="pm-setup-lbl">T2 &nbsp;<span style="font-size:.55rem;opacity:.6">(2R)</span></span>
-                      <span class="pm-setup-val tgt" id="pm-ce-t2">&mdash;</span>
-                    </div>
-                    <div class="pm-setup-row">
-                      <span class="pm-setup-lbl">T3 &nbsp;<span style="font-size:.55rem;opacity:.6">(3R)</span></span>
-                      <span class="pm-setup-val tgt" id="pm-ce-t3">&mdash;</span>
-                    </div>
-                    <div class="pm-setup-divider"></div>
-                    <div class="pm-setup-row">
-                      <span class="pm-setup-lbl">Range High</span>
-                      <span class="pm-setup-val" id="pm-ce-rh">&mdash;</span>
-                    </div>
-                    <div class="pm-setup-row">
-                      <span class="pm-setup-lbl">Range Low</span>
-                      <span class="pm-setup-val" id="pm-ce-rl">&mdash;</span>
-                    </div>
-                    <div class="pm-setup-divider"></div>
-                    <div class="pm-setup-row">
-                      <span class="pm-setup-lbl">&#8377; Risk</span>
-                      <span class="pm-setup-val sl" id="pm-ce-risk">&mdash;</span>
-                    </div>
-                    <div class="pm-setup-row">
-                      <span class="pm-setup-lbl">&#8377; Reward</span>
-                      <span class="pm-setup-val tgt" id="pm-ce-reward">&mdash;</span>
-                    </div>
-                    <div class="pm-setup-row" style="margin-top:4px">
-                      <span class="pm-setup-lbl">R : R</span>
-                      <span class="pm-rr-badge" id="pm-ce-rr">&mdash;</span>
-                    </div>
-                  </div>
-
-                  <!-- PE side -->
-                  <div class="pm-setup-side pe-side">
-                    <div class="pm-setup-dir pe">&#9661; PE Option</div>
-                    <div class="pm-setup-row">
-                      <span class="pm-setup-lbl">Open Premium</span>
-                      <span class="pm-setup-val" id="pm-pe-open">&mdash;</span>
-                    </div>
-                    <div class="pm-setup-row">
-                      <span class="pm-setup-lbl">Entry Trigger</span>
-                      <span class="pm-setup-val entry" id="pm-pe-entry">&mdash;</span>
-                    </div>
-                    <div class="pm-setup-divider"></div>
-                    <div class="pm-setup-row">
-                      <span class="pm-setup-lbl">Stop Loss</span>
-                      <span class="pm-setup-val sl" id="pm-pe-sl">&mdash;</span>
-                    </div>
-                    <div class="pm-setup-row">
-                      <span class="pm-setup-lbl">T1 &nbsp;<span style="font-size:.55rem;opacity:.6">(1R)</span></span>
-                      <span class="pm-setup-val tgt" id="pm-pe-t1">&mdash;</span>
-                    </div>
-                    <div class="pm-setup-row">
-                      <span class="pm-setup-lbl">T2 &nbsp;<span style="font-size:.55rem;opacity:.6">(2R)</span></span>
-                      <span class="pm-setup-val tgt" id="pm-pe-t2">&mdash;</span>
-                    </div>
-                    <div class="pm-setup-row">
-                      <span class="pm-setup-lbl">T3 &nbsp;<span style="font-size:.55rem;opacity:.6">(3R)</span></span>
-                      <span class="pm-setup-val tgt" id="pm-pe-t3">&mdash;</span>
-                    </div>
-                    <div class="pm-setup-divider"></div>
-                    <div class="pm-setup-row">
-                      <span class="pm-setup-lbl">Range High</span>
-                      <span class="pm-setup-val" id="pm-pe-rh">&mdash;</span>
-                    </div>
-                    <div class="pm-setup-row">
-                      <span class="pm-setup-lbl">Range Low</span>
-                      <span class="pm-setup-val" id="pm-pe-rl">&mdash;</span>
-                    </div>
-                    <div class="pm-setup-divider"></div>
-                    <div class="pm-setup-row">
-                      <span class="pm-setup-lbl">&#8377; Risk</span>
-                      <span class="pm-setup-val sl" id="pm-pe-risk">&mdash;</span>
-                    </div>
-                    <div class="pm-setup-row">
-                      <span class="pm-setup-lbl">&#8377; Reward</span>
-                      <span class="pm-setup-val tgt" id="pm-pe-reward">&mdash;</span>
-                    </div>
-                    <div class="pm-setup-row" style="margin-top:4px">
-                      <span class="pm-setup-lbl">R : R</span>
-                      <span class="pm-rr-badge" id="pm-pe-rr">&mdash;</span>
-                    </div>
-                  </div>
-
-                </div><!-- /pm-setup-grid -->
-                <div style="font-size:.58rem;color:var(--muted);margin-top:8px;text-align:center">SL = Open Premium &nbsp;&#183;&nbsp; Entry = Open + 7 pts &nbsp;&#183;&nbsp; T1 = 1R &nbsp;&#183;&nbsp; T2 = 2R &nbsp;&#183;&nbsp; T3 = 3R &nbsp;&#183;&nbsp; Range = First 15-min candle</div>
-              </div>
-
-            </div>
+            <div class="sig3-pl">Live Index</div>
+            <div class="sig3-pv sig3-g sig3-mono" id="k3t-pos-live">&hellip;</div>
           </div>
-
-        </div><!-- /pm-grid -->
-      </div><!-- /pm-body -->
-    </div><!-- /pm-card -->
-
-
-      <div class="db-main">
-
-        <!-- LEFT: VMT Position card — same structure as AMINA -->
-        <div id="vmt-pos-wrap">
-          <!-- IN-TRADE pos-card (hidden when flat) -->
-          <div class="pos-card pos-ce" id="vmt-pos-card" style="display:none">
-            <div class="pos-hdr">
-              <span class="pos-live-dot"></span>
-              <span class="pos-badge pos-b-ce" id="vmt-card-badge">CE OPTION</span>
-              <span class="pos-sym">BANKNIFTY</span>
-              <span class="pos-mode">PAPER</span>
-            </div>
-            <div class="pos-pnl-rs g" id="vmt-card-rs">&#8212;</div>
-            <div class="pos-pnl-pts g" id="vmt-card-pts">&#8212; premium pts unrealised</div>
-            <div class="pos-gauge"><div class="pos-gauge-fill" id="vmt-card-gauge" style="width:50%;background:#10b981"></div></div>
-            <div class="pos-grid">
-              <div><div class="pos-lbl">Entry Premium</div><div class="pos-val mono" id="vmt-card-ep">&#8212;</div></div>
-              <div><div class="pos-lbl">Live Premium</div><div class="pos-val g mono" id="vmt-card-lp">&#8212;</div></div>
-              <div><div class="pos-lbl">SL Premium</div><div class="pos-val r mono" id="vmt-card-sl">&#8212;</div></div>
-              <div><div class="pos-lbl">SL Risk &#8377;</div><div class="pos-val r" id="vmt-card-slrs">&#8212;</div></div>
-              <div><div class="pos-lbl">Target</div><div class="pos-val mono" style="color:#fbbf24" id="vmt-card-tgt">&#8212;</div></div>
-              <div><div class="pos-lbl">ATM Strike</div><div class="pos-val mono" id="vmt-card-strike">&#8212;</div></div>
-            </div>
-            <div class="pos-divider"></div>
-            <div class="pos-prem-row">
-              <div class="pos-prem-cell"><span class="pos-prem-tag buy-tag">OPEN Premium</span><span class="pos-prem-val" id="vmt-card-open-prem">&#8212;</span></div>
-              <div class="pos-prem-cell"><span class="pos-prem-tag" style="background:rgba(251,191,36,.15);color:#fbbf24">LIVE Premium</span><span class="pos-prem-val" id="vmt-card-live-prem">&#8212;</span></div>
-            </div>
+          <div>
+            <div class="sig3-pl">Stop Loss</div>
+            <div class="sig3-pv sig3-r sig3-mono" id="k3t-pos-sl">${(hb2?.shadowSL ?? 0) > 0 ? (hb2?.shadowSL ?? 0).toFixed(1) : "&mdash;"}</div>
           </div>
-          <!-- WATCHING / FLAT card (shown when not in trade) -->
-          <div class="watch-card" id="vmt-pos-flat">
-            <div class="watch-title"><span>&#128161;</span>VMT Shadow &#8212; <span id="vmt-status-txt">Waiting for market open</span></div>
-            <div id="vmt-watch-levels" style="font-size:.78rem;color:var(--muted);margin-top:8px">
-              <span style="opacity:.4">Calculating setup levels&#8230;</span>
-            </div>
+          <div>
+            <div class="sig3-pl">Direction</div>
+            <div class="sig3-pv" id="k3t-pos-dir">${hb2?.shadowDir ?? "&mdash;"}</div>
           </div>
         </div>
-
-        <!-- RIGHT: Session Stats — same 6-row ss-card structure as AMINA -->
-        <div>
-          <div class="ss-card">
-            <div class="ss-row">
-              <div><div class="ss-lbl">Today P&amp;L</div></div>
-              <div style="text-align:right">
-                <div class="ss-val g" id="vmt-ss-today-rs">&#8212;</div>
-                <div class="ss-sub" id="vmt-ss-today-pts"></div>
-              </div>
-            </div>
-            <div class="ss-row" id="vmt-ss-unr-row" style="display:none">
-              <div><div class="ss-lbl" style="color:var(--muted);font-style:italic">&#8517; Unrealised</div></div>
-              <div style="text-align:right">
-                <div class="ss-val" id="vmt-ss-unr-rs">&#8212;</div>
-                <div class="ss-sub" id="vmt-ss-unr-pts"></div>
-              </div>
-            </div>
-            <div class="ss-row">
-              <div><div class="ss-lbl">Trade Status</div></div>
-              <div style="text-align:right">
-                <div class="ss-val" id="vmt-ss-status">Idle</div>
-                <div class="ss-sub" id="vmt-ss-dir"></div>
-              </div>
-            </div>
-            <div class="ss-row">
-              <div><div class="ss-lbl">ATM Strike / DTE</div></div>
-              <div style="text-align:right">
-                <div class="ss-val mono" id="vmt-ss-strike">&#8212;</div>
-                <div class="ss-sub" id="vmt-ss-dte"></div>
-              </div>
-            </div>
-            <div class="ss-row">
-              <div><div class="ss-lbl">CE Open Prem &#8594; Entry</div></div>
-              <div style="text-align:right">
-                <div class="ss-val" id="vmt-ss-ce" style="font-size:.82rem">&#8212;</div>
-              </div>
-            </div>
-            <div class="ss-row">
-              <div><div class="ss-lbl">PE Open Prem &#8594; Entry</div></div>
-              <div style="text-align:right">
-                <div class="ss-val" id="vmt-ss-pe" style="font-size:.82rem">&#8212;</div>
-              </div>
-            </div>
+      </div>
+      <!-- Flat/watching card: always rendered, JS shows/hides -->
+      <div class="sig3-pos sig3-pos-flat" id="k3t-pos-flat" style="display:${(hb2?.shadowInTrade && (hb2?.shadowEntry ?? 0) > 0) ? 'none' : ''}">
+        <div style="display:flex;align-items:center;gap:.75rem">
+          <span style="font-size:1.6rem">&#9203;</span>
+          <div>
+            <div style="font-weight:700;font-size:.95rem">TRAIL — Watching for Signal</div>
+            <div class="sig3-ks sig3-d" id="k3t-next-opp" style="margin-top:4px">Next opportunity loading&hellip;</div>
           </div>
         </div>
-
-      </div><!-- /db-main -->
-
-      <!-- Trade History — same section header + Daily/Weekly/Monthly as AMINA -->
-      <div style="display:flex;align-items:center;gap:8px;margin-top:1.5rem;margin-bottom:.6rem;flex-wrap:wrap">
-        <span style="font-size:.72rem;text-transform:uppercase;letter-spacing:1px;color:#8b949e;font-weight:700">Trade History</span>
-        <div style="display:flex;gap:4px;margin-left:auto">
-          <button id="vmt-th-btn-d" onclick="_vmtThFilter('d')" style="padding:3px 12px;border-radius:5px;font-size:.72rem;font-weight:700;cursor:pointer;border:1px solid #7c3aed;background:rgba(124,58,237,.2);color:#a78bfa">Daily</button>
-          <button id="vmt-th-btn-w" onclick="_vmtThFilter('w')" style="padding:3px 12px;border-radius:5px;font-size:.72rem;font-weight:700;cursor:pointer;border:1px solid var(--border);background:transparent;color:var(--text-muted)">Weekly</button>
-          <button id="vmt-th-btn-m" onclick="_vmtThFilter('m')" style="padding:3px 12px;border-radius:5px;font-size:.72rem;font-weight:700;cursor:pointer;border:1px solid var(--border);background:transparent;color:var(--text-muted)">Monthly</button>
-        </div>
-        <span class="sec-count" id="vmt-th-count" style="margin:0"></span>
       </div>
+    </div>
 
-      <!-- DAILY panel -->
-      <div id="vmt-th-panel-d">
-        <div class="tw"><table class="tt">
-          <thead><tr><th>Time</th><th>Dir</th><th>Strike</th><th>Open Prem</th><th>Entry Prem</th><th>Exit Prem</th><th>Prem P&amp;L</th><th>&#8377; P&amp;L</th><th>Reason</th></tr></thead>
-          <tbody id="vmt-tbody-d"><tr><td colspan="9" class="tt-e">No VMT trades today</td></tr></tbody>
-        </table></div>
+    <!-- TRAIL Today's Trades — shown right after position card -->
+    <div class="sig3-sec" style="margin-top:1.2rem">
+      Today &mdash; TRAIL Paper Trades
+      <span class="sig3-sec-count" id="k3t-today-count">(${hb2?.shadowTrades ?? 0} trades)</span>
+    </div>
+    <div class="sig3-tw">
+      <table class="sig3-t">
+        <thead><tr>
+          <th>Time</th><th>Dir</th><th>Entry &rarr; Exit (Index)</th>
+          <th>Prem In</th><th>Prem Out</th>
+          <th>P&amp;L (&#8377;)</th><th>Reason</th>
+        </tr></thead>
+        <tbody id="k3t-today-body">
+          <tr><td colspan="7" class="sig3-te">Loading&hellip;</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <!-- LAST 15-MIN CANDLE (shared with LOCK50) -->
+    <div id="sig3t-candle-wrap" style="margin-bottom:1rem;display:none">
+      <div class="sig3-sec" style="margin-bottom:.5rem">Last 15-Min Candle <span id="sig3t-candle-time" style="font-weight:400;font-size:.72rem;color:var(--text-muted)"></span></div>
+      <div style="background:var(--card-bg);border:1px solid var(--border);border-radius:10px;padding:14px 18px;display:flex;flex-wrap:wrap;gap:1.2rem;align-items:center">
+        <span id="sig3t-candle-colour" style="font-size:1.1rem;font-weight:700"></span>
+        <span style="font-size:.8rem;color:var(--text-muted)">O: <b id="sig3t-c-o" style="color:var(--text)"></b></span>
+        <span style="font-size:.8rem;color:var(--text-muted)">H: <b id="sig3t-c-h" style="color:#10b981"></b></span>
+        <span style="font-size:.8rem;color:var(--text-muted)">L: <b id="sig3t-c-l" style="color:#ef4444"></b></span>
+        <span style="font-size:.8rem;color:var(--text-muted)">C: <b id="sig3t-c-c" style="color:var(--text)"></b></span>
+        <span id="sig3t-candle-status" style="font-size:.78rem;margin-left:auto;color:var(--text-muted)"></span>
       </div>
+    </div>
 
-      <!-- WEEKLY panel -->
-      <div id="vmt-th-panel-w" style="display:none">
-        <div class="tw"><table class="tt">
-          <thead><tr><th>Date</th><th>Dir</th><th>Strike</th><th>Open Prem</th><th>Entry Prem</th><th>Prem P&amp;L</th><th>&#8377; P&amp;L</th><th>Reason</th></tr></thead>
-          <tbody id="vmt-tbody-w"><tr><td colspan="8" class="tt-e">No VMT trades in last 7 days</td></tr></tbody>
-        </table></div>
-      </div>
+    <!-- TRAIL status note -->
+    <div style="padding:12px 16px;border-radius:10px;background:rgba(99,102,241,.08);border:1px solid rgba(99,102,241,.2);font-size:.78rem;color:var(--text-muted);margin-bottom:1rem">
+      <strong style="color:#818cf8">&#9670; TRAIL — Paper Shadow Mode</strong><br>
+      Runs alongside the live LOCK50 bot. Same entry signals, different exit logic.
+      No real orders placed. Today's P&amp;L updates every 8 seconds from bot heartbeat.
+    </div>
 
-      <!-- MONTHLY panel -->
-      <div id="vmt-th-panel-m" style="display:none">
-        <div class="tw"><table class="tt">
-          <thead><tr><th>Month</th><th>&#8377; P&amp;L</th><th>Prem P&amp;L</th><th>Trades</th><th>W/L</th></tr></thead>
-          <tbody id="vmt-tbody-m"><tr><td colspan="5" class="tt-e">No monthly data yet</td></tr></tbody>
-        </table></div>
-      </div>
+    <!-- Today's comparison section header -->
+    <div class="sig3-sec">Today &mdash; Strategy Comparison</div>
+    <div class="sig3-tw">
+      <table class="sig3-t">
+        <thead><tr><th>Strategy</th><th>Today P&amp;L (&#8377;)</th><th>pts</th><th>Trades</th><th>Mode</th></tr></thead>
+        <tbody>
+          <tr>
+            <td style="font-weight:700">&#9679; LOCK50</td>
+            <td><span class="sig3-pnl-rs ${pnlCls2(an2.today.pnl)}" id="k3t-cmp-lock-rs">${fmtRs2(an2.today.pnl)}</span></td>
+            <td class="sig3-mono" id="k3t-cmp-lock-pts">${fmtPts2(an2.today.pnl)}</td>
+            <td id="k3t-cmp-lock-tr">${an2.today.trades}</td>
+            <td><span style="font-size:.65rem;font-weight:700;background:rgba(16,185,129,.15);color:#10b981;padding:2px 6px;border-radius:3px">LIVE</span></td>
+          </tr>
+          <tr>
+            <td style="font-weight:700;color:#818cf8">&#9670; TRAIL</td>
+            <td><span class="sig3-pnl-rs" id="k3t-cmp-trail-rs" style="color:#818cf8">${fmtRs2(hb2?.shadowPnL ?? 0)}</span></td>
+            <td class="sig3-mono" id="k3t-cmp-trail-pts" style="color:#818cf8">${fmtPts2(hb2?.shadowPnL ?? 0)}</td>
+            <td id="k3t-cmp-trail-tr">${hb2?.shadowTrades ?? 0}</td>
+            <td><span style="font-size:.65rem;font-weight:700;background:rgba(99,102,241,.15);color:#818cf8;padding:2px 6px;border-radius:3px">PAPER</span></td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
 
-      <script>
-      (function(){
-        function _vmtThFilter(f){
-          ['d','w','m'].forEach(function(x){
-            var p=document.getElementById('vmt-th-panel-'+x);
-            var b=document.getElementById('vmt-th-btn-'+x);
-            if(p) p.style.display=(x===f)?'':'none';
-            if(b){
-              if(x===f){b.style.background='rgba(124,58,237,.2)';b.style.borderColor='#7c3aed';b.style.color='#a78bfa';}
-              else{b.style.background='transparent';b.style.borderColor='';b.style.color='';}
-            }
-          });
-          var rows=document.querySelectorAll('#vmt-th-panel-'+f+' tbody tr:not(.tt-e)');
-          var cnt=document.getElementById('vmt-th-count');
-          if(cnt) cnt.textContent=rows.length?'('+rows.length+' trade'+(rows.length!==1?'s':'')+')':'';
-        }
-        window._vmtThFilter=_vmtThFilter;
-        _vmtThFilter('d');
-      })();
-      </script>
+    </div><!-- /panel-trail -->
 
-    </div><!-- /panel-vmt -->
-
-  </div><!-- /db -->
+  </div>
+  <footer class="site-footer">
+    <span>&copy; 2026 ZeroScreen &mdash; Admin View &middot; ${mode2.toUpperCase()} mode &middot; Not SEBI registered. Not investment advice.</span>
+  </footer>
 
   <script>
-  // ── Constants ──────────────────────────────────────────────────
-  var QM=15;
-  function fR(v){var r=Math.round(v*QM);return(r>=0?'+':'−')+'₹'+Math.abs(r).toLocaleString('en-IN');}
-  function fP(v){return(v>=0?'+':'')+v.toFixed(0)+' pts';}
-  function gc(v){return v>=0?'#059669':'#dc2626';}
-  function ge(id){return document.getElementById(id);}
-
-  // ── Tab switching ──────────────────────────────────────────────
-  // ── Pre-Market card ──────────────────────────────────────────────────────────
-  (function(){
-    var STORE_KEY='pm_pred_v2';
-    var TIMELINE=[
-      {id:0, h:8,  m:30},
-      {id:1, h:8,  m:55},
-      {id:2, h:9,  m:0 },
-      {id:3, h:9,  m:7 },
-      {id:4, h:9,  m:15},
-      {id:5, h:9,  m:15},
-      {id:6, h:9,  m:45},
-      {id:7, h:11, m:30},
-      {id:8, h:15, m:15},
-      {id:9, h:15, m:30}
-    ];
-    // Session phases: [endH, endM, label, cssClass]
-    var PHASES=[
-      [8,30,'Pre-Market',''],
-      [8,55,'Global Cues',''],
-      [9,0, 'Pre-Open',''],
-      [9,7, 'Pre-Open Auction',''],
-      [9,15,'Fill Predictions',''],
-      [9,45,'Market Open','live'],
-      [11,30,'Entry Window','live'],
-      [15,15,'Session Live','live'],
-      [15,30,'Near Close','live'],
-      [24,0, 'Closed','closed']
-    ];
-
-    function nowIST(){
-      var d=new Date(new Date().toLocaleString('en-US',{timeZone:'Asia/Kolkata'}));
-      return {h:d.getHours(),m:d.getMinutes()};
-    }
-    function toMins(h,m){return h*60+m;}
-    function loadData(){
-      try{return JSON.parse(localStorage.getItem(STORE_KEY)||'{}');}catch(e){return {};}
-    }
-    function saveData(d){localStorage.setItem(STORE_KEY,JSON.stringify(d));}
-
-    // Restore saved state
-    var saved=loadData();
-    var todayKey=(function(){var d=new Date(new Date().toLocaleString('en-US',{timeZone:'Asia/Kolkata'}));return d.getFullYear()+'-'+(d.getMonth()+1)+'-'+d.getDate();})();
-    // Reset if new day
-    if(saved.date&&saved.date!==todayKey){saved={};saveData(saved);}
-    saved.date=todayKey;
-
-    // Restore inputs
-    var _restoreIds=['pm-notes'];
-    _restoreIds.forEach(function(id){var k=id.replace(/-/g,'_');if(saved[k]&&ge(id))ge(id).value=saved[k];});
-    if(saved.collapsed){var body=ge('pm-body');var arrow=ge('pm-toggle-arrow');if(body){body.style.display='none';}if(arrow)arrow.classList.remove('open');}
-    else{var arrow=ge('pm-toggle-arrow');if(arrow)arrow.classList.add('open');}
-
-    // Exported functions
-    window._pmToggle=function(){
-      var body=ge('pm-body');var arrow=ge('pm-toggle-arrow');
-      if(!body)return;
-      var collapsed=body.style.display==='none';
-      body.style.display=collapsed?'':'none';
-      if(arrow)arrow.classList.toggle('open',collapsed);
-      var d=loadData();d.collapsed=!collapsed;saveData(d);
-    };
-    window._pmSave=function(){
-      var d=loadData();
-      var ids=['pm-notes'];
-      ids.forEach(function(id){var el=ge(id);if(el)d[id.replace(/-/g,'_')]=el.value;});
-      saveData(d);
-    };
-    // Timeline + phase update (run every 30s)
-    function _pmUpdateTimeline(){
-      var t=nowIST();
-      var nowM=toMins(t.h,t.m);
-      // Dots
-      // After market close (15:30), reset all dots to empty — fresh for next morning
-      var marketClosed=nowM>=toMins(15,30);
-      TIMELINE.forEach(function(row){
-        var dot=ge('pm-dot-'+row.id);
-        if(!dot)return;
-        if(marketClosed){dot.className='pm-tl-dot';dot.textContent='';return;}
-        var rowM=toMins(row.h,row.m);
-        var isActive=nowM>=rowM&&nowM<rowM+3;
-        var isDone=nowM>=rowM+3;
-        if(isDone){dot.className='pm-tl-dot done';dot.textContent='✓';}
-        else if(isActive){dot.className='pm-tl-dot active';dot.textContent='▶';}
-        else{dot.className='pm-tl-dot';dot.textContent='';}
-      });
-      // Notes
-      var note2=ge('pm-note-2');if(note2)note2.className='pm-tl-note'+(nowM>=540&&nowM<555?' show':'');
-      var note4=ge('pm-note-4');if(note4)note4.className='pm-tl-note'+(nowM>=555?' show':'');
-      // Phase badge
-      var badge=ge('pm-phase-badge');
-      if(badge){
-        var label='Pre-Market',cls='';
-        for(var i=0;i<PHASES.length;i++){
-          if(nowM<toMins(PHASES[i][0],PHASES[i][1])){label=PHASES[i][2];cls=PHASES[i][3];break;}
-        }
-        badge.textContent=label;badge.className='pm-phase'+(cls?' '+cls:'');
-      }
-    }
-    _pmUpdateTimeline();
-    setInterval(_pmUpdateTimeline,30000);
-
-    // Update auto-levels from VMT shadow (piggybacks the _vmtRefresh poll)
-    window._pmUpdateAutoLevels=function(v){
-      if(!v||!v.atmStrike)return;
-      var box=ge('pm-auto-box');if(box)box.style.display='';
-      // Auto bias from tradeDir
-      var biasIcon=ge('pm-bias-icon'),biasText=ge('pm-bias-text'),biasDis=ge('pm-bias-display');
-      if(biasIcon&&biasText&&biasDis){
-        var dir=v.tradeDir;
-        if(dir==='CE'){
-          biasIcon.textContent='📈';biasText.textContent='Bullish — CE trade signalled';
-          biasText.style.color='#059669';biasDis.style.borderColor='rgba(5,150,105,.4)';biasDis.style.background='rgba(5,150,105,.07)';
-        } else if(dir==='PE'){
-          biasIcon.textContent='📉';biasText.textContent='Bearish — PE trade signalled';
-          biasText.style.color='#ef4444';biasDis.style.borderColor='rgba(239,68,68,.35)';biasDis.style.background='rgba(239,68,68,.07)';
-        } else if(v.cePremium||v.pePremium){
-          var ceP=v.cePremium||0,peP=v.pePremium||0,diff=Math.abs(ceP-peP);
-          var pct=((ceP+peP)>0)?diff/(ceP+peP)*100:0;
-          if(pct>5&&ceP>peP){
-            biasIcon.textContent='📈';biasText.textContent='Bullish — CE premium dominant';
-            biasText.style.color='#059669';biasDis.style.borderColor='rgba(5,150,105,.3)';biasDis.style.background='rgba(5,150,105,.05)';
-          } else if(pct>5&&peP>ceP){
-            biasIcon.textContent='📉';biasText.textContent='Bearish — PE premium dominant';
-            biasText.style.color='#ef4444';biasDis.style.borderColor='rgba(239,68,68,.3)';biasDis.style.background='rgba(239,68,68,.05)';
-          } else {
-            biasIcon.textContent='↔️';biasText.textContent='Neutral — CE ≈ PE premium';
-            biasText.style.color='#94a3b8';biasDis.style.borderColor='var(--border-c)';biasDis.style.background='var(--bg)';
-          }
-        }
-      }
-      // Top row
-      if(ge('pm-auto-spot'))ge('pm-auto-spot').textContent=v.spotOpen?('₹'+Number(v.spotOpen).toFixed(0)):'—';
-      if(ge('pm-auto-strike'))ge('pm-auto-strike').textContent=v.atmStrike||'—';
-      if(ge('pm-auto-dte'))ge('pm-auto-dte').textContent=v.dte?(v.dte+' days to Thu expiry'):'—';
-      // CE setup
-      var ceOp=v.cePremium||0,ceEn=v.ceEntry||0,ceSl=v.ceSL||ceOp,ceTg=v.ceTarget||0;
-      var ceRisk=Math.round(Math.abs(ceEn-ceSl)*15),ceReward=Math.round(Math.abs(ceTg-ceEn)*15);
-      var ceRR=ceRisk>0?(ceReward/ceRisk).toFixed(1)+'R':'—';
-      var ceRisk1=Math.abs(ceEn-ceSl);
-      var ceT1=ceEn+ceRisk1,ceT2=ceEn+ceRisk1*2,ceT3=ceEn+ceRisk1*3;
-      if(ge('pm-ce-open'))ge('pm-ce-open').textContent='₹'+ceOp.toFixed(1);
-      if(ge('pm-ce-entry'))ge('pm-ce-entry').textContent='₹'+ceEn.toFixed(1);
-      if(ge('pm-ce-sl'))ge('pm-ce-sl').textContent='₹'+ceSl.toFixed(1);
-      if(ge('pm-ce-t1'))ge('pm-ce-t1').textContent='₹'+ceT1.toFixed(1);
-      if(ge('pm-ce-t2'))ge('pm-ce-t2').textContent='₹'+ceT2.toFixed(1);
-      if(ge('pm-ce-t3'))ge('pm-ce-t3').textContent='₹'+ceT3.toFixed(1);
-      if(ge('pm-ce-rh'))ge('pm-ce-rh').textContent=v.ceRangeHigh?('₹'+Number(v.ceRangeHigh).toFixed(1)):'—';
-      if(ge('pm-ce-rl'))ge('pm-ce-rl').textContent=v.ceRangeLow?('₹'+Number(v.ceRangeLow).toFixed(1)):'—';
-      // Mirror to card divs
-      if(ge('pm-cc-rh'))ge('pm-cc-rh').textContent=ge('pm-ce-rh').textContent;
-      if(ge('pm-cc-rl'))ge('pm-cc-rl').textContent=ge('pm-ce-rl').textContent;
-      if(ge('pm-cc-prem'))ge('pm-cc-prem').textContent='₹'+ceOp.toFixed(1);
-      if(ge('pm-cc-entry'))ge('pm-cc-entry').textContent='₹'+ceEn.toFixed(1);
-      if(ge('pm-cc-sl'))ge('pm-cc-sl').textContent='₹'+ceSl.toFixed(1);
-      if(ge('pm-cc-t1'))ge('pm-cc-t1').textContent='₹'+ceT1.toFixed(1);
-      if(ge('pm-cc-t2'))ge('pm-cc-t2').textContent='₹'+ceT2.toFixed(1);
-      if(ge('pm-cc-t3'))ge('pm-cc-t3').textContent='₹'+ceT3.toFixed(1);
-      if(ge('pm-ce-risk'))ge('pm-ce-risk').textContent='₹'+ceRisk.toLocaleString('en-IN');
-      if(ge('pm-ce-reward'))ge('pm-ce-reward').textContent='₹'+Math.round(ceRisk1*3*15).toLocaleString('en-IN');
-      if(ge('pm-ce-rr'))ge('pm-ce-rr').textContent='1 : '+(ceRisk>0?((ceRisk1*3*15/ceRisk).toFixed(1)+'R'):'—');
-      // PE setup
-      var peOp=v.pePremium||0,peEn=v.peEntry||0,peSl=v.peSL||peOp,peTg=v.peTarget||0;
-      var peRisk=Math.round(Math.abs(peEn-peSl)*15),peReward=Math.round(Math.abs(peTg-peEn)*15);
-      var peRR=peRisk>0?(peReward/peRisk).toFixed(1)+'R':'—';
-      var peRisk1=Math.abs(peEn-peSl);
-      var peT1=peEn+peRisk1,peT2=peEn+peRisk1*2,peT3=peEn+peRisk1*3;
-      if(ge('pm-pe-open'))ge('pm-pe-open').textContent='₹'+peOp.toFixed(1);
-      if(ge('pm-pe-entry'))ge('pm-pe-entry').textContent='₹'+peEn.toFixed(1);
-      if(ge('pm-pe-sl'))ge('pm-pe-sl').textContent='₹'+peSl.toFixed(1);
-      if(ge('pm-pe-t1'))ge('pm-pe-t1').textContent='₹'+peT1.toFixed(1);
-      if(ge('pm-pe-t2'))ge('pm-pe-t2').textContent='₹'+peT2.toFixed(1);
-      if(ge('pm-pe-t3'))ge('pm-pe-t3').textContent='₹'+peT3.toFixed(1);
-      if(ge('pm-pe-rh'))ge('pm-pe-rh').textContent=v.peRangeHigh?('₹'+Number(v.peRangeHigh).toFixed(1)):'—';
-      if(ge('pm-pe-rl'))ge('pm-pe-rl').textContent=v.peRangeLow?('₹'+Number(v.peRangeLow).toFixed(1)):'—';
-      // Mirror to card divs
-      if(ge('pm-cp-rh'))ge('pm-cp-rh').textContent=ge('pm-pe-rh').textContent;
-      if(ge('pm-cp-rl'))ge('pm-cp-rl').textContent=ge('pm-pe-rl').textContent;
-      if(ge('pm-cp-prem'))ge('pm-cp-prem').textContent='₹'+peOp.toFixed(1);
-      if(ge('pm-cp-entry'))ge('pm-cp-entry').textContent='₹'+peEn.toFixed(1);
-      if(ge('pm-cp-sl'))ge('pm-cp-sl').textContent='₹'+peSl.toFixed(1);
-      if(ge('pm-cp-t1'))ge('pm-cp-t1').textContent='₹'+peT1.toFixed(1);
-      if(ge('pm-cp-t2'))ge('pm-cp-t2').textContent='₹'+peT2.toFixed(1);
-      if(ge('pm-cp-t3'))ge('pm-cp-t3').textContent='₹'+peT3.toFixed(1);
-      if(ge('pm-pe-risk'))ge('pm-pe-risk').textContent='₹'+peRisk.toLocaleString('en-IN');
-      if(ge('pm-pe-reward'))ge('pm-pe-reward').textContent='₹'+Math.round(peRisk1*3*15).toLocaleString('en-IN');
-      if(ge('pm-pe-rr'))ge('pm-pe-rr').textContent='1 : '+(peRisk>0?((peRisk1*3*15/peRisk).toFixed(1)+'R'):'—');
-    };
-  })();
-
-  function _sTab(t){
-    ['lock50','trail','lock50old','vmt'].forEach(function(id){
-      var p=ge('panel-'+id);var b=ge('stab-'+id);
-      if(p)p.style.display=t===id?'block':'none';
-      if(b)b.classList.toggle('act',t===id);
-    });
-    // Scroll to top of the shown panel so position card is visible
-    var wrap=ge('stab-wrap')||document.querySelector('.stab-wrap');
-    if(wrap){var y=wrap.getBoundingClientRect().top+window.scrollY-8;window.scrollTo({top:y,behavior:'smooth'});}
-  }
-  // Wire tab buttons immediately (script is at bottom of body, elements exist)
-  (function(){
-    var tabMap={'stab-lock50':'lock50','stab-vmt':'vmt'};
-    Object.keys(tabMap).forEach(function(btnId){
-      var btn=ge(btnId);
-      if(btn)btn.addEventListener('click',function(){_sTab(tabMap[btnId]);});
-    });
-  })();
-
-  // ── Session candle timeline builder ───────────────────────────
-  // slots: 9:15 9:30 9:45 … 3:15 3:30  = 25 slots
-  var SLOTS=[];
-  (function(){for(var h=9,m=15;;){var hh=h,mm=m;var lbl=(hh>12?hh-12:hh)+':'+(mm<10?'0'+mm:mm)+(hh>=12?'pm':'am');SLOTS.push({h:hh,m:mm,lbl:lbl});m+=15;if(m>=60){h++;m-=60;}if(h>15||(h===15&&m>30))break;}})();
-
-  function _buildTimeline(gridId, candles, trades){
-    var el=ge(gridId); if(!el)return;
-    if(!candles||!candles.length){el.innerHTML='<span style="font-size:.72rem;color:var(--muted);padding:12px">No candle data yet — market may not have opened</span>';return;}
-    // Build map: "H:M" -> candle
-    var cmap={};
-    candles.forEach(function(c){
-      var d=new Date(c.t);
-      var ist=new Date(d.toLocaleString('en-US',{timeZone:'Asia/Kolkata'}));
-      var key=ist.getHours()+':'+ist.getMinutes();
-      cmap[key]=c;
-    });
-    // Trade markers by slot
-    var entryMap={}, exitMap={};
-    (trades||[]).forEach(function(t){
-      if(t.entryMs){var d=new Date(t.entryMs);var ist=new Date(d.toLocaleString('en-US',{timeZone:'Asia/Kolkata'}));var k=ist.getHours()+':'+ist.getMinutes();if(!entryMap[k])entryMap[k]=[];entryMap[k].push(t);}
-      if(t.exitMs){var d=new Date(t.exitMs);var ist=new Date(d.toLocaleString('en-US',{timeZone:'Asia/Kolkata'}));var k=ist.getHours()+':'+ist.getMinutes();if(!exitMap[k])exitMap[k]=[];exitMap[k].push(t);}
-    });
-    // Find max body for scaling
-    var maxBody=1;
-    candles.forEach(function(c){var b=Math.abs(c.close-c.open);if(b>maxBody)maxBody=b;});
-    var html='';
-    // Current IST slot
-    var nowIST=new Date(new Date().toLocaleString('en-US',{timeZone:'Asia/Kolkata'}));
-    var nowKey=nowIST.getHours()+':'+nowIST.getMinutes();
-    SLOTS.forEach(function(s){
-      var key=s.h+':'+s.m;
-      var c=cmap[key];
-      var isCur=false;
-      // Mark current slot (within 15 mins)
-      for(var sm=0;sm<15;sm++){var k2=nowIST.getHours()+':'+(nowIST.getMinutes()-sm);if(k2===key){isCur=true;break;}}
-      var barHtml='';
-      var tooltip='';
-      if(c){
-        var body=Math.abs(c.close-c.open);
-        var pct=Math.max(8,Math.round((body/maxBody)*52));
-        var cls=c.close>c.open?'bull':c.close<c.open?'bear':'doji';
-        if(isCur)cls+=' current';
-        barHtml='<div class="ctl-bar '+cls+'" style="height:'+pct+'px"></div>';
-        tooltip='<div class="ctl-tooltip"><b>'+s.lbl+'</b><br>O: '+c.open.toFixed(0)+' H: '+c.high.toFixed(0)+' L: '+c.low.toFixed(0)+' C: '+c.close.toFixed(0)+'<br>'+(c.close>c.open?'🟢 Bullish':'🔴 Bearish')+' '+(body.toFixed(0))+' pts</div>';
-      } else {
-        barHtml='<div class="ctl-bar empty" style="height:18px"></div>';
-      }
-      var markers='';
-      if(entryMap[key])markers+='<span class="ctl-marker" style="color:#10b981" title="Entry">▲</span>';
-      if(exitMap[key])markers+='<span class="ctl-marker" style="color:#ef4444;top:-18px" title="Exit">▼</span>';
-      html+='<div class="ctl-slot"><div class="ctl-bar-wrap">'+barHtml+'</div>'+markers+tooltip+'<span class="ctl-time">'+s.lbl+'</span></div>';
-    });
-    el.innerHTML=html;
-  }
-
-  // ── Shadow trade log renderer ──────────────────────────────────
-  function _renderShLog(bodyId, log, isAlive){
-    var el=ge(bodyId); if(!el)return;
-    if(!log||!log.length){el.innerHTML='<tr><td colspan="8" class="tt-e">No trades today'+(isAlive?' — monitoring':'')+'</td></tr>';return;}
-    el.innerHTML=[...log].reverse().map(function(t){
-      var pts=t.pts!=null?parseFloat(t.pts):null;
-      var pC=pts!=null?(pts>0?'g':pts<0?'r':'d'):'d';
-      var rs=pts!=null?Math.round(pts*QM):null;
-      var dir=(t.dir||'').toUpperCase();
-      var dur='—';
-      if(t.entryMs&&t.exitMs)dur=Math.round((t.exitMs-t.entryMs)/60000)+'m';
-      else if(t.entryMs&&!t.exitMs)dur='<em style="color:#fbbf24">'+Math.round((Date.now()-t.entryMs)/60000)+'m live</em>';
-      var reason=t.reason||'—';
-      var rTag=reason.toLowerCase().includes('sl')?'rc-sl':reason.toLowerCase().includes('trail')||reason.toLowerCase().includes('early')?'rc-trail':'rc-eod';
-      return '<tr>'
-        +'<td class="tc">'+(t.time||'—')+'</td>'
-        +'<td><span class="db-badge '+(dir.toLowerCase())+'">'+(dir||'—')+'</span></td>'
-        +'<td class="mono">'+(t.entry>0?parseFloat(t.entry).toFixed(1):'—')+'</td>'
-        +'<td class="mono">'+(t.exit!=null&&t.exit>0?parseFloat(t.exit).toFixed(1):'<em style="color:#fbbf24">live</em>')+'</td>'
-        +'<td class="'+pC+'" style="font-weight:800">'+(pts!=null?(pts>=0?'+':'')+pts.toFixed(0)+' pts':'—')+'</td>'
-        +'<td>'+(rs!=null?'<span class="pnl-rs '+pC+'">'+(rs>=0?'+':'−')+'₹'+Math.abs(rs).toLocaleString('en-IN')+'</span>':'—')+'</td>'
-        +'<td>'+(reason!=='—'?'<span class="rc-b '+rTag+'">'+reason+'</span>':'—')+'</td>'
-        +'<td class="tc">'+dur+'</td>'
-        +'</tr>';
-    }).join('');
-  }
-
-  // ── Main refresh ───────────────────────────────────────────────
-  var _candleHistory=[];
-  async function _dbRefresh(){
+  var _QM = 15;
+  function _fR(v){var r=Math.round(v*_QM);return(r>=0?"+":"\u2212")+"\u20B9"+Math.abs(r).toLocaleString("en-IN");}
+  function _fP(v){return(v>=0?"+":"")+v.toFixed(0)+" pts";}
+  function _gc(v){return v>=0?"#10b981":"#ef4444";}
+  function _ge(id){return document.getElementById(id);}
+  async function _sig3Refresh(){
     try{
-      const r=await fetch('/api/bot/status');
-      const d=await r.json();
-      ge('db-upd').textContent='Updated '+new Date().toLocaleTimeString('en-IN',{hour:'2-digit',minute:'2-digit',second:'2-digit'});
-
-      const hb=d.heartbeat||{};
-      const st=d.activeState||{};
-      const inT=!!(hb.inTrade||st.activeTrade||st.mainEntryDone);
-      const lp=parseFloat(hb.livePrice||0);
-      const ep=parseFloat(hb.entryPrice||st.entryPrice||0);
-      const dir=(hb.direction||st.tradeDirection||'').toUpperCase();
-      const _rawUnr=parseFloat(hb.unrealisedPnL||0);const unr=(_rawUnr===0&&inT&&lp>0&&ep>0)?(dir==="CE"?lp-ep:ep-lp):_rawUnr;
-      const slPts=parseFloat(hb.slPts||100);
-      const qty=parseFloat(hb.qty||30);
-
-      // ── Health bar ──────────────────────────────────────────
-      const alive=hb.at&&(Date.now()-new Date(hb.at).getTime())<3*60*1000;
-      const hbBotEl=ge('hb-bot');
-      if(hbBotEl){hbBotEl.className='hb-pill '+(alive?'ok':'err');hbBotEl.textContent='Bot '+(alive?'● Online':'● Offline');}
-      if(alive&&hb.at){
-        const ageS=Math.round((Date.now()-new Date(hb.at).getTime())/1000);
-        const ageEl=ge('hb-age-txt');
-        if(ageEl)ageEl.textContent=ageS<5?'live':ageS+'s ago';
-        const lsEl=ge('hb-last-seen');
-        if(lsEl)lsEl.textContent='Last seen '+ageS+'s ago';
+      const r=await fetch("/api/bot/status");const d=await r.json();
+      _ge("sig3-upd").textContent="Updated "+new Date().toLocaleTimeString("en-IN");
+      const inT=d.activeState&&!!(d.activeState.inTrade||d.activeState.activeTrade||d.activeState.mainEntryDone);
+      const tot=parseFloat(((d.today?.pnl||0)+(inT?(d.activeState?.unrealisedPnL||0):0)).toFixed(0));
+      // ── LOCK50 KPI
+      if(_ge("k3-today-rs")){_ge("k3-today-rs").textContent=_fR(tot);_ge("k3-today-rs").style.color=_gc(tot);}
+      if(_ge("k3-today-pts")){_ge("k3-today-pts").textContent=_fP(tot);_ge("k3-today-pts").style.color=_gc(tot);}
+      const tc=d.today?.trades||0;
+      if(_ge("k3-trades"))_ge("k3-trades").innerHTML=tc+(tc!==1?" trades":" trade")+(inT?' <span style="font-size:.65rem;color:#10b981">+live</span>':"");
+      if(_ge("k3-wl")&&d.today)_ge("k3-wl").innerHTML='<span class="sig3-g">'+d.today.wins+'W</span> / <span class="sig3-r">'+d.today.losses+'L</span>';
+      if(_ge("k3-wk-rs")&&d.weekly){_ge("k3-wk-rs").textContent=_fR(d.weekly.pnl);_ge("k3-wk-rs").style.color=_gc(d.weekly.pnl);}
+      if(_ge("k3-wk-pts")&&d.weekly){_ge("k3-wk-pts").textContent=_fP(d.weekly.pnl);_ge("k3-wk-pts").style.color=_gc(d.weekly.pnl);}
+      if(_ge("k3-wr")&&d.allTime)_ge("k3-wr").textContent=d.allTime.winRate+"%";
+      // ── LOCK50 live position + SL update
+      if(inT&&d.activeState?.entryPrice>0){
+        const u=d.activeState?.unrealisedPnL??0;
+        if(_ge("sig3-pnl-rs")){_ge("sig3-pnl-rs").textContent=_fR(u);_ge("sig3-pnl-rs").style.color=_gc(u);}
+        if(_ge("sig3-pnl-pts")){_ge("sig3-pnl-pts").textContent=(u>=0?"+":"")+u.toFixed(0)+" index pts unrealised";_ge("sig3-pnl-pts").style.color=_gc(u);}
+        if(_ge("sig3-live")&&d.activeState?.livePrice)_ge("sig3-live").textContent=parseFloat(d.activeState.livePrice).toFixed(1);
       }
-      const hbTokEl=ge('hb-token');
-      if(hbTokEl&&d.kiteTokenValid!==undefined){
-        hbTokEl.className='hb-pill '+(d.kiteTokenValid?'ok':'err');
-      }
-
-      // ── Tab P&L badges ──────────────────────────────────────
-      const totPnl=parseFloat(((d.today?.pnl||0)+(inT?unr:0)).toFixed(0));
-      const totPnlRs=d.today?.pnlRs!=null?(d.today.pnlRs+(inT?Math.round(unr*15):0)):Math.round(totPnl*15);
-      const shPnl=parseFloat((hb.shadowPnL||0).toFixed(0));
-      const s1Pnl=parseFloat((hb.scalp1PnL||0).toFixed(0));
-      const tpLock=ge('stab-pnl-lock50');if(tpLock){const _s=totPnlRs>=0?'+':'\u2212';tpLock.textContent=_s+'\u20B9'+Math.abs(totPnlRs).toLocaleString('en-IN');tpLock.style.color=gc(totPnl);}
-      const tpTrail=ge('stab-pnl-trail');if(tpTrail){tpTrail.textContent=fR(shPnl);tpTrail.style.color=gc(shPnl);}
-      const tpL50o=ge('stab-pnl-l50o');if(tpL50o){tpL50o.textContent=fR(s1Pnl);tpL50o.style.color=gc(s1Pnl);}
-
-      // ── TICK TRAIL position card ────────────────────────────
-      if(inT&&ep>0){
-        const g=ge('pos-lock50-rs');if(g){g.textContent=fR(unr);g.style.color=gc(unr);}
-        const gp=ge('pos-lock50-pts');if(gp){gp.textContent=(unr>=0?'+':'')+unr.toFixed(0)+' index pts unrealised';gp.style.color=gc(unr);}
-        if(ge('pos-lock50-lp')&&lp)ge('pos-lock50-lp').textContent=lp.toFixed(1);
-        // P&L gauge: 0% at SL, 50% at entry, 100% at +slPts target
-        const gf=ge('pos-lock50-gauge');
-        if(gf){
-          const range=slPts*2;
-          const pct=Math.min(100,Math.max(0,Math.round(((unr+slPts)/range)*100)));
-          gf.style.width=pct+'%';
-          gf.style.background=unr>=0?'#10b981':'#ef4444';
-        }
-      }
-      // Watching card trigger levels
+      // ── LOCK50 flat — next opportunity trigger levels
       if(!inT){
-        const lc=hb.lastCandle;
-        const noEl=ge('pos-lock50-watch');
-        if(lc&&noEl){
-          const bH=Math.max(lc.open,lc.close);
-          const bL=Math.min(lc.open,lc.close);
-          const ce=(bH+25).toFixed(0);
-          const pe=(bL-25).toFixed(0);
-          const ceD=lp>0?(lp-(bH+25)):null;
-          const peD=lp>0?((bL-25)-lp):null;
-          const ceA=ceD!==null?(' <span style="color:'+(ceD>=0?'#10b981':'#94a3b8')+'">'+(ceD>=0?'✓ past':'↑ '+Math.abs(ceD).toFixed(0)+' pts away')+'</span>'):'';
-          const peA=peD!==null?(' <span style="color:'+(peD>=0?'#10b981':'#94a3b8')+'">'+(peD>=0?'✓ past':'↓ '+Math.abs(peD).toFixed(0)+' pts away')+'</span>'):'';
-          noEl.innerHTML=
-            '<div class="watch-lvl-row watch-ce-row"><span class="watch-lvl-dir" style="color:#60a5fa">CE ▲</span><span class="watch-lvl-val">'+ce+'</span><span class="watch-lvl-dist">close ≥'+ce+ceA+'</span></div>'+
-            '<div class="watch-lvl-row watch-pe-row"><span class="watch-lvl-dir" style="color:#fca5a5">PE ▼</span><span class="watch-lvl-val">'+pe+'</span><span class="watch-lvl-dist">close ≤'+pe+peA+'</span></div>'+
-            (lp>0?'<div style="font-size:.73rem;color:var(--muted);margin-top:7px">Live index: <b style="color:var(--text-main)">'+lp.toFixed(1)+'</b></div>':'');
-        } else if(noEl){
-          noEl.innerHTML='<span style="opacity:.4">Waiting for first 15-min candle…</span>';
+        const _lc0=d.heartbeat?.lastCandle;
+        const _lp0=parseFloat(d.activeState?.livePrice||d.heartbeat?.livePrice||0);
+        const _noEl=_ge("sig3-next-opp");
+        if(_lc0&&_noEl){
+          const _bH0=Math.max(_lc0.open,_lc0.close);
+          const _bL0=Math.min(_lc0.open,_lc0.close);
+          const _ce0=(_bH0+25).toFixed(0);
+          const _pe0=(_bL0-25).toFixed(0);
+          const _ceD0=_lp0>0?(_lp0-(_bH0+25)):null;
+          const _peD0=_lp0>0?((_bL0-25)-_lp0):null;
+          const _ceIcon0=_ceD0===null?"":(_ceD0>=0?'<span style="color:#10b981">&#9679;</span>':'<span style="color:#ef4444">&#9679;</span>');
+          const _peIcon0=_peD0===null?"":(_peD0>=0?'<span style="color:#10b981">&#9679;</span>':'<span style="color:#ef4444">&#9679;</span>');
+          const _ceAway0=_ceD0!==null?(' &nbsp;<span style="color:'+(_ceD0>=0?'#10b981':'#ef4444')+'">'+(_ceD0>=0?'&#10003; past':'&#8679; '+Math.abs(_ceD0).toFixed(0)+' pts away')+'</span>'):"";
+          const _peAway0=_peD0!==null?(' &nbsp;<span style="color:'+(_peD0>=0?'#10b981':'#ef4444')+'">'+(_peD0>=0?'&#10003; past':'&#8681; '+Math.abs(_peD0).toFixed(0)+' pts away')+'</span>'):"";
+          _noEl.innerHTML=
+            _ceIcon0+' <b style="color:#60a5fa">CE</b> entry if close &ge; <b>'+_ce0+'</b>'+_ceAway0+'<br>'+
+            _peIcon0+' <b style="color:#f87171">PE</b> entry if close &le; <b>'+_pe0+'</b>'+_peAway0;
+        } else if(_noEl){
+          _noEl.innerHTML='<span style="opacity:.5">Waiting for first candle&hellip;</span>';
         }
       }
-
-      // ── Session stats ───────────────────────────────────────
-      if(d.today){
-        const tot=parseFloat(((d.today.pnl||0)+(inT?unr:0)).toFixed(0));
-        if(ge('ss-today-rs')){const _totRs=d.today.pnlRs!=null?(d.today.pnlRs+(inT?Math.round(unr*15):0)):Math.round(tot*15);const _tsign=_totRs>=0?'+':'\u2212';ge('ss-today-rs').textContent=_tsign+'\u20B9'+Math.abs(_totRs).toLocaleString('en-IN');ge('ss-today-rs').style.color=gc(tot);}
-        // Unrealised sub-row
-        var unrRow=ge('ss-unr-row');
-        if(unrRow){
-          unrRow.style.display=inT?'':'none';
-          if(inT){
-            const rR=ge('ss-unr-rs');const rP=ge('ss-unr-pts');
-            if(rR){rR.textContent=fR(unr);rR.style.color=gc(unr);}
-            if(rP){rP.textContent=fP(unr);rP.style.color=gc(unr);}
-          }
-        }
-        if(ge('ss-today-pts'))ge('ss-today-pts').textContent=fP(tot);
-        if(ge('ss-tc'))ge('ss-tc').innerHTML=hb.tradeCount+(inT?'<span style="font-size:.6rem;color:#10b981"> +live</span>':'');
-        if(ge('ss-wins'))ge('ss-wins').textContent=d.today.wins+'W';
-        if(ge('ss-losses'))ge('ss-losses').textContent=d.today.losses+'L';
-      }
-      if(d.weekly){
-        const _wkRs=d.weekly.pnlRs!=null?d.weekly.pnlRs:Math.round((d.weekly.pnl||0)*15);
-        if(ge('ss-wk-rs')){const _wsign=_wkRs>=0?'+':'\u2212';ge('ss-wk-rs').textContent=_wsign+'\u20B9'+Math.abs(_wkRs).toLocaleString('en-IN');ge('ss-wk-rs').style.color=gc(d.weekly.pnl);}
-        if(ge('ss-wk-pts'))ge('ss-wk-pts').textContent=fP(d.weekly.pnl);
-      }
-      if(d.allTime&&ge('ss-wr'))ge('ss-wr').textContent=d.allTime.winRate+'%';
-
-      // ── Today trade table update ────────────────────────────
-      if(d.todayTrades){
-        const tbody=ge('tt-body-lock50');
-        if(tbody){
-          const cl=[...d.todayTrades].filter(function(t){return t.exitPrice&&t.exitPrice>0;});
-          const cnt=ge('tt-count');
-          if(cnt)cnt.textContent='('+cl.length+' closed'+(inT?' + 1 live':'')+')';
-        }
-      }
-
-      // ── Candle timeline ─────────────────────────────────────
-      if(hb.candleHistory&&hb.candleHistory.length){_candleHistory=hb.candleHistory;}
-      if(hb.lastCandle){
-        // todayTrades for markers
-        var _tt=d.todayTrades||[];
-        // candle timeline removed from TICK TRAIL panel
-        // candle timeline removed from TRAIL/LOCK50 Old panels
-      }
-
-      // ── TRAIL shadow ───────────────────────
-      try{
-        const shTr=hb.shadowTrades||0;const shW=hb.shadowWins||0;const shL=hb.shadowLosses||0;
-        const shInT=!!(hb.shadowInTrade);const shDir=(hb.shadowDir||'').toUpperCase();const shEp=parseFloat(hb.shadowEntry||0);
-        const shUnr=shInT&&lp>0&&shEp>0?(shDir==='CE'?lp-shEp:shEp-lp):0;
-        const shTotal=shPnl+shUnr;
-        const tpT2=ge('stab-pnl-trail');if(tpT2){tpT2.textContent=fR(shTotal);tpT2.style.color=gc(shTotal);}
-        if(ge('sh-trail-pnl-rs')){ge('sh-trail-pnl-rs').textContent=fR(shTotal);ge('sh-trail-pnl-rs').style.color=gc(shTotal);}
-        if(ge('sh-trail-pnl-pts'))ge('sh-trail-pnl-pts').textContent=fP(shTotal);
-        if(ge('sh-trail-tc')){ge('sh-trail-tc').innerHTML=shTr+(shInT?'<span style="font-size:.6rem;color:#10b981"> +live</span>':'');}
-        if(ge('sh-trail-wk-rs')){ge('sh-trail-wk-rs').textContent=fR(shTotal);ge('sh-trail-wk-rs').style.color=gc(shTotal);}
-        if(ge('sh-trail-wk-pts'))ge('sh-trail-wk-pts').textContent=fP(shTotal);
-        if(ge('sh-trail-wrs'))ge('sh-trail-wrs').textContent=(shW+shL)>0?shW+'W / '+shL+'L':'—';
-        var _shFC=ge('sh-pos-trail-flat'),_shIC=ge('sh-pos-trail-card');
-        if(_shFC&&_shIC){if(shInT&&shEp>0){_shFC.style.display='none';_shIC.style.display='';var _shDir2=(hb.shadowDir||'').toUpperCase();_shIC.className='pos-card pos-'+(_shDir2==='CE'?'ce':'pe');var _shBadge=ge('sh-trail-card-badge');if(_shBadge){_shBadge.className='pos-badge pos-b-'+(_shDir2==='CE'?'ce':'pe');_shBadge.textContent=_shDir2+' OPTION';}if(ge('sh-trail-card-rs')){ge('sh-trail-card-rs').textContent=fR(shUnr);ge('sh-trail-card-rs').className='pos-pnl-rs '+(shUnr>=0?'g':'r');}if(ge('sh-trail-card-pts')){ge('sh-trail-card-pts').textContent=fP(shUnr)+' unrealised';ge('sh-trail-card-pts').className='pos-pnl-pts '+(shUnr>=0?'g':'r');}if(ge('sh-trail-card-ep'))ge('sh-trail-card-ep').textContent=shEp.toFixed(1);if(ge('sh-trail-card-lp')){ge('sh-trail-card-lp').textContent=lp>0?lp.toFixed(1):'—';}if(ge('sh-trail-card-sl'))ge('sh-trail-card-sl').textContent=parseFloat(hb.shadowSL||0)>0?parseFloat(hb.shadowSL).toFixed(1):'—';var _shSlRs=Math.abs(parseFloat(hb.shadowSL||shEp)-shEp)*15;if(ge('sh-trail-card-slrs'))ge('sh-trail-card-slrs').textContent='₹'+_shSlRs.toFixed(0);}else{_shFC.style.display='';_shIC.style.display='none';}}
-        if(ge('sh-trail-w'))ge('sh-trail-w').textContent=shW+'W';
-        if(ge('sh-trail-l'))ge('sh-trail-l').textContent=shL+'L';
-        if(ge('sh-trail-wr'))ge('sh-trail-wr').textContent=(shW+shL)>0?Math.round(shW/(shW+shL)*100)+'%':'—';
-        if(ge('sh-trail-today-count'))ge('sh-trail-today-count').textContent='('+shTr+' trade'+(shTr!==1?'s':'')+')';
-        var shUnrRow=ge('sh-trail-unr-row');if(shUnrRow){shUnrRow.style.display=shInT?'':'none';if(shInT){var rA=ge('sh-trail-unr-rs');var pA=ge('sh-trail-unr-pts');if(rA){rA.textContent=fR(shUnr);rA.style.color=gc(shUnr);}if(pA){pA.textContent=fP(shUnr);pA.style.color=gc(shUnr);}}}
-        if(ge('sh-trail-status'))ge('sh-trail-status').textContent=shInT&&shDir?shDir+' In Trade':'Watching';
-        if(ge('sh-trail-detail')){if(shInT&&shEp>0&&lp>0){ge('sh-trail-detail').innerHTML='<b style="color:'+gc(shUnr)+'">'+fP(shUnr)+'</b> unrealised · Entry: '+shEp.toFixed(0)+' · SL: '+parseFloat(hb.shadowSL||0).toFixed(0);}else{ge('sh-trail-detail').textContent='Watching for next signal…';}}
-        var shWE=ge('sh-trail-signal');if(shWE){shWE.style.display='';if(hb.lastCandle&&lp>0){var lc2=hb.lastCandle;var bH2=Math.max(lc2.open,lc2.close);var bL2=Math.min(lc2.open,lc2.close);var ce2=(bH2+25).toFixed(0);var pe2=(bL2-25).toFixed(0);var ceD2=lp-(bH2+25);var peD2=(bL2-25)-lp;shWE.innerHTML='<div class="watch-lvl-row watch-ce-row"><span class="watch-lvl-dir" style="color:#60a5fa">CE ▲</span><span class="watch-lvl-val">'+ce2+'</span><span class="watch-lvl-dist">close ≥'+ce2+' <span style="color:'+(ceD2>=0?'#10b981':'#94a3b8')+'">'+(ceD2>=0?'✓ past':'↑ '+Math.abs(ceD2).toFixed(0)+' pts away')+'</span></span></div><div class="watch-lvl-row watch-pe-row"><span class="watch-lvl-dir" style="color:#fca5a5">PE ▼</span><span class="watch-lvl-val">'+pe2+'</span><span class="watch-lvl-dist">close ≤'+pe2+' <span style="color:'+(peD2>=0?'#10b981':'#94a3b8')+'">'+(peD2>=0?'✓ past':'↓ '+Math.abs(peD2).toFixed(0)+' pts away')+'</span></span></div>';}else{shWE.innerHTML='';}} 
-        _renderShLog('sh-trail-body',hb.shadowTradeLog||[],alive);
-      }catch(e){console.error('TRAIL err',e);}
-
-      // ── LOCK50 Old shadow ───────────────────
-      try{
-        const s1Tr=hb.scalp1Trades||0;const s1W=hb.scalp1Wins||0;const s1L=hb.scalp1Losses||0;
-        const s1InT=!!(hb.scalp1InTrade);const s1Dir=(hb.scalp1Dir||'').toUpperCase();const s1Ep=parseFloat(hb.scalp1Entry||0);
-        const s1Unr=s1InT&&lp>0&&s1Ep>0?(s1Dir==='CE'?lp-s1Ep:s1Ep-lp):0;
-        const s1Total=s1Pnl+s1Unr;
-        const tpL2=ge('stab-pnl-l50o');if(tpL2){tpL2.textContent=fR(s1Total);tpL2.style.color=gc(s1Total);}
-        if(ge('sh-l50o-pnl-rs')){ge('sh-l50o-pnl-rs').textContent=fR(s1Total);ge('sh-l50o-pnl-rs').style.color=gc(s1Total);}
-        if(ge('sh-l50o-pnl-pts'))ge('sh-l50o-pnl-pts').textContent=fP(s1Total);
-        if(ge('sh-l50o-tc')){ge('sh-l50o-tc').innerHTML=s1Tr+(s1InT?'<span style="font-size:.6rem;color:#10b981"> +live</span>':'');}
-        if(ge('sh-l50o-wk-rs')){ge('sh-l50o-wk-rs').textContent=fR(s1Total);ge('sh-l50o-wk-rs').style.color=gc(s1Total);}
-        if(ge('sh-l50o-wk-pts'))ge('sh-l50o-wk-pts').textContent=fP(s1Total);
-        if(ge('sh-l50o-wrs'))ge('sh-l50o-wrs').textContent=(s1W+s1L)>0?s1W+'W / '+s1L+'L':'—';
-        var _s1FC=ge('sh-pos-l50o-flat'),_s1IC=ge('sh-pos-l50o-card');
-        if(_s1FC&&_s1IC){if(s1InT&&s1Ep>0){_s1FC.style.display='none';_s1IC.style.display='';var _s1Dir2=(hb.scalp1Dir||'').toUpperCase();_s1IC.className='pos-card pos-'+(_s1Dir2==='CE'?'ce':'pe');var _s1Badge=ge('sh-l50o-card-badge');if(_s1Badge){_s1Badge.className='pos-badge pos-b-'+(_s1Dir2==='CE'?'ce':'pe');_s1Badge.textContent=_s1Dir2+' OPTION';}if(ge('sh-l50o-card-rs')){ge('sh-l50o-card-rs').textContent=fR(s1Unr);ge('sh-l50o-card-rs').className='pos-pnl-rs '+(s1Unr>=0?'g':'r');}if(ge('sh-l50o-card-pts')){ge('sh-l50o-card-pts').textContent=fP(s1Unr)+' unrealised';ge('sh-l50o-card-pts').className='pos-pnl-pts '+(s1Unr>=0?'g':'r');}if(ge('sh-l50o-card-ep'))ge('sh-l50o-card-ep').textContent=s1Ep.toFixed(1);if(ge('sh-l50o-card-lp')){ge('sh-l50o-card-lp').textContent=lp>0?lp.toFixed(1):'—';}if(ge('sh-l50o-card-sl'))ge('sh-l50o-card-sl').textContent=parseFloat(hb.scalp1SL||0)>0?parseFloat(hb.scalp1SL).toFixed(1):'—';var _s1SlRs=Math.abs(parseFloat(hb.scalp1SL||s1Ep)-s1Ep)*15;if(ge('sh-l50o-card-slrs'))ge('sh-l50o-card-slrs').textContent='₹'+_s1SlRs.toFixed(0);}else{_s1FC.style.display='';_s1IC.style.display='none';}}
-        if(ge('sh-l50o-w'))ge('sh-l50o-w').textContent=s1W+'W';
-        if(ge('sh-l50o-l'))ge('sh-l50o-l').textContent=s1L+'L';
-        if(ge('sh-l50o-wr'))ge('sh-l50o-wr').textContent=(s1W+s1L)>0?Math.round(s1W/(s1W+s1L)*100)+'%':'—';
-        if(ge('sh-l50o-today-count'))ge('sh-l50o-today-count').textContent='('+s1Tr+' trade'+(s1Tr!==1?'s':'')+')';
-        var s1UnrRow=ge('sh-l50o-unr-row');if(s1UnrRow){s1UnrRow.style.display=s1InT?'':'none';if(s1InT){var rB=ge('sh-l50o-unr-rs');var pB=ge('sh-l50o-unr-pts');if(rB){rB.textContent=fR(s1Unr);rB.style.color=gc(s1Unr);}if(pB){pB.textContent=fP(s1Unr);pB.style.color=gc(s1Unr);}}}
-        if(ge('sh-l50o-status'))ge('sh-l50o-status').textContent=s1InT&&s1Dir?s1Dir+' In Trade':'Watching';
-        if(ge('sh-l50o-detail')){if(s1InT&&s1Ep>0&&lp>0){ge('sh-l50o-detail').innerHTML='<b style="color:'+gc(s1Unr)+'">'+fP(s1Unr)+'</b> unrealised · Entry: '+s1Ep.toFixed(0)+' · SL: '+parseFloat(hb.scalp1SL||0).toFixed(0);}else{ge('sh-l50o-detail').textContent='Watching for next signal…';}}
-        var s1WE=ge('sh-l50o-signal');if(s1WE){s1WE.style.display='';if(hb.lastCandle&&lp>0){var lc3=hb.lastCandle;var bH3=Math.max(lc3.open,lc3.close);var bL3=Math.min(lc3.open,lc3.close);var ce3=(bH3+25).toFixed(0);var pe3=(bL3-25).toFixed(0);var ceD3=lp-(bH3+25);var peD3=(bL3-25)-lp;s1WE.innerHTML='<div class="watch-lvl-row watch-ce-row"><span class="watch-lvl-dir" style="color:#60a5fa">CE ▲</span><span class="watch-lvl-val">'+ce3+'</span><span class="watch-lvl-dist">close ≥'+ce3+' <span style="color:'+(ceD3>=0?'#10b981':'#94a3b8')+'">'+(ceD3>=0?'✓ past':'↑ '+Math.abs(ceD3).toFixed(0)+' pts away')+'</span></span></div><div class="watch-lvl-row watch-pe-row"><span class="watch-lvl-dir" style="color:#fca5a5">PE ▼</span><span class="watch-lvl-val">'+pe3+'</span><span class="watch-lvl-dist">close ≤'+pe3+' <span style="color:'+(peD3>=0?'#10b981':'#94a3b8')+'">'+(peD3>=0?'✓ past':'↓ '+Math.abs(peD3).toFixed(0)+' pts away')+'</span></span></div>';}else{s1WE.innerHTML='';}} 
-        _renderShLog('sh-l50o-body',hb.scalp1TradeLog||[],alive);
-      }catch(e){console.error('LOCK50 err',e);}
-
-    }catch(e){console.error('refresh error',e);}
-  }
-
-  // ─── VMT Shadow refresh (separate poll, every 5s) ──────────────────────────
-  var _vmtDailyLog=[];
-  async function _vmtRefresh(){
-    try{
-      const r=await fetch('/api/vmt-shadow');
-      const v=await r.json();
-      if(!v)return;
-      const st=v.status||'IDLE';
-      const inT=(st==='IN_TRADE');
-      const isDone=(st==='DONE');
-      const hasSetup=!!(v.atmStrike);
-
-      // Update pre-market auto-levels
-      if(window._pmUpdateAutoLevels)_pmUpdateAutoLevels(v);
-
-      // ── Tab P&L badge ─────────────────────────────────────────────────────
-      const fp=isDone?(v.finalPnl||0):(inT?(v.livePnl||0):0);
-      const vmtPnlEl=ge('stab-pnl-vmt');
-      if(vmtPnlEl){
-        if(st==='IDLE'||st==='WAITING'||(!inT&&!isDone)){vmtPnlEl.innerHTML='&mdash;';vmtPnlEl.style.color='#8b949e';}
-        else{vmtPnlEl.textContent=fR(fp);vmtPnlEl.style.color=gc(fp);}
-      }
-
-      // ── Right stats card ──────────────────────────────────────────────────
-      var totPnl=isDone?(v.finalPnl||0):(inT?(v.livePnl||0):0);
-      var todRs=ge('vmt-ss-today-rs'),todPts=ge('vmt-ss-today-pts');
-      if(todRs){
-        if(!inT&&!isDone){todRs.innerHTML='&mdash;';todRs.style.color='';}
-        else{todRs.textContent=fR(totPnl);todRs.style.color=gc(totPnl);}
-      }
-      if(todPts)todPts.textContent=(inT||isDone)?fP(totPnl):'';
-
-      var unrRow=ge('vmt-ss-unr-row');
-      if(unrRow){
-        unrRow.style.display=inT?'':'none';
-        if(inT){
-          var ruR=ge('vmt-ss-unr-rs'),ruP=ge('vmt-ss-unr-pts');
-          if(ruR){ruR.textContent=fR(v.livePnl||0);ruR.style.color=gc(v.livePnl||0);}
-          if(ruP){ruP.textContent=fP(v.livePnl||0);ruP.style.color=gc(v.livePnl||0);}
-        }
-      }
-
-      // Trade Status row
-      var ssStatus=ge('vmt-ss-status'),ssDirEl=ge('vmt-ss-dir');
-      if(ssStatus){
-        if(isDone){var rm={TARGET:'&#9989; Target Hit',SL:'&#10060; SL Hit',TIME_EXIT:'&#9200; Time Exit',NO_TRADE:'&#9208; No Trade'};ssStatus.innerHTML=rm[v.exitReason]||v.exitReason||'Done';}
-        else if(inT){ssStatus.textContent='In Trade';}
-        else if(st==='READY'){ssStatus.textContent='Watching for trigger';}
-        else{ssStatus.textContent='Waiting';}
-      }
-      if(ssDirEl){
-        ssDirEl.innerHTML=v.tradeDir?('<span class="db-badge '+(v.tradeDir==='CE'?'ce':'pe')+'">'+v.tradeDir+'</span>'):'';
-      }
-
-      // ATM / DTE row
-      if(ge('vmt-ss-strike'))ge('vmt-ss-strike').textContent=hasSetup?(v.atmStrike||'&mdash;'):'&mdash;';
-      if(ge('vmt-ss-dte'))ge('vmt-ss-dte').textContent=hasSetup?(v.dte?v.dte+'d to expiry':''):'';
-
-      // CE/PE setup rows
-      if(ge('vmt-ss-ce'))ge('vmt-ss-ce').textContent=hasSetup&&v.ceEntry!=null?('₹'+(v.cePremium||0).toFixed(1)+' → Entry ₹'+(v.ceEntry||0).toFixed(1)):'&mdash;';
-      if(ge('vmt-ss-pe'))ge('vmt-ss-pe').textContent=hasSetup&&v.peEntry!=null?('₹'+(v.pePremium||0).toFixed(1)+' → Entry ₹'+(v.peEntry||0).toFixed(1)):'&mdash;';
-
-      // ── Left position card ─────────────────────────────────────────────────
-      var posCard=ge('vmt-pos-card');
-      var flatCard=ge('vmt-pos-flat');
-      var watchLvl=ge('vmt-watch-levels');
-      var statusTxt=ge('vmt-status-txt');
-
-      if(inT&&(v.tradeEntry||0)>0){
-        // Show active position card
-        if(flatCard)flatCard.style.display='none';
-        if(posCard){
-          posCard.style.display='';
-          var tdir=(v.tradeDir||'CE').toUpperCase();
-          posCard.className='pos-card pos-'+(tdir==='CE'?'ce':'pe');
-          var badge=ge('vmt-card-badge');
-          if(badge){badge.className='pos-badge pos-b-'+(tdir==='CE'?'ce':'pe');badge.textContent=tdir+' OPTION';}
-          var lunr=v.livePnl||0;
-          var rsEl=ge('vmt-card-rs'),ptsEl=ge('vmt-card-pts');
-          if(rsEl){rsEl.textContent=fR(lunr);rsEl.className='pos-pnl-rs '+(lunr>=0?'g':'r');}
-          if(ptsEl){ptsEl.textContent=(lunr>=0?'+':'')+lunr.toFixed(1)+' premium pts unrealised';ptsEl.className='pos-pnl-pts '+(lunr>=0?'g':'r');}
-          // Gauge (SL dist = entry - SL; range = SL dist * 4; 0%=SL, 50%=entry, 100%=target)
-          var slD=Math.abs((v.tradeEntry||0)-(v.tradeSL||0));
-          var gf=ge('vmt-card-gauge');
-          if(gf&&slD>0){var pct=Math.min(100,Math.max(0,Math.round(((lunr+slD)/(slD*4))*100)));gf.style.width=pct+'%';gf.style.background=lunr>=0?'#10b981':'#ef4444';}
-          if(ge('vmt-card-ep'))ge('vmt-card-ep').textContent=(v.tradeEntry||0).toFixed(1);
-          if(ge('vmt-card-lp'))ge('vmt-card-lp').textContent=(v.liveOptPrice||0).toFixed(1);
-          if(ge('vmt-card-sl'))ge('vmt-card-sl').textContent=(v.tradeSL||0).toFixed(1);
-          if(ge('vmt-card-slrs'))ge('vmt-card-slrs').textContent='₹'+Math.abs(Math.round(slD*15)).toLocaleString('en-IN');
-          if(ge('vmt-card-tgt'))ge('vmt-card-tgt').textContent=(v.tradeTarget||0).toFixed(1);
-          if(ge('vmt-card-strike'))ge('vmt-card-strike').textContent=v.atmStrike||'&mdash;';
-          var openPrem=(tdir==='CE'?(v.cePremium||0):(v.pePremium||0));
-          if(ge('vmt-card-open-prem'))ge('vmt-card-open-prem').textContent='₹'+openPrem.toFixed(1);
-          if(ge('vmt-card-live-prem'))ge('vmt-card-live-prem').textContent='₹'+(v.liveOptPrice||0).toFixed(1);
-        }
-      } else {
-        // Show watching / flat card
-        if(posCard)posCard.style.display='none';
-        if(flatCard)flatCard.style.display='';
-        if(statusTxt){
-          if(isDone){
-            var rm2={TARGET:'&#9989; Target Hit',SL:'&#10060; SL Hit',TIME_EXIT:'&#9200; Time Exit',NO_TRADE:'&#9208; No Trade Fired'};
-            statusTxt.innerHTML=rm2[v.exitReason]||v.exitReason||'Done';
-          } else if(st==='READY'){
-            statusTxt.textContent='Setup ready — watching for trigger';
-          } else {
-            statusTxt.textContent='Waiting for market open';
-          }
-        }
-        // Watch levels in flat card
-        if(watchLvl){
-          if(st==='READY'&&v.ceEntry!=null){
-            var ceD=(v.ceNow||0)-(v.ceEntry||0);
-            var peD=(v.peNow||0)-(v.peEntry||0);
-            watchLvl.innerHTML=
-              '<div class="watch-lvl-row watch-ce-row"><span class="watch-lvl-dir" style="color:#60a5fa">CE &#9651;</span><span class="watch-lvl-val">Entry ₹'+(v.ceEntry||0).toFixed(1)+'</span><span class="watch-lvl-dist">Live ₹'+(v.ceNow||0).toFixed(1)+' <span style="color:'+(ceD>=0?'#10b981':'#94a3b8')+'">'+(ceD>=0?'&#10003; triggered':'⇑ '+Math.abs(ceD).toFixed(1)+' away')+'</span></span></div>'+
-              '<div class="watch-lvl-row watch-pe-row"><span class="watch-lvl-dir" style="color:#fca5a5">PE &#9661;</span><span class="watch-lvl-val">Entry ₹'+(v.peEntry||0).toFixed(1)+'</span><span class="watch-lvl-dist">Live ₹'+(v.peNow||0).toFixed(1)+' <span style="color:'+(peD>=0?'#10b981':'#94a3b8')+'">'+(peD>=0?'&#10003; triggered':'⇑ '+Math.abs(peD).toFixed(1)+' away')+'</span></span></div>';
-          } else if(isDone&&v.tradeDir){
-            var fp2=v.finalPnl||0;
-            watchLvl.innerHTML='Final: <span style="color:'+gc(fp2)+'">'+fR(fp2)+'</span> &nbsp;&#183;&nbsp; <span style="color:'+gc(fp2)+'">'+fP(fp2)+'</span>';
-          } else if(isDone&&v.exitReason==='NO_TRADE'){
-            watchLvl.innerHTML='<span style="color:#8b949e">Entry window (9:15–9:45) closed without trigger.</span>';
-          } else if(hasSetup){
-            watchLvl.innerHTML='<span style="opacity:.7">ATM '+v.atmStrike+' &nbsp;&#183;&nbsp; CE ₹'+(v.cePremium||0).toFixed(1)+' &rarr; ₹'+(v.ceEntry||0).toFixed(1)+' entry</span>';
-          } else {
-            watchLvl.innerHTML='<span style="opacity:.4">Calculating setup levels…</span>';
-          }
-        }
-      }
-
-      // ── Trade table (Daily only — VMT fires max 1 trade per day) ─────────
-      var tbody=ge('vmt-tbody-d');
-      var cntEl=ge('vmt-th-count');
-      if(tbody){
-        if((inT||isDone)&&v.tradeDir){
-          var tdir2=v.tradeDir;
-          var pnlV=isDone?(v.finalPnl||0):(v.livePnl||0);
-          var reasonMap={TARGET:'Target Hit',SL:'SL Hit',TIME_EXIT:'Time Exit',NO_TRADE:'No Trade'};
-          var rTagMap={TARGET:'rc-eod',SL:'rc-sl',TIME_EXIT:'rc-trail',NO_TRADE:'rc-eod'};
-          var reasonTxt=isDone?(reasonMap[v.exitReason]||v.exitReason):'Live';
-          var rTagCls=isDone?(rTagMap[v.exitReason]||'rc-eod'):'rc-trail';
-          var openPrem2=(tdir2==='CE'?(v.cePremium||0):(v.pePremium||0));
-          var exitPrem=(isDone&&v.liveOptPrice)?v.liveOptPrice:0;
-          var timeStr=new Date().toLocaleTimeString('en-IN',{timeZone:'Asia/Kolkata',hour:'2-digit',minute:'2-digit'});
-          tbody.innerHTML='<tr>'+
-            '<td class="tc">'+timeStr+'</td>'+
-            '<td><span class="db-badge '+(tdir2==='CE'?'ce':'pe')+'">'+tdir2+'</span></td>'+
-            '<td class="mono">'+(v.atmStrike||'&mdash;')+'</td>'+
-            '<td class="mono">₹'+openPrem2.toFixed(1)+'</td>'+
-            '<td class="mono">₹'+(v.tradeEntry||0).toFixed(1)+'</td>'+
-            '<td class="mono">'+(exitPrem>0?'₹'+exitPrem.toFixed(1):(isDone?'&mdash;':'live'))+'</td>'+
-            '<td class="'+(pnlV>=0?'g':'r')+'" style="font-weight:800">'+(pnlV>=0?'+':'')+pnlV.toFixed(1)+' pts</td>'+
-            '<td><span class="pnl-rs '+(pnlV>=0?'g':'r')+'">'+(Math.round(pnlV*15)>=0?'+':'&minus;')+'₹'+Math.abs(Math.round(pnlV*15)).toLocaleString('en-IN')+'</span></td>'+
-            '<td><span class="rc-b '+rTagCls+'">'+reasonTxt+'</span></td>'+
-          '</tr>';
-          if(cntEl)cntEl.textContent='(1 trade)';
-        } else if(isDone&&v.exitReason==='NO_TRADE'){
-          tbody.innerHTML='<tr><td colspan="9" class="tt-e">No trade fired today (9:15–9:45 window passed)</td></tr>';
-          if(cntEl)cntEl.textContent='';
+      const shPnl=parseFloat((d.heartbeat?.shadowPnL??0).toFixed(0));
+      const shTr=d.heartbeat?.shadowTrades??0;
+      const shW=d.heartbeat?.shadowWins??0;
+      const shL=d.heartbeat?.shadowLosses??0;
+      const shInT=!!(d.heartbeat?.shadowInTrade);
+      const shDir=(d.heartbeat?.shadowDir||"").toUpperCase();
+      const shEntry=parseFloat(d.heartbeat?.shadowEntry||0);
+      const shSL=parseFloat(d.heartbeat?.shadowSL||0);
+      const livePrice=d.activeState?.livePrice||d.heartbeat?.livePrice||0;
+      const lock50Today=parseFloat(((d.today?.pnl||0)+(inT?(d.activeState?.unrealisedPnL||0):0)).toFixed(0));
+      // TRAIL KPI
+      if(_ge("k3t-today-rs")){_ge("k3t-today-rs").textContent=_fR(shPnl);_ge("k3t-today-rs").style.color="#818cf8";}
+      if(_ge("k3t-today-pts")){_ge("k3t-today-pts").textContent=_fP(shPnl);_ge("k3t-today-pts").style.color="#818cf8";}
+      if(_ge("k3t-trades")){_ge("k3t-trades").textContent=shTr;}
+      if(_ge("k3t-wl"))_ge("k3t-wl").innerHTML='<span class="sig3-g">'+shW+'W</span> / <span class="sig3-r">'+shL+'L</span>';
+      const _wrt=shW+shL>0?Math.round(shW/(shW+shL)*100):0;
+      if(_ge("k3t-winrate")){_ge("k3t-winrate").textContent=shW+shL>0?_wrt+'%':'\u2014';}
+      if(_ge("k3t-cmp-lock-rs")){_ge("k3t-cmp-lock-rs").textContent=_fR(lock50Today);_ge("k3t-cmp-lock-rs").style.color=_gc(lock50Today);}
+      if(_ge("k3t-cmp-lock-pts")){_ge("k3t-cmp-lock-pts").textContent=_fP(lock50Today);_ge("k3t-cmp-lock-pts").style.color=_gc(lock50Today);}
+      if(_ge("k3t-cmp-lock-tr")){_ge("k3t-cmp-lock-tr").textContent=d.today?.trades??0;}
+      if(_ge("k3t-cmp-trail-rs")){_ge("k3t-cmp-trail-rs").textContent=_fR(shPnl);}
+      if(_ge("k3t-cmp-trail-pts")){_ge("k3t-cmp-trail-pts").textContent=_fP(shPnl);}
+      if(_ge("k3t-cmp-trail-tr")){_ge("k3t-cmp-trail-tr").textContent=shTr;}
+      // TRAIL today's trades log
+      const shLog=d.heartbeat?.shadowTradeLog||[];
+      // (lock50Today already declared above)
+      if(_ge("k3t-today-count"))_ge("k3t-today-count").textContent="("+shTr+" trade"+(shTr!==1?"s":"")+")";
+      const k3tbody=_ge("k3t-today-body");
+      if(k3tbody){
+        if(!shLog.length){
+          k3tbody.innerHTML='<tr><td colspan="7" class="sig3-te">No TRAIL paper trades today'+(shInT?' &mdash; 1 live position active':'')+'</td></tr>';
         } else {
-          tbody.innerHTML='<tr><td colspan="9" class="tt-e">No VMT trades today</td></tr>';
-          if(cntEl)cntEl.textContent='';
+          k3tbody.innerHTML=[...shLog].reverse().map(function(t){
+            const _pts=t.pts!=null?parseFloat(t.pts):null;
+            const _pC=_pts!=null?(_pts>0?'sig3-g':_pts<0?'sig3-r':''):''; 
+            const _rsV=_pts!=null?_fR(_pts):'&mdash;';
+            const _ptV=_pts!=null?_fP(_pts):'';
+            const _entStr=t.entry>0?parseFloat(t.entry).toFixed(1):'&mdash;';
+            const _exStr=t.exit!=null&&t.exit>0?parseFloat(t.exit).toFixed(1):'<em style="color:#818cf8">live</em>';
+            const _dir=(t.dir||'').toUpperCase();
+            const _pIn=t.premIn!=null?'&#8377;'+parseFloat(t.premIn).toFixed(0):'&mdash;';
+            const _pOut=t.premOut!=null?'&#8377;'+parseFloat(t.premOut).toFixed(0):(t.exit!=null&&t.exit>0?'&mdash;':'<em style="color:#818cf8">live</em>');
+            return '<tr>'
+              +'<td class="sig3-ct">'+(t.time||'&mdash;')+'</td>'
+              +'<td><span class="sig3-db '+(_dir.toLowerCase())+'">'+(_dir||'&mdash;')+'</span></td>'
+              +'<td class="sig3-mono">'+_entStr+' &rarr; '+_exStr+'</td>'
+              +'<td class="sig3-mono">'+_pIn+'</td>'
+              +'<td class="sig3-mono">'+_pOut+'</td>'
+              +'<td><span class="sig3-pnl-rs '+_pC+'">'+_rsV+'</span><span class="sig3-pnl-spt"> '+_ptV+'</span></td>'
+              +'<td>'+(t.reason||'&mdash;')+'</td>'
+              +'</tr>';
+          }).join("");
         }
       }
-    }catch(e){console.error('VMT refresh err',e);}
+      // TRAIL live position card — show/hide and update
+      const _k3inT=_ge("k3t-pos-intrade");
+      const _k3flat=_ge("k3t-pos-flat");
+      if(_k3inT)_k3inT.style.display=shInT&&shEntry>0?'':'none';
+      if(_k3flat)_k3flat.style.display=shInT&&shEntry>0?'none':'';
+      if(shInT&&shEntry>0&&livePrice>0){
+        const shU=shDir==="CE"?livePrice-shEntry:shEntry-livePrice;
+        if(_ge("k3t-pos-pnl")){_ge("k3t-pos-pnl").textContent=_fR(shU);_ge("k3t-pos-pnl").style.color=shU>=0?"#818cf8":"#ef4444";}
+        if(_ge("k3t-pos-pts")){_ge("k3t-pos-pts").textContent=(shU>=0?"+":"")+shU.toFixed(0)+" index pts unrealised (paper)";}
+        if(_ge("k3t-pos-live"))_ge("k3t-pos-live").textContent=livePrice.toFixed(1);
+        if(_ge("k3t-pos-entry"))_ge("k3t-pos-entry").textContent=shEntry.toFixed(1);
+        if(_ge("k3t-pos-dir"))_ge("k3t-pos-dir").textContent=shDir||"—";
+        if(_ge("k3t-pos-dir-b"))_ge("k3t-pos-dir-b").textContent=(shDir||"?")+' OPTION';
+        if(_ge("k3t-pos-sl")&&shSL>0)_ge("k3t-pos-sl").textContent=shSL.toFixed(1);
+      }
+      // TRAIL flat — show next opportunity trigger levels
+      if(!shInT){
+        const lc2=d.heartbeat?.lastCandle;
+        if(lc2&&_ge("k3t-next-opp")){
+          const _bH=Math.max(lc2.open,lc2.close);
+          const _bL=Math.min(lc2.open,lc2.close);
+          const _ceTrig=(_bH+25).toFixed(0);
+          const _peTrig=(_bL-25).toFixed(0);
+          const _lpf=parseFloat(livePrice)||0;
+          const _ceAway=_lpf>0?((_bH+25)-_lpf).toFixed(0):null;
+          const _peAway=_lpf>0?(_lpf-(_bL-25)).toFixed(0):null;
+          const _ceStr=_ceAway!==null?(" \u2014 "+(_ceAway>0?"\uD83D\uDD34 "+_ceAway+" pts away":"\u2705 past")):"";
+          const _peStr=_peAway!==null?(" \u2014 "+(_peAway>0?"\uD83D\uDD34 "+_peAway+" pts away":"\u2705 past")):"";
+          _ge("k3t-next-opp").innerHTML="CE entry if close \u2265 "+_ceTrig+_ceStr+"&nbsp;&nbsp;/&nbsp;&nbsp;PE entry if close \u2264 "+_peTrig+_peStr;
+        }
+      }
+      // ── Bot status bar
+      const alive2=d.isAlive!==false;
+      const hbSt2=(d.botStatus||"").toUpperCase();
+      const _nowI=new Date(new Date().toLocaleString("en-US",{timeZone:"Asia/Kolkata"}));
+      const _iH=_nowI.getHours(),_iM=_nowI.getMinutes();
+      const _mktOpen=(_iH>9||(_iH===9&&_iM>=15))&&(_iH<15||(_iH===15&&_iM<=30));
+      const _sleeping2=!alive2&&!_mktOpen;
+      const isWait2=!inT&&alive2&&(hbSt2.includes("WAIT")||hbSt2.includes("9:25")||hbSt2.includes("MARKET"));
+      const dotCls2=!alive2?(_sleeping2?"waiting":"offline"):inT?"active":isWait2?"waiting":"scanning";
+      const lbl2=!alive2?(_sleeping2?"Bot sleeping \u2014 market closed":"Bot offline \u2014 not responding"):inT?"Bot is running a trade \u2014 "+((d.heartbeat?.direction||"")+" OPTION").trim():(isWait2?"Bot alive \u2014 waiting for market hours (opens 9:25 IST)":"Bot alive \u2014 monitoring the options market");
+      const val2=!alive2?(_sleeping2?"Sleeping":"Offline"):inT?"\u25CF\u00A0ACTIVE":(isWait2?"Waiting":"Scanning");
+      const valCol2=!alive2?(_sleeping2?"waiting-col":"offline-col"):inT?"active-col":isWait2?"waiting-col":"scanning-col";
+      const dot2=_ge("sig3-status-dot");if(dot2)dot2.className="gv-status-dot "+dotCls2;
+      if(_ge("sig3-status-lbl"))_ge("sig3-status-lbl").textContent=lbl2;
+      if(_ge("sig3-status-val")){_ge("sig3-status-val").textContent=val2;_ge("sig3-status-val").className="gv-status-val "+valCol2;}
+      const tkOK=!!(d.tokenOK);
+      if(_ge("sig3-token-status")){_ge("sig3-token-status").textContent=tkOK?"\u2713 Token OK":"\u2717 No Token";_ge("sig3-token-status").style.background=tkOK?"rgba(16,185,129,.15)":"rgba(239,68,68,.15)";_ge("sig3-token-status").style.color=tkOK?"#10b981":"#ef4444";}
+      if(_ge("sig3-token-link"))_ge("sig3-token-link").style.display=tkOK?"none":"";
+      // ── Last 15-min candle (both panels)
+      const lc=d.heartbeat?.lastCandle;
+      [["sig3-candle-wrap","sig3-candle-time","sig3-candle-colour","sig3-c-o","sig3-c-h","sig3-c-l","sig3-c-c","sig3-candle-status"],
+       ["sig3t-candle-wrap","sig3t-candle-time","sig3t-candle-colour","sig3t-c-o","sig3t-c-h","sig3t-c-l","sig3t-c-c","sig3t-candle-status"]
+      ].forEach(function(ids){
+        const cw=_ge(ids[0]);if(!lc||!cw)return;
+        cw.style.display="";
+        if(_ge(ids[1]))_ge(ids[1]).textContent="@ "+lc.time;
+        if(_ge(ids[2]))_ge(ids[2]).textContent=lc.colour==="bull"?"\uD83D\uDFE2 Bullish":"\uD83D\uDD34 Bearish";
+        if(_ge(ids[3]))_ge(ids[3]).textContent=lc.open;
+        if(_ge(ids[4]))_ge(ids[4]).textContent=lc.high;
+        if(_ge(ids[5]))_ge(ids[5]).textContent=lc.low;
+        if(_ge(ids[6]))_ge(ids[6]).textContent=lc.close;
+        if(_ge(ids[7]))_ge(ids[7]).textContent=lc.status||"";
+      });
+    }catch(e){console.error(e);}
   }
-  setInterval(_vmtRefresh,5000);
-  _vmtRefresh();
-
-  setInterval(_dbRefresh,3000);
-  _dbRefresh();
-  _sTab('lock50');
-
-  // ── Bot control ────────────────────────────────────────────────
-  function _toggleBotMenu(e){e.stopPropagation();var m=ge('bot-ctl-menu');if(m)m.style.display=m.style.display==='block'?'none':'block';}
-  document.addEventListener('click',function(){var m=ge('bot-ctl-menu');if(m)m.style.display='none';});
+  _sig3Refresh();setInterval(_sig3Refresh,8000);
+  function _toggleBotMenu(e){e.stopPropagation();const m=_ge('bot-ctl-menu');if(m)m.style.display=m.style.display==='none'?'block':'none';}
+  document.addEventListener('click',function(){const m=_ge('bot-ctl-menu');if(m)m.style.display='none';});
   async function _botAction(action){
-    var btn=document.querySelector('[onclick="_toggleBotMenu(event)"]');
-    if(btn){btn.textContent='⚙ …';btn.disabled=true;}
+    const m=_ge('bot-ctl-menu');if(m)m.style.display='none';
+    const labels={start:'Start the trading bot?',restart:'Restart the trading bot?',stop:'Stop the trading bot? It will not trade until manually restarted.'};
+    if(!confirm(labels[action]||'Perform action: '+action+'?'))return;
+    const btn=_ge('bot-ctl-btn');if(btn){btn.disabled=true;btn.textContent='...';}  
     try{
       const r=await fetch('/api/bot/action',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action})});
       const d=await r.json();
-      if(btn){btn.textContent='⚙ Bot ▾';btn.disabled=false;}
-      if(d.ok){const t=document.createElement('span');t.textContent=' ✓ '+d.msg;t.style.cssText='font-size:.7rem;color:#10b981;margin-left:6px';btn.parentNode.appendChild(t);setTimeout(function(){t.remove();},3000);}
+      if(btn){btn.textContent='\u2699 Bot \u25be';btn.disabled=false;}
+      if(d.ok){const t=document.createElement('span');t.textContent=' \u2713 '+d.msg;t.style.cssText='font-size:.7rem;color:#10b981;margin-left:6px';btn.parentNode.appendChild(t);setTimeout(function(){t.remove();},3000);}
       else alert('Error: '+(d.msg||'Failed'));
-    }catch(e){alert('Request failed');if(btn){btn.textContent='⚙ Bot ▾';btn.disabled=false;}}
+    }catch(e){alert('Request failed');if(btn){btn.textContent='\u2699 Bot \u25be';btn.disabled=false;}}
   }
   </script>
   <script src="/public/js/app.js"></script>
@@ -12125,7 +10801,6 @@ app.get("/signals", featureGate("feature_signals", "Signals"), async (req, res) 
     const closedTodayG = trades.filter((t) => (t.date || "").startsWith(todayStrG) && t.exitPrice && t.exitPrice > 0);
     const QTY_MULT_G = 15;
     function fmtRsG(v) { const r = Math.round(v * QTY_MULT_G); return (r >= 0 ? "+" : "\u2212") + "\u20B9" + Math.abs(r).toLocaleString("en-IN"); }
-    function fmtActRsG(pnlRs, pnl) { const r = (pnlRs != null) ? pnlRs : Math.round((pnl ?? 0) * QTY_MULT_G); return (r >= 0 ? "+" : "\u2212") + "\u20B9" + Math.abs(r).toLocaleString("en-IN"); }
     function fmtPtsG(v) { return (v >= 0 ? "+" : "") + v.toFixed(0) + " pts"; }
     const tierLabel = loggedIn ? "\uD83D\uDD14 Member" : "\uD83D\uDC64 Guest";
     const tierClass = loggedIn ? "sig-tier-free" : "sig-tier-guest";
@@ -12238,7 +10913,7 @@ app.get("/signals", featureGate("feature_signals", "Signals"), async (req, res) 
     <div class="sig3-kpis">
       <div class="sig3-kpi">
         <div class="sig3-kl">Today P&amp;L</div>
-        <div class="sig3-kv ${analytics.today.pnl >= 0 ? 'sig3-g' : 'sig3-r'}" id="gv-today-rs"><span class="${!loggedIn ? 'sig-blur' : ''}">${fmtActRsG(analytics.today.pnlRs, analytics.today.pnl)}</span></div>
+        <div class="sig3-kv ${analytics.today.pnl >= 0 ? 'sig3-g' : 'sig3-r'}" id="gv-today-rs"><span class="${!loggedIn ? 'sig-blur' : ''}">${fmtRsG(analytics.today.pnl)}</span></div>
         <div class="sig3-ks sig3-d" id="gv-today-pts"><span class="${!loggedIn ? 'sig-blur' : ''}">${fmtPtsG(analytics.today.pnl)}</span></div>
       </div>
       <div class="sig3-kpi">
@@ -12248,12 +10923,12 @@ app.get("/signals", featureGate("feature_signals", "Signals"), async (req, res) 
       </div>
       <div class="sig3-kpi">
         <div class="sig3-kl">This Week</div>
-        <div class="sig3-kv ${analytics.weekly.pnl >= 0 ? 'sig3-g' : 'sig3-r'}" id="gv-wk-rs"><span class="${!loggedIn ? 'sig-blur' : ''}">${fmtActRsG(analytics.weekly.pnlRs, analytics.weekly.pnl)}</span></div>
+        <div class="sig3-kv ${analytics.weekly.pnl >= 0 ? 'sig3-g' : 'sig3-r'}" id="gv-wk-rs"><span class="${!loggedIn ? 'sig-blur' : ''}">${fmtRsG(analytics.weekly.pnl)}</span></div>
         <div class="sig3-ks sig3-d" id="gv-wk-pts"><span class="${!loggedIn ? 'sig-blur' : ''}">${fmtPtsG(analytics.weekly.pnl)}</span></div>
       </div>
       <div class="sig3-kpi">
         <div class="sig3-kl">All-Time P&amp;L</div>
-        <div class="sig3-kv ${analytics.allTime.pnl >= 0 ? 'sig3-g' : 'sig3-r'}"><span class="${!loggedIn ? 'sig-blur' : ''}">${fmtActRsG(analytics.allTime.pnlRs, analytics.allTime.pnl)}</span></div>
+        <div class="sig3-kv ${analytics.allTime.pnl >= 0 ? 'sig3-g' : 'sig3-r'}"><span class="${!loggedIn ? 'sig-blur' : ''}">${fmtRsG(analytics.allTime.pnl)}</span></div>
         <div class="sig3-ks sig3-d"><span class="${!loggedIn ? 'sig-blur' : ''}">${fmtPtsG(analytics.allTime.pnl)}</span></div>
       </div>
       <div class="sig3-kpi">
@@ -12401,7 +11076,6 @@ app.get("/signals", featureGate("feature_signals", "Signals"), async (req, res) 
   <script>
   const _GQM = 15;
   function _gfR(v){const r=Math.round(v*_GQM);return(r>=0?"+":"\u2212")+"\u20B9"+Math.abs(r).toLocaleString("en-IN");}
-  function _gfActR(pnlRs,pnl){const r=(pnlRs!=null)?pnlRs:Math.round((pnl??0)*_GQM);return(r>=0?"+":"\u2212")+"\u20B9"+Math.abs(r).toLocaleString("en-IN");}
   function _gfP(v){return(v>=0?"+":"")+v.toFixed(0)+" pts";}
   function _gc2(v){return v>=0?"#10b981":"#ef4444";}
   function _ge2(id){return document.getElementById(id);}
@@ -12424,25 +11098,25 @@ app.get("/signals", featureGate("feature_signals", "Signals"), async (req, res) 
       const dot=_ge2("gv-dot");if(dot)dot.className="gv-status-dot "+dotCls;
       if(_ge2("gv-status-lbl"))_ge2("gv-status-lbl").textContent=lblTxt;
       if(_ge2("gv-status-val")){_ge2("gv-status-val").textContent=valTxt;_ge2("gv-status-val").className="gv-status-val "+valCls;}
-      const tot=(d.today?.pnl??0)+(inT?(d.heartbeat?.unrealisedPnL??0):0);
+      const tot=(d.today?.pnl??0)+(inT?(d.activeState?.unrealisedPnL??0):0);
       const _isGuest=${!loggedIn};
       // Only update numeric KPIs live if logged in — guests keep blurred SSR values
       if(_isGuest){
-        if(_ge2("gv-today-rs")){_ge2("gv-today-rs").innerHTML='<span class="sig-blur">'+_gfActR(d.today?.pnlRs,tot)+'</span>';_ge2("gv-today-rs").style.color=_gc2(tot);}
+        if(_ge2("gv-today-rs")){_ge2("gv-today-rs").innerHTML='<span class="sig-blur">'+_gfR(tot)+'</span>';_ge2("gv-today-rs").style.color=_gc2(tot);}
         if(_ge2("gv-today-pts"))_ge2("gv-today-pts").innerHTML='<span class="sig-blur">'+_gfP(tot)+(inT?" (incl. live)":"")+'</span>';
-        if(_ge2("gv-wk-rs")&&d.weekly){_ge2("gv-wk-rs").innerHTML='<span class="sig-blur">'+_gfActR(d.weekly?.pnlRs,d.weekly.pnl)+'</span>';_ge2("gv-wk-rs").style.color=_gc2(d.weekly.pnl);}
+        if(_ge2("gv-wk-rs")&&d.weekly){_ge2("gv-wk-rs").innerHTML='<span class="sig-blur">'+_gfR(d.weekly.pnl)+'</span>';_ge2("gv-wk-rs").style.color=_gc2(d.weekly.pnl);}
         if(_ge2("gv-wk-pts")&&d.weekly)_ge2("gv-wk-pts").innerHTML='<span class="sig-blur">'+_gfP(d.weekly.pnl)+'</span>';
       } else {
-        if(_ge2("gv-today-rs")){_ge2("gv-today-rs").textContent=_gfActR(d.today?.pnlRs,tot);_ge2("gv-today-rs").style.color=_gc2(tot);}
+        if(_ge2("gv-today-rs")){_ge2("gv-today-rs").textContent=_gfR(tot);_ge2("gv-today-rs").style.color=_gc2(tot);}
         if(_ge2("gv-today-pts"))_ge2("gv-today-pts").textContent=_gfP(tot)+(inT?" (incl. live)":"");
-        if(_ge2("gv-wk-rs")&&d.weekly){_ge2("gv-wk-rs").textContent=_gfActR(d.weekly?.pnlRs,d.weekly.pnl);_ge2("gv-wk-rs").style.color=_gc2(d.weekly.pnl);}
+        if(_ge2("gv-wk-rs")&&d.weekly){_ge2("gv-wk-rs").textContent=_gfR(d.weekly.pnl);_ge2("gv-wk-rs").style.color=_gc2(d.weekly.pnl);}
         if(_ge2("gv-wk-pts")&&d.weekly)_ge2("gv-wk-pts").textContent=_gfP(d.weekly.pnl);
       }
-      const tc=d.heartbeat?.tradeCount??d.today?.trades??0;
+      const tc=d.today?.trades||0;
       if(_ge2("gv-trades"))_ge2("gv-trades").innerHTML=tc+(tc!==1?" trades":" trade")+(inT?' <span style="font-size:.65rem;color:#10b981">+live</span>':"");
       if(_ge2("gv-wl")&&d.today)_ge2("gv-wl").innerHTML='<span class="sig3-g">'+d.today.wins+'W</span> / <span class="sig3-r">'+d.today.losses+'L</span>';
       if(inT&&d.activeState?.entryPrice>0){
-        const u=d.heartbeat?.unrealisedPnL??0;
+        const u=d.activeState?.unrealisedPnL??0;
         const dirLive=(d.heartbeat?.direction||"").toUpperCase();
         if(_ge2("gv-live-pnl")){_ge2("gv-live-pnl").textContent=_gfR(u);_ge2("gv-live-pnl").style.color=_gc2(u);}
         if(_ge2("gv-live-pts")){_ge2("gv-live-pts").textContent=_gfP(u)+" unrealised";_ge2("gv-live-pts").style.color=_gc2(u);}
@@ -12460,6 +11134,627 @@ async function ensureAdminEmail() {
         return;
     await (0, db_1.dbRun)("UPDATE users SET role = 'admin' WHERE email = ? AND role != 'admin'", [ADMIN_EMAIL]);
 }
+const HOLDINGS = [
+    // ── 🔥 HIGH PRIORITY ──────────────────────────────────────────────────────
+    { symbol: "NSE:BHEL", name: "BHEL", qty: 40, avgPrice: 253, invested: 10120, currentVal: 16342, targetAlloc: 25000, addAmountINR: 5000, priority: "🔥 HIGH",
+        dipAlerts: [{ pct: -10, label: "10% correction — start buying", urgency: "⭐⭐", buyMultiplier: 1 }, { pct: -18, label: "18% deep correction — accumulate", urgency: "⭐⭐⭐", buyMultiplier: 1.5 }],
+        absoluteAlerts: [], thesis: "Power sector capex + defense + railways — massive ₹1.2L Cr order book, PSU re-rating play" },
+    { symbol: "NSE:LT", name: "L&T", qty: 9, avgPrice: 3652, invested: 32867, currentVal: 35339, targetAlloc: 45000, addAmountINR: 5000, priority: "🔥 HIGH",
+        dipAlerts: [{ pct: -8, label: "8% dip — add to largest holding", urgency: "⭐⭐", buyMultiplier: 1 }],
+        absoluteAlerts: [{ price: 3200, label: "Below ₹3,200 — support zone", urgency: "⭐⭐", buyMultiplier: 1 }, { price: 3000, label: "Below ₹3,000 — strong accumulate", urgency: "⭐⭐⭐", buyMultiplier: 1.5 }],
+        thesis: "India #1 infra conglomerate — record ₹5L Cr order book, defense exports, IT services" },
+    { symbol: "NSE:SUZLON", name: "Suzlon Energy", qty: 230, avgPrice: 45.2, invested: 10396, currentVal: 12363, targetAlloc: 25000, addAmountINR: 5000, priority: "🔥 HIGH",
+        dipAlerts: [{ pct: -12, label: "12% dip — start adding", urgency: "⭐⭐", buyMultiplier: 1 }, { pct: -20, label: "20% deep dip — add more", urgency: "⭐⭐⭐", buyMultiplier: 1.5 }],
+        absoluteAlerts: [], thesis: "Wind energy — India 500GW target, only integrated wind turbine maker, debt-free turnaround" },
+    { symbol: "NSE:HAL", name: "HAL", qty: 1, avgPrice: 3973, invested: 3973, currentVal: 4368, targetAlloc: 15000, addAmountINR: 4500, priority: "🔥 HIGH",
+        dipAlerts: [{ pct: -8, label: "8% dip — accumulate", urgency: "⭐⭐", buyMultiplier: 1 }, { pct: -15, label: "15% dip — buy aggressively", urgency: "⭐⭐⭐", buyMultiplier: 2 }],
+        absoluteAlerts: [{ price: 4000, label: "Below ₹4,000 — strong buy", urgency: "⭐⭐⭐", buyMultiplier: 1.5 }],
+        thesis: "Defense PSU — ₹94,000Cr order book, 15yr revenue visibility, LCA Tejas + helicopters" },
+    { symbol: "NSE:HDFCBANK", name: "HDFC Bank", qty: 11, avgPrice: 912.2, invested: 10034, currentVal: 8435, targetAlloc: 20000, addAmountINR: 5000, priority: "🔥 HIGH",
+        dipAlerts: [{ pct: -5, label: "5% further dip — average down", urgency: "⭐⭐", buyMultiplier: 1 }],
+        absoluteAlerts: [{ price: 1600, label: "Below ₹1,600 — value zone", urgency: "⭐⭐", buyMultiplier: 1 }, { price: 1550, label: "Below ₹1,550 — strong accumulation", urgency: "⭐⭐⭐", buyMultiplier: 1.5 }],
+        thesis: "India largest private bank — HDFC merger overhang fading, NIM recovery in progress" },
+    // ── ⚡ MEDIUM PRIORITY ─────────────────────────────────────────────────────
+    { symbol: "NSE:NIFTYBEES", name: "Nifty BeES (ETF)", qty: 86, avgPrice: 263.85, invested: 22691, currentVal: 23143, targetAlloc: 50000, addAmountINR: 5000, priority: "⚡ MEDIUM",
+        dipAlerts: [{ pct: -5, label: "5% dip — buy more ETF", urgency: "⭐⭐", buyMultiplier: 1 }, { pct: -10, label: "10% correction — accumulate aggressively", urgency: "⭐⭐⭐", buyMultiplier: 2 }],
+        absoluteAlerts: [], thesis: "Index ETF — low cost Nifty 50 exposure. Every dip is a buying opportunity. Long term wealth builder." },
+    { symbol: "NSE:GOLDBEES", name: "Gold BeES (ETF)", qty: 75, avgPrice: 126.37, invested: 9478, currentVal: 9788, targetAlloc: 20000, addAmountINR: 3000, priority: "⚡ MEDIUM",
+        dipAlerts: [{ pct: -5, label: "5% dip — add to gold position", urgency: "⭐⭐", buyMultiplier: 1 }],
+        absoluteAlerts: [], thesis: "Gold ETF — hedge against INR depreciation + geopolitical risk. 10-15% portfolio allocation target." },
+    { symbol: "NSE:ICICIBANK", name: "ICICI Bank", qty: 5, avgPrice: 1216, invested: 6078, currentVal: 6322, targetAlloc: 15000, addAmountINR: 3000, priority: "⚡ MEDIUM",
+        dipAlerts: [{ pct: -8, label: "8% dip — add", urgency: "⭐⭐", buyMultiplier: 1 }, { pct: -15, label: "15% dip — buy aggressively", urgency: "⭐⭐⭐", buyMultiplier: 1.5 }],
+        absoluteAlerts: [{ price: 1100, label: "Below ₹1,100 — strong buy", urgency: "⭐⭐⭐", buyMultiplier: 1.5 }],
+        thesis: "Best-run private bank — tech-first, strong retail + corporate mix, consistent 15%+ RoE. Better than HDFC Bank right now." },
+    { symbol: "NSE:CDSL", name: "CDSL", qty: 4, avgPrice: 1169, invested: 4674, currentVal: 4816, targetAlloc: 10000, addAmountINR: 2000, priority: "⚡ MEDIUM",
+        dipAlerts: [{ pct: -15, label: "15% dip — demat growth story", urgency: "⭐⭐", buyMultiplier: 1 }, { pct: -25, label: "25% deep correction — buy more", urgency: "⭐⭐⭐", buyMultiplier: 1.5 }],
+        absoluteAlerts: [{ price: 1000, label: "Below ₹1,000 — excellent entry", urgency: "⭐⭐⭐", buyMultiplier: 1.5 }],
+        thesis: "Demat account monopoly — every new investor adds recurring revenue. Duopoly with NSDL. Beneficiary of India financialization." },
+    { symbol: "NSE:BSE", name: "BSE Ltd", qty: 1, avgPrice: 3563, invested: 3563, currentVal: 4194, targetAlloc: 10000, addAmountINR: 3000, priority: "⚡ MEDIUM",
+        dipAlerts: [{ pct: -10, label: "10% dip — add to position", urgency: "⭐⭐", buyMultiplier: 1 }],
+        absoluteAlerts: [{ price: 3800, label: "Below ₹3,800 — SEBI noise creates opportunity", urgency: "⭐⭐", buyMultiplier: 1 }],
+        thesis: "Exchange moat — SME IPO boom 80% YoY growth, derivatives comeback" },
+    { symbol: "NSE:M&M", name: "M&M", qty: 1, avgPrice: 3205, invested: 3205, currentVal: 3081, targetAlloc: 10000, addAmountINR: 3500, priority: "⚡ MEDIUM",
+        dipAlerts: [{ pct: -8, label: "8% dip — watch and accumulate", urgency: "⭐⭐", buyMultiplier: 1 }],
+        absoluteAlerts: [{ price: 2700, label: "Below ₹2,700 — add", urgency: "⭐⭐⭐", buyMultiplier: 1 }, { price: 2500, label: "Below ₹2,500 — deep value", urgency: "⭐⭐⭐", buyMultiplier: 1.5 }],
+        thesis: "SUV market leader + EV platform launch (BE 6e, XEV 9e) + tractor recovery upcoming" },
+    // ── 🔵 LOW PRIORITY (hold; only buy on clear signals) ─────────────────────
+    { symbol: "NSE:PIDILITIND", name: "Pidilite Industries", qty: 1, avgPrice: 1357, invested: 1357, currentVal: 1478, targetAlloc: 5000, addAmountINR: 2000, priority: "🔵 LOW",
+        dipAlerts: [{ pct: -10, label: "10% dip — quality compounder", urgency: "⭐⭐", buyMultiplier: 1 }, { pct: -18, label: "18% dip — add strongly", urgency: "⭐⭐⭐", buyMultiplier: 1.5 }],
+        absoluteAlerts: [{ price: 1200, label: "Below ₹1,200 — compelling entry", urgency: "⭐⭐⭐", buyMultiplier: 1.5 }],
+        thesis: "Fevicol monopoly — 70% market share in adhesives. Pricing power + rural distribution moat. Quality compounder." },
+    { symbol: "NSE:RELIANCE", name: "Reliance Industries", qty: 7, avgPrice: 1410, invested: 9867, currentVal: 9482, targetAlloc: 15000, addAmountINR: 3000, priority: "🔵 LOW",
+        dipAlerts: [{ pct: -8, label: "8% dip — minor add", urgency: "⭐⭐", buyMultiplier: 1 }],
+        absoluteAlerts: [{ price: 1250, label: "Below ₹1,250 — deep value zone", urgency: "⭐⭐⭐", buyMultiplier: 1 }],
+        thesis: "Wait for Jio IPO announcement — that is the real trigger. Buy major dips only." },
+    { symbol: "NSE:TITAN", name: "Titan Company", qty: 1, avgPrice: 4526, invested: 4526, currentVal: 4080, targetAlloc: 8000, addAmountINR: 3000, priority: "🔵 LOW",
+        dipAlerts: [{ pct: -15, label: "15% dip — PE normalizing", urgency: "⭐⭐", buyMultiplier: 1 }, { pct: -22, label: "22% deep correction — good PE entry", urgency: "⭐⭐⭐", buyMultiplier: 1.5 }],
+        absoluteAlerts: [{ price: 2800, label: "Below ₹2,800 — compelling entry", urgency: "⭐⭐⭐", buyMultiplier: 1 }],
+        thesis: "Jewelry + watches brand (Tanishq) — wait for wedding season recovery" },
+    { symbol: "NSE:INFY", name: "Infosys", qty: 1, avgPrice: 1315, invested: 1315, currentVal: 1175, targetAlloc: 10000, addAmountINR: 4000, priority: "🔵 LOW",
+        dipAlerts: [{ pct: -10, label: "IT sector selloff — buy bigger or exit", urgency: "⭐⭐", buyMultiplier: 1 }],
+        absoluteAlerts: [{ price: 1400, label: "Below ₹1,400 — IT value zone", urgency: "⭐⭐", buyMultiplier: 1 }],
+        thesis: "Tier-1 IT — position too small. Either commit ₹10K total or exit and redeploy." },
+    { symbol: "NSE:ONGC", name: "ONGC", qty: 1, avgPrice: 265.15, invested: 265, currentVal: 290, targetAlloc: 3000, addAmountINR: 1000, priority: "🔵 LOW",
+        dipAlerts: [{ pct: -10, label: "10% dip — dividend PSU", urgency: "⭐⭐", buyMultiplier: 1 }],
+        absoluteAlerts: [{ price: 240, label: "Below ₹240 — add for dividend", urgency: "⭐⭐", buyMultiplier: 1 }],
+        thesis: "PSU oil producer — 4%+ dividend yield. Hold for income. Add on major corrections only." },
+    { symbol: "NSE:COALINDIA", name: "Coal India", qty: 1, avgPrice: 435.7, invested: 436, currentVal: 457, targetAlloc: 3000, addAmountINR: 1000, priority: "🔵 LOW",
+        dipAlerts: [{ pct: -10, label: "10% dip — dividend play", urgency: "⭐⭐", buyMultiplier: 1 }],
+        absoluteAlerts: [{ price: 400, label: "Below ₹400 — strong dividend buy", urgency: "⭐⭐", buyMultiplier: 1 }],
+        thesis: "Coal monopoly PSU — 6%+ dividend yield, thermal power demand stays elevated. Income holding." },
+    { symbol: "NSE:DABUR", name: "Dabur India", qty: 1, avgPrice: 445.05, invested: 445, currentVal: 451, targetAlloc: 3000, addAmountINR: 1000, priority: "🔵 LOW",
+        dipAlerts: [{ pct: -10, label: "10% dip — FMCG dip buy", urgency: "⭐⭐", buyMultiplier: 1 }],
+        absoluteAlerts: [{ price: 400, label: "Below ₹400 — FMCG value zone", urgency: "⭐⭐", buyMultiplier: 1 }],
+        thesis: "Ayurvedic FMCG — rural recovery play. Consistent dividend, low volatility. Small position, hold." },
+    { symbol: "NSE:POWERGRID", name: "Power Grid", qty: 1, avgPrice: 318.7, invested: 319, currentVal: 294, targetAlloc: 3000, addAmountINR: 1000, priority: "🔵 LOW",
+        dipAlerts: [{ pct: -10, label: "10% further dip — avg down", urgency: "⭐⭐", buyMultiplier: 1 }],
+        absoluteAlerts: [{ price: 270, label: "Below ₹270 — strong dividend buy", urgency: "⭐⭐⭐", buyMultiplier: 1.5 }],
+        thesis: "Transmission monopoly — regulated 15%+ ROE, 4% dividend yield. Dip from ₹318. Add on weakness." },
+];
+const STOCK_ALERTS_DIR = process.env.STOCK_ALERTS_DIR || "/root/stock-alerts";
+const TRADING_BOT_ENV = process.env.TRADING_BOT_ENV_PATH || "/home/ubuntu/trading-bot/.env";
+function readKiteCredentials() {
+    try {
+        const raw = fs_1.default.readFileSync(TRADING_BOT_ENV, "utf8");
+        let apiKey = "", token = "";
+        for (const line of raw.split("\n")) {
+            const eq = line.indexOf("=");
+            if (eq < 0)
+                continue;
+            const k = line.slice(0, eq).trim();
+            const v = line.slice(eq + 1).trim();
+            if (k === "API_KEY")
+                apiKey = v;
+            if (k === "ACCESS_TOKEN")
+                token = v;
+        }
+        return { apiKey, token };
+    }
+    catch {
+        return { apiKey: "", token: "" };
+    }
+}
+function fetchKitePricesForHoldings(symbols) {
+    const { apiKey, token } = readKiteCredentials();
+    if (!apiKey || !token)
+        return Promise.reject(new Error("Kite credentials not available"));
+    const query = symbols.map(s => `i=${encodeURIComponent(s)}`).join("&");
+    return new Promise((resolve, reject) => {
+        const req = https_1.default.request({ hostname: "api.kite.trade", path: `/quote?${query}`, method: "GET",
+            headers: { "X-Kite-Version": "3", "Authorization": `token ${apiKey}:${token}` } }, res => {
+            let raw = "";
+            res.on("data", c => raw += c);
+            res.on("end", () => {
+                try {
+                    const json = JSON.parse(raw);
+                    if (json.status === "error")
+                        return reject(new Error(`Kite: ${json.message}`));
+                    const result = new Map();
+                    for (const [sym, q] of Object.entries(json.data)) {
+                        const price = q.last_price;
+                        const prevClose = q.ohlc?.close || price;
+                        result.set(sym, { price, changePct: prevClose ? (price - prevClose) / prevClose * 100 : 0,
+                            dayHigh: q.ohlc?.high || price, dayLow: q.ohlc?.low || price, prevClose });
+                    }
+                    resolve(result);
+                }
+                catch (e) {
+                    reject(new Error(`Parse error: ${e.message}`));
+                }
+            });
+        });
+        req.on("error", reject);
+        req.end();
+    });
+}
+// GET /api/holdings/prices — live prices + baseline + alert state (admin only)
+app.get("/api/holdings/prices", (req, res) => {
+    if (!req.session?.userId || req.session?.userRole !== "admin") {
+        res.status(403).json({ ok: false, error: "Admin only" });
+        return;
+    }
+    const symbols = HOLDINGS.map(s => s.symbol);
+    let baseline = {};
+    let alertState = {};
+    try {
+        baseline = JSON.parse(fs_1.default.readFileSync(path_1.default.join(STOCK_ALERTS_DIR, "baseline.json"), "utf8"));
+    }
+    catch { }
+    try {
+        alertState = JSON.parse(fs_1.default.readFileSync(path_1.default.join(STOCK_ALERTS_DIR, "alert-state.json"), "utf8"));
+    }
+    catch { }
+    fetchKitePricesForHoldings(symbols)
+        .then(prices => {
+        const data = HOLDINGS.map(stock => {
+            const q = prices.get(stock.symbol);
+            const base = baseline[stock.symbol] || null;
+            // Find last fired alert for this stock
+            const fired = Object.entries(alertState)
+                .filter(([k]) => k.startsWith(stock.symbol + "_"))
+                .sort((a, b) => new Date(b[1]).getTime() - new Date(a[1]).getTime());
+            const lastDip = fired[0] ? { key: fired[0][0], time: fired[0][1] } : null;
+            // Check current opportunities
+            const opps = [];
+            if (q) {
+                for (const a of stock.absoluteAlerts) {
+                    if (q.price <= a.price)
+                        opps.push(a.label);
+                }
+                if (base) {
+                    for (const d of stock.dipAlerts) {
+                        if (q.price <= base.price * (1 + d.pct / 100))
+                            opps.push(d.label);
+                    }
+                }
+            }
+            return { ...stock, price: q?.price ?? null, changePct: q?.changePct ?? null,
+                dayHigh: q?.dayHigh ?? null, dayLow: q?.dayLow ?? null,
+                baseline: base, lastDip, opportunities: opps };
+        });
+        const totInvested = HOLDINGS.reduce((s, h) => s + h.invested, 0);
+        const totTarget = HOLDINGS.reduce((s, h) => s + h.targetAlloc, 0);
+        res.json({ ok: true, data, totInvested, totTarget, fetchedAt: new Date().toISOString() });
+    })
+        .catch(err => res.json({ ok: false, error: err.message, data: HOLDINGS.map(stock => {
+            const base = baseline[stock.symbol] || null;
+            const fired = Object.entries(alertState)
+                .filter(([k]) => k.startsWith(stock.symbol + "_"))
+                .sort((a, b) => new Date(b[1]).getTime() - new Date(a[1]).getTime());
+            const lastDip = fired[0] ? { key: fired[0][0], time: fired[0][1] } : null;
+            return { ...stock, price: null, changePct: null, dayHigh: null, dayLow: null,
+                baseline: base, lastDip, opportunities: [] };
+        }), totInvested: HOLDINGS.reduce((s, h) => s + h.invested, 0),
+        totTarget: HOLDINGS.reduce((s, h) => s + h.targetAlloc, 0),
+        fetchedAt: new Date().toISOString() }));
+});
+// GET /holdings — portfolio dashboard page (admin only)
+app.get("/holdings", requireAdmin, (_req, res) => {
+    const totInvested = HOLDINGS.reduce((s, h) => s + h.invested, 0);
+    const totCurrentVal = HOLDINGS.reduce((s, h) => s + h.currentVal, 0);
+    const totTarget = HOLDINGS.reduce((s, h) => s + h.targetAlloc, 0);
+    const totPnl = totCurrentVal - totInvested;
+    const totPnlPct = (totPnl / totInvested * 100).toFixed(1);
+    const pnlColor = totPnl >= 0 ? "#34d399" : "#f87171";
+    const stocksJson = JSON.stringify(HOLDINGS);
+    res.send(`<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>My Holdings — ZeroScreen</title>
+  <link rel="stylesheet" href="/public/css/style.css">
+  <style>
+    *{box-sizing:border-box}
+    body{background:#f1f5f9;color:#1e293b}
+    .hw{max-width:1300px;margin:0 auto;padding:16px 12px 60px}
+
+    /* ── Summary bar ── */
+    .hs{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:16px;align-items:center;
+        background:#fff;border:1px solid #e2e8f0;
+        border-radius:14px;padding:14px 18px;box-shadow:0 1px 4px rgba(0,0,0,.06)}
+    .hs-title{font-size:1.1rem;font-weight:800;color:#0f172a;flex:0 0 100%;
+              display:flex;align-items:center;gap:8px;margin-bottom:6px}
+    .hs-title small{font-size:.72rem;color:#94a3b8;font-weight:400;margin-left:auto}
+    .hs-s{background:#f8fafc;border:1px solid #e2e8f0;
+          border-radius:8px;padding:8px 14px;text-align:center;flex:1;min-width:88px}
+    .hs-v{font-size:1rem;font-weight:800;line-height:1.2;color:#0f172a}
+    .hs-l{font-size:.6rem;color:#94a3b8;text-transform:uppercase;letter-spacing:.5px;margin-top:1px}
+
+    /* ── Toolbar ── */
+    .htb{display:flex;align-items:center;gap:10px;margin-bottom:10px;flex-wrap:wrap}
+    .htb-btn{background:#7c3aed;border:none;
+             color:#fff;border-radius:7px;padding:5px 14px;font-size:.76rem;
+             font-weight:700;cursor:pointer;transition:.15s}
+    .htb-btn:hover{background:#6d28d9}
+    .htb-info{font-size:.73rem;color:#64748b}
+    .htb-mkt-open{color:#059669;font-weight:700;font-size:.73rem}
+    .htb-mkt-cl{color:#d97706;font-weight:700;font-size:.73rem}
+
+    /* ── Table ── */
+    .ht-wrap{overflow-x:auto;border-radius:12px;border:1px solid #e2e8f0;box-shadow:0 1px 4px rgba(0,0,0,.05)}
+    table{width:100%;border-collapse:collapse;font-size:.8rem;background:#fff}
+    thead tr{background:#f8fafc;border-bottom:2px solid #e2e8f0}
+    th{padding:9px 10px;text-align:left;font-size:.63rem;font-weight:800;
+       text-transform:uppercase;letter-spacing:.6px;color:#64748b;white-space:nowrap}
+    th:not(:first-child){text-align:right}
+    tbody tr{border-bottom:1px solid #f1f5f9;transition:.15s;cursor:default}
+    tbody tr:hover{background:#f8fafc}
+    tbody tr.opp{background:#ecfdf5;border-left:3px solid #10b981}
+    tbody tr.opp:hover{background:#d1fae5}
+    tbody tr.watch{background:#fffbeb;border-left:3px solid #f59e0b}
+    tbody tr.loss td.tdpnl{color:#dc2626}
+    td{padding:8px 10px;white-space:nowrap;color:#334155}
+    td:not(:first-child){text-align:right}
+    td.tdsym{text-align:left}
+    td.tdname{text-align:left;font-weight:700;color:#0f172a;max-width:130px}
+    td.tdname small{display:block;font-size:.63rem;color:#94a3b8;font-weight:400}
+    .pri{font-size:.6rem;padding:1px 6px;border-radius:10px;font-weight:700;white-space:nowrap;margin-left:4px}
+    .ph{background:#fee2e2;color:#b91c1c;border:1px solid #fca5a5}
+    .pm{background:#fef3c7;color:#92400e;border:1px solid #fde68a}
+    .pl{background:#ede9fe;color:#5b21b6;border:1px solid #c4b5fd}
+    .status-opp{background:#d1fae5;color:#065f46;border:1px solid #6ee7b7;
+                border-radius:6px;padding:2px 8px;font-size:.68rem;font-weight:800;
+                animation:blink 2s infinite;display:inline-block}
+    .status-watch{background:#fef3c7;color:#92400e;border:1px solid #fde68a;
+                  border-radius:6px;padding:2px 8px;font-size:.68rem;font-weight:700;display:inline-block}
+    .status-hold{color:#94a3b8;font-size:.72rem}
+    @keyframes blink{0%,100%{opacity:1}50%{opacity:.6}}
+    .tdpx{font-weight:800}
+    .trig-dist{font-size:.68rem;color:#64748b}
+    .trig-hit{color:#059669;font-weight:700}
+    .trig-near{color:#d97706;font-weight:700}
+
+    /* ── Detail panel (expandable) ── */
+    .det-row{display:none;background:#f8fafc}
+    .det-row.open{display:table-row}
+    .det-inner{padding:14px 16px;display:flex;flex-direction:column;gap:10px}
+    .det-top{display:flex;flex-wrap:wrap;gap:10px}
+    .det-box{background:#fff;border:1px solid #e2e8f0;
+             border-radius:8px;padding:10px 14px;flex:1;min-width:160px;box-shadow:0 1px 3px rgba(0,0,0,.04)}
+    .det-box-full{background:#fff;border:1px solid #e2e8f0;
+                  border-radius:8px;padding:10px 14px;width:100%;box-shadow:0 1px 3px rgba(0,0,0,.04)}
+    .det-lbl{font-size:.6rem;font-weight:800;text-transform:uppercase;letter-spacing:.5px;
+             color:#94a3b8;margin-bottom:6px}
+    .det-val{font-size:.8rem;color:#1e293b}
+    .det-dip{border-color:#c4b5fd;background:#faf5ff}
+    .det-opp{border-color:#6ee7b7;background:#f0fdf4}
+    .opp-item{font-size:.73rem;color:#065f46;font-weight:600;margin:2px 0}
+    .thesis{font-size:.74rem;color:#475569;line-height:1.6}
+    .trig-tags{display:flex;flex-wrap:wrap;gap:4px;margin-top:2px}
+    .trig-tag{font-size:.62rem;padding:3px 8px;border-radius:4px;white-space:nowrap}
+    .trig-abs{background:#ecfeff;color:#0e7490;border:1px solid #a5f3fc}
+    .trig-dip{background:#faf5ff;color:#6d28d9;border:1px solid #c4b5fd}
+    .buy-box{background:#f0fdf4;border:1px solid #86efac;
+             border-radius:6px;padding:6px 10px;font-size:.75rem;color:#166534;margin-top:6px}
+
+    /* ── Token status ── */
+    .tok-warn{background:#fffbeb;border:1px solid #fde68a;
+              color:#92400e;border-radius:8px;padding:8px 14px;font-size:.75rem;
+              margin-bottom:12px;display:flex;align-items:center;gap:8px}
+    .tok-ok{background:#f0fdf4;border:1px solid #86efac;
+            color:#166534;border-radius:8px;padding:8px 14px;font-size:.75rem;
+            margin-bottom:12px;display:none;align-items:center;gap:8px}
+
+    /* ── Opportunity panel ── */
+    .opp-panel{background:#f0fdf4;border:1px solid #86efac;
+               border-radius:10px;padding:12px 16px;margin-bottom:14px;display:none}
+    .opp-panel.has-opps{display:block}
+    .opp-panel-title{font-size:.75rem;font-weight:800;color:#059669;margin-bottom:8px}
+    .opp-pill{display:inline-block;background:#dcfce7;color:#166534;
+              border:1px solid #86efac;border-radius:6px;padding:3px 10px;
+              font-size:.72rem;font-weight:700;margin:2px}
+
+    @media(max-width:700px){
+      .hs-s{min-width:70px;padding:7px 8px}
+      .hs-v{font-size:.85rem}
+      td,th{padding:7px 6px}
+    }
+  </style>
+</head>
+<body>
+  ${nav("holdings", _req)}
+  <div class="hw">
+
+    <!-- Summary -->
+    <div class="hs">
+      <div class="hs-title">📊 My Portfolio
+        <small id="tok-time">Loading live prices…</small>
+      </div>
+      <div class="hs-s">
+        <div class="hs-v">₹${Math.round(totInvested / 1000)}K</div>
+        <div class="hs-l">Invested</div>
+      </div>
+      <div class="hs-s">
+        <div class="hs-v" id="h-live" style="color:${pnlColor}">₹${Math.round(totCurrentVal / 1000)}K</div>
+        <div class="hs-l">Live Value</div>
+      </div>
+      <div class="hs-s">
+        <div class="hs-v" id="h-pnl" style="color:${pnlColor}">${totPnl >= 0 ? '+' : ''}₹${Math.round(Math.abs(totPnl)).toLocaleString('en-IN')}</div>
+        <div class="hs-l">P&amp;L</div>
+      </div>
+      <div class="hs-s">
+        <div class="hs-v" id="h-pct" style="color:${pnlColor}">${totPnl >= 0 ? '+' : ''}${totPnlPct}%</div>
+        <div class="hs-l">Return</div>
+      </div>
+      <div class="hs-s">
+        <div class="hs-v" style="color:#f59e0b">₹${Math.round(totTarget / 1000)}K</div>
+        <div class="hs-l">Target Alloc</div>
+      </div>
+      <div class="hs-s">
+        <div class="hs-v" id="h-opps" style="color:#64748b">—</div>
+        <div class="hs-l">Opportunities</div>
+      </div>
+    </div>
+
+    <!-- Toolbar -->
+    <div class="htb">
+      <button class="htb-btn" onclick="load()">↻ Refresh Prices</button>
+      <span id="htb-ts" class="htb-info"></span>
+      <span id="htb-mkt"></span>
+    </div>
+
+    <!-- Token warning (hidden when live) -->
+    <div class="tok-warn" id="tok-warn">
+      ⚠️ Prices shown below are your last known values (Zerodha Kite token refreshes automatically Mon–Fri at 7:30 AM IST)
+    </div>
+    <div class="tok-ok" id="tok-ok">
+      ✅ Live prices from Zerodha Kite
+    </div>
+
+    <!-- Opportunities panel -->
+    <div class="opp-panel" id="opp-panel">
+      <div class="opp-panel-title">🎯 Buy Opportunities Right Now</div>
+      <div id="opp-pills"></div>
+    </div>
+
+    <!-- Table -->
+    <div class="ht-wrap">
+      <table id="htbl">
+        <thead>
+          <tr>
+            <th>#</th>
+            <th style="text-align:left">Stock</th>
+            <th>Qty</th>
+            <th>Avg ₹</th>
+            <th>Invested</th>
+            <th>Live Price</th>
+            <th>Live Val</th>
+            <th>P&amp;L</th>
+            <th>P&amp;L %</th>
+            <th>Nearest Trigger</th>
+            <th>Status</th>
+          </tr>
+        </thead>
+        <tbody id="htb-body"></tbody>
+      </table>
+    </div>
+    <div style="font-size:.68rem;color:#64748b;margin-top:8px;padding-left:4px">
+      Click any row to expand triggers, thesis &amp; last dip alert
+    </div>
+  </div>
+
+  <script src="/public/js/app.js"></script>
+  <script>
+  const _H = ${stocksJson};
+
+  const inr   = n => '₹'+Math.round(n).toLocaleString('en-IN');
+  const inrd  = (n,d=2) => '₹'+n.toFixed(d);
+  const pct   = n => (n>=0?'+':'')+n.toFixed(2)+'%';
+  const fdt   = iso => {
+    if(!iso) return '—';
+    const d=new Date(iso), M=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+    const h=d.getHours(),m=d.getMinutes();
+    return d.getDate()+' '+M[d.getMonth()]+' '+(h<10?'0'+h:h)+':'+(m<10?'0'+m:m);
+  };
+  const isMO = () => {
+    const ist=new Date(Date.now()+5.5*3600000), day=ist.getUTCDay();
+    if(day===0||day===6) return false;
+    const mins=ist.getUTCHours()*60+ist.getUTCMinutes();
+    return mins>=555&&mins<=930;
+  };
+  const priCls = p => p.includes('HIGH')?'ph':p.includes('MEDIUM')?'pm':'pl';
+  const parseKey = (key,sym) => {
+    const r=key.replace(sym+'_','');
+    if(r.startsWith('dip_')) return 'Dip '+r.replace('dip_','')+'%';
+    if(r.startsWith('abs_')) return 'Below ₹'+parseFloat(r.replace('abs_','')).toLocaleString('en-IN');
+    return r;
+  };
+
+  // Find nearest trigger and distance
+  function nearestTrigger(s, price, base){
+    let best=null, bestDist=Infinity;
+    if(price===null) price = s.avgPrice; // fallback
+    for(const a of s.absoluteAlerts){
+      const dist=(price-a.price)/price*100; // positive = above trigger (need to fall)
+      if(dist>0 && dist<bestDist){ bestDist=dist; best={label:'₹'+a.price.toLocaleString('en-IN'),dist,hit:false}; }
+      if(dist<=0){ best={label:'₹'+a.price.toLocaleString('en-IN'),dist,hit:true}; bestDist=0; break; }
+    }
+    if(base){
+      for(const d of s.dipAlerts){
+        const thresh=base.price*(1+d.pct/100);
+        const dist=(price-thresh)/price*100;
+        if(dist>0 && dist<bestDist){ bestDist=dist; best={label:d.pct+'% dip',dist,hit:false}; }
+        if(dist<=0 && bestDist>0){ best={label:d.pct+'% dip',dist,hit:true}; bestDist=0; break; }
+      }
+    }
+    return best;
+  }
+
+  function rowClass(opps, pnlPct, trig){
+    if(opps && opps.length>0) return 'opp';
+    if(trig && !trig.hit && trig.dist<5) return 'watch';
+    return pnlPct<0?'loss':'';
+  }
+
+  function renderTable(data){
+    const body = document.getElementById('htb-body');
+    const sorted=[...data].sort((a,b)=>{
+      const oa=a.opportunities.length, ob=b.opportunities.length;
+      if(oa!==ob) return ob-oa;
+      const p=['HIGH','MEDIUM','LOW'];
+      return p.findIndex(x=>a.priority.includes(x))-p.findIndex(x=>b.priority.includes(x));
+    });
+
+    let html='', oppPills='', oppCount=0;
+    sorted.forEach((s,i)=>{
+      const hasPx  = s.price!==null;
+      const px     = hasPx ? s.price : s.avgPrice;
+      const lv     = hasPx ? s.qty * s.price : s.currentVal;
+      const pnlA   = lv - s.invested;
+      const pnlP   = pnlA / s.invested * 100;
+      const pnlClr = pnlP>=0?'#34d399':'#f87171';
+      const trig   = nearestTrigger(s, px, s.baseline);
+      const rc     = rowClass(s.opportunities, pnlP, trig);
+      const isOpp  = rc==='opp';
+      const isWatch= rc==='watch';
+      const rid    = 'r'+i;
+
+      // Trigger cell
+      let trigHtml='<span class="trig-dist">—</span>';
+      if(trig){
+        if(trig.hit){
+          trigHtml=\`<span class="trig-hit">● \${trig.label}</span>\`;
+        } else {
+          const distStr=trig.dist.toFixed(1)+'% away';
+          const cls=trig.dist<5?'trig-near':'trig-dist';
+          trigHtml=\`<span class="\${cls}">\${trig.label} · \${distStr}</span>\`;
+        }
+      }
+
+      // Status
+      let statusHtml='<span class="status-hold">Hold</span>';
+      if(isOpp) statusHtml='<span class="status-opp">🎯 BUY</span>';
+      else if(isWatch) statusHtml='<span class="status-watch">⚠️ Watch</span>';
+
+      // Price cell
+      const pxColor = hasPx ? (s.changePct>=0?'#34d399':'#f87171') : '#64748b';
+      const pxHtml  = hasPx
+        ? \`<span class="tdpx" style="color:\${pxColor}">\${inrd(s.price)}</span> <small style="color:\${pxColor}">\${pct(s.changePct)}</small>\`
+        : \`<span style="color:#64748b">\${inrd(s.avgPrice)} <small>(stale)</small></span>\`;
+
+      if(isOpp){ oppCount++; oppPills+=\`<span class="opp-pill">\${s.name}: \${s.opportunities[0]}</span>\`; }
+
+      // Detail row content
+      const trigTags=[
+        ...s.absoluteAlerts.map(a=>\`<span class="trig-tag trig-abs">₹\${a.price.toLocaleString('en-IN')} — \${a.label}</span>\`),
+        ...s.dipAlerts.map(d=>\`<span class="trig-tag trig-dip">\${d.pct}% — \${d.label}</span>\`)
+      ].join('');
+      const lastDipHtml = s.lastDip
+        ? \`<strong style="color:#c4b5fd">\${parseKey(s.lastDip.key,s.symbol)}</strong><br><span style="color:#64748b">\${fdt(s.lastDip.time)}</span>\`
+        : '<span style="color:#64748b;font-style:italic">No alert fired yet — bot starts Mon 9:30 AM</span>';
+      const oppDetail = isOpp
+        ? \`<div class="det-box det-opp">
+            <div class="det-lbl">🟢 Buy Now</div>
+            \${s.opportunities.map(o=>\`<div class="opp-item">✅ \${o}</div>\`).join('')}
+            <div class="buy-box">Buy \${Math.max(1,Math.floor(s.addAmountINR/px))} shares × \${inrd(px)} ≈ \${inr(Math.round(Math.max(1,Math.floor(s.addAmountINR/px))*px))}</div>
+          </div>\`
+        : '';
+
+      html+=\`<tr class="\${rc}" onclick="tog('\${rid}')">
+        <td style="color:#64748b;width:28px">\${i+1}</td>
+        <td class="tdname">\${s.name}<small>\${s.symbol} <span class="pri \${priCls(s.priority)}">\${s.priority.replace(/[^\w\s]/g,'').trim()}</span></small></td>
+        <td style="color:#94a3b8">\${s.qty}</td>
+        <td style="color:#94a3b8">\${inrd(s.avgPrice,s.avgPrice<100?2:0)}</td>
+        <td>\${inr(s.invested)}</td>
+        <td>\${pxHtml}</td>
+        <td style="color:\${pnlClr}">\${inr(lv)}</td>
+        <td class="tdpnl" style="color:\${pnlClr}">\${pnlA>=0?'+':''}\${inr(Math.abs(pnlA))}</td>
+        <td style="color:\${pnlClr};font-weight:700">\${pct(pnlP)}</td>
+        <td>\${trigHtml}</td>
+        <td>\${statusHtml}</td>
+      </tr>
+      <tr class="det-row" id="\${rid}">
+        <td colspan="11">
+          <div class="det-inner">
+            <div class="det-top">
+              <div class="det-box det-dip">
+                <div class="det-lbl">📉 Last Dip Alert</div>
+                <div class="det-val">\${lastDipHtml}</div>
+              </div>
+              <div class="det-box">
+                <div class="det-lbl">🎯 Triggers</div>
+                <div class="trig-tags">\${trigTags||'<span style="color:#94a3b8">No triggers set</span>'}</div>
+              </div>
+              \${oppDetail}
+            </div>
+            <div class="det-box-full">
+              <div class="det-lbl">💡 Thesis</div>
+              <div class="thesis">\${s.thesis}</div>
+            </div>
+          </div>
+        </td>
+      </tr>\`;
+    });
+
+    body.innerHTML=html;
+
+    // Opportunities panel
+    const panel=document.getElementById('opp-panel');
+    document.getElementById('opp-pills').innerHTML=oppPills;
+    panel.classList.toggle('has-opps', oppCount>0);
+    document.getElementById('h-opps').textContent=oppCount?oppCount+' stock'+(oppCount>1?'s':''):'None';
+    document.getElementById('h-opps').style.color=oppCount?'#10b981':'#64748b';
+
+    // Hero live totals
+    let lv2=0, pnl2=0;
+    for(const s of data){ const v=s.price!==null?s.qty*s.price:s.currentVal; lv2+=v; pnl2+=v-s.invested; }
+    document.getElementById('h-live').textContent='₹'+Math.round(lv2/1000)+'K';
+    document.getElementById('h-live').style.color=lv2>${totInvested}?'#34d399':'#f87171';
+    const ps=pnl2>=0?'+':'';
+    document.getElementById('h-pnl').textContent=ps+'₹'+Math.round(Math.abs(pnl2)).toLocaleString('en-IN');
+    document.getElementById('h-pnl').style.color=pnl2>=0?'#34d399':'#f87171';
+    document.getElementById('h-pct').textContent=ps+(pnl2/${totInvested}*100).toFixed(1)+'%';
+    document.getElementById('h-pct').style.color=pnl2>=0?'#34d399':'#f87171';
+  }
+
+  function tog(id){
+    const el=document.getElementById(id);
+    if(el) el.classList.toggle('open');
+  }
+
+  function mktStatus(){
+    const el=document.getElementById('htb-mkt');
+    el.innerHTML=isMO()?'<span class="htb-mkt-open">🟢 Market OPEN</span>':'<span class="htb-mkt-cl">🟡 Market CLOSED</span>';
+  }
+
+  let _live=false;
+  async function load(){
+    document.getElementById('htb-ts').textContent='Fetching…';
+    try{
+      const r=await fetch('/api/holdings/prices');
+      const j=await r.json();
+      if(!j.data){document.getElementById('htb-ts').textContent='Failed: '+j.error; return;}
+      _live=j.ok;
+      // Merge live data into static holdings
+      const merged=_H.map(h=>{
+        const d=j.data.find(x=>x.symbol===h.symbol)||{};
+        return {...h, price:d.price??null, changePct:d.changePct??null,
+          dayHigh:d.dayHigh??null, dayLow:d.dayLow??null,
+          baseline:d.baseline??null, lastDip:d.lastDip??null,
+          opportunities:d.opportunities??[]};
+      });
+      renderTable(merged);
+      const t=new Date(j.fetchedAt).toLocaleTimeString('en-IN');
+      document.getElementById('htb-ts').textContent=j.ok?('Updated '+t):('Stale — '+t);
+      document.getElementById('tok-ok').style.display  = j.ok?'flex':'none';
+      document.getElementById('tok-warn').style.display= j.ok?'none':'flex';
+    }catch(e){
+      document.getElementById('htb-ts').textContent='Error: '+e.message;
+    }
+  }
+
+  // Init — static data first (no live prices yet)
+  const staticData=_H.map(h=>({...h,price:null,changePct:null,dayHigh:null,dayLow:null,
+    baseline:null,lastDip:null,opportunities:[]}));
+  renderTable(staticData);
+  mktStatus();
+  load();
+  setInterval(()=>{load();mktStatus();}, isMO()?60000:300000);
+  </script>
+</body>
+</html>`);
+});
 (0, db_1.initDb)().then(async () => {
     await ensureAdminEmail();
     // Run subscription expiry check on startup
@@ -12470,76 +11765,5 @@ async function ensureAdminEmail() {
         console.log(`   Watchlists: http://localhost:${PORT}/watchlists`);
         console.log(`   API stats : http://localhost:${PORT}/api/stats\n`);
         (0, scheduler_1.startScheduler)();
-
-        // ── Auto-resolve picks: check target/SL every 5 min during market hours ──
-        // Auto pick flow: entry trigger + target/SL exit, runs every 5 min during market hours
-        async function autoResolvePicks() {
-            const now = new Date();
-            const ist = new Date(now.toLocaleString("en-US", { timeZone: "Asia/Kolkata" }));
-            const day = ist.getDay(); // 0=Sun, 6=Sat
-            if (day === 0 || day === 6) return; // skip weekends
-            const hm = ist.getHours() * 60 + ist.getMinutes();
-            if (hm < 555 || hm > 930) return; // only 9:15 AM - 3:30 PM IST
-            try {
-                // Fetch all active + entry_triggered picks
-                const allPicks = await (0, db_1.dbAll)(
-                    "SELECT id, stock_symbol, direction, entry_low, entry_high, target, stop_loss, result FROM picks WHERE status='active' AND (result IS NULL OR result='entry_triggered')"
-                );
-                if (!allPicks.length) return;
-
-                // Get live prices for all symbols
-                const syms = [...new Set(allPicks.map(pk => pk.stock_symbol))];
-                const priceRows = await (0, db_1.dbAll)(
-                    `SELECT symbol, price FROM prices WHERE symbol IN (${syms.map(() => "?").join(",")}) AND price > 0`,
-                    syms
-                );
-                const priceMap = {};
-                for (const r of priceRows) priceMap[r.symbol] = r.price;
-
-                for (const pick of allPicks) {
-                    const livePrice = priceMap[pick.stock_symbol];
-                    if (!livePrice) continue;
-                    const isShort = (pick.direction || '').toUpperCase() === 'SHORT' || (pick.direction || '').toUpperCase() === 'PE';
-
-                    // STEP 1: Active but not triggered - check if price entered the entry zone
-                    if (!pick.result) {
-                        const lo = pick.entry_low  ? parseFloat(pick.entry_low)  : null;
-                        const hi = pick.entry_high ? parseFloat(pick.entry_high) : null;
-                        let inZone = false;
-                        if (lo && hi)  inZone = livePrice >= lo && livePrice <= hi;
-                        else if (lo)   inZone = livePrice <= lo * 1.01; // within 1% above low
-                        else if (hi)   inZone = livePrice <= hi;
-                        if (inZone) {
-                            await (0, db_1.updatePickEntry)(pick.id, livePrice);
-                            console.log(`[PICK-MONITOR] ${pick.stock_symbol} ENTRY_TRIGGERED @ ${livePrice} (id:${pick.id})`);
-                            sendTelegramNotification(`📍 <b>Pick Entry Triggered</b>\n📈 ${pick.stock_symbol} (${pick.direction || 'LONG'})\n💰 Entry @ ₹${livePrice}\nSL: ₹${pick.stop_loss || '-'} | Target: ₹${pick.target || '-'}\n⏰ ${new Date().toLocaleString('en-IN', {timeZone:'Asia/Kolkata'})} IST`, 'tg_notify_pick_entry').catch(()=>{});
-                        }
-                        continue; // don't check exit until in position
-                    }
-
-                    // STEP 2: In position - check target / SL
-                    const target = pick.target    ? parseFloat(pick.target)    : null;
-                    const sl     = pick.stop_loss ? parseFloat(pick.stop_loss) : null;
-                    let resolved = null;
-                    if (!isShort) {
-                        if (target && livePrice >= target) resolved = 'target_hit';
-                        else if (sl && livePrice <= sl)    resolved = 'sl_hit';
-                    } else {
-                        if (target && livePrice <= target) resolved = 'target_hit';
-                        else if (sl && livePrice >= sl)    resolved = 'sl_hit';
-                    }
-                    if (resolved) {
-                        await (0, db_1.updatePickResult)(pick.id, resolved, livePrice);
-                        console.log(`[PICK-MONITOR] ${pick.stock_symbol} ${resolved} @ ${livePrice} (id:${pick.id})`);
-                        const isWin = resolved === 'target_hit';
-                        sendTelegramNotification(`${isWin ? '🎯 <b>Target Hit</b>' : '🛑 <b>SL Hit</b>'} — ${pick.stock_symbol}\n💹 Exit @ ₹${livePrice}\nEntry was ₹${pick.entry_price || '-'} | ${isWin ? 'Target' : 'SL'}: ₹${isWin ? pick.target : pick.stop_loss}\n⏰ ${new Date().toLocaleString('en-IN', {timeZone:'Asia/Kolkata'})} IST`, 'tg_notify_pick_exit').catch(()=>{});
-                    }
-                }
-            } catch (e) {
-                console.error("[PICK-MONITOR] error:", e.message);
-            }
-        }
-        setInterval(autoResolvePicks, 5 * 60 * 1000); // every 5 minutes
-        autoResolvePicks(); // run once immediately on startup
     });
 }).catch(err => { console.error("DB init failed:", err); process.exit(1); });

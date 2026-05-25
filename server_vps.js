@@ -6393,15 +6393,15 @@ app.post("/api/bot/action", requireAdmin, (req, res) => {
     const { action } = req.body;
     try {
         if (action === "restart") {
-            (0, child_process_1.execSync)("pm2 restart trading-bot", { stdio: "ignore" });
+            (0, child_process_1.execSync)("pm2 restart amina-100-variant-b", { stdio: "ignore" });
             res.json({ ok: true, msg: "Bot restarted" });
         }
         else if (action === "stop") {
-            (0, child_process_1.execSync)("pm2 stop trading-bot", { stdio: "ignore" });
+            (0, child_process_1.execSync)("pm2 stop amina-100-variant-b", { stdio: "ignore" });
             res.json({ ok: true, msg: "Bot stopped" });
         }
         else if (action === "start") {
-            (0, child_process_1.execSync)("pm2 start trading-bot", { stdio: "ignore" });
+            (0, child_process_1.execSync)("pm2 start amina-100-variant-b", { stdio: "ignore" });
             res.json({ ok: true, msg: "Bot started" });
         }
         else {
@@ -7709,7 +7709,7 @@ async function paperPortfolioPage(req, res) {
     const [port, positions, trades, tradeCount, ptConfig, activeSub, allPicksForTrade] = await Promise.all([
         (0, db_1.getPaperPortfolio)(userId),
         (0, db_1.getPaperPositions)(userId),
-        (0, db_1.getPaperTrades)(userId, 9999),
+        (0, db_1.getPaperTrades)(userId, 60),
         (0, db_1.countPaperTrades)(userId),
         (0, db_1.getPaperTradeConfig)(userId),
         (0, db_1.getActiveSubscription)(userId),
@@ -7791,8 +7791,8 @@ async function paperPortfolioPage(req, res) {
     const investedTotal = posRows.reduce((s, p) => s + p.invested, 0);
     const curValTotal = posRows.reduce((s, p) => s + p.curVal, 0);
     const portfolioValue = parseFloat((port.balance + curValTotal).toFixed(2));
-    const totalPnl = parseFloat((portfolioValue - 1000000).toFixed(2));
-    const totalPnlPct = parseFloat(((totalPnl / 1000000) * 100).toFixed(2));
+    const totalPnl = parseFloat((portfolioValue - 100000).toFixed(2));
+    const totalPnlPct = parseFloat(((totalPnl / 100000) * 100).toFixed(2));
     const sellTrades = trades.filter(t => t.action === "SELL");
     const realizedPnl = parseFloat(sellTrades.reduce((s, t) => s + (t.pnl ?? 0), 0).toFixed(2));
     const wins = sellTrades.filter(t => (t.pnl ?? 0) > 0).length;
@@ -8059,7 +8059,7 @@ async function paperPortfolioPage(req, res) {
             return `<tr>
                 <td><strong style="color:var(--accent)">${esc(p.stock_symbol)}</strong>${p.company_name ? `<br><span class="dim" style="font-size:.64rem">${esc(p.company_name)}</span>` : ''}</td>
                 <td><span class="${p.direction === 'BULLISH' ? 'pb-bullish' : 'pb-bearish'}">${p.direction}</span></td>
-                <td style="font-weight:600;color:var(--text-muted)">${(() => { const _pc = ptConfig && ptConfig.picks_capital || 0; const _dq = ptConfig && ptConfig.default_qty || 1; return _pc > 0 && ep > 0 ? Math.max(1, Math.floor(_pc / ep)) : _dq; })()}</td>
+                <td style="font-weight:600;color:var(--text-muted)">1</td>
                 <td style="font-size:.82rem">₹${ep.toFixed(2)}</td>
                 <td style="color:#10b981;font-size:.74rem">${p.target ? '₹' + p.target : '—'}</td>
                 <td style="color:#ef4444;font-size:.74rem">${p.stop_loss ? '₹' + p.stop_loss : '—'}</td>
@@ -8087,7 +8087,7 @@ async function paperPortfolioPage(req, res) {
                 <td><strong>${esc(p.stock_symbol)}</strong>${p.company_name ? `<br><span class="dim" style="font-size:.64rem">${esc(p.company_name)}</span>` : ''}</td>
                 <td style="font-size:.72rem">${(p.pick_type || 'intraday').toUpperCase()}</td>
                 <td><span class="${p.direction === 'BULLISH' ? 'pb-bullish' : 'pb-bearish'}">${p.direction}</span></td>
-                <td style="font-weight:600;color:var(--text-muted)">${(() => { const _mid = (p.entry_low + p.entry_high) / 2; const _pc = ptConfig && ptConfig.picks_capital || 0; const _dq = ptConfig && ptConfig.default_qty || 1; return _pc > 0 && _mid > 0 ? Math.max(1, Math.floor(_pc / _mid)) : _dq; })()}</td>
+                <td style="font-weight:600;color:var(--text-muted)">1</td>
                 <td class="dim" style="font-size:.74rem;white-space:nowrap">₹${p.entry_low}–${p.entry_high}</td>
                 <td style="color:#10b981;font-size:.74rem">${p.target ? '₹' + p.target : '—'}</td>
                 <td style="color:#ef4444;font-size:.74rem">${p.stop_loss ? '₹' + p.stop_loss : '—'}</td>
@@ -8117,7 +8117,7 @@ async function paperPortfolioPage(req, res) {
             return `<tr>
                 <td><strong style="color:var(--accent)">${esc(p.stock_symbol)}</strong>${p.company_name ? `<br><span class="dim" style="font-size:.64rem">${esc(p.company_name)}</span>` : ''}</td>
                 <td><span class="${p.direction === 'BULLISH' ? 'pb-bullish' : 'pb-bearish'}">${p.direction}</span></td>
-                <td style="font-weight:600;color:var(--text-muted)">${(() => { const _ep2 = ep || (p.entry_low + p.entry_high) / 2; const _pc = ptConfig && ptConfig.picks_capital || 0; const _dq = ptConfig && ptConfig.default_qty || 1; return _pc > 0 && _ep2 > 0 ? Math.max(1, Math.floor(_pc / _ep2)) : _dq; })()}</td>
+                <td style="font-weight:600;color:var(--text-muted)">1</td>
                 <td><span style="background:${isWin ? '#10b98122' : '#ef444422'};color:${isWin ? '#10b981' : '#ef4444'};border:1px solid ${isWin ? '#10b98144' : '#ef444444'};border-radius:20px;padding:3px 10px;font-size:.72rem;font-weight:700;white-space:nowrap">${isWin ? '✅ Target Hit' : '⛔ SL Hit'}</span></td>
                 <td class="dim" style="font-size:.74rem">${ep ? '₹' + ep : '—'}</td>
                 <td style="font-weight:700">${rp ? '₹' + rp : '—'}</td>
@@ -8141,7 +8141,7 @@ async function paperPortfolioPage(req, res) {
     <div class="mpt-kpi-row">
       <div class="mpt-kpi">
         <div class="mpt-kpi-label">Portfolio Value</div>
-        <div class="mpt-kpi-val ${portfolioValue >= 1000000 ? "mpt-green" : "mpt-red"}">₹${portfolioValue.toLocaleString("en-IN", { maximumFractionDigits: 0 })}</div>
+        <div class="mpt-kpi-val ${portfolioValue >= 100000 ? "mpt-green" : "mpt-red"}">₹${portfolioValue.toLocaleString("en-IN", { maximumFractionDigits: 0 })}</div>
       </div>
       <div class="mpt-kpi">
         <div class="mpt-kpi-label">Total PnL</div>
@@ -8510,7 +8510,7 @@ app.get("/dashboard", requireAuth, async (req, res) => {
         const [port, positions, trades, activeSub, allPicks] = await Promise.all([
             (0, db_1.getPaperPortfolio)(userId),
             (0, db_1.getPaperPositions)(userId),
-            (0, db_1.getPaperTrades)(userId, 9999),
+            (0, db_1.getPaperTrades)(userId, 200),
             (0, db_1.getActiveSubscription)(userId),
             (0, db_1.getAllPicks)(),
         ]);
@@ -8560,7 +8560,7 @@ app.get("/dashboard", requireAuth, async (req, res) => {
         const investedTotal = posRows.reduce((s, p) => s + p.invested, 0);
         const curValTotal = posRows.reduce((s, p) => s + (p.livePrice * p.qty), 0);
         const portfolioValue = parseFloat((port.balance + curValTotal).toFixed(2));
-        const totalPnl = parseFloat((portfolioValue - 1000000).toFixed(2));
+        const totalPnl = parseFloat((portfolioValue - 100000).toFixed(2));
         // Weekly P&L (last 7 days)
         const _7dAgo = new Date(Date.now() - 7 * 86400000).toISOString().slice(0, 10);
         const weekTrades = sellTrades.filter((t) => t.traded_at >= _7dAgo);
@@ -8832,7 +8832,7 @@ app.get("/dashboard", requireAuth, async (req, res) => {
       </button>
       <div class="db-kpi-collapsible" style="overflow:hidden;max-height:0;transition:max-height .3s ease">
         <div class="db-kpi-grid" style="margin-top:10px">
-          <div class="db-kpi"><div class="db-kpi-lbl">Portfolio Value</div><div class="db-kpi-val ${portfolioValue >= 1000000 ? 'db-green' : 'db-red'}">₹${portfolioValue.toLocaleString("en-IN", { maximumFractionDigits: 0 })}</div></div>
+          <div class="db-kpi"><div class="db-kpi-lbl">Portfolio Value</div><div class="db-kpi-val ${portfolioValue >= 100000 ? 'db-green' : 'db-red'}">₹${portfolioValue.toLocaleString("en-IN", { maximumFractionDigits: 0 })}</div></div>
           <div class="db-kpi"><div class="db-kpi-lbl">Cash Balance</div><div class="db-kpi-val">₹${port.balance.toLocaleString("en-IN", { maximumFractionDigits: 0 })}</div></div>
           <div class="db-kpi"><div class="db-kpi-lbl">Total P&L</div><div class="db-kpi-val ${totalPnl >= 0 ? 'db-green' : 'db-red'}">${totalPnl >= 0 ? "+" : ""}₹${Math.abs(totalPnl).toLocaleString("en-IN", { maximumFractionDigits: 0 })}</div></div>
           <div class="db-kpi"><div class="db-kpi-lbl">This Week (Manual)</div><div class="db-kpi-val ${weekPnl >= 0 ? 'db-green' : 'db-red'}">${weekPnl >= 0 ? "+" : ""}₹${Math.abs(weekPnl).toLocaleString("en-IN", { maximumFractionDigits: 0 })}</div></div>
@@ -9288,7 +9288,7 @@ app.get("/dashboard", requireAuth, async (req, res) => {
                 const tableHtml = `<div class="db-tbl-wrap"><table class="db-tbl">
                 <thead><tr><th>Symbol</th><th>Direction</th><th>Qty</th><th>Entry Price</th><th>Target</th><th>SL</th><th>CMP</th><th>P&amp;L</th><th>Entry At</th></tr></thead>
                 <tbody>${rows.map(({ p, lp, ep, pnlPct }) => {
-                    const qty = (() => { const _pc = ptConfig && ptConfig.picks_capital || 0; const _dq = ptConfig && ptConfig.default_qty || 1; return _pc > 0 && ep > 0 ? Math.max(1, Math.floor(_pc / ep)) : _dq; })();
+                    const qty = 1;
                     const pnlAmt = lp && ep ? parseFloat(((lp - ep) * ((p.direction === "BULLISH" || p.direction === "LONG") ? 1 : -1) * qty).toFixed(2)) : null;
                     return `<tr>
                   <td><strong style="color:var(--accent)">${esc(p.stock_symbol)}</strong>${p.company_name ? `<br><span style="color:var(--text-muted);font-size:.7rem">${esc(p.company_name)}</span>` : ""}</td>
@@ -9319,7 +9319,7 @@ app.get("/dashboard", requireAuth, async (req, res) => {
                   <td><strong>${esc(p.stock_symbol)}</strong>${p.company_name ? `<br><span style="color:var(--text-muted);font-size:.7rem">${esc(p.company_name)}</span>` : ""}</td>
                   <td style="font-size:.78rem">${(p.pick_type || "intraday").toUpperCase()}</td>
                   <td><span class="${p.direction === "BULLISH" ? "pb-bullish" : "pb-bearish"}">${p.direction}</span></td>
-                  <td style="font-weight:600;color:var(--text-muted)">${(() => { const _mid2 = (p.entry_low + p.entry_high) / 2; const _pc = ptConfig && ptConfig.picks_capital || 0; const _dq = ptConfig && ptConfig.default_qty || 1; return _pc > 0 && _mid2 > 0 ? Math.max(1, Math.floor(_pc / _mid2)) : _dq; })()}</td>
+                  <td style="font-weight:600;color:var(--text-muted)">1</td>
                   <td style="color:var(--text-muted);font-size:.8rem;white-space:nowrap">₹${p.entry_low}–${p.entry_high}</td>
                   <td style="color:#10b981;font-size:.8rem">${p.target ? "₹" + p.target : "—"}</td>
                   <td style="color:#ef4444;font-size:.8rem">${p.stop_loss ? "₹" + p.stop_loss : "—"}</td>
@@ -9336,7 +9336,7 @@ app.get("/dashboard", requireAuth, async (req, res) => {
               <thead><tr><th>Symbol</th><th>Direction</th><th>Qty</th><th>Result</th><th>Entry ₹</th><th>Result ₹</th><th>P&amp;L</th><th>Date</th></tr></thead>
               <tbody>${resolvedPicks.slice(0, 50).map((p) => {
                 const isWin = p.result === "target_hit";
-                const qty = (() => { const _ep = p.entry_price; const _pc = ptConfig && ptConfig.picks_capital || 0; const _dq = ptConfig && ptConfig.default_qty || 1; return _pc > 0 && _ep > 0 ? Math.max(1, Math.floor(_pc / _ep)) : _dq; })();
+                const qty = 1;
                 const ep = p.entry_price;
                 const rp = p.result_price;
                 const mult = (p.direction === "BULLISH" || p.direction === "LONG") ? 1 : -1;
@@ -10388,8 +10388,8 @@ app.get("/signals", featureGate("feature_signals", "Signals"), async (req, res) 
     @media(min-width:700px){.db-main{grid-template-columns:minmax(0,1.6fr) minmax(0,1fr)}}
     /* ═══ Position Hero Card ════════════════════════════════════ */
     .pos-card{border-radius:14px;padding:20px 22px;border:1.5px solid;position:relative;overflow:hidden}
-    .pos-ce{background:linear-gradient(135deg,rgba(219,234,254,.55),rgba(219,234,254,.25));border-color:rgba(37,99,235,.3)}
-    .pos-pe{background:linear-gradient(135deg,rgba(254,226,226,.55),rgba(254,226,226,.25));border-color:rgba(220,38,38,.3)}
+    .pos-ce{background:linear-gradient(135deg,rgba(56,189,248,.12),rgba(56,189,248,.06));border-color:rgba(56,189,248,.3)}
+    .pos-pe{background:linear-gradient(135deg,rgba(192,132,252,.12),rgba(192,132,252,.06));border-color:rgba(192,132,252,.3)}
     .pos-flat{background:var(--card);border-color:var(--border-c)}
     .pos-hdr{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:16px}
     .pos-badge{font-size:.75rem;font-weight:800;padding:.22rem .6rem;border-radius:6px}
@@ -10422,10 +10422,11 @@ app.get("/signals", featureGate("feature_signals", "Signals"), async (req, res) 
     .pos-prem-val{font-size:.9rem;font-weight:700;font-family:monospace}
     /* Watching card */
     .watch-card{padding:18px 22px;background:var(--card);border:1.5px solid var(--border-c);border-radius:14px}
-    .watch-title{font-size:.92rem;font-weight:700;margin-bottom:8px;display:flex;align-items:center;gap:8px}
+    .watch-title{font-size:.82rem;font-weight:600;margin-bottom:10px;display:flex;align-items:center;gap:8px;color:var(--muted)}
     .watch-lvl-row{display:flex;align-items:center;gap:10px;padding:9px 12px;border-radius:8px;margin-bottom:6px}
-    .watch-ce-row{background:rgba(37,99,235,.08);border:1px solid rgba(59,130,246,.2)}
-    .watch-pe-row{background:rgba(185,28,28,.08);border:1px solid rgba(239,68,68,.2)}
+    .watch-ce-row{background:rgba(59,130,246,.12);border:1.5px solid rgba(37,99,235,.45)}
+    .watch-pe-row{background:rgba(239,68,68,.16);border:1px solid rgba(248,113,113,.4)}
+    .watch-cnd-row{background:rgba(217,119,6,.12);border:1.5px solid rgba(180,83,9,.45)}
     .watch-lvl-dir{font-size:.73rem;font-weight:800;min-width:30px}
     .watch-lvl-val{font-size:1rem;font-weight:800;font-family:monospace;flex:1}
     .watch-lvl-dist{font-size:.72rem;font-weight:600}
@@ -10583,7 +10584,9 @@ app.get("/signals", featureGate("feature_signals", "Signals"), async (req, res) 
     <div class="db-hdr">
       <div>
         <div class="db-title">📡 Live Bot Dashboard</div>
-        <div class="db-sub">BANKNIFTY · BODY_BREAKOUT · <strong>${mode2}</strong> · 30 qty · ₹ P&L = pts × 15</div>
+        <div class="db-sub">BANKNIFTY &middot; BHAV V3 &middot; <strong>${mode2}</strong> &middot; 30 qty &middot; SL: ${_slPts2ssr} pts &middot; Entry: PDH/PDL Break &middot; Candle-close SL &middot; Max 5 trades/day</div>
+        <div class="db-sub" style="margin-top:3px">PDH: <span id="db-pdh" style="color:#10b981;font-weight:600">${hb2?.bhavPrevDayHigh ?? "&mdash;"}</span> &middot; PDL: <span id="db-pdl" style="color:#ef4444;font-weight:600">${hb2?.bhavPrevDayLow ?? "&mdash;"}</span> &middot; Candles today: <span id="db-cndl">${hb2?.bhavCandles ?? "&mdash;"}</span> &middot; &#8377; P&amp;L: idx pts &times; 15 &middot; prem pts &times; 30</div>
+        <div class="db-sub" style="margin-top:3px">5yr Backtest (Jan&rsquo;21&ndash;May&rsquo;26): <strong style="color:#10b981">&#8377;31.07L</strong> &middot; 74.6% WR &middot; &#8377;2,583 avg/trade &middot; MaxDD &#8377;11,027</div>
       </div>
       <div class="db-live"><span class="db-pulse"></span><span id="db-upd">Connecting…</span></div>
     </div>
@@ -10623,24 +10626,18 @@ app.get("/signals", featureGate("feature_signals", "Signals"), async (req, res) 
     <!-- ── Strategy Tab Switcher ──────────────────────────────── -->
 
     <div class="stab-wrap">
-      <button class="stab act" id="stab-lock50" type="button" onclick="_sTab('lock50')">
-        <span class="stab-name">&#9679; AMINA 100</span>
-        <span class="stab-sub">LIVE v2.0</span>
-        <span class="stab-pnl" id="stab-pnl-lock50" style="color:${an2.today.pnl>=0?'#059669':'#dc2626'}">${fmtRs2(an2.today.pnl)}</span>
-      </button>
-      <button class="stab" id="stab-vmt" type="button" onclick="_sTab('vmt')">
-        <span class="stab-name">&#128161; VMT</span>
-        <span class="stab-sub">Option shadow</span>
-        <span class="stab-pnl" id="stab-pnl-vmt" style="color:#8b949e">&#8212;</span>
-      </button>
+      <div class="stab act" style="cursor:default;min-width:260px">
+        <span class="stab-name">&#9679; BHAV V3</span>
+        <span class="stab-sub">${mode2} &middot; 30 qty &middot; SL: ${_slPts2ssr} pts</span>
+        <span class="stab-pnl" id="stab-pnl-bhav" style="color:${an2.today.pnl>=0?'#059669':'#dc2626'}">${fmtRs2(an2.today.pnl)}</span>
+      </div>
     </div>
-    <script>/* _sTab defined in main script below */</script>
 
 
     <!-- ════════════════════════════════════════════════════════
          TICK TRAIL PANEL
          ════════════════════════════════════════════════════════ -->
-    <div id="panel-lock50">
+    <div id="panel-bhav">
 
     <!-- === AMINA 100: 2-col top (Timeline + Position) === -->
     <div style="display:grid;grid-template-columns:1fr;gap:14px;margin-bottom:1rem;align-items:start">
@@ -10655,7 +10652,7 @@ app.get("/signals", featureGate("feature_signals", "Signals"), async (req, res) 
           <span class="pm-phase" id="atl-phase-badge">Loading&hellip;</span>
         </div>
 <div class="pm-tl" id="atl-tl">
-                    <div class="pm-tl-row" id="atl-row-0">
+          <div class="pm-tl-row" id="atl-row-0">
             <div class="pm-tl-dot" id="atl-dot-0"></div>
             <div class="pm-tl-txt">
               <div class="pm-tl-time">7:30 AM &mdash; Token Auto-Refreshed &mdash; Bot Ready</div>
@@ -10665,66 +10662,67 @@ app.get("/signals", featureGate("feature_signals", "Signals"), async (req, res) 
           <div class="pm-tl-row" id="atl-row-1">
             <div class="pm-tl-dot" id="atl-dot-1"></div>
             <div class="pm-tl-txt">
-              <div class="pm-tl-time">8:30 AM &mdash; Global Cues</div>
-              <div class="pm-tl-label">Check Gift Nifty / SGX Nifty for BNF gap-up or gap-down bias</div>
+              <div class="pm-tl-time">8:30 AM &mdash; Morning Telegram Sent</div>
+              <div class="pm-tl-label">Yesterday P&amp;L + today&rsquo;s picks + token status delivered to Telegram</div>
             </div>
           </div>
           <div class="pm-tl-row" id="atl-row-2">
             <div class="pm-tl-dot" id="atl-dot-2"></div>
             <div class="pm-tl-txt">
-              <div class="pm-tl-time">9:15 AM &mdash; Market Opens &mdash; Bot Active</div>
-              <div class="pm-tl-label">Bot begins scanning. First 15-min candle (C1) starts forming</div>
+              <div class="pm-tl-time">9:00 AM &mdash; PDH/PDL Loaded &mdash; Context Set</div>
+              <div class="pm-tl-label">ABOVE_PDH: fade gap &rarr; PE &bull; BELOW_PDL: fade gap &rarr; CE &bull; INSIDE: body% scan</div>
             </div>
           </div>
           <div class="pm-tl-row" id="atl-row-3">
             <div class="pm-tl-dot" id="atl-dot-3"></div>
             <div class="pm-tl-txt">
-              <div class="pm-tl-time">9:15 &ndash; 9:30 AM &mdash; C1 Candle Watch</div>
-              <div class="pm-tl-label">Bot records C1 high &amp; low. No entries during this window</div>
+              <div class="pm-tl-time">9:15 AM &mdash; Market Opens &mdash; C0 Starts</div>
+              <div class="pm-tl-label">Bot live. ABOVE_PDH &amp; BELOW_PDL: C0 body% may trigger immediate entry</div>
             </div>
           </div>
           <div class="pm-tl-row" id="atl-row-4">
             <div class="pm-tl-dot" id="atl-dot-4"></div>
             <div class="pm-tl-txt">
-              <div class="pm-tl-time">9:30 AM &mdash; C1 Level Locked</div>
-              <div class="pm-tl-label">C1 high/low fixed. C2 early-entry scan begins immediately</div>
-              <div class="pm-tl-note show" style="display:block;font-size:.61rem;color:#7c3aed;font-weight:600;margin-top:2px">C2 breaks C1 level at close &rarr; enter at C2.close &rarr; SL: &minus;60 pts, trail 100 pts behind peak</div>
+              <div class="pm-tl-time">9:30 AM &mdash; C1 Closes &mdash; First Signal Check</div>
+              <div class="pm-tl-label">Body% candle analysis &bull; Reversal or breakout entry &bull; SL: candle-close only</div>
             </div>
           </div>
           <div class="pm-tl-row" id="atl-row-5">
             <div class="pm-tl-dot" id="atl-dot-5"></div>
             <div class="pm-tl-txt">
-              <div class="pm-tl-time">9:30 &ndash; 9:45 AM &mdash; C2 Early Entry Window</div>
-              <div class="pm-tl-label">If C2.close breaks C1 level &rarr; enter at C2.close. SL: &minus;60 pts</div>
+              <div class="pm-tl-time">9:45 AM &mdash; C2 Closes &mdash; Second Window</div>
+              <div class="pm-tl-label">Rolling scan active &bull; SL = 150 pts candle-close &bull; LOCK20 trail (locks +20 at peak &ge;20)</div>
             </div>
           </div>
+          <!-- trade events injected by JS (between morning setup and EOD) -->
+          <div id="atl-trades"></div>
           <div class="pm-tl-row" id="atl-row-6">
             <div class="pm-tl-dot" id="atl-dot-6"></div>
-            <div class="pm-tl-txt">
-              <div class="pm-tl-time">9:45 AM &mdash; C3+ Rolling Scan Active</div>
-              <div class="pm-tl-label">No C2 entry? Bot watches every candle to break max(C1, C2) level</div>
-            </div>
-          </div>
-          <div class="pm-tl-row" id="atl-row-7">
-            <div class="pm-tl-dot" id="atl-dot-7"></div>
             <div class="pm-tl-txt">
               <div class="pm-tl-time">3:14 PM &mdash; EOD Exit</div>
               <div class="pm-tl-label">Bot exits all open positions at market. P&amp;L locked for the day</div>
             </div>
           </div>
-          <div class="pm-tl-row" id="atl-row-8">
-            <div class="pm-tl-dot" id="atl-dot-8"></div>
+          <div class="pm-tl-row" id="atl-row-7">
+            <div class="pm-tl-dot" id="atl-dot-7"></div>
             <div class="pm-tl-txt">
               <div class="pm-tl-time">3:30 PM &mdash; Market Closes</div>
               <div class="pm-tl-label">Session complete. Bot sleeping until next trading day</div>
+            </div>
+          </div>
+          <div class="pm-tl-row" id="atl-row-8">
+            <div class="pm-tl-dot" id="atl-dot-8"></div>
+            <div class="pm-tl-txt">
+              <div class="pm-tl-time">3:31 PM &mdash; EOD Telegram Sent</div>
+              <div class="pm-tl-label">Day P&amp;L + trade summary + tomorrow&rsquo;s context preview delivered to Telegram</div>
             </div>
           </div>
         </div>
       </div>
       <script>
       (function(){
-        var _ATL=[{id:0,h:7,m:30},{id:1,h:8,m:30},{id:2,h:9,m:15},{id:3,h:9,m:15},{id:4,h:9,m:30},{id:5,h:9,m:30},{id:6,h:9,m:45},{id:7,h:15,m:14},{id:8,h:15,m:30}];
-        var _ATLPH=[[7,30,'Token Refresh',''],[8,30,'Pre-Market',''],[9,15,'Global Cues',''],[9,30,'C1 Forming','live'],[9,45,'C2 Entry','live'],[15,14,'C3+ Scan','live'],[15,30,'EOD Exit','live'],[24,0,'Closed','closed']];
+        var _ATL=[{id:0,h:7,m:30},{id:1,h:8,m:30},{id:2,h:9,m:0},{id:3,h:9,m:15},{id:4,h:9,m:30},{id:5,h:9,m:45},{id:6,h:15,m:14},{id:7,h:15,m:30},{id:8,h:15,m:31}];
+        var _ATLPH=[[7,30,'Token Refresh',''],[8,30,'Pre-Market',''],[9,0,'Context Set',''],[9,15,'Mkt Open','live'],[9,30,'C1 Signal','live'],[9,45,'Scanning','live'],[15,14,'EOD Exit','live'],[15,30,'Closed','closed'],[24,0,'Closed','closed']];
         function _atlN(){var d=new Date(new Date().toLocaleString('en-US',{timeZone:'Asia/Kolkata'}));return{h:d.getHours(),m:d.getMinutes()};}
         function _atlM(h,m){return h*60+m;}
         function _atlUpd(){
@@ -10734,7 +10732,7 @@ app.get("/signals", featureGate("feature_signals", "Signals"), async (req, res) 
             var dot=document.getElementById('atl-dot-'+row.id);if(!dot)return;
             if(closed){dot.className='pm-tl-dot';dot.textContent='';return;}
             var isActive,isDone;
-            if(row.id===2){isActive=nowM>=_atlM(9,15)&&nowM<_atlM(9,30);isDone=nowM>=_atlM(9,30);}
+            if(row.id===2){isActive=nowM>=_atlM(9,0)&&nowM<_atlM(9,15);isDone=nowM>=_atlM(9,15);}
             else if(row.id===4){isActive=nowM>=_atlM(9,30)&&nowM<_atlM(9,45);isDone=nowM>=_atlM(9,45);}
             else{var rowM=_atlM(row.h,row.m);isActive=nowM>=rowM&&nowM<rowM+3;isDone=nowM>=rowM+3;}
             if(isDone){dot.className='pm-tl-dot done';dot.textContent='\u2714';}
@@ -10797,28 +10795,10 @@ app.get("/signals", featureGate("feature_signals", "Signals"), async (req, res) 
             <div class="kpi-m-s"><span class="g" id="ss-wins">${an2.today.wins}W</span> / <span class="r" id="ss-losses">${an2.today.losses}L</span></div>
           </div>
         </div>
+        <div id="ss-trade-breakdown" style="margin-top:6px;font-size:.65rem;color:#8b949e;line-height:1.7"></div>
       </div>
 
     </div><!-- /atl-top-grid -->
-
-    <!-- Stats strip -->
-    <div class="kpi-mini" style="grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:8px;margin-bottom:1rem">
-      <div class="kpi-m">
-        <div class="kpi-m-l">This Week</div>
-        <div class="kpi-m-v ${pnlCls2(an2.weekly.pnl)}" id="ss-wk-rs">${fmtRs2(an2.weekly.pnl)}</div>
-        <div class="kpi-m-s" id="ss-wk-pts">${fmtPts2(an2.weekly.pnl)}</div>
-      </div>
-      <div class="kpi-m">
-        <div class="kpi-m-l">All-Time P&amp;L</div>
-        <div class="kpi-m-v ${pnlCls2(an2.allTime.pnl)}">${fmtRs2(an2.allTime.pnl)}</div>
-        <div class="kpi-m-s">${fmtPts2(an2.allTime.pnl)}</div>
-      </div>
-      <div class="kpi-m">
-        <div class="kpi-m-l">Win Rate</div>
-        <div class="kpi-m-v" id="ss-wr">${an2.allTime.winRate}%</div>
-        <div class="kpi-m-s">${an2.allTime.wins}W / ${an2.allTime.losses}L</div>
-      </div>
-    </div>
 
       <!-- ── Trade History (Daily / Weekly / Monthly) ── -->
       <div style="display:flex;align-items:center;gap:8px;margin-top:1.5rem;margin-bottom:.6rem;flex-wrap:wrap">
@@ -10834,26 +10814,36 @@ app.get("/signals", featureGate("feature_signals", "Signals"), async (req, res) 
       <!-- DAILY panel (default visible) -->
       <div id="th-panel-d">
         <div class="tw"><table class="tt">
-          <thead><tr><th>Time</th><th>Dir</th><th>Buy Index</th><th>Symbol</th><th>Sell Index</th><th>Index P&amp;L</th><th>&#8377; P&amp;L</th><th>Reason</th><th>Dur</th></tr></thead>
+          <thead><tr><th>Time</th><th>Dir</th><th>Side</th><th>Index</th><th>Prem</th><th>Symbol</th><th>Index P&amp;L</th><th>&#8377; P&amp;L</th><th>Reason</th><th>Dur</th></tr></thead>
           <tbody id="tt-body-lock50">
             ${closedToday2.length===0&&!inTrade2
-              ? `<tr><td colspan="9" class="tt-e">No closed trades today</td></tr>`
+              ? `<tr><td colspan="10" class="tt-e">No closed trades today</td></tr>`
               : [...closedToday2].reverse().map(t=>{
                   const d3=(t.direction||'').toLowerCase();
-                  const pts=t.pnl??0; const rs=Math.round(pts*QTY_MULT2);
+                  const pts=t.pnl??0;
+                  const _bPrem=(t.premiumEntry??0)>0?(t.premiumEntry??0).toFixed(1):'—';
+                  const _sPrem=(t.premiumExit??0)>0?(t.premiumExit??0).toFixed(1):'—';
+                  const rs=(t.premiumEntry>0&&t.premiumExit>0)?Math.round((t.premiumExit-t.premiumEntry)*(t.qty||30)):Math.round(pts*QTY_MULT2);
                   const reason=t.reasonExit||'—';
                   const rTag=reason.toLowerCase().includes('sl')||reason.toLowerCase().includes('stop')?'rc-sl':reason.toLowerCase().includes('trail')||reason.toLowerCase().includes('early')?'rc-trail':'rc-eod';
                   const dur=t.duration?(t.duration<60?t.duration+'s':Math.round(t.duration/60)+'m'):'—';
-                  return `<tr>
-                    <td class="tc">${fmtTime2(t.date)}</td>
-                    <td><span class="db-badge ${d3}">${t.direction||'—'}</span></td>
+                  return `
+                  <tr style="border-bottom:none">
+                    <td class="tc" rowspan="2" style="vertical-align:middle">${fmtTime2(t.date)}</td>
+                    <td rowspan="2" style="vertical-align:middle"><span class="db-badge ${d3}">${t.direction||'—'}</span></td>
+                    <td style="font-size:.65rem;color:#60a5fa;font-weight:700">BUY</td>
                     <td class="mono">${(t.entryPrice??0)>0?(t.entryPrice??0).toFixed(1):'—'}</td>
-                    <td class="tc mono">${t.symbol||'—'}</td>
+                    <td class="mono" style="color:#94a3b8">${_bPrem}</td>
+                    <td class="tc mono" rowspan="2" style="vertical-align:middle">${t.symbol||'—'}</td>
+                    <td class="${pts>=0?'g':'r'}" style="font-weight:800" rowspan="2">${pts>=0?'+':''}${pts.toFixed(0)} pts</td>
+                    <td rowspan="2"><span class="pnl-rs ${rs>=0?'g':'r'}">${rs>=0?'+':'&#8722;'}&#8377;${Math.abs(rs).toLocaleString('en-IN')}</span></td>
+                    <td rowspan="2">${reason!='—'?`<span class="rc-b ${rTag}">${reason}</span>`:'—'}</td>
+                    <td class="tc" rowspan="2" style="vertical-align:middle">${dur}</td>
+                  </tr>
+                  <tr>
+                    <td style="font-size:.65rem;color:#fca5a5;font-weight:700">SELL</td>
                     <td class="mono">${(t.exitPrice??0)>0?(t.exitPrice??0).toFixed(1):'—'}</td>
-                    <td class="${pts>=0?'g':'r'}" style="font-weight:800">${pts>=0?'+':''}${pts.toFixed(0)} pts</td>
-                    <td><span class="pnl-rs ${pts>=0?'g':'r'}">${rs>=0?'+':'&#8722;'}&#8377;${Math.abs(rs).toLocaleString('en-IN')}</span></td>
-                    <td>${reason!=='—'?`<span class="rc-b ${rTag}">${reason}</span>`:'—'}</td>
-                    <td class="tc">${dur}</td>
+                    <td class="mono" style="color:#94a3b8">${_sPrem}</td>
                   </tr>`;
                 }).join('')
             }
@@ -10915,6 +10905,25 @@ app.get("/signals", featureGate("feature_signals", "Signals"), async (req, res) 
         </table></div>
       </div>
 
+    <!-- Stats strip -->
+    <div class="kpi-mini" style="grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:8px;margin-top:1rem">
+      <div class="kpi-m">
+        <div class="kpi-m-l">This Week</div>
+        <div class="kpi-m-v ${pnlCls2(an2.weekly.pnl)}" id="ss-wk-rs">${fmtRs2(an2.weekly.pnl)}</div>
+        <div class="kpi-m-s" id="ss-wk-pts">${fmtPts2(an2.weekly.pnl)}</div>
+      </div>
+      <div class="kpi-m">
+        <div class="kpi-m-l">All-Time P&amp;L</div>
+        <div class="kpi-m-v ${pnlCls2(an2.allTime.pnl)}">${fmtRs2(an2.allTime.pnl)}</div>
+        <div class="kpi-m-s">${fmtPts2(an2.allTime.pnl)}</div>
+      </div>
+      <div class="kpi-m">
+        <div class="kpi-m-l">Win Rate</div>
+        <div class="kpi-m-v" id="ss-wr">${an2.allTime.winRate}%</div>
+        <div class="kpi-m-s">${an2.allTime.wins}W / ${an2.allTime.losses}L</div>
+      </div>
+    </div>
+
       <script>
       (function(){
         function _thFilter(f){
@@ -10936,7 +10945,201 @@ app.get("/signals", featureGate("feature_signals", "Signals"), async (req, res) 
       })();
       </script>
 
-    </div><!-- /panel-lock50 -->
+    </div><!-- /panel-bhav -->
+
+    <!-- ════════════════════════════════════════════════════════
+         TRAIL PAPER SHADOW PANEL
+         ════════════════════════════════════════════════════════ -->
+    <div id="panel-trail" style="display:none"><div class="db-main">
+        <!-- Position -->
+        <div id="sh-pos-trail-wrap">
+          ${hb2.shadowInTrade && (hb2.shadowEntry||0) > 0 ? `
+          <!-- In-trade card -->
+          <div class="pos-card pos-${(hb2.shadowDir||'ce').toLowerCase()}" id="sh-pos-trail-card">
+            <div class="pos-hdr">
+              <span class="pos-live-dot"></span>
+              <span class="pos-badge pos-b-${(hb2.shadowDir||'ce').toLowerCase()}" id="sh-trail-card-badge">${(hb2.shadowDir||'CE').toUpperCase()} OPTION</span>
+              <span class="pos-sym">BANKNIFTY</span>
+              <span class="pos-mode">PAPER</span>
+            </div>
+            <div class="pos-pnl-rs g" id="sh-trail-card-rs">—</div>
+            <div class="pos-pnl-pts g" id="sh-trail-card-pts">— unrealised</div>
+            <div class="pos-grid">
+              <div><div class="pos-lbl">Entry Index</div><div class="pos-val mono" id="sh-trail-card-ep">${(hb2.shadowEntry||0).toFixed(1)}</div></div>
+              <div><div class="pos-lbl">Live Index</div><div class="pos-val g mono" id="sh-trail-card-lp">${live2>0?live2.toFixed(1):'—'}</div></div>
+              <div><div class="pos-lbl">Stop Loss</div><div class="pos-val r mono" id="sh-trail-card-sl">${(hb2.shadowSL||0)>0?(hb2.shadowSL).toFixed(1):'—'}</div></div>
+              <div><div class="pos-lbl">SL Risk ₹</div><div class="pos-val r" id="sh-trail-card-slrs">—</div></div>
+            </div>
+          </div>
+          <div class="sh-pos sh-pos-watch" id="sh-pos-trail-flat" style="display:none">
+            <div class="watch-title"><span>⏳</span> TRAIL Shadow — <span id="sh-trail-status">In Trade</span></div>
+            <div id="sh-trail-detail" style="margin-top:8px;font-size:.8rem;color:var(--muted)"></div>
+            <div id="sh-trail-watch" style="margin-top:10px"></div>
+          </div>
+          ` : `
+          <!-- Flat / watching card -->
+          <div class="sh-pos sh-pos-watch" id="sh-pos-trail-flat">
+            <div class="watch-title"><span>⏳</span> TRAIL Shadow — <span id="sh-trail-status">Watching</span></div>
+            <div id="sh-trail-detail" style="margin-top:8px;font-size:.8rem;color:var(--muted)">Watching for next signal⏳</div>
+            <div id="sh-trail-watch" style="margin-top:10px"></div>
+          </div>
+          <div class="pos-card pos-ce" id="sh-pos-trail-card" style="display:none">
+            <div class="pos-hdr">
+              <span class="pos-live-dot"></span>
+              <span class="pos-badge pos-b-ce" id="sh-trail-card-badge">CE OPTION</span>
+              <span class="pos-sym">BANKNIFTY</span>
+              <span class="pos-mode">PAPER</span>
+            </div>
+            <div class="pos-pnl-rs g" id="sh-trail-card-rs">—</div>
+            <div class="pos-pnl-pts g" id="sh-trail-card-pts">— unrealised</div>
+            <div class="pos-grid">
+              <div><div class="pos-lbl">Entry Index</div><div class="pos-val mono" id="sh-trail-card-ep">—</div></div>
+              <div><div class="pos-lbl">Live Index</div><div class="pos-val g mono" id="sh-trail-card-lp">—</div></div>
+              <div><div class="pos-lbl">Stop Loss</div><div class="pos-val r mono" id="sh-trail-card-sl">—</div></div>
+              <div><div class="pos-lbl">SL Risk ₹</div><div class="pos-val r" id="sh-trail-card-slrs">—</div></div>
+            </div>
+          </div>
+          `}
+        </div>
+        <div id="sh-trail-signal" class="watch-card" style="margin-top:8px;display:none"></div>
+        <!-- Stats -->
+        <div>
+          <div class="ss-card">
+            <div class="ss-row">
+              <div><div class="ss-lbl">Today P&amp;L</div></div>
+              <div style="text-align:right"><div class="ss-val" id="sh-trail-pnl-rs" style="color:#818cf8">—</div><div class="ss-sub" id="sh-trail-pnl-pts"></div></div>
+            </div>
+            <div class="ss-row" id="sh-trail-unr-row" style="display:none">
+              <div><div class="ss-lbl" style="color:var(--muted);font-style:italic">↳ Unrealised</div></div>
+              <div style="text-align:right"><div class="ss-val" id="sh-trail-unr-rs"></div><div class="ss-sub" id="sh-trail-unr-pts"></div></div>
+            </div>
+            <div class="ss-row">
+              <div><div class="ss-lbl">Trades Today</div></div>
+              <div style="text-align:right"><div class="ss-val" id="sh-trail-tc">0</div><div class="ss-sub"><span class="g" id="sh-trail-w">0W</span> / <span class="r" id="sh-trail-l">0L</span></div></div>
+            </div>
+            <div class="ss-row">
+              <div><div class="ss-lbl">This Week</div></div>
+              <div style="text-align:right"><div class="ss-val" id="sh-trail-wk-rs" style="color:#818cf8">—</div><div class="ss-sub" id="sh-trail-wk-pts"></div></div>
+            </div>
+            <div class="ss-row">
+              <div><div class="ss-lbl">All-Time P&amp;L</div></div>
+              <div style="text-align:right"><div class="ss-val" style="color:var(--muted)">—</div><div class="ss-sub">Paper only</div></div>
+            </div>
+            <div class="ss-row">
+              <div><div class="ss-lbl">Win Rate (All-Time)</div></div>
+              <div style="text-align:right"><div class="ss-val" id="sh-trail-wr">—</div><div class="ss-sub" id="sh-trail-wrs"></div></div>
+            </div>
+          </div>
+          <div style="font-size:.67rem;color:var(--muted);padding:4px 2px">Shadow paper strategy — trailDefault</div>
+        </div>
+      </div>
+
+      <!-- Trade log -->
+      <div class="sec">TRAIL Trades Today <span class="sec-count" id="sh-trail-today-count"></span></div>
+      <div class="tw">
+        <table class="tt">
+          <thead><tr><th>Time</th><th>Dir</th><th>Entry Index</th><th>Exit Index</th><th>Index P&L</th><th>₹ P&L</th><th>Reason</th><th>Duration</th></tr></thead>
+          <tbody id="sh-trail-body"><tr><td colspan="8" class="tt-e">No TRAIL trades today</td></tr></tbody>
+        </table>
+      </div>
+    </div><!-- /panel-trail -->
+
+    <!-- ════════════════════════════════════════════════════════
+         LOCK50 OLD SHADOW PANEL
+         ════════════════════════════════════════════════════════ -->
+    <div id="panel-bhavold" style="display:none">
+      <div class="db-main">
+        <div id="sh-pos-l50o-wrap">
+          ${hb2.scalp1InTrade && (hb2.scalp1Entry||0) > 0 ? `
+          <!-- In-trade card (server-rendered) -->
+          <div class="pos-card pos-${(hb2.scalp1Dir||'ce').toLowerCase()}" id="sh-pos-l50o-card">
+            <div class="pos-hdr">
+              <span class="pos-live-dot"></span>
+              <span class="pos-badge pos-b-${(hb2.scalp1Dir||'ce').toLowerCase()}" id="sh-l50o-card-badge">${(hb2.scalp1Dir||'CE').toUpperCase()} OPTION</span>
+              <span class="pos-sym">BANKNIFTY</span>
+              <span class="pos-mode">PAPER</span>
+            </div>
+            <div class="pos-pnl-rs g" id="sh-l50o-card-rs">—</div>
+            <div class="pos-pnl-pts g" id="sh-l50o-card-pts">— unrealised</div>
+            <div class="pos-grid">
+              <div><div class="pos-lbl">Entry Index</div><div class="pos-val mono" id="sh-l50o-card-ep">${(hb2.scalp1Entry||0).toFixed(1)}</div></div>
+              <div><div class="pos-lbl">Live Index</div><div class="pos-val g mono" id="sh-l50o-card-lp">${live2>0?live2.toFixed(1):'—'}</div></div>
+              <div><div class="pos-lbl">Stop Loss</div><div class="pos-val r mono" id="sh-l50o-card-sl">${(hb2.scalp1SL||0)>0?(hb2.scalp1SL).toFixed(1):'—'}</div></div>
+              <div><div class="pos-lbl">SL Risk ₹</div><div class="pos-val r" id="sh-l50o-card-slrs">—</div></div>
+            </div>
+          </div>
+          <div class="sh-pos sh-pos-watch" id="sh-pos-l50o-flat" style="display:none">
+            <div class="watch-title"><span>🔆</span> LOCK50 Old Shadow — <span id="sh-l50o-status">In Trade</span></div>
+            <div id="sh-l50o-detail" style="margin-top:8px;font-size:.8rem;color:var(--muted)"></div>
+            <div id="sh-l50o-watch" style="margin-top:10px"></div>
+          </div>
+          ` : `
+          <!-- Flat / watching card -->
+          <div class="sh-pos sh-pos-watch" id="sh-pos-l50o-flat">
+            <div class="watch-title"><span>🔆</span> LOCK50 Old Shadow — <span id="sh-l50o-status">Watching</span></div>
+            <div id="sh-l50o-detail" style="margin-top:8px;font-size:.8rem;color:var(--muted)">Watching for next signal⏳</div>
+            <div id="sh-l50o-watch" style="margin-top:10px"></div>
+          </div>
+          <div class="pos-card pos-ce" id="sh-pos-l50o-card" style="display:none">
+            <div class="pos-hdr">
+              <span class="pos-live-dot"></span>
+              <span class="pos-badge pos-b-ce" id="sh-l50o-card-badge">CE OPTION</span>
+              <span class="pos-sym">BANKNIFTY</span>
+              <span class="pos-mode">PAPER</span>
+            </div>
+            <div class="pos-pnl-rs g" id="sh-l50o-card-rs">—</div>
+            <div class="pos-pnl-pts g" id="sh-l50o-card-pts">— unrealised</div>
+            <div class="pos-grid">
+              <div><div class="pos-lbl">Entry Index</div><div class="pos-val mono" id="sh-l50o-card-ep">—</div></div>
+              <div><div class="pos-lbl">Live Index</div><div class="pos-val g mono" id="sh-l50o-card-lp">—</div></div>
+              <div><div class="pos-lbl">Stop Loss</div><div class="pos-val r mono" id="sh-l50o-card-sl">—</div></div>
+              <div><div class="pos-lbl">SL Risk ₹</div><div class="pos-val r" id="sh-l50o-card-slrs">—</div></div>
+            </div>
+          </div>
+          `}
+        </div>
+        <div id="sh-l50o-signal" class="watch-card" style="margin-top:8px;display:none"></div>
+        <!-- Stats -->
+        <div>
+          <div class="ss-card">
+            <div class="ss-row">
+              <div><div class="ss-lbl">Today P&amp;L</div></div>
+              <div style="text-align:right"><div class="ss-val am" id="sh-l50o-pnl-rs">—</div><div class="ss-sub" id="sh-l50o-pnl-pts"></div></div>
+            </div>
+            <div class="ss-row" id="sh-l50o-unr-row" style="display:none">
+              <div><div class="ss-lbl" style="color:var(--muted);font-style:italic">↳ Unrealised</div></div>
+              <div style="text-align:right"><div class="ss-val" id="sh-l50o-unr-rs"></div><div class="ss-sub" id="sh-l50o-unr-pts"></div></div>
+            </div>
+            <div class="ss-row">
+              <div><div class="ss-lbl">Trades Today</div></div>
+              <div style="text-align:right"><div class="ss-val" id="sh-l50o-tc">0</div><div class="ss-sub"><span class="g" id="sh-l50o-w">0W</span> / <span class="r" id="sh-l50o-l">0L</span></div></div>
+            </div>
+            <div class="ss-row">
+              <div><div class="ss-lbl">This Week</div></div>
+              <div style="text-align:right"><div class="ss-val am" id="sh-l50o-wk-rs">—</div><div class="ss-sub" id="sh-l50o-wk-pts"></div></div>
+            </div>
+            <div class="ss-row">
+              <div><div class="ss-lbl">All-Time P&amp;L</div></div>
+              <div style="text-align:right"><div class="ss-val" style="color:var(--muted)">—</div><div class="ss-sub">Paper only</div></div>
+            </div>
+            <div class="ss-row">
+              <div><div class="ss-lbl">Win Rate (All-Time)</div></div>
+              <div style="text-align:right"><div class="ss-val" id="sh-l50o-wr">—</div><div class="ss-sub" id="sh-l50o-wrs"></div></div>
+            </div>
+          </div>
+          <div style="font-size:.67rem;color:var(--muted);padding:4px 2px">Shadow paper strategy — trailLock50Old</div>
+        </div>
+      </div>
+
+      <!-- Trade log -->
+      <div class="sec">LOCK50 Old Trades Today <span class="sec-count" id="sh-l50o-today-count"></span></div>
+      <div class="tw">
+        <table class="tt">
+          <thead><tr><th>Time</th><th>Dir</th><th>Entry Index</th><th>Exit Index</th><th>Index P&L</th><th>₹ P&L</th><th>Reason</th><th>Duration</th></tr></thead>
+          <tbody id="sh-l50o-body"><tr><td colspan="8" class="tt-e">No LOCK50 Old trades today</td></tr></tbody>
+        </table>
+      </div>
+    </div><!-- /panel-bhavold -->
 
     <!-- ════════════════════════════════════════════════════════
          VMT SHADOW PANEL (Option Premium Breakout)
@@ -11640,7 +11843,7 @@ app.get("/signals", featureGate("feature_signals", "Signals"), async (req, res) 
   }
   // Wire tab buttons immediately (script is at bottom of body, elements exist)
   (function(){
-    var tabMap={'stab-lock50':'lock50','stab-vmt':'vmt'};
+    var tabMap={'stab-lock50':'lock50','stab-trail':'trail','stab-lock50old':'lock50old','stab-vmt':'vmt'};
     Object.keys(tabMap).forEach(function(btnId){
       var btn=ge(btnId);
       if(btn)btn.addEventListener('click',function(){_sTab(tabMap[btnId]);});
@@ -11735,6 +11938,8 @@ app.get("/signals", featureGate("feature_signals", "Signals"), async (req, res) 
     try{
       const r=await fetch('/api/bot/status');
       const d=await r.json();
+      var _pd=d.heartbeat||{};var _pdh=document.getElementById('db-pdh');var _pdl=document.getElementById('db-pdl');var _pdc=document.getElementById('db-cndl');if(_pdh&&_pd.bhavPrevDayHigh)_pdh.textContent=_pd.bhavPrevDayHigh;if(_pdl&&_pd.bhavPrevDayLow)_pdl.textContent=_pd.bhavPrevDayLow;if(_pdc&&_pd.bhavCandles!==undefined)_pdc.textContent=_pd.bhavCandles;
+      var _pd=d.heartbeat||{};if(document.getElementById('db-pdh')&&_pd.bhavPrevDayHigh)document.getElementById('db-pdh').textContent=_pd.bhavPrevDayHigh;if(document.getElementById('db-pdl')&&_pd.bhavPrevDayLow)document.getElementById('db-pdl').textContent=_pd.bhavPrevDayLow;if(document.getElementById('db-cndl')&&_pd.bhavCandles!==undefined)document.getElementById('db-cndl').textContent=_pd.bhavCandles;
       ge('db-upd').textContent='Updated '+new Date().toLocaleTimeString('en-IN',{hour:'2-digit',minute:'2-digit',second:'2-digit'});
 
       const hb=d.heartbeat||{};
@@ -11785,32 +11990,69 @@ app.get("/signals", featureGate("feature_signals", "Signals"), async (req, res) 
           gf.style.background=unr>=0?'#10b981':'#ef4444';
         }
       }
-      // Watching card trigger levels
+      function _appendClosedTrades(el,d){
+        var _td3=new Date().toISOString().slice(0,10);
+        var _ctds=(d.recentTrades||[]).filter(function(t){return t.exitPrice&&t.exitPrice>0&&(t.date||'').startsWith(_td3);});
+        if(!_ctds.length)return;
+        var _ch='<div style="margin-top:10px;border-top:1px solid rgba(255,255,255,.06);padding-top:8px">';
+        _ch+='<div style="font-size:.58rem;text-transform:uppercase;letter-spacing:.8px;color:#475569;margin-bottom:5px">Closed Today</div>';
+        _ctds.slice().reverse().forEach(function(t,i){
+          var _ti=(t.premiumEntry>0&&t.premiumExit>0)?Math.round((t.premiumExit-t.premiumEntry)*(t.qty||30)):Math.round((t.pnl||0)*15);
+          var _tc=_ti>=0?'#4ade80':'#fb923c';
+          var _dc=t.direction==='CE'?'#38bdf8':'#c084fc';
+          var _tm=t.date?new Date(t.date).toLocaleTimeString('en-IN',{hour:'2-digit',minute:'2-digit',timeZone:'Asia/Kolkata'}):'';
+          var _re=t.reasonExit?'<span style="color:#475569;font-size:.6rem"> '+t.reasonExit+'</span>':'';
+          _ch+='<div style="display:flex;align-items:center;gap:8px;padding:3px 0;font-size:.68rem">'
+            +'<span style="color:#64748b">'+_tm+'</span>'
+            +(t.direction?'<span style="color:'+_dc+';font-weight:700">'+t.direction+'</span>':'')
+            +'<b style="color:'+_tc+'">'+(_ti>=0?'+':'-')+'&#8377;'+Math.abs(_ti)+'</b>'
+            +_re
+            +'</div>';
+        });
+        _ch+='</div>';
+        el.innerHTML+=_ch;
+      }
+      // Watching card — BHAV V3 candle status
       if(!inT){
-        const lc=hb.lastCandle;
         const noEl=ge('pos-lock50-watch');
-        if(lc&&noEl){
-          const bH=Math.max(lc.open,lc.close);
-          const bL=Math.min(lc.open,lc.close);
-          const ce=(bH+25).toFixed(0);
-          const pe=(bL-25).toFixed(0);
-          const ceD=lp>0?(lp-(bH+25)):null;
-          const peD=lp>0?((bL-25)-lp):null;
-          const ceA=ceD!==null?(' <span style="color:'+(ceD>=0?'#10b981':'#94a3b8')+'">'+(ceD>=0?'✓ past':'↑ '+Math.abs(ceD).toFixed(0)+' pts away')+'</span>'):'';
-          const peA=peD!==null?(' <span style="color:'+(peD>=0?'#10b981':'#94a3b8')+'">'+(peD>=0?'✓ past':'↓ '+Math.abs(peD).toFixed(0)+' pts away')+'</span>'):'';
-          noEl.innerHTML=
-            '<div class="watch-lvl-row watch-ce-row"><span class="watch-lvl-dir" style="color:#60a5fa">CE ▲</span><span class="watch-lvl-val">'+ce+'</span><span class="watch-lvl-dist">close ≥'+ce+ceA+'</span></div>'+
-            '<div class="watch-lvl-row watch-pe-row"><span class="watch-lvl-dir" style="color:#fca5a5">PE ▼</span><span class="watch-lvl-val">'+pe+'</span><span class="watch-lvl-dist">close ≤'+pe+peA+'</span></div>'+
-            (lp>0?'<div style="font-size:.73rem;color:var(--muted);margin-top:7px">Live index: <b style="color:var(--text-main)">'+lp.toFixed(1)+'</b></div>':'');
-        } else if(noEl){
-          noEl.innerHTML='<span style="opacity:.4">Waiting for first 15-min candle…</span>';
+        if(noEl){
+          const _pdh=parseFloat(hb.bhavPrevDayHigh||0);
+          const _pdl=parseFloat(hb.bhavPrevDayLow||0);
+          const _cn=parseInt(hb.bhavCandles||0);
+          const _ctx=_pdh>0?(lp>_pdh?'ABOVE PDH':((_pdl>0&&lp<_pdl)?'BELOW PDL':'INSIDE')):'';
+          const _now=new Date();
+          const _rm=_now.getMinutes();const _rs=_now.getSeconds();
+          const _rem=(15-(_rm%15))*60-_rs;
+          const _remFix=_rem<=0?_rem+900:_rem;
+          const _remStr=Math.floor(_remFix/60)+':'+(_remFix%60<10?'0':'')+(_remFix%60);
+          let _wh='';
+          if(_pdh>0){
+            // PDH row — pe-row style (above PDH → PE fade)
+            const _pdhDist=lp>0?Math.abs(lp-_pdh).toFixed(0):'';
+            const _pdhAbove=lp>_pdh;
+            const _pdhCol=_pdhAbove?'#dc2626':'#64748b';
+            const _pdhNote=lp>0?(' <span style="color:'+_pdhCol+'">'+(_pdhAbove?'&#8593; '+_pdhDist+' above &rarr; PE fade':''+_pdhDist+' pts below')+'</span>'):'';
+            _wh+='<div class="watch-lvl-row watch-pe-row"><span class="watch-lvl-dir" style="color:#dc2626">PDH &#9660;</span><span class="watch-lvl-val">'+_pdh.toFixed(0)+'</span><span class="watch-lvl-dist">'+(_pdl>0?'PDL '+_pdl.toFixed(0):'')+''+_pdhNote+'</span></div>';
+            // Candle row — amber style
+            _wh+='<div class="watch-lvl-row watch-cnd-row"><span class="watch-lvl-dir" style="color:#d97706;min-width:28px">&#8987;</span><span class="watch-lvl-val" style="font-size:.85rem">Candle #'+(_cn+1)+'</span><span class="watch-lvl-dist" style="color:#94a3b8">next close <b style="color:#fbbf24">'+_remStr+'</b>'+(lp>0?' &middot; spot <b style="color:var(--text-main)">'+lp.toFixed(0)+'</b>':'')+'</span></div>';
+          } else {
+            _wh='<span style="opacity:.4;font-size:.78rem">Waiting for first 15-min candle&#8230;</span>';
+          }
+          noEl.innerHTML=_wh;
+          _appendClosedTrades(noEl,d);
         }
       }
 
       // ── Session stats ───────────────────────────────────────
       if(d.today){
+        var _today2=new Date().toISOString().slice(0,10);
+        var _todayTds=(d.recentTrades||[]).filter(function(t){return t.exitPrice&&t.exitPrice>0&&(t.date||'').startsWith(_today2);});
+        var _premTot=_todayTds.reduce(function(s,t){return s+((t.premiumEntry>0&&t.premiumExit>0)?Math.round((t.premiumExit-t.premiumEntry)*(t.qty||30)):Math.round((t.pnl||0)*15));},0);
+        var _ep2h=parseFloat(hb.entryPremium||0);var _lp2h=parseFloat(hb.livePremium||0);
+        var _livePremUnr2=inT?(_ep2h>0&&_lp2h>0?Math.round((_lp2h-_ep2h)*(qty||30)):Math.round(unr*15)):0;
+        var _totInr=_premTot+_livePremUnr2;
         const tot=parseFloat(((d.today.pnl||0)+(inT?unr:0)).toFixed(0));
-        if(ge('ss-today-rs')){ge('ss-today-rs').textContent=fR(tot);ge('ss-today-rs').style.color=gc(tot);}
+        if(ge('ss-today-rs')){var _rs=(_totInr>=0?'+':'−')+'₹'+Math.abs(_totInr).toLocaleString('en-IN');ge('ss-today-rs').textContent=_rs;ge('ss-today-rs').style.color=gc(_totInr);}
         // Unrealised sub-row
         var unrRow=ge('ss-unr-row');
         if(unrRow){
@@ -11825,6 +12067,41 @@ app.get("/signals", featureGate("feature_signals", "Signals"), async (req, res) 
         if(ge('ss-tc'))ge('ss-tc').innerHTML=hb.tradeCount+(inT?'<span style="font-size:.6rem;color:#10b981"> +live</span>':'');
         if(ge('ss-wins'))ge('ss-wins').textContent=d.today.wins+'W';
         if(ge('ss-losses'))ge('ss-losses').textContent=d.today.losses+'L';
+        // Per-trade breakdown
+        var _bdEl=ge('ss-trade-breakdown');
+        if(_bdEl){
+          if(_todayTds.length===0&&!inT){_bdEl.innerHTML='';}
+          else{
+            var _bdHtml='';
+            _todayTds.forEach(function(t,i){
+              var _ti=(t.premiumEntry>0&&t.premiumExit>0)?Math.round((t.premiumExit-t.premiumEntry)*(t.qty||30)):Math.round((t.pnl||0)*15);
+              var _tc=_ti>=0?'#6ee7b7':'#fca5a5';
+              var _td=t.direction?'<span style="color:'+(t.direction==='CE'?'#93c5fd':'#fda4af')+'">'+t.direction+'</span> ':'';
+              var _tm=t.date?new Date(t.date).toLocaleTimeString('en-IN',{hour:'2-digit',minute:'2-digit',timeZone:'Asia/Kolkata'}):'';
+              var _tp=(t.premiumEntry>0&&t.premiumExit>0)?' ('+t.premiumEntry.toFixed(0)+'→'+t.premiumExit.toFixed(0)+')':'';
+              _bdHtml+='<div style="display:flex;align-items:center;gap:6px;padding:2px 0">'
+                +'<span style="color:#64748b;font-size:.6rem">T'+(i+1)+'</span>'
+                +_td
+                +'<b style="color:'+_tc+'">'+(_ti>=0?'+':'-')+'&#8377;'+Math.abs(_ti)+'</b>'
+                +(_tp?'<span style="color:#475569;font-size:.6rem">'+_tp+'</span>':'')
+                +'<span style="color:#64748b;font-size:.6rem">'+_tm+'</span>'
+                +'</div>';
+            });
+            if(inT){
+              var _lti=_ep2h>0&&_lp2h>0?Math.round((_lp2h-_ep2h)*(qty||30)):Math.round(unr*15);
+              var _ltc=_lti>=0?'#6ee7b7':'#fca5a5';
+              var _ldir=(hb.direction||'').toUpperCase();
+              var _ldirHtml=_ldir?'<span style="color:'+(_ldir==='CE'?'#60a5fa':'#fca5a5')+'">'+_ldir+'</span> ':'';
+              _bdHtml+='<div style="display:flex;align-items:center;gap:6px;padding:2px 0">'
+                +'<span style="color:#64748b;font-size:.6rem">T'+(_todayTds.length+1)+'</span>'
+                +_ldirHtml
+                +'<b style="color:'+_ltc+'">'+(_lti>=0?'+':'-')+'&#8377;'+Math.abs(_lti)+'</b>'
+                +'<span style="color:#f59e0b;font-size:.6rem">&#9679; live</span>'
+                +'</div>';
+            }
+            _bdEl.innerHTML=_bdHtml;
+          }
+        }
       }
       if(d.weekly){
         if(ge('ss-wk-rs')){ge('ss-wk-rs').textContent=fR(d.weekly.pnl);ge('ss-wk-rs').style.color=gc(d.weekly.pnl);}
@@ -11841,12 +12118,54 @@ app.get("/signals", featureGate("feature_signals", "Signals"), async (req, res) 
           if(cnt)cnt.textContent='('+cl.length+' closed'+(inT?' + 1 live':'')+')';
         }
       }
+      // trade events in timeline
+      var _atlTr=document.getElementById('atl-trades');
+      if(_atlTr){
+        var _today=new Date().toISOString().slice(0,10);
+        var _tds=(d.recentTrades||[]).filter(function(t){return t.exitPrice&&t.exitPrice>0&&(t.date||'').startsWith(_today);});
+        var _html='';
+        // live trade first
+        if(d.heartbeat&&d.heartbeat.inTrade&&parseFloat((d.heartbeat||{}).entryPrice||0)>0){
+          var _ep=parseFloat(d.heartbeat.entryPrice);var _dr=(d.heartbeat.direction||'').toUpperCase();
+          var _lp=parseFloat(d.heartbeat.livePrice||0);var _unr=_lp>0?(_dr==='CE'?_lp-_ep:_ep-_lp):0;
+          var _ep2=parseFloat(d.heartbeat.entryPremium||0);var _lp2=parseFloat(d.heartbeat.livePremium||0);
+          var _qty2=d.heartbeat.qty||30;
+          var _unrInr=(_ep2>0&&_lp2>0)?Math.round((_lp2-_ep2)*_qty2):Math.round(_unr*15);
+          var _ucol=_unrInr>=0?'#10b981':'#ef4444';
+          _html+='<div class="pm-tl-row"><div class="pm-tl-dot active">\u25c6</div>'
+            +'<div class="pm-tl-txt"><div class="pm-tl-time" style="color:#f59e0b">'
+            +(_dr?'<b style="color:'+(_dr==='CE'?'#60a5fa':'#fca5a5')+'">'+_dr+'</b> ':'')
+            +'IN TRADE \u2014 Entry '+_ep.toFixed(0)+(_lp>0?' \u2192 LTP '+_lp.toFixed(0):'')+'</div>'
+            +'<div class="pm-tl-label"><b style="color:'+_ucol+'">'+(_unrInr>=0?'+':'-')+'\u20b9'+Math.abs(_unrInr)+'</b>'
+            +' unrealised'+(_ep2>0&&_lp2>0?' (opt '+_ep2.toFixed(0)+'\u2192'+_lp2.toFixed(0)+')':' \u00b7 '+(_unr>=0?'+':'')+_unr.toFixed(0)+' pts')+'</div></div></div>';
+        }
+        // closed trades
+        _tds.slice().reverse().forEach(function(t){
+          var _p=t.pnl||0;
+          var _inr=(t.premiumEntry>0&&t.premiumExit>0)?Math.round((t.premiumExit-t.premiumEntry)*(t.qty||30)):Math.round(_p*15);
+          var _col=_inr>=0?'#10b981':'#ef4444';
+          var _tm=t.date?new Date(t.date).toLocaleTimeString('en-IN',{hour:'2-digit',minute:'2-digit',timeZone:'Asia/Kolkata'}):'';
+          var _dur=t.duration?(t.duration<60?t.duration+'s':Math.round(t.duration/60)+'m'):'';
+          _html+='<div class="pm-tl-row">'
+            +'<div class="pm-tl-dot '+(_p>=0?'done':'err')+'" style="color:'+_col+';background:'+_col+'20">'+(_p>=0?'\u2714':'\u2715')+'</div>'
+            +'<div class="pm-tl-txt"><div class="pm-tl-time">'
+            +(t.direction?'<b style="color:'+(t.direction==='CE'?'#60a5fa':'#fca5a5')+'">'+t.direction+'</b> ':'')
+            +_tm+' \u2014 Entry '+(t.entryPrice||0).toFixed(0)+' \u2192 Exit '+(t.exitPrice||0).toFixed(0)+'</div>'
+            +'<div class="pm-tl-label"><b style="color:'+_col+'">'+((_p>=0?'+':'-')+'\u20b9'+Math.abs(_inr))+'</b>'
+            +' \u00b7 '+(_p>=0?'+':'')+_p.toFixed(0)+' pts'
+            +(_dur?' \u00b7 '+_dur:'')
+            +(t.reasonExit?' \u00b7 <span style="font-size:.6rem;opacity:.75">'+t.reasonExit+'</span>':'')+'</div></div></div>';
+        });
+        if(!_html&&!(d.heartbeat&&d.heartbeat.inTrade))_html='<div style="font-size:.72rem;color:#8b949e;padding:4px 0 0 28px">No trades yet today</div>';
+        _atlTr.innerHTML=_html;
+      }
+
 
       // ── Candle timeline ─────────────────────────────────────
       if(hb.candleHistory&&hb.candleHistory.length){_candleHistory=hb.candleHistory;}
       if(hb.lastCandle){
         // todayTrades for markers
-        var _tt=d.todayTrades||[];
+        var _tt=(d.recentTrades||[]).filter(function(t){return (t.date||'').startsWith(new Date().toISOString().slice(0,10));});
         // candle timeline removed from TICK TRAIL panel
         // candle timeline removed from TRAIL/LOCK50 Old panels
       }
