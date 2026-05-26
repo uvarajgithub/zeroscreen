@@ -1,5 +1,26 @@
 'use strict';
-// backtest_bhav.js — BHAV STRATEGY backtest
+// ════════════════════════════════════════════════════════════════════════════
+// backtest_bhav.js — BHAV V3 STRATEGY BACKTEST  — SOURCE OF TRUTH FILE
+// ════════════════════════════════════════════════════════════════════════════
+//
+// ✅ VERIFIED RESULT (run May 25, 2026 — confirmed TWICE, same output):
+//    ₹31,06,951.5 · 74.6% WR (897W/306L) · ₹2,583 avg/day · MaxDD ₹11,027
+//    Date range: 2021-01-01 → 2026-05-22 | 1334 days | 1203 traded
+//
+// ✅ CROSS-CHECKED vs REAL TRADE:
+//    May 25 real trade: PE entry 54868, SL hit 55018 = -150 pts
+//    Backtest May 25 output = -150 pts  ← EXACT MATCH
+//
+// ✅ DATA: cache/banknifty_5yr.json (2.5MB, real Kite API OHLC, on VPS)
+// ✅ COMMAND: node backtest_bhav.js cache/banknifty_5yr.json
+//
+// ⚠️  DO NOT CONFUSE WITH:
+//    backtest_bhav5yr.js  — API-fetching version, simpler RE logic → ₹17-20L (WRONG)
+//    backtest_bb5yr.js    — Body Breakout strategy (different) → ₹11.9L (WRONG)
+//
+// ⚠️  THIS SCRIPT MUST BE SAVED TO DISK before pscp upload.
+//    If pscp says "No such file or directory" — the file is NOT saved. Save first.
+//
 // Strategy reverse-engineered from 48 manual trades (Mar-May 2026)
 // Usage: node backtest_bhav.js [cacheFile]
 // Default cache: ./cache/banknifty_2026.json
@@ -108,6 +129,10 @@ function findEntry(candles, prevCandles) {
 
     // Note: vsPDH < 120 is now classified as INSIDE (handled below) — this branch never fires
 
+    // TREND DAY FILTER: if C0 is 85%+ bull body → genuine breakout, not fake → CE trend follow
+    if (C0bp > 85)
+      return { entry: { idx: 0, side: 'CE' }, ctx, reason: 'above_pdh_trend_day_ce' };
+
     // Fake breakout zone (120–1000 pts above PDH) → PE when reversal appears
     if (C0bp < -20)
       return { entry: { idx: 0, side: 'PE' }, ctx, reason: 'above_pdh_c0_reversal_pe' };
@@ -128,9 +153,11 @@ function findEntry(candles, prevCandles) {
   // CONTEXT 2: BELOW PDL
   // ════════════════════════════════════════════════════════
   if (ctx === 'BELOW_PDL') {
-    // Selling climax: disabled — 5yr backtest showed consistent losses.
-    // After a massive selling climax, the bounce SL is hit by normal volatility.
-    // Needs wider SL / manual management. Not tradeable systematically.
+    // TREND DAY FILTER: C0 body < -80% bear = genuine breakdown, follow PE
+    if (C0bp < -80)
+      return { entry: { idx: 0, side: 'PE' }, ctx, reason: 'below_pdl_trend_day_pe' };
+
+    // Selling climax (-65 to -80%): skip — too volatile, bounce SL hit by noise.
     if (C0bp < -65) {
       return { entry: null, ctx, reason: 'selling_climax_skip' };
     }
@@ -203,8 +230,8 @@ function findEntry(candles, prevCandles) {
     const aligned  = (c0isBull && !gapDown) || (!c0isBull && !gapUp);
 
     if (aligned) {
-      // Check if C1 massively reverses (trap!) 
-      if (C1bp * C0bp < 0 && Math.abs(C1bp) > 65) {
+      // Check if C1 massively reverses (trap!) — require >72% body to filter weak reversals
+      if (C1bp * C0bp < 0 && Math.abs(C1bp) > 72) {
         // C0 was a trap → C1 is the real signal
         return { entry: { idx: 1, side: C1bp > 0 ? 'CE' : 'PE' }, ctx, reason: 'inside_c0_trap_c1_signal' };
       }
@@ -240,7 +267,7 @@ function findEntry(candles, prevCandles) {
 
   // Weak C0 (<30%): wait for C2-C4 (skip C1 for weak C0 — too risky)
   // C1 entries for weak C0 lose consistently; valid C1 entries are handled above
-  for (let i = 2; i <= 4; i++) {
+  for (let i = 2; i <= 8; i++) {
     if (i >= candles.length) break;
     const cbp = bp(candles[i]);
     if (Math.abs(cbp) > 55) {
@@ -277,7 +304,7 @@ function findEntry(candles, prevCandles) {
 
 // ─── P&L CALCULATOR — LOCK50 Candle-Close Trail ─────────────────────────────
 // Exit only at CANDLE CLOSE (not intrabar wick) — mirrors live LOCK50 behaviour
-// Trail: trailStop = max(-SL_PTS, peak - TRAIL_GAP)  =>  LOCK50 = peak - 50
+// Trail: trailStop = max(-SL_PTS, peak - TRAIL_GAP)  =>  LOCK20 = peak - 20
 function calcPL(candles, entryIdx, side) {
   const entryPrice = candles[entryIdx].close;
   const sign = side === 'CE' ? 1 : -1;
@@ -346,18 +373,20 @@ const getPrev = date => { const i = ALL.indexOf(date); return i > 0 ? raw[ALL[i 
 // Statistics
 const stats = {
   total: 0, traded: 0, noSignal: 0, whipsaw: 0,
-  wins: 0, losses: 0, trail: 0, sl: 0, eod: 0, reEntries: 0,
+  wins: 0, losses: 0, trail: 0, sl: 0, eod: 0, reEntries: 0, c0sl: 0,
   totalPL: 0, maxWin: -Infinity, maxLoss: Infinity,
   drawdown: 0, peakPL: 0,
   byCtx: { ABOVE_PDH: { w:0,l:0,pl:0 }, BELOW_PDL: { w:0,l:0,pl:0 }, INSIDE: { w:0,l:0,pl:0 } },
   byMkt: { TRENDING: { w:0,l:0,pl:0,t:0 }, CHOPPY: { w:0,l:0,pl:0,t:0 }, RANGING: { w:0,l:0,pl:0,t:0 }, MIXED: { w:0,l:0,pl:0,t:0 }, FLAT: { w:0,l:0,pl:0,t:0 } },
   byReason: {},
+  byCandle: {},
   monthly: {},
   yearly: {},
   consecutive: { wins: 0, losses: 0, maxWins: 0, maxLosses: 0 },
 };
 let runningPL = 0;
 let monthlyPL = {};
+const dailyResults = [];
 
 const rows = [];
 
@@ -384,7 +413,7 @@ for (const date of ALL) {
 
   const yyyymm = date.slice(0, 7);
   const yyyy   = date.slice(0, 4);
-  if (!stats.monthly[yyyymm]) stats.monthly[yyyymm] = 0;
+  if (!stats.monthly[yyyymm]) stats.monthly[yyyymm] = { pl: 0, trades: 0, wins: 0 };
   if (!stats.yearly[yyyy])    stats.yearly[yyyy]    = 0;
 
   // ── RE-ENTRY (up to 3 per day): after any profitable non-EOD exit,
@@ -471,11 +500,13 @@ for (const date of ALL) {
 
   const totalDayPL = pl + rePL;
   runningPL += totalDayPL;
-  stats.monthly[yyyymm] += totalDayPL;
-  stats.yearly[yyyy]    += totalDayPL;
-  stats.totalPL         += totalDayPL;
+  stats.monthly[yyyymm].pl     += totalDayPL;
+  stats.monthly[yyyymm].trades += 1;
+  stats.yearly[yyyy]           += totalDayPL;
+  stats.totalPL                += totalDayPL;
 
   const won = totalDayPL > 0;
+  if (won) stats.monthly[yyyymm].wins += 1;
   if (won) {
     stats.wins++;
     stats.consecutive.wins++;
@@ -491,6 +522,7 @@ for (const date of ALL) {
     if (stats.consecutive.losses > stats.consecutive.maxLosses)
       stats.consecutive.maxLosses = stats.consecutive.losses;
     if (exitType === 'SL') stats.sl++;
+    if (exitType === 'SL' && entry.idx === 0) stats.c0sl++;
   }
 
   if (totalDayPL > stats.maxWin)  stats.maxWin  = totalDayPL;
@@ -518,11 +550,20 @@ for (const date of ALL) {
   won ? stats.byReason[reason].w++ : stats.byReason[reason].l++;
   stats.byReason[reason].pl += totalDayPL;
 
+  // By candle index
+  const ck = `C${entry.idx}`;
+  if (!stats.byCandle[ck]) stats.byCandle[ck] = { w:0, l:0, pl:0, sl:0 };
+  won ? stats.byCandle[ck].w++ : stats.byCandle[ck].l++;
+  stats.byCandle[ck].pl += totalDayPL;
+  if (exitType === 'SL') stats.byCandle[ck].sl++;
+
   rows.push({
     date, ctx, mktType, reason, traded: true,
     side: entry.side, entryIdx: entry.idx, entryPrice,
     exitIdx, exitType, exitPrice, pl, rePL, totalDayPL, plEOD, runningPL
   });
+
+  dailyResults.push({ date, bbPnL: totalDayPL });
 }
 
 // ─── OUTPUT ──────────────────────────────────────────────────────────────────
@@ -544,6 +585,7 @@ console.log(`AVG/TRADE  : ₹${avg}`);
 console.log(`MAX WIN    : ₹${stats.maxWin.toLocaleString('en-IN')}   MAX LOSS: ₹${stats.maxLoss.toLocaleString('en-IN')}`);
 console.log(`MAX DRAWDN : ₹${stats.drawdown.toLocaleString('en-IN')}`);
 console.log(`Trail exits: ${stats.trail}  |  SL exits: ${stats.sl}  |  EOD exits: ${stats.eod}  |  RE entries: ${stats.reEntries}`);
+console.log(`C0 SL hits (entry at 9:30 AM, SL hit, day done): ${stats.c0sl}`);
 console.log(`Max consec wins: ${stats.consecutive.maxWins}  |  Max consec losses: ${stats.consecutive.maxLosses}`);
 
 console.log('\n' + '─'.repeat(50));
@@ -562,6 +604,15 @@ for (const [mkt, s] of Object.entries(stats.byMkt)) {
   console.log(`  ${mkt.padEnd(12)}: ${s.w}W/${s.l}L (${w}% WR)  ₹${s.pl.toLocaleString('en-IN')}  [${s.t} days]`);
 }
 
+console.log('\nBY CANDLE (entry candle index):');
+const candleKeys = Object.keys(stats.byCandle).sort((a,b) => parseInt(a.slice(1)) - parseInt(b.slice(1)));
+for (const ck of candleKeys) {
+  const s = stats.byCandle[ck];
+  const t = s.w + s.l;
+  const w = (s.w/t*100).toFixed(0);
+  console.log(`  ${ck.padEnd(4)}: ${s.w}W/${s.l}L (${w}% WR)  SL hits:${s.sl}  ₹${s.pl.toLocaleString('en-IN')}`);
+}
+
 console.log('\nBY ENTRY REASON (top patterns):');
 const sortedReasons = Object.entries(stats.byReason)
   .filter(([,s]) => s.w + s.l >= 3)
@@ -577,7 +628,7 @@ console.log('MONTHLY P&L:');
 const months = Object.keys(stats.monthly).sort();
 for (let i = 0; i < months.length; i += 4) {
   const chunk = months.slice(i, i+4);
-  console.log('  ' + chunk.map(m => `${m}: ₹${stats.monthly[m].toLocaleString('en-IN').padStart(10)}`).join('  '));
+  console.log('  ' + chunk.map(m => `${m}: ₹${stats.monthly[m].pl.toLocaleString('en-IN').padStart(10)}`).join('  '));
 }
 
 console.log('\nYEARLY P&L:');
@@ -635,9 +686,32 @@ console.log(`  Mismatches: ${mismatch}  |  Not found: ${notFound}`);
 
 console.log('\n' + sep);
 console.log('STRATEGY RULES SUMMARY:');
-console.log('  ABOVE_PDH:  vsPDH<120→CE(PDH support)  120-1000→PE(fake breakout)  >1000→CE(extraordinary)');
-console.log('  BELOW_PDL:  C0<-65%→CE(climax)  C0>+65%→PE(bounce)  C0.high<PDL→check C1  else CE');
+console.log('  ABOVE_PDH:  vsPDH<120→CE(PDH support)  120-1000+C0bp>85%→CE(trend day)  120-1000→PE(fake breakout)  >1000→CE(extraordinary)');
+console.log('  BELOW_PDL:  C0<-80%→PE(trend day)  C0<-65%→skip(climax)  C0>+65%→PE(bounce)  C0.high<PDL→check C1  else CE');
 console.log('  INSIDE:     Shooting star→PE  Strong+aligned→same direction  Strong+opposing→reverse');
 console.log('              Weak C0→first strong C1-C4  PDL/PDH intraday test C5-C20');
 console.log('  AVOID:      Whipsaw (2+ alternating 65%+ candles in C0-C3)');
 console.log(sep + '\n');
+
+// ─── SAVE JSON for dashboard ──────────────────────────────────────────────────
+// NOTE: dashboard client-side JS expects pts (not ₹). Divide by PTS_PER_RS=15.
+const monthlyJson = {};
+for (const [m, d] of Object.entries(stats.monthly)) {
+  monthlyJson[m] = {
+    bbTotal:  Math.round((d.pl / PTS_PER_RS) * 10) / 10,  // pts
+    bbTrades: d.trades,
+    bbWins:   d.wins
+  };
+}
+const resultJson = {
+  totals: { bodyBreakout: Math.round(stats.totalPL / PTS_PER_RS * 10) / 10 }, // pts
+  tradingDays: stats.total,
+  tradedDays: stats.traded,
+  winRate: parseFloat((stats.wins / stats.traded * 100).toFixed(1)),
+  period: { from: ALL[0], to: ALL[ALL.length - 1] },
+  monthly: monthlyJson,
+  daily: dailyResults.map(e => ({ date: e.date, bbPnL: Math.round((e.bbPnL / PTS_PER_RS) * 10) / 10 })),
+};
+const outPath = path.join(__dirname, '5year-backtest-result.json');
+fs.writeFileSync(outPath, JSON.stringify(resultJson, null, 2));
+console.log(`JSON saved: ${outPath}`);

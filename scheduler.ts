@@ -15,7 +15,7 @@
 import cron from "node-cron";
 import { fetchLatestBhavcopy } from "./nse";
 import { fetchFundamentals }   from "./scraper";
-import { dbRun, dbAll, upsertStock, upsertPrice, getStaleSymbols, getAllSymbols, initDb, screenStocks, getAllActiveAlerts, updateAlertLastSent, createPick, getUsersWithAutoPicks, paperBuy, paperSell, getPaperPositions, getAllActivePriceAlerts, triggerPriceAlert, updatePickEntry } from "./db";
+import { dbRun, dbAll, upsertStock, upsertPrice, getStaleSymbols, getAllSymbols, initDb, screenStocks, getAllActiveAlerts, updateAlertLastSent, createPick, getUsersWithAutoPicks, paperBuy, paperSell, getPaperPositions, getAllActivePriceAlerts, triggerPriceAlert, updatePickEntry, getPaperTradeConfig } from "./db";
 import { sendAlertEmail, sendPriceAlertEmail } from "./mailer";
 
 const FETCH_DELAY_MS = 800;
@@ -358,6 +358,7 @@ export async function autoPaperTradeFromPicks(): Promise<void> {
     // Fetch all open positions for this user once per user (avoid per-pick DB calls)
     const openPositions = await getPaperPositions(user.id);
     const openSymbols = new Set(openPositions.map((p: any) => p.symbol.toUpperCase()));
+    const ptCfg = await getPaperTradeConfig(user.id);
 
     for (const pick of picks) {
       // Skip if user already holds an open position in this stock
@@ -366,15 +367,16 @@ export async function autoPaperTradeFromPicks(): Promise<void> {
         continue;
       }
 
-      const qty   = 1;
-      // Use midpoint of pick's entry zone — this IS yesterday's close ± 0.3% buffer,
-      // the intended entry price. Far more meaningful than raw prices table at 9:15 AM.
+      // Use midpoint of pick's entry zone as entry price
       const entryMid = parseFloat(((pick.entry_low + pick.entry_high) / 2).toFixed(2));
       // Fallback: live price from prices table (same data, but use midpoint first)
       const priceRow = await dbAll<{ price: number }>(
         "SELECT price FROM prices WHERE symbol = ?", [pick.stock_symbol]
       );
       const price = entryMid > 0 ? entryMid : (priceRow[0]?.price && priceRow[0].price > 0 ? priceRow[0].price : pick.entry_low);
+      const qty = ptCfg.picks_capital > 0
+        ? Math.max(1, Math.floor(ptCfg.picks_capital / price))
+        : Math.max(1, ptCfg.default_qty ?? 1);
       const tradeType = pick.pick_type === "intraday" ? "INTRADAY" : "HOLDING";
 
       const result = await paperBuy(

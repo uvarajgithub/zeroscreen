@@ -1,0 +1,12 @@
+[
+  {
+    "date": "2026-05-26",
+    "signal": "CE",
+    "reason": "inside_c0_breaks_above_pdh",
+    "btPnl": -100,
+    "btNote": "SL hit C2 (09:45)",
+    "actualPnl": 0,
+    "actualTrades": 0,
+    "note": "Bot offline"
+  }
+]

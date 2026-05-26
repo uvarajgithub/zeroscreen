@@ -1,15 +1,16 @@
 // auto_token.js — Standalone Kite token auto-refresh
-// Runs at 8:00 AM IST daily via cron
-// Does NOT touch any bot code — only calls the existing token-server /submit endpoint
+// Runs at 7:30 AM IST daily via cron (2:00 UTC, weekdays)
+// Self-sufficient: exchanges token directly, updates .env itself — does NOT depend on token-server
+// Retries up to 3 times on failure. Sends Telegram on success AND failure.
 //
 // SETUP (one time):
 //   1. Fill in your credentials in the CONFIG section below
 //   2. node /home/ubuntu/trading-bot/auto_token.js   ← test manually first
-//   3. crontab -e  → add:  30 2 * * 1-5 node /home/ubuntu/trading-bot/auto_token.js >> /home/ubuntu/trading-bot/logs/auto_token.log 2>&1
-//      (2:30 UTC = 8:00 IST, weekdays only)
+//   3. crontab -e  → confirm:  0 2 * * 1-5 node /home/ubuntu/trading-bot/auto_token.js >> /home/ubuntu/trading-bot/logs/auto_token.log 2>&1
 
 const https = require('https');
 const http  = require('http');
+const fs    = require('fs');
 const { execSync } = require('child_process');
 const crypto = require('crypto');
 require('dotenv').config({ path: '/home/ubuntu/trading-bot/.env' });
@@ -124,12 +125,86 @@ function mergeCookies(existing, newHeaders) {
   return Object.entries(jar).map(([k,v]) => `${k}=${v}`).join('; ');
 }
 
-// ── Main flow ─────────────────────────────────────────────────────────────────
-async function main() {
-  const now = new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' });
-  console.log(`\n[auto_token] Starting at ${now} IST`);
+// ── Exchange request_token → access_token directly via Kite REST API ─────────
+function exchangeToken(requestToken, apiKey, apiSecret) {
+  return new Promise((resolve, reject) => {
+    const checksum = crypto.createHash('sha256')
+      .update(apiKey + requestToken + apiSecret)
+      .digest('hex');
+    const data = new URLSearchParams({
+      api_key: apiKey,
+      request_token: requestToken,
+      checksum
+    }).toString();
+    const opts = {
+      hostname: 'api.kite.trade', path: '/session/token', method: 'POST',
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded',
+        'Content-Length': Buffer.byteLength(data),
+        'X-Kite-Version': '3',
+        'User-Agent': 'Mozilla/5.0'
+      }
+    };
+    const req = https.request(opts, res => {
+      let d = ''; res.on('data', c => d += c);
+      res.on('end', () => {
+        try {
+          const j = JSON.parse(d);
+          if (j.status === 'success' && j.data && j.data.access_token) {
+            resolve(j.data.access_token);
+          } else {
+            reject(new Error('Token exchange failed: ' + d.slice(0, 200)));
+          }
+        } catch(e) { reject(new Error('Token exchange parse error: ' + d.slice(0, 200))); }
+      });
+    });
+    req.on('error', reject);
+    req.setTimeout(20000, () => { req.destroy(); reject(new Error('Token exchange timeout')); });
+    req.write(data); req.end();
+  });
+}
 
-  // Step 1: GET login page (establishes api_key session context)
+// ── Update ACCESS_TOKEN line in .env file directly ────────────────────────────
+function updateEnvFile(envPath, accessToken) {
+  let content = fs.readFileSync(envPath, 'utf-8');
+  if (/^ACCESS_TOKEN=.*/m.test(content)) {
+    content = content.replace(/^ACCESS_TOKEN=.*/m, `ACCESS_TOKEN=${accessToken}`);
+  } else {
+    content += `\nACCESS_TOKEN=${accessToken}\n`;
+  }
+  fs.writeFileSync(envPath, content, 'utf-8');
+  // Also write access_token.txt — used by the 9:10 AM health check to confirm token is fresh today
+  try { fs.writeFileSync('/home/ubuntu/trading-bot/access_token.txt', accessToken); } catch(_) {}
+  console.log('[auto_token] .env updated with new ACCESS_TOKEN');
+}
+
+// ── Verify token works by hitting Kite /user/profile ─────────────────────────
+function verifyToken(apiKey, accessToken) {
+  return new Promise((resolve) => {
+    const opts = {
+      hostname: 'api.kite.trade', path: '/user/profile', method: 'GET',
+      headers: {
+        'X-Kite-Version': '3',
+        'Authorization': `token ${apiKey}:${accessToken}`,
+        'User-Agent': 'Mozilla/5.0'
+      }
+    };
+    const req = https.request(opts, res => {
+      let d = ''; res.on('data', c => d += c);
+      res.on('end', () => {
+        try { const j = JSON.parse(d); resolve(j.status === 'success'); }
+        catch(e) { resolve(false); }
+      });
+    });
+    req.on('error', () => resolve(false));
+    req.setTimeout(10000, () => { req.destroy(); resolve(false); });
+    req.end();
+  });
+}
+
+// ── Single attempt: login → get request_token ─────────────────────────────────
+async function getRequestToken() {
+  // Step 1: GET login page
   console.log('[auto_token] Step 1: Establishing session...');
   const r0 = await httpsGet(`/connect/login?api_key=${API_KEY}&v=3`, '');
   let cookies = mergeCookies('', r0.headers);
@@ -166,13 +241,12 @@ async function main() {
   const m1 = loc.match(/request_token=([^&]+)/);
   if (m1) requestToken = m1[1];
 
-  // Fallback: parse from response body
   if (!requestToken) {
     const m2 = r2.body.match(/request_token[=:]["']?([A-Za-z0-9]+)/);
     if (m2) requestToken = m2[1];
   }
 
-  // Step 3b: After 2FA success, GET connect/login again to trigger OAuth redirect
+  // Step 3b: After 2FA, GET connect/login to trigger OAuth redirect
   if (!requestToken) {
     console.log('[auto_token] Step 3b: Triggering OAuth redirect...');
     const r3 = await httpsGet(`/connect/login?api_key=${API_KEY}&v=3`, cookies);
@@ -184,7 +258,6 @@ async function main() {
       const m4 = r3.body.match(/request_token=([A-Za-z0-9]+)/);
       if (m4) requestToken = m4[1];
     }
-    // Step 3c: Follow /connect/finish to get request_token
     if (!requestToken && loc3.includes('/connect/finish')) {
       console.log('[auto_token] Step 3c: Following /connect/finish...');
       const finishPath = loc3.replace('https://kite.zerodha.com', '');
@@ -197,53 +270,98 @@ async function main() {
         const m6 = r4.body.match(/request_token=([A-Za-z0-9]+)/);
         if (m6) requestToken = m6[1];
       }
-      if (!requestToken) {
-        throw new Error(`No request_token found.\nFinish status: ${r4.status}\nFinish loc: ${loc4}\nFinish body: ${r4.body.slice(0,300)}`);
-      }
+      if (!requestToken) throw new Error(`No request_token found.\nLoc: ${loc4}\nBody: ${r4.body.slice(0,300)}`);
     } else if (!requestToken) {
-      throw new Error(`No request_token found.\nTOTP status: ${r2.status}\nTOTP body: ${r2.body.slice(0,200)}\nRedirect loc: ${loc3}\nRedirect body: ${r3.body.slice(0,200)}`);
+      throw new Error(`No request_token found.\nTOTP status: ${r2.status}\nLoc: ${loc3}\nBody: ${r3.body.slice(0,200)}`);
     }
   }
   console.log('[auto_token] Got request_token:', requestToken.slice(0, 12) + '...');
+  return requestToken;
+}
 
-  // Step 4: Submit to local token-server (handles .env update + bot restart)
-  // Construct the redirect URL that token-server expects
-  const redirectUrl = `https://127.0.0.1/?request_token=${requestToken}&action=login&status=success`;
-  const payload = `token=${encodeURIComponent(redirectUrl)}`;
+// ── Main flow with retry ───────────────────────────────────────────────────────
+const ENV_PATH   = '/home/ubuntu/trading-bot/.env';
+const API_SECRET = process.env.API_SECRET;
+const MAX_RETRIES = 3;
+const RETRY_DELAY_MS = 3 * 60 * 1000;  // 3 minutes between retries
 
-  console.log('[auto_token] Step 4: Submitting to token-server...');
-  const response = await new Promise((resolve, reject) => {
-    const req = http.request({
-      hostname: 'localhost', port: 3001, path: '/submit', method: 'POST',
-      headers: {
-        'Content-Type': 'application/x-www-form-urlencoded',
-        'Content-Length': Buffer.byteLength(payload)
+async function main() {
+  const now = new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' });
+  console.log(`\n[auto_token] Starting at ${now} IST`);
+
+  let lastError = null;
+
+  for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+    if (attempt > 1) {
+      console.log(`\n[auto_token] Retry ${attempt}/${MAX_RETRIES} in 3 minutes...`);
+      await new Promise(r => setTimeout(r, RETRY_DELAY_MS));
+    }
+    console.log(`\n[auto_token] === Attempt ${attempt}/${MAX_RETRIES} ===`);
+
+    try {
+      // Step A: Get request_token from Zerodha login
+      const requestToken = await getRequestToken();
+
+      // Step B: Exchange request_token → access_token directly (no token-server dependency)
+      console.log('[auto_token] Step 4: Exchanging for access_token...');
+      const accessToken = await exchangeToken(requestToken, API_KEY, API_SECRET);
+      console.log('[auto_token] Got access_token:', accessToken.slice(0, 8) + '...');
+
+      // Step C: Write directly to .env
+      console.log('[auto_token] Step 5: Updating .env...');
+      updateEnvFile(ENV_PATH, accessToken);
+
+      // Step D: Also update token-server so its in-memory state stays fresh
+      try {
+        const redirectUrl = `https://127.0.0.1/?request_token=${requestToken}&action=login&status=success`;
+        const payload = `token=${encodeURIComponent(redirectUrl)}`;
+        await new Promise((resolve) => {
+          const req = http.request({
+            hostname: 'localhost', port: 3001, path: '/submit', method: 'POST',
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'Content-Length': Buffer.byteLength(payload) }
+          }, res => { res.on('data', () => {}); res.on('end', () => resolve()); });
+          req.on('error', () => resolve());  // non-fatal — .env already updated
+          req.setTimeout(5000, () => { req.destroy(); resolve(); });
+          req.write(payload); req.end();
+        });
+        console.log('[auto_token] token-server notified (optional)');
+      } catch(_) {}
+
+      // Step E: Restart bot with new token
+      console.log('[auto_token] Step 6: Restarting bot...');
+      execSync(`pm2 restart ${BOT_PM2_NAME} --update-env`, { stdio: 'pipe' });
+      console.log(`[auto_token] ✔ ${BOT_PM2_NAME} restarted`);
+
+      // Step F: Wait 10 seconds then verify token actually works
+      console.log('[auto_token] Step 7: Verifying token...');
+      await new Promise(r => setTimeout(r, 10000));
+      const ok = await verifyToken(API_KEY, accessToken);
+      if (!ok) throw new Error('Token verification failed — Kite /user/profile rejected it');
+
+      // ✅ All good
+      const successMsg = `✅ Token refreshed & bot ready\n${new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })} IST`;
+      console.log('[auto_token] ' + successMsg);
+      sendTelegram(successMsg);
+      return;
+
+    } catch (err) {
+      lastError = err;
+      console.error(`[auto_token] Attempt ${attempt} FAILED: ${err.message}`);
+      if (attempt < MAX_RETRIES) {
+        sendTelegram(`⚠️ Token refresh attempt ${attempt}/${MAX_RETRIES} failed: ${err.message.slice(0, 150)}\nRetrying in 3 min...`);
       }
-    }, res => {
-      let d = ''; res.on('data', c => d += c);
-      res.on('end', () => resolve({ status: res.statusCode, body: d }));
-    });
-    req.on('error', reject);
-    req.setTimeout(20000, () => { req.destroy(); reject(new Error('token-server timeout')); });
-    req.write(payload); req.end();
-  });
-
-  console.log('[auto_token] Token-server response status:', response.status);
-
-  // Step 5: Direct PM2 restart with correct process name
-  // (token-server has BOT_NAME='trading-bot' which is wrong — we fix it here)
-  try {
-    execSync(`pm2 restart ${BOT_PM2_NAME} --update-env`, { stdio: 'pipe' });
-    console.log(`[auto_token] \u2714 ${BOT_PM2_NAME} restarted with new token`);
-    sendTelegram(`\u2705 Token refreshed & bot restarted\n${now} IST`);
-  } catch (pmErr) {
-    console.warn('[auto_token] PM2 restart warning:', pmErr.message ? pmErr.message.slice(0, 200) : pmErr);
-    sendTelegram(`\u26a0\ufe0f Token updated but PM2 restart failed: ${(pmErr.message || '').slice(0, 100)}`);
+    }
   }
+
+  // All retries exhausted
+  const failMsg = `🚨 TOKEN REFRESH FAILED after ${MAX_RETRIES} attempts!\n${lastError ? lastError.message.slice(0, 200) : 'unknown'}\n\nBot will miss today's trade! Login manually NOW:\nhttp://139.59.18.52:3001/login`;
+  console.error('[auto_token] ' + failMsg);
+  sendTelegram(failMsg);
+  setTimeout(() => process.exit(1), 2000);
 }
 
 main().catch(e => {
-  console.error('[auto_token] FAILED:', e.message);
-  sendTelegram('\u274c Token refresh FAILED: ' + e.message.slice(0, 200) + '\n\nLogin manually: http://139.59.18.52:3001/login');
+  console.error('[auto_token] FATAL:', e.message);
+  sendTelegram(`🚨 TOKEN REFRESH FATAL ERROR: ${e.message.slice(0, 200)}\n\nLogin manually: http://139.59.18.52:3001/login`);
   setTimeout(() => process.exit(1), 2000);
 });

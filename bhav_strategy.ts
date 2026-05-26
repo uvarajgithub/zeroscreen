@@ -107,6 +107,10 @@ export function findBhavEntry(
     if (vsPDH > 1000)
       return at(0, 'CE', 'extraordinary_gap_ce');
 
+    // TREND DAY FILTER: C0 body >85% bull = genuine breakout, not fake → follow CE
+    if (C0bp > 85)
+      return at(0, 'CE', 'above_pdh_trend_day_ce');
+
     if (C0bp < -20)
       return at(0, 'PE', 'above_pdh_c0_reversal_pe');
 
@@ -125,7 +129,11 @@ export function findBhavEntry(
   // CONTEXT 2: BELOW PDL
   // ════════════════════════════════════════════════════════
   if (ctx === 'BELOW_PDL') {
-    if (C0bp < -65) return null;  // selling climax — skip
+    // TREND DAY FILTER: C0 body < -80% bear = genuine breakdown, follow PE
+    if (C0bp < -80)
+      return at(0, 'PE', 'below_pdl_trend_day_pe');
+
+    if (C0bp < -65) return null;  // selling climax (-65 to -80%) — skip
 
     if (C0bp > 65) {
       const i = _firstBear(todayCandles, 1, 30);
@@ -159,43 +167,56 @@ export function findBhavEntry(
   // ════════════════════════════════════════════════════════
 
   // C0 breaks outside range
-  if (C0.close < PL) return at(0, 'PE', 'inside_c0_breaks_below_pdl');
-  if (C0.close > PH) return at(0, 'CE', 'inside_c0_breaks_above_pdh');
+  // If bot was live at C0 close → signal fires immediately
+  // If bot came online late (lastIdx > 0) → C0 already closed outside range, fall through to late-entry patterns below
+  if (C0.close < PL && lastIdx === 0) return at(0, 'PE', 'inside_c0_breaks_below_pdl');
+  if (C0.close > PH && lastIdx === 0) return at(0, 'CE', 'inside_c0_breaks_above_pdh');
 
   const gapUp   = gap > 50;
   const gapDown = gap < -50;
 
   // Strong C0 (>55%)
+  // at(0,...) and at(1,...) returns are non-blocking: only exit if signal is non-null,
+  // otherwise fall through to late-entry loops (supports bot coming online after C0/C1)
   if (Math.abs(C0bp) > 55) {
     const c0isBull = C0bp > 0;
     const aligned  = (c0isBull && !gapDown) || (!c0isBull && !gapUp);
 
     if (aligned) {
-      if (todayCandles.length >= 2 && C1bp * C0bp < 0 && Math.abs(C1bp) > 65)
-        return at(1, C1bp > 0 ? 'CE' : 'PE', 'inside_c0_trap_c1_signal');
-      return at(0, c0isBull ? 'CE' : 'PE', 'inside_c0_momentum');
+      if (todayCandles.length >= 2 && C1bp * C0bp < 0 && Math.abs(C1bp) > 72) {
+        const s = at(1, C1bp > 0 ? 'CE' : 'PE', 'inside_c0_trap_c1_signal');
+        if (s) return s;
+      }
+      { const s = at(0, c0isBull ? 'CE' : 'PE', 'inside_c0_momentum'); if (s) return s; }
     } else {
-      const gapSide  = gapUp ? 'CE' : 'PE';
+      const gapSide   = gapUp ? 'CE' : 'PE';
       const revCandle = gapUp ? _firstBull(todayCandles, 1, 35) : _firstBear(todayCandles, 1, 35);
-      if (revCandle > 0 && revCandle <= 5)
-        return at(revCandle, gapSide, 'inside_counter_gap_reversal');
-      return at(0, c0isBull ? 'CE' : 'PE', 'inside_c0_momentum_no_reversal');
+      if (revCandle > 0 && revCandle <= 5) {
+        const s = at(revCandle, gapSide, 'inside_counter_gap_reversal');
+        if (s) return s;
+      }
+      { const s = at(0, c0isBull ? 'CE' : 'PE', 'inside_c0_momentum_no_reversal'); if (s) return s; }
     }
   }
 
   // Moderate C0 (30-55%)
+  // All patterns here fire at idx=0 only — non-blocking so late-entry loops are still reachable
   if (Math.abs(C0bp) > 30) {
-    if (todayCandles.length >= 2 && C1bp * C0bp > 0)
-      return at(0, C0bp > 0 ? 'CE' : 'PE', 'inside_c0_moderate_c1_confirmed');
+    if (todayCandles.length >= 2 && C1bp * C0bp > 0) {
+      const s = at(0, C0bp > 0 ? 'CE' : 'PE', 'inside_c0_moderate_c1_confirmed');
+      if (s) return s;
+    }
     if (todayCandles.length >= 3 && Math.abs(C1bp) > 65 && C1bp * C0bp < 0) {
       const C2bp = _bp(todayCandles[2]);
-      if (C2bp * C0bp > 0 && Math.abs(C2bp) > 20)
-        return at(0, C0bp > 0 ? 'CE' : 'PE', 'inside_c0_c1_fake_c2_confirms');
+      if (C2bp * C0bp > 0 && Math.abs(C2bp) > 20) {
+        const s = at(0, C0bp > 0 ? 'CE' : 'PE', 'inside_c0_c1_fake_c2_confirms');
+        if (s) return s;
+      }
     }
   }
 
-  // Weak C0 (<30%): wait C2-C4
-  for (let i = 2; i <= 4; i++) {
+  // Weak C0 (<30%): wait C2-C8
+  for (let i = 2; i <= 8; i++) {
     if (i >= todayCandles.length) break;
     const cbp = _bp(todayCandles[i]);
     if (Math.abs(cbp) > 55) {

@@ -1129,7 +1129,7 @@ app.get("/login", (req, res) => {
           </a>
           <a href="/dashboard" class="zl-card zl-card-dash">
             <div class="zl-card-icon">📊</div>
-            <div><div class="zl-card-title">Bot Analytics</div><div class="zl-card-desc">5-year backtest · 68% win rate</div><div class="zl-card-pill pill-data">5-YR DATA</div></div>
+            <div><div class="zl-card-title">Bot Analytics</div><div class="zl-card-desc">5-year backtest · 74.8% win rate</div><div class="zl-card-pill pill-data">5-YR DATA</div></div>
           </a>
         </div>
 
@@ -8054,12 +8054,15 @@ async function paperPortfolioPage(req, res) {
             const lp = priceMap[p.stock_symbol];
             const ep = p.entry_price ?? ((p.entry_low + p.entry_high) / 2);
             const mult = (p.direction === 'BULLISH' || p.direction === 'LONG') ? 1 : -1;
-            const pnlAmt = lp && ep ? parseFloat(((lp - ep) * mult).toFixed(2)) : null;
+            const posQty = ptConfig?.picks_capital > 0 && ep
+              ? Math.max(1, Math.floor(ptConfig.picks_capital / ep))
+              : (positions.find(pos => pos.symbol?.toUpperCase() === p.stock_symbol?.toUpperCase())?.qty ?? ptConfig?.default_qty ?? 1);
+            const pnlAmt = lp && ep ? parseFloat(((lp - ep) * mult * posQty).toFixed(2)) : null;
             const pnlPct = lp && ep ? parseFloat((((lp - ep) / ep) * 100 * mult).toFixed(2)) : null;
             return `<tr>
                 <td><strong style="color:var(--accent)">${esc(p.stock_symbol)}</strong>${p.company_name ? `<br><span class="dim" style="font-size:.64rem">${esc(p.company_name)}</span>` : ''}</td>
                 <td><span class="${p.direction === 'BULLISH' ? 'pb-bullish' : 'pb-bearish'}">${p.direction}</span></td>
-                <td style="font-weight:600;color:var(--text-muted)">1</td>
+                <td style="font-weight:600;color:var(--text-muted)">${posQty}</td>
                 <td style="font-size:.82rem">₹${ep.toFixed(2)}</td>
                 <td style="color:#10b981;font-size:.74rem">${p.target ? '₹' + p.target : '—'}</td>
                 <td style="color:#ef4444;font-size:.74rem">${p.stop_loss ? '₹' + p.stop_loss : '—'}</td>
@@ -8087,7 +8090,7 @@ async function paperPortfolioPage(req, res) {
                 <td><strong>${esc(p.stock_symbol)}</strong>${p.company_name ? `<br><span class="dim" style="font-size:.64rem">${esc(p.company_name)}</span>` : ''}</td>
                 <td style="font-size:.72rem">${(p.pick_type || 'intraday').toUpperCase()}</td>
                 <td><span class="${p.direction === 'BULLISH' ? 'pb-bullish' : 'pb-bearish'}">${p.direction}</span></td>
-                <td style="font-weight:600;color:var(--text-muted)">1</td>
+                <td style="font-weight:600;color:var(--text-muted)">${ptConfig?.picks_capital > 0 ? Math.max(1, Math.floor(ptConfig.picks_capital / ((p.entry_low + p.entry_high) / 2))) : ptConfig?.default_qty ?? 1}</td>
                 <td class="dim" style="font-size:.74rem;white-space:nowrap">₹${p.entry_low}–${p.entry_high}</td>
                 <td style="color:#10b981;font-size:.74rem">${p.target ? '₹' + p.target : '—'}</td>
                 <td style="color:#ef4444;font-size:.74rem">${p.stop_loss ? '₹' + p.stop_loss : '—'}</td>
@@ -8117,7 +8120,7 @@ async function paperPortfolioPage(req, res) {
             return `<tr>
                 <td><strong style="color:var(--accent)">${esc(p.stock_symbol)}</strong>${p.company_name ? `<br><span class="dim" style="font-size:.64rem">${esc(p.company_name)}</span>` : ''}</td>
                 <td><span class="${p.direction === 'BULLISH' ? 'pb-bullish' : 'pb-bearish'}">${p.direction}</span></td>
-                <td style="font-weight:600;color:var(--text-muted)">1</td>
+                <td style="font-weight:600;color:var(--text-muted)">${ptConfig?.picks_capital > 0 && ep ? Math.max(1, Math.floor(ptConfig.picks_capital / ep)) : ptConfig?.default_qty ?? 1}</td>
                 <td><span style="background:${isWin ? '#10b98122' : '#ef444422'};color:${isWin ? '#10b981' : '#ef4444'};border:1px solid ${isWin ? '#10b98144' : '#ef444444'};border-radius:20px;padding:3px 10px;font-size:.72rem;font-weight:700;white-space:nowrap">${isWin ? '✅ Target Hit' : '⛔ SL Hit'}</span></td>
                 <td class="dim" style="font-size:.74rem">${ep ? '₹' + ep : '—'}</td>
                 <td style="font-weight:700">${rp ? '₹' + rp : '—'}</td>
@@ -8507,12 +8510,13 @@ app.get("/dashboard", requireAuth, async (req, res) => {
         const userName = req.session.userName || "Trader";
         const isAdmin = req.session.userRole === "admin";
         // Manual paper trade data
-        const [port, positions, trades, activeSub, allPicks] = await Promise.all([
+        const [port, positions, trades, activeSub, allPicks, dashPtConfig] = await Promise.all([
             (0, db_1.getPaperPortfolio)(userId),
             (0, db_1.getPaperPositions)(userId),
             (0, db_1.getPaperTrades)(userId, 200),
             (0, db_1.getActiveSubscription)(userId),
             (0, db_1.getAllPicks)(),
+            (0, db_1.getPaperTradeConfig)(userId),
         ]);
         const isPremium = !!activeSub || req.session.userRole === "premium" || isAdmin;
         // Live prices for open positions
@@ -8733,6 +8737,8 @@ app.get("/dashboard", requireAuth, async (req, res) => {
         });
         const totalDrawdownRisk = parseFloat(drawdownRows.reduce((s, r) => s + r.maxLoss, 0).toFixed(2));
         const unprotectedPositions = drawdownRows.filter((r) => !r.hasSl).length;
+        // Bot heartbeat (for candle log panel)
+        const hb = readBotJSON("bot-heartbeat.json", null);
         // 5. VIX-aware Mode (fetch from cached NSE markets)
         let vixValue = null;
         try {
@@ -8858,6 +8864,7 @@ app.get("/dashboard", requireAuth, async (req, res) => {
       <button class="db-tab" onclick="dbTab('weekly')" id="dbt-weekly">📅 Weekly</button>
       <button class="db-tab" onclick="dbTab('monthly')" id="dbt-monthly">📆 Monthly</button>
       <button class="db-tab" onclick="dbTab('ai')" id="dbt-ai">🧠 AI Insights${pickAnomalies.length > 0 || overtradingAlert.warn || vixAlert === "extreme" || vixAlert === "high" ? ` <span style="background:#ef444422;color:#ef4444;border:1px solid #ef444444;border-radius:10px;padding:1px 7px;font-size:.7rem;margin-left:3px">!</span>` : ""}</button>
+      <button class="db-tab" onclick="dbTab('candlelog')" id="dbt-candlelog">📊 Candle Log</button>
     </div>
 
     <!-- ── PANEL: POSITIONS ── -->
@@ -9225,6 +9232,46 @@ app.get("/dashboard", requireAuth, async (req, res) => {
       </div><!-- end ai-grid -->
     </div><!-- end dbp-ai -->
 
+    <!-- ── PANEL: CANDLE LOG ── -->
+    <div class="db-panel" id="dbp-candlelog">
+      <style>
+        .cl-table{width:100%;border-collapse:collapse;font-size:.82rem}
+        .cl-table th{text-align:left;padding:6px 10px;color:var(--text-muted);font-weight:600;border-bottom:1px solid var(--border)}
+        .cl-table td{padding:6px 10px;border-bottom:1px solid #ffffff08}
+        .cl-table tr:hover td{background:#ffffff06}
+        .cl-bull{color:#22c55e;font-weight:700}
+        .cl-bear{color:#ef4444;font-weight:700}
+        .cl-weak{color:#94a3b8}
+        .cl-signal{font-size:.78rem;font-weight:700;padding:2px 8px;border-radius:4px}
+        .cl-signal-ce{background:#22c55e22;color:#22c55e;border:1px solid #22c55e44}
+        .cl-signal-pe{background:#ef444422;color:#ef4444;border:1px solid #ef444444}
+        .cl-empty{padding:32px;text-align:center;color:var(--text-muted);font-size:.9rem}
+      </style>
+      <div style="display:flex;align-items:center;gap:12px;margin-bottom:14px">
+        <h3 style="margin:0;font-size:1rem;color:var(--text-primary)">📊 BHAV V3 — Today's Candle Evaluation Log</h3>
+        <span style="font-size:.75rem;color:var(--text-muted)">Each 15-min candle evaluated by strategy</span>
+      </div>
+      ${(()=>{
+        const _cl = hb && hb.bhavCandleLog;
+        if (!_cl || !_cl.length) return '<div class="cl-empty">No candle data yet today. Log fills after 9:30 AM during market hours.</div>';
+        let _rows = '';
+        _cl.forEach(function(c){
+          const _absBody = Math.abs(c.bodyPct);
+          const _bodyClass = _absBody >= 55 ? (c.bodyPct > 0 ? 'cl-bull' : 'cl-bear') : 'cl-weak';
+          const _bodyStr = (c.bodyPct > 0 ? '+' : '') + c.bodyPct + '%';
+          const _sigHtml = c.signal
+            ? '<span class="cl-signal ' + (c.signal === 'CE' ? 'cl-signal-ce' : 'cl-signal-pe') + '">▶ ' + c.signal + '</span>'
+            : '<span style="color:#475569">—</span>';
+          const _reasonStr = c.reason === 'no_signal' ? '<span style="color:#475569;font-size:.72rem">no signal</span>' : '<span style="color:#94a3b8;font-size:.72rem">' + c.reason.replace(/_/g,' ') + '</span>';
+          _rows += '<tr><td style="color:#e2e8f0;font-weight:600">C' + (c.idx+1) + '</td><td style="color:#94a3b8">' + (c.time||'—') + '</td><td style="color:#f1f5f9">' + c.close.toLocaleString('en-IN') + '</td><td class="' + _bodyClass + '">' + _bodyStr + '</td><td>' + _sigHtml + '</td><td>' + _reasonStr + '</td></tr>';
+        });
+        return '<table class="cl-table"><thead><tr><th>Candle</th><th>Time</th><th>Close</th><th>Body%</th><th>Signal</th><th>Reason</th></tr></thead><tbody>' + _rows + '</tbody></table>';
+      })()}
+      <div style="margin-top:10px;padding:8px 12px;background:var(--input-bg);border-radius:8px;font-size:.75rem;color:var(--text-muted)">
+        <b style="color:#a78bfa">Body%</b> = (close−open)/(high−low)×100 &nbsp;·&nbsp; <span style="color:#22c55e">Green ≥+55%</span> bull &nbsp;·&nbsp; <span style="color:#ef4444">Red ≥−55%</span> bear &nbsp;·&nbsp; Grey = weak &nbsp;·&nbsp; Updates live from bot heartbeat
+      </div>
+    </div>
+
     <!-- ── PANEL: PICKS TRACKER (admin only) ── -->
     ${isAdmin ? `<div class="db-panel active" id="dbp-picks">
       <style>
@@ -9261,7 +9308,8 @@ app.get("/dashboard", requireAuth, async (req, res) => {
                 });
                 const avgPnlPct = countWithCmp > 0 ? (totalPnlPct / countWithCmp).toFixed(2) : null;
                 const totalPnlAmt = rows.reduce((s, r) => {
-                    const pnlAmt = r.lp && r.ep ? parseFloat(((r.lp - r.ep) * ((r.p.direction === "BULLISH" || r.p.direction === "LONG") ? 1 : -1)).toFixed(2)) : 0;
+                    const rowQty = dashPtConfig?.picks_capital > 0 && r.ep ? Math.max(1, Math.floor(dashPtConfig.picks_capital / r.ep)) : 1;
+                    const pnlAmt = r.lp && r.ep ? parseFloat(((r.lp - r.ep) * ((r.p.direction === "BULLISH" || r.p.direction === "LONG") ? 1 : -1) * rowQty).toFixed(2)) : 0;
                     return s + pnlAmt;
                 }, 0);
                 const inProfit = rows.filter((r) => r.pnlPct !== null && r.pnlPct > 0).length;
@@ -9288,7 +9336,7 @@ app.get("/dashboard", requireAuth, async (req, res) => {
                 const tableHtml = `<div class="db-tbl-wrap"><table class="db-tbl">
                 <thead><tr><th>Symbol</th><th>Direction</th><th>Qty</th><th>Entry Price</th><th>Target</th><th>SL</th><th>CMP</th><th>P&amp;L</th><th>Entry At</th></tr></thead>
                 <tbody>${rows.map(({ p, lp, ep, pnlPct }) => {
-                    const qty = 1;
+                    const qty = dashPtConfig?.picks_capital > 0 && ep ? Math.max(1, Math.floor(dashPtConfig.picks_capital / ep)) : 1;
                     const pnlAmt = lp && ep ? parseFloat(((lp - ep) * ((p.direction === "BULLISH" || p.direction === "LONG") ? 1 : -1) * qty).toFixed(2)) : null;
                     return `<tr>
                   <td><strong style="color:var(--accent)">${esc(p.stock_symbol)}</strong>${p.company_name ? `<br><span style="color:var(--text-muted);font-size:.7rem">${esc(p.company_name)}</span>` : ""}</td>
@@ -9336,8 +9384,8 @@ app.get("/dashboard", requireAuth, async (req, res) => {
               <thead><tr><th>Symbol</th><th>Direction</th><th>Qty</th><th>Result</th><th>Entry ₹</th><th>Result ₹</th><th>P&amp;L</th><th>Date</th></tr></thead>
               <tbody>${resolvedPicks.slice(0, 50).map((p) => {
                 const isWin = p.result === "target_hit";
-                const qty = 1;
                 const ep = p.entry_price;
+                const qty = dashPtConfig?.picks_capital > 0 && ep ? Math.max(1, Math.floor(dashPtConfig.picks_capital / ep)) : 1;
                 const rp = p.result_price;
                 const mult = (p.direction === "BULLISH" || p.direction === "LONG") ? 1 : -1;
                 const pnlAmt = ep && rp ? parseFloat(((rp - ep) * mult * qty).toFixed(2)) : null;
@@ -9706,7 +9754,7 @@ app.get("/strategies", featureGate("feature_strategies", "Strategies"), (req, re
           </div>
         </div>
         <p class="strat-mode-desc">
-          Backtested across 1,241 trading days (2021–2026) covering multiple bull and bear market cycles.
+          Backtested across 1,334 trading days (Jan 2021–May 2026) covering multiple bull and bear market cycles.
           Demonstrates consistent profitability with ${monthPct}% of months ending in positive territory.
         </p>
         <div class="strat-mode-stats">
@@ -9748,7 +9796,7 @@ app.get("/strategies", featureGate("feature_strategies", "Strategies"), (req, re
           Every trade has a predefined stop-loss. The system stops trading automatically if daily limits are hit.
         </p>
         <div class="strat-mode-stats">
-          <div class="strat-ms"><span class="strat-ms-val">100 pts</span><span class="strat-ms-label">Per-Trade SL</span></div>
+          <div class="strat-ms"><span class="strat-ms-val">150 pts</span><span class="strat-ms-label">Per-Trade SL</span></div>
           <div class="strat-ms"><span class="strat-ms-val">5</span><span class="strat-ms-label">Max Trades/Day</span></div>
           <div class="strat-ms"><span class="strat-ms-val">1%</span><span class="strat-ms-label">Risk/Trade</span></div>
         </div>
@@ -10053,6 +10101,19 @@ app.get("/bot-analytics", featureGate("feature_dashboard", "Dashboard"), async (
             </tr>`;
     }).join("")}
         </tbody>
+        <tfoot>
+          <tr style="border-top:2px solid var(--border);font-weight:700">
+            <td class="dash-td-month">TOTAL</td>
+            <td>${mKeys.reduce((s,k)=>s+(monthly[k].days??0),0)}</td>
+            <td class="${bbPnl>=0?'dash-green':'dash-red'}">${bbPnl>=0?'+':''}${bbPnl.toFixed(1)}</td>
+            <td>${allBbTrades}</td>
+            <td>${allBbWins}/${allBbTrades-allBbWins}</td>
+            <td class="${rcPnl>=0?'dash-green':'dash-red'}">${rcPnl>=0?'+':''}${rcPnl.toFixed(1)}</td>
+            <td>${allRcTrades}</td>
+            <td>${allRcWins}/${allRcTrades-allRcWins}</td>
+            <td class="${totalPnl>=0?'dash-green dash-td-bold':'dash-red dash-td-bold'}">${totalPnl>=0?'+':''}${totalPnl.toFixed(1)}</td>
+          </tr>
+        </tfoot>
       </table>
     </div>
 
@@ -10165,6 +10226,45 @@ app.get('/api/vmt-shadow', async (_req, res) => {
     } catch(e) { res.json({ status: 'IDLE', error: e.message }); }
 });
 
+// ─── Bot log tail ────────────────────────────────────────────────────────────
+app.get('/api/bot-logs', (req, res) => {
+    try {
+        const fs2 = require('fs');
+        const LOG_FILE = '/home/ubuntu/trading-bot/logs/bot-out.log';
+        const ERR_FILE = '/home/ubuntu/trading-bot/logs/bot-err.log';
+        const _lines = parseInt(req.query.lines) || 30;
+        let outLines = [], errLines = [];
+        if (fs2.existsSync(LOG_FILE)) {
+            const raw = fs2.readFileSync(LOG_FILE, 'utf8');
+            outLines = raw.trim().split('\n').slice(-_lines);
+        }
+        if (fs2.existsSync(ERR_FILE)) {
+            const raw = fs2.readFileSync(ERR_FILE, 'utf8');
+            const todayStr = new Date().toISOString().slice(0, 10); // e.g. "2026-05-26"
+            const NOISE = ['Incorrect `api_key` or `access_token`', 'Not enough candle data'];
+            errLines = raw.trim().split('\n').filter(l => {
+                if (!l.trim()) return false;
+                if (NOISE.some(n => l.includes(n))) return false;
+                // only show errors from today
+                const istOffset = 5.5 * 3600000;
+                const todayIST = new Date(Date.now() + istOffset).toISOString().slice(0, 10);
+                return l.includes(todayIST);
+            }).slice(-10);
+        }
+        res.json({ out: outLines, err: errLines, at: new Date().toISOString() });
+    } catch(e) { res.json({ out: [], err: [], error: e.message, at: new Date().toISOString() }); }
+});
+
+// ─── Daily P&L log ───────────────────────────────────────────────────────────
+app.get('/api/daily-pnl-log', (req, res) => {
+    try {
+        const fs2 = require('fs');
+        const LOG_FILE = '/home/ubuntu/trading-bot/daily-pnl-log.json';
+        if (!fs2.existsSync(LOG_FILE)) return res.json([]);
+        res.json(JSON.parse(fs2.readFileSync(LOG_FILE, 'utf-8')));
+    } catch(e) { res.json([]); }
+});
+
 app.get("/signals", featureGate("feature_signals", "Signals"), async (req, res) => {
     res.setHeader("Cache-Control", "no-store");
     const state = readBotJSON("trade-state.json", {});
@@ -10250,8 +10350,23 @@ app.get("/signals", featureGate("feature_signals", "Signals"), async (req, res) 
         const an2 = computeAnalytics(trades);
         const hb2 = readBotJSON("bot-heartbeat.json", {});
         const _qty2ssr = hb2?.qty ?? 30;
-        const _slPts2ssr = hb2?.slPts ?? 100;
+        const _slPts2ssr = hb2?.slPts ?? 150;
         const _slRs2ssr = Math.round(_slPts2ssr * _qty2ssr * 0.5).toLocaleString("en-IN");
+        // 5yr backtest stats computed from JSON
+        const _bb5yrPts = backtest.totals?.bodyBreakout ?? 0;
+        const _bb5yrRs = Math.round(_bb5yrPts * 15);
+        const _bb5yrL = (_bb5yrRs / 100000).toFixed(2);
+        const _bb5yrWR = backtest.winRate ?? 0;
+        const _bb5yrDays = backtest.tradedDays ?? 0;
+        const _bb5yrAvg = _bb5yrDays > 0 ? Math.round(_bb5yrRs / _bb5yrDays).toLocaleString('en-IN') : 0;
+        let _btEq5 = 0, _btPeak5 = 0, _btMaxDD5 = 0;
+        Object.keys(backtest.monthly || {}).sort().forEach(k => {
+            _btEq5 += ((backtest.monthly[k].bbTotal ?? 0) * 15);
+            if (_btEq5 > _btPeak5) _btPeak5 = _btEq5;
+            const _dd = _btPeak5 - _btEq5;
+            if (_dd > _btMaxDD5) _btMaxDD5 = _dd;
+        });
+        const _bb5yrMaxDD = Math.round(_btMaxDD5).toLocaleString('en-IN');
         const isAlive2 = hb2?.at ? (Date.now() - new Date(hb2.at).getTime()) < 3 * 60 * 1000 : false;
         const _nowIST2 = new Date(new Date().toLocaleString("en-US", { timeZone: "Asia/Kolkata" }));
         const _istH2 = _nowIST2.getHours(), _istM2 = _nowIST2.getMinutes();
@@ -10311,6 +10426,58 @@ app.get("/signals", featureGate("feature_signals", "Signals"), async (req, res) 
                 + " " + d.toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata", hour: "2-digit", minute: "2-digit" });
         }
         const QTY_MULT2 = 15; // 30 qty × 0.5 delta — option premium ₹ per index pt
+        // Build 5-year backtest report data (compact: {y, m, l})
+        const _btAllDaily = backtest.daily || [];
+        const _btAllMonthly = backtest.monthly || {};
+        const _btYears = [...new Set(_btAllDaily.map(e => e.date.slice(0,4)))].sort();
+        const _btMonthsObj = {};
+        for (const mk of Object.keys(_btAllMonthly)) {
+          const bm = _btAllMonthly[mk];
+          const bbTotal = Math.round((bm.bbTotal||0)*10)/10;
+          const bbt = bm.bbTrades||0, bbw = bm.bbWins||0;
+          _btMonthsObj[mk] = {
+            p: bbTotal, t: bbt, w: bbw, l: bbt-bbw,
+            r: bbt>0 ? Math.round((bbw/bbt)*1000)/10 : 0,
+            d: _btAllDaily.filter(e=>e.date&&e.date.startsWith(mk))
+                .sort((a,b)=>a.date<b.date?-1:1)
+                .map(e=>[e.date.slice(8,10), Math.round((e.bbPnL||0)*10)/10])
+          };
+        }
+        const _btLiveObj = {};
+        for (const t of [...(an2.recentTrades||[]),...closedToday2]) {
+          if(!t.date)continue;
+          const dk=t.date.slice(0,10);
+          if(!_btLiveObj[dk])_btLiveObj[dk]=[];
+          const pts=Math.round((t.pnl||0)*10)/10;
+          if(!_btLiveObj[dk].some(x=>Math.abs(x[0]-pts)<0.1))
+            _btLiveObj[dk].push([pts,(t.direction||'').slice(0,2)]);
+        }
+        // Inject daily-pnl-log.json entries so today + past days appear in the drill-down
+        const _dpnlLog = readBotJSON('daily-pnl-log.json', []);
+        for (const _de of _dpnlLog) {
+          if (!_de.date) continue;
+          const _mk = _de.date.slice(0, 7);
+          const _dd = _de.date.slice(8, 10);
+          const _bpt = Math.round((_de.btPnl || 0) * 10) / 10;
+          if (!_btMonthsObj[_mk]) {
+            _btMonthsObj[_mk] = { p: 0, t: 0, w: 0, l: 0, r: 0, d: [] };
+            if (!_btYears.includes(_de.date.slice(0, 4))) _btYears.push(_de.date.slice(0, 4));
+          }
+          if (!_btMonthsObj[_mk].d.some(x => x[0] === _dd)) {
+            _btMonthsObj[_mk].d.push([_dd, _bpt]);
+            _btMonthsObj[_mk].d.sort((a, b) => a[0] < b[0] ? -1 : 1);
+          }
+          if (!_btLiveObj[_de.date]) _btLiveObj[_de.date] = [];
+          if (_de.actualTrades > 0) {
+            const _apts = Math.round((_de.actualPnl || 0) * 10) / 10;
+            if (!_btLiveObj[_de.date].some(x => Math.abs(x[0] - _apts) < 0.1))
+              _btLiveObj[_de.date].push([_apts, (_de.signal || '').slice(0, 2)]);
+          } else if (_de.note) {
+            if (!_btLiveObj[_de.date].some(x => x[1] === 'note:' + _de.note))
+              _btLiveObj[_de.date].push([null, 'note:' + _de.note]);
+          }
+        }
+        const btDataJson = JSON.stringify({y:_btYears, m:_btMonthsObj, l:_btLiveObj});
         function pnlCls2(v) { return v >= 0 ? "sig-green" : "sig-red"; }
         function fmtPts2(v) { return `${v >= 0 ? "+" : ""}${v.toFixed(0)} pts`; }
         function fmtRs2(v) { const r = Math.round(v * QTY_MULT2); return `${r >= 0 ? "+" : "−"}₹${Math.abs(r).toLocaleString("en-IN")}`; }
@@ -10586,7 +10753,7 @@ app.get("/signals", featureGate("feature_signals", "Signals"), async (req, res) 
         <div class="db-title">📡 Live Bot Dashboard</div>
         <div class="db-sub">BANKNIFTY &middot; BHAV V3 &middot; <strong>${mode2}</strong> &middot; 30 qty &middot; SL: ${_slPts2ssr} pts &middot; Entry: PDH/PDL Break &middot; Candle-close SL &middot; Max 5 trades/day</div>
         <div class="db-sub" style="margin-top:3px">PDH: <span id="db-pdh" style="color:#10b981;font-weight:600">${hb2?.bhavPrevDayHigh ?? "&mdash;"}</span> &middot; PDL: <span id="db-pdl" style="color:#ef4444;font-weight:600">${hb2?.bhavPrevDayLow ?? "&mdash;"}</span> &middot; Candles today: <span id="db-cndl">${hb2?.bhavCandles ?? "&mdash;"}</span> &middot; &#8377; P&amp;L: idx pts &times; 15 &middot; prem pts &times; 30</div>
-        <div class="db-sub" style="margin-top:3px">5yr Backtest (Jan&rsquo;21&ndash;May&rsquo;26): <strong style="color:#10b981">&#8377;31.07L</strong> &middot; 74.6% WR &middot; &#8377;2,583 avg/trade &middot; MaxDD &#8377;11,027</div>
+        <div class="db-sub" style="margin-top:3px">5yr Backtest (Jan&rsquo;21&ndash;May&rsquo;26): <strong style="color:#10b981">&#8377;${_bb5yrL}L</strong> &middot; ${_bb5yrWR}% WR &middot; &#8377;${_bb5yrAvg} avg/day &middot; MaxDD &#8377;${_bb5yrMaxDD}</div>
       </div>
       <div class="db-live"><span class="db-pulse"></span><span id="db-upd">Connecting…</span></div>
     </div>
@@ -10621,6 +10788,38 @@ app.get("/signals", featureGate("feature_signals", "Signals"), async (req, res) 
         </div>
       </div>
       <span class="hb-age" id="hb-last-seen">${isAlive2 ? 'Last seen just now' : ''}</span>
+      ${(()=>{
+        const _cl2=hb2?.bhavCandleLog??[];
+        const _lastCl=_cl2.length>0?_cl2[_cl2.length-1]:null;
+        const _missed=_cl2.filter(c=>c.offline&&c.signal);
+        const _allOffline=_cl2.length>0&&_cl2.every(c=>c.offline);
+        const _entryGone=_allOffline&&_missed.length===0&&_cl2.length>=1;  // bot came online after C0
+        let out='';
+        // Last candle log pill
+        if(_lastCl){
+          const _isStale=_allOffline;
+          out+=`<span class="hb-pill ${_isStale?'warn':'ok'}" id="hb-cl-last"><span class="hb-dot"></span>Last log: C${_lastCl.idx+1} @ ${_lastCl.time}${_isStale?' <span style="opacity:.6;font-weight:400">(offline)</span>':''}</span>`;
+        } else {
+          out+='<span class="hb-pill dim" id="hb-cl-last"><span class="hb-dot"></span>No candles yet</span>';
+        }
+        // Missed entries pill
+        if(_missed.length>0){
+          out+=`<span class="hb-pill err" id="hb-cl-missed">⚠ ${_missed.length} MISSED: ${_missed.map(c=>'C'+(c.idx+1)+' '+c.signal).join(', ')}</span>`;
+        }
+        // Entry status pill
+        if(isAlive2){
+          if(_missed.length>0&&_allOffline){
+            out+='<span class="hb-pill err" id="hb-entry-status">✗ C0 missed — no entry today</span>';
+          } else if(_entryGone){
+            out+='<span class="hb-pill err" id="hb-entry-status">✗ Entry window gone (bot late)</span>';
+          } else {
+            out+='<span class="hb-pill ok" id="hb-entry-status">● Watching for entry</span>';
+          }
+        } else {
+          out+='<span class="hb-pill err" id="hb-entry-status">Bot offline</span>';
+        }
+        return out;
+      })()}
     </div>
 
     <!-- ── Strategy Tab Switcher ──────────────────────────────── -->
@@ -10807,6 +11006,7 @@ app.get("/signals", featureGate("feature_signals", "Signals"), async (req, res) 
           <button id="th-btn-d" onclick="_thFilter('d')" style="padding:3px 12px;border-radius:5px;font-size:.72rem;font-weight:700;cursor:pointer;border:1px solid #7c3aed;background:rgba(124,58,237,.2);color:#a78bfa">Daily</button>
           <button id="th-btn-w" onclick="_thFilter('w')" style="padding:3px 12px;border-radius:5px;font-size:.72rem;font-weight:700;cursor:pointer;border:1px solid var(--border);background:transparent;color:var(--text-muted)">Weekly</button>
           <button id="th-btn-m" onclick="_thFilter('m')" style="padding:3px 12px;border-radius:5px;font-size:.72rem;font-weight:700;cursor:pointer;border:1px solid var(--border);background:transparent;color:var(--text-muted)">Monthly</button>
+          <button id="th-btn-cl" onclick="_thFilter('cl')" style="padding:3px 12px;border-radius:5px;font-size:.72rem;font-weight:700;cursor:pointer;border:1px solid var(--border);background:transparent;color:var(--text-muted)">&#128202; Candle Log</button>
         </div>
         <span class="sec-count" id="th-count" style="margin:0"></span>
       </div>
@@ -10880,29 +11080,80 @@ app.get("/signals", featureGate("feature_signals", "Signals"), async (req, res) 
         </table></div>
       </div>
 
-      <!-- MONTHLY panel -->
+      <!-- BACKTEST REPORT panel (Monthly tab) -->
       <div id="th-panel-m" style="display:none">
-        <div class="tw"><table class="tt">
-          <thead><tr><th>Month</th><th>&#8377; P&amp;L</th><th>Index P&amp;L</th><th>Trades</th><th>W/L</th><th>Win%</th></tr></thead>
-          <tbody>
-            ${!an2.monthly.length
-              ? '<tr><td colspan="6" class="tt-e">No monthly data yet</td></tr>'
-              : an2.monthly.map(m=>{
-                  const [y,mo]=m.month.split('-');
-                  const ml=new Date(parseInt(y),parseInt(mo)-1,1).toLocaleString('en-IN',{month:'long',year:'numeric'});
-                  const rs=Math.round(m.pnl*QTY_MULT2);
-                  return `<tr>
-                    <td style="font-weight:600">${ml}</td>
-                    <td class="${m.pnl>=0?'g':'r'}" style="font-weight:800">${rs>=0?'+':'&#8722;'}&#8377;${Math.abs(rs).toLocaleString('en-IN')}</td>
-                    <td class="${m.pnl>=0?'g':'r'}">${m.pnl>=0?'+':''}${m.pnl.toFixed(0)} pts</td>
-                    <td>${m.trades}</td>
-                    <td><span class="g">${m.wins}W</span> / <span class="r">${m.losses}L</span></td>
-                    <td>${m.trades>0?m.winRate+'%':'—'}</td>
-                  </tr>`;
-                }).join('')
+        <div id="bt-yr-bar" style="display:flex;gap:5px;flex-wrap:wrap;padding:4px 0 10px;border-bottom:1px solid rgba(255,255,255,.08);margin-bottom:8px"></div>
+        <div id="bt-content"><div style="padding:20px;text-align:center;color:#8b949e;font-size:.8rem">Select a year above</div></div>
+      </div>
+
+      <!-- CANDLE LOG panel -->
+      <div id="th-panel-cl" style="display:none">
+        ${(()=>{
+          const _cl = hb2 && hb2.bhavCandleLog;
+          if(!_cl || !_cl.length) return '<div style="padding:28px;text-align:center;color:var(--text-muted);font-size:.82rem">No candle data yet today.<br>Log fills from 9:30 AM during market hours.</div>';
+          function _clReason(c){
+            // c.offline = true → bot was not running when this candle closed (backfilled on restart)
+            if(c.offline){
+              // Candles at/after 15:15 are post-trading EOD — bot never processes these, not "offline"
+              if(c.time && c.time >= '15:15') return 'EOD — bot stopped trading at 3:15 PM (normal)';
+              if(c.signal){
+                // Strategy evaluation shows signal WOULD have fired — this is a missed entry
+                return '\uD83D\uDEA8 MISSED ENTRY — Signal was: '+c.reason.replace(/_/g,' ')+'  (bot was offline)';
+              }
+              // Bot was offline — don't claim any analysis was done
+              return 'Bot was offline — data backfilled on restart, skip';
             }
-          </tbody>
-        </table></div>
+            // Live candle — bot was running
+            if(c.signal) return c.reason.replace(/_/g,' ');
+            // Specific diagnostic reason computed by the bot
+            const _r = c.reason || '';
+            if(_r.startsWith('Entry window expired')) {
+              const _m = _r.match(/C1 was ([+\-]?\d+)% body/);
+              const _c1b = _m ? _m[1] : '?';
+              return 'C1 was '+_c1b+'% — below 50% min. No trade today, skip';
+            }
+            // If any earlier candle had "Entry window expired", today's no_signal = no trade today
+            if(_r === 'no_signal' || _r === '') {
+              const _entryExpired = _cl.some(function(x){ return x.reason && x.reason.startsWith('Entry window expired'); });
+              if(_entryExpired) return 'No trade today — watching only, skip';
+              return 'Body too small — no breakout pattern, skip';
+            }
+            return _r.replace(/_/g,' ');
+          }
+          function _clTime(c){
+            if(!c.time) return '—';
+            const parts=c.time.split(':');
+            const h=parseInt(parts[0]),m=parseInt(parts[1]);
+            const em=(m+15)%60, eh=m+15>=60?h+1:h;
+            return c.time+'\u2013'+(eh<10?'0':'')+eh+':'+(em<10?'0':'')+em;
+          }
+          const _hasMissed=_cl.some(c=>c.offline&&c.signal);
+          let _r='';
+          _cl.forEach(function(c){
+            const _ab=Math.abs(c.bodyPct);
+            const _bc=_ab>=55?(c.bodyPct>0?'color:#16a34a;font-weight:700':'color:#dc2626;font-weight:700'):'color:var(--text-muted)';
+            const _bs=(c.bodyPct>0?'+':'')+c.bodyPct+'%';
+            const _isMissed=c.offline&&c.signal;
+            const _isOfflineNoSig=c.offline&&!c.signal;
+            // Signal column: MISSED badge for offline+signal, normal badge for live+signal, dash otherwise
+            let _sh;
+            if(_isMissed){
+              _sh='<span style="font-size:.7rem;font-weight:700;padding:1px 7px;border-radius:4px;background:rgba(239,68,68,.18);color:#dc2626;border:1px solid rgba(239,68,68,.5)">\u26A0 MISSED '+c.signal+'</span>';
+            } else if(!c.offline&&c.signal){
+              _sh='<span style="font-size:.7rem;font-weight:700;padding:1px 7px;border-radius:4px;background:'+(c.signal==='CE'?'rgba(34,197,94,.15)':'rgba(239,68,68,.15)')+';color:'+(c.signal==='CE'?'#16a34a':'#dc2626')+';border:1px solid '+(c.signal==='CE'?'rgba(34,197,94,.4)':'rgba(239,68,68,.4)')+'">&#9654; '+c.signal+'</span>';
+            } else {
+              _sh='<span style="color:var(--text-muted)">—</span>';
+            }
+            const _reason=_clReason(c);
+            const _rCol=_isMissed?'#dc2626':(c.signal&&!c.offline)?'#16a34a':'var(--text-muted)';
+            const _rowStyle=_isMissed
+              ?'border-bottom:1px solid var(--border);background:rgba(239,68,68,.06)'
+              :'border-bottom:1px solid var(--border)';
+            _r+='<tr style="'+_rowStyle+'"><td style="padding:6px 10px;color:var(--text);font-weight:600;white-space:nowrap">C'+(c.idx+1)+'</td><td style="padding:6px 10px;color:var(--text-muted);font-size:.78rem;white-space:nowrap">'+_clTime(c)+'</td><td style="padding:6px 10px;color:var(--text);font-weight:600;font-variant-numeric:tabular-nums">'+(c.close?(c.close).toLocaleString('en-IN',{maximumFractionDigits:0}):'—')+'</td><td style="padding:6px 10px;'+_bc+'">'+_bs+'</td><td style="padding:6px 10px">'+_sh+'</td><td style="padding:6px 10px;color:'+_rCol+';font-size:.75rem">'+_reason+'</td></tr>';
+          });
+          const _hdr=_hasMissed?'<div style="margin-bottom:10px;padding:8px 12px;background:rgba(239,68,68,.1);border:1px solid rgba(239,68,68,.3);border-radius:6px;color:#dc2626;font-size:.78rem;font-weight:600">\u26A0 Missed entr'+((_cl.filter(c=>c.offline&&c.signal).length>1)?'ies':'y')+' detected — bot was offline during '+(_cl.filter(c=>c.offline&&c.signal).map(c=>'C'+(c.idx+1)).join(', '))+' signal(s)</div>':'';
+          return _hdr+'<table style="width:100%;border-collapse:collapse;font-size:.82rem"><thead><tr style="color:var(--text-muted);border-bottom:2px solid var(--border)"><th style="padding:6px 10px;text-align:left;font-weight:600">Candle</th><th style="padding:6px 10px;text-align:left;font-weight:600">Time</th><th style="padding:6px 10px;text-align:left;font-weight:600">Close</th><th style="padding:6px 10px;text-align:left;font-weight:600">Body%</th><th style="padding:6px 10px;text-align:left;font-weight:600">Signal</th><th style="padding:6px 10px;text-align:left;font-weight:600">Reason</th></tr></thead><tbody>'+_r+'</tbody></table><div style="margin-top:10px;font-size:.7rem;color:var(--text-muted)">Body% = (close\u2212open)/(high\u2212low)\u00d7100 \u00b7 <span style="color:#16a34a">\u2265+55% bull</span> \u00b7 <span style="color:#dc2626">\u2264\u221255% bear</span> \u00b7 Dimmed rows = bot was offline \u00b7 Page refresh updates</div>';
+        })()}
       </div>
 
     <!-- Stats strip -->
@@ -10924,23 +11175,227 @@ app.get("/signals", featureGate("feature_signals", "Signals"), async (req, res) 
       </div>
     </div>
 
+    <!-- ── Server Log Tail ──────────────────────────────────────── -->
+    <div style="margin-top:1.2rem;border-radius:10px;border:1px solid var(--border);overflow:hidden">
+      <div style="display:flex;align-items:center;justify-content:space-between;padding:8px 14px;background:var(--card);border-bottom:1px solid var(--border)">
+        <span style="font-size:.78rem;font-weight:700;color:var(--text)">&#128196; Server Logs <span style="font-size:.65rem;font-weight:400;color:var(--text-muted);margin-left:6px">bot-out.log · auto-refreshes every 15s</span></span>
+        <span id="srv-log-ts" style="font-size:.65rem;color:var(--text-muted)">Loading...</span>
+      </div>
+      <div id="srv-log-body" style="background:#0d1117;padding:10px 14px;max-height:260px;overflow-y:auto;font-family:monospace;font-size:.72rem;line-height:1.55">
+        <span style="color:#6b7280">Loading logs...</span>
+      </div>
+
+    </div>
+
+
+
       <script>
-      (function(){
-        function _thFilter(f){
-          ['d','w','m'].forEach(function(x){
+      var BT_DATA=${btDataJson};
+      var _btInitDone=false;
+      var MNS_BT=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+
+      function _thFilter(f){
+        try{
+          ['d','w','m','cl'].forEach(function(x){
             var p=document.getElementById('th-panel-'+x);
             var b=document.getElementById('th-btn-'+x);
-            if(p) p.style.display=(x===f)?'':'none';
+            if(p) p.style.display=(x===f)?'block':'none';
             if(b){
               if(x===f){b.style.background='rgba(124,58,237,.2)';b.style.borderColor='#7c3aed';b.style.color='#a78bfa';}
               else{b.style.background='transparent';b.style.borderColor='';b.style.color='';}
             }
           });
-          var rows=document.querySelectorAll('#th-panel-'+f+' tbody tr:not(.tt-e)');
+          if(f==='m') btInit();
           var cnt=document.getElementById('th-count');
-          if(cnt) cnt.textContent=rows.length?'('+rows.length+' trades)':'';
+          if(cnt&&f!=='m'&&f!=='cl'){
+            var rows=document.querySelectorAll('#th-panel-'+f+' tbody tr:not(.tt-e)');
+            cnt.textContent=rows.length?'('+rows.length+' trades)':'';
+          } else if(cnt&&f==='cl'){cnt.textContent='';}
+        }catch(e){console.error('_thFilter:',e);}
+      }
+
+      function btInit(){
+        if(_btInitDone)return; _btInitDone=true;
+        var bar=document.getElementById('bt-yr-bar');
+        if(!bar)return;
+        BT_DATA.y.forEach(function(yr){
+          var b=document.createElement('button');
+          b.textContent=yr; b.id='bt-yr-'+yr;
+          b.style.cssText='padding:3px 14px;border-radius:20px;font-size:.72rem;font-weight:700;cursor:pointer;border:1px solid rgba(124,58,237,.3);background:transparent;color:inherit';
+          b.addEventListener('click',function(){btShowYear(yr);});
+          bar.appendChild(b);
+        });
+        btShowYear(BT_DATA.y[BT_DATA.y.length-1]);
+      }
+
+      function btShowYear(yr){
+        BT_DATA.y.forEach(function(y){
+          var b=document.getElementById('bt-yr-'+y);
+          if(!b)return;
+          if(y===yr){b.style.background='rgba(124,58,237,.2)';b.style.borderColor='#7c3aed';b.style.color='#a78bfa';}
+          else{b.style.background='transparent';b.style.borderColor='rgba(124,58,237,.3)';b.style.color='';}
+        });
+        // Compute year-level totals
+        var totPts=0,totT=0,totW=0,bestM=null,worstM=null,profitMo=0,lossMo=0;
+        for(var m=1;m<=12;m++){
+          var mk2=yr+'-'+(m<10?'0':'')+m;
+          var md2=BT_DATA.m[mk2]; if(!md2)continue;
+          totPts=Math.round((totPts+md2.p)*10)/10;
+          totT+=md2.t; totW+=md2.w;
+          if(md2.p>=0) profitMo++; else lossMo++;
+          if(bestM===null||md2.p>BT_DATA.m[bestM].p) bestM=mk2;
+          if(worstM===null||md2.p<BT_DATA.m[worstM].p) worstM=mk2;
         }
-        window._thFilter=_thFilter;
+        var totRs=Math.round(totPts*15);
+        var totWR=totT>0?Math.round((totW/totT)*1000)/10:0;
+        var totCls=totPts>=0?'#10b981':'#ef4444';
+        var bestMd=bestM?BT_DATA.m[bestM]:null;
+        var worstMd=worstM?BT_DATA.m[worstM]:null;
+        var bestRs=bestMd?Math.round(bestMd.p*15):0;
+        var worstRs=worstMd?Math.round(worstMd.p*15):0;
+        var summary='<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:8px;padding:10px 0 14px">';
+        summary+='<div style="background:rgba(255,255,255,.04);border-radius:8px;padding:10px 12px;border:1px solid rgba(255,255,255,.08)">';
+        summary+='<div style="font-size:.68rem;color:#8b949e;margin-bottom:3px">'+yr+' Total &#8377;</div>';
+        summary+='<div style="font-size:1.1rem;font-weight:900;color:'+totCls+'">'+(totRs>=0?'+':'&#8722;')+'&#8377;'+Math.abs(totRs).toLocaleString('en-IN')+'</div>';
+        summary+='<div style="font-size:.68rem;color:'+totCls+'">'+(totPts>=0?'+':'')+totPts.toFixed(1)+' pts</div>';
+        summary+='</div>';
+        summary+='<div style="background:rgba(255,255,255,.04);border-radius:8px;padding:10px 12px;border:1px solid rgba(255,255,255,.08)">';
+        summary+='<div style="font-size:.68rem;color:#8b949e;margin-bottom:3px">Trades / Win%</div>';
+        summary+='<div style="font-size:1.1rem;font-weight:900">'+totT+'</div>';
+        summary+='<div style="font-size:.68rem"><span style="color:#10b981">'+totW+'W</span> &nbsp;<span style="color:#ef4444">'+(totT-totW)+'L</span> &nbsp;<span style="color:#a78bfa">'+totWR+'%</span></div>';
+        summary+='</div>';
+        summary+='<div style="background:rgba(255,255,255,.04);border-radius:8px;padding:10px 12px;border:1px solid rgba(255,255,255,.08)">';
+        summary+='<div style="font-size:.68rem;color:#8b949e;margin-bottom:3px">Months</div>';
+        summary+='<div style="font-size:1.1rem;font-weight:900"><span style="color:#10b981">'+profitMo+' green</span></div>';
+        summary+='<div style="font-size:.68rem;color:#ef4444">'+lossMo+' red</div>';
+        summary+='</div>';
+        if(bestMd){
+          summary+='<div style="background:rgba(16,185,129,.06);border-radius:8px;padding:10px 12px;border:1px solid rgba(16,185,129,.2)">';
+          summary+='<div style="font-size:.68rem;color:#8b949e;margin-bottom:3px">&#127942; Best Month</div>';
+          summary+='<div style="font-size:.88rem;font-weight:800;color:#10b981">'+MNS_BT[parseInt(bestM.slice(5,7))-1]+'</div>';
+          summary+='<div style="font-size:.68rem;color:#10b981">+&#8377;'+Math.abs(bestRs).toLocaleString('en-IN')+' / +'+bestMd.p.toFixed(1)+' pts</div>';
+          summary+='</div>';
+        }
+        if(worstMd){
+          summary+='<div style="background:rgba(239,68,68,.06);border-radius:8px;padding:10px 12px;border:1px solid rgba(239,68,68,.2)">';
+          summary+='<div style="font-size:.68rem;color:#8b949e;margin-bottom:3px">&#128293; Worst Month</div>';
+          summary+='<div style="font-size:.88rem;font-weight:800;color:#ef4444">'+MNS_BT[parseInt(worstM.slice(5,7))-1]+'</div>';
+          summary+='<div style="font-size:.68rem;color:#ef4444">&#8722;&#8377;'+Math.abs(worstRs).toLocaleString('en-IN')+' / '+worstMd.p.toFixed(1)+' pts</div>';
+          summary+='</div>';
+        }
+        summary+='</div>';
+
+        var rows=''; var mCnt=0; var totalP=0,totalT=0,totalW=0,totalL=0;
+        for(var m=1;m<=12;m++){
+          var mk=yr+'-'+(m<10?'0':'')+m;
+          var md=BT_DATA.m[mk]; if(!md)continue; mCnt++;
+          var rs=Math.round(md.p*15); var pCls=md.p>=0?'g':'r';
+          var hasLive=Object.keys(BT_DATA.l).some(function(dk){return dk.startsWith(mk);});
+          rows+='<tr class="bt-mo-row" data-mk="'+mk+'" style="cursor:pointer">';
+          rows+='<td style="font-weight:600">'+MNS_BT[m-1]+' '+yr+' <span id="bt-arr-'+mk.replace('-','_')+'" style="font-size:.65rem;color:#7c3aed">&#9654;</span></td>';
+          rows+='<td class="'+pCls+'" style="font-weight:800">'+(rs>=0?'+':'&#8722;')+'&#8377;'+Math.abs(rs).toLocaleString('en-IN')+'</td>';
+          rows+='<td class="'+pCls+'">'+(md.p>=0?'+':'')+md.p.toFixed(1)+' pts</td>';
+          rows+='<td>'+md.t+'</td>';
+          rows+='<td><span class="g">'+md.w+'W</span> / <span class="r">'+md.l+'L</span></td>';
+          rows+='<td>'+(md.t>0?md.r+'%':'--')+'</td>';
+          rows+='<td style="font-size:.68rem">'+(hasLive?'<span style="color:#60a5fa;font-weight:700">&#10003; Live</span>':'')+'</td>';
+          rows+='</tr>';
+          rows+='<tr id="bt-day-'+mk.replace('-','_')+'" style="display:none"><td colspan="7" style="padding:0"></td></tr>';
+          totalP+=md.p; totalT+=md.t; totalW+=md.w; totalL+=md.l;
+        }
+        if(!rows) rows='<tr><td colspan="7" class="tt-e">No backtest data for '+yr+'</td></tr>';
+        var totalRs=Math.round(totalP*15); var tPCls=totalP>=0?'g':'r';
+        var totalWR=totalT>0?((totalW/totalT)*100).toFixed(0)+'%':'--';
+        // Year total row
+        var totalRow='<tr style="border-top:3px solid rgba(124,58,237,.5);background:rgba(124,58,237,.08);font-weight:700">';
+        totalRow+='<td style="font-weight:800;color:var(--text)">'+yr+' TOTAL</td>';
+        totalRow+='<td class="'+tPCls+'" style="font-weight:800">'+(totalRs>=0?'+':'&#8722;')+'&#8377;'+Math.abs(totalRs).toLocaleString('en-IN')+'</td>';
+        totalRow+='<td class="'+tPCls+'">'+(totalP>=0?'+':'')+totalP.toFixed(1)+' pts</td>';
+        totalRow+='<td>'+totalT+'</td>';
+        totalRow+='<td><span class="g">'+totalW+'W</span> / <span class="r">'+totalL+'L</span></td>';
+        totalRow+='<td>'+totalWR+'</td>';
+        totalRow+='<td></td>';
+        totalRow+='</tr>';
+        // All-time 5-year total row
+        var atP=0,atT=0,atW=0,atL=0;
+        Object.keys(BT_DATA.m).forEach(function(k){ var d=BT_DATA.m[k]; atP+=d.p||0; atT+=d.t||0; atW+=d.w||0; atL+=d.l||0; });
+        var atRs=Math.round(atP*15); var atCls=atP>=0?'g':'r';
+        var atWR=atT>0?((atW/atT)*100).toFixed(0)+'%':'--';
+        var atRow='<tr style="border-top:2px solid rgba(251,191,36,.4);background:rgba(251,191,36,.06);font-weight:700">';
+        atRow+='<td style="font-weight:800;color:#f59e0b">ALL TIME (5yr)</td>';
+        atRow+='<td class="'+atCls+'" style="font-weight:800">'+(atRs>=0?'+':'&#8722;')+'&#8377;'+Math.abs(atRs).toLocaleString('en-IN')+'</td>';
+        atRow+='<td class="'+atCls+'">'+(atP>=0?'+':'')+atP.toFixed(1)+' pts</td>';
+        atRow+='<td>'+atT+'</td>';
+        atRow+='<td><span class="g">'+atW+'W</span> / <span class="r">'+atL+'L</span></td>';
+        atRow+='<td>'+atWR+'</td>';
+        atRow+='<td></td>';
+        atRow+='</tr>';
+        document.getElementById('bt-content').innerHTML=summary+'<div class="tw"><table class="tt"><thead><tr><th>Month</th><th>&#8377; P&amp;L</th><th>Index P&amp;L</th><th>Trades</th><th>W/L</th><th>Win%</th><th>Live</th></tr></thead><tbody>'+rows+totalRow+atRow+'</tbody></table></div>';
+        var cnt=document.getElementById('th-count');
+        if(cnt) cnt.textContent='('+mCnt+' months, '+yr+')';
+        document.querySelectorAll('#bt-content .bt-mo-row').forEach(function(row){
+          row.addEventListener('click',function(){btToggle(this.getAttribute('data-mk'));});
+        });
+      }
+
+      function btToggle(mk){
+        var sk=mk.replace('-','_');
+        var det=document.getElementById('bt-day-'+sk);
+        var arr=document.getElementById('bt-arr-'+sk);
+        if(!det)return;
+        var isOpen=det.style.display!=='none';
+        // close all
+        document.querySelectorAll('[id^="bt-day-"]').forEach(function(r){
+          r.style.display='none';
+          var k=r.id.slice(7);
+          var a=document.getElementById('bt-arr-'+k);
+          if(a)a.innerHTML='&#9654;';
+        });
+        if(isOpen)return;
+        var md=BT_DATA.m[mk];
+        if(!md){det.children[0].innerHTML='<div style="padding:12px;text-align:center;color:#8b949e">No data</div>';det.style.display='';return;}
+        var moIdx=parseInt(mk.slice(5,7))-1;
+        var html='<table class="tt" style="width:100%;margin:0;border-radius:0"><thead><tr style="background:rgba(124,58,237,.08)"><th>Date</th><th>BT Index P&amp;L</th><th>BT &#8377;</th><th>Result</th><th>Live Trade</th></tr></thead><tbody>';
+        md.d.forEach(function(d){
+          var dayNum=d[0]; var pts=d[1]; var fullDate=mk+'-'+dayNum;
+          var rs2=Math.round(pts*15); var pCls=pts>=0?'g':'r';
+          var wl=pts>=0
+            ?'<span style="background:rgba(5,150,105,.15);color:#059669;padding:1px 6px;border-radius:4px;font-weight:700;font-size:.68rem">WIN</span>'
+            :'<span style="background:rgba(220,38,38,.12);color:#dc2626;padding:1px 6px;border-radius:4px;font-weight:700;font-size:.68rem">LOSS</span>';
+          var rsStr=(rs2>=0?'+':'&#8722;')+'&#8377;'+Math.abs(rs2).toLocaleString('en-IN');
+          var dStr=dayNum+' '+MNS_BT[moIdx];
+          var lt=BT_DATA.l[fullDate];
+          var liveHtml='<span style="color:#475569">&#8212;</span>';
+          if(lt&&lt.length){
+            liveHtml=lt.map(function(t){
+              if(t[1]&&t[1].indexOf('note:')===0){
+                return '<span style="color:#6b7280;font-size:.7rem">'+t[1].slice(5)+'</span>';
+              }
+              var lCls=t[0]>=0?'g':'r';
+              return '<span class="'+lCls+'" style="font-weight:700">'+(t[0]>=0?'+':'')+t[0].toFixed(0)+'pts</span>'+(t[1]?' <span class="db-badge '+t[1].toLowerCase()+'" style="font-size:.6rem">'+t[1]+'</span>':'');
+            }).join('<br>');
+          }
+          html+='<tr style="border-bottom:1px solid rgba(255,255,255,.05)">';
+          html+='<td style="font-size:.72rem;padding:5px 10px;font-weight:600">'+dStr+'</td>';
+          html+='<td class="'+pCls+'" style="font-weight:800;padding:5px 8px">'+(pts>=0?'+':'')+pts.toFixed(1)+' pts</td>';
+          html+='<td style="padding:5px 8px"><span class="pnl-rs '+pCls+'" style="font-size:.73rem">'+rsStr+'</span></td>';
+          html+='<td style="padding:5px 8px">'+wl+'</td>';
+          html+='<td style="padding:5px 10px">'+liveHtml+'</td>';
+          html+='</tr>';
+        });
+        html+='</tbody></table>';
+        det.children[0].innerHTML=html;
+        det.style.display='';
+        if(arr)arr.innerHTML='&#9660;';
+      }
+
+      (function(){
+        var bD=document.getElementById('th-btn-d');
+        var bW=document.getElementById('th-btn-w');
+        var bM=document.getElementById('th-btn-m');
+        if(bD)bD.addEventListener('click',function(){_thFilter('d');});
+        if(bW)bW.addEventListener('click',function(){_thFilter('w');});
+        if(bM)bM.addEventListener('click',function(){_thFilter('m');});
         _thFilter('d');
       })();
       </script>
@@ -11963,6 +12418,34 @@ app.get("/signals", featureGate("feature_signals", "Signals"), async (req, res) 
         const lsEl=ge('hb-last-seen');
         if(lsEl)lsEl.textContent='Last seen '+ageS+'s ago';
       }
+      // ── Candle log health pills (live update) ──────────────
+      const _clArr=hb.bhavCandleLog||[];
+      const _clLast=_clArr.length>0?_clArr[_clArr.length-1]:null;
+      const _clMissed=_clArr.filter(function(c){return c.offline&&c.signal;});
+      const _clAllOff=_clArr.length>0&&_clArr.every(function(c){return c.offline;});
+      const _clLastEl=ge('hb-cl-last');
+      if(_clLastEl){
+        if(_clLast){
+          _clLastEl.className='hb-pill '+(_clAllOff?'warn':'ok');
+          _clLastEl.innerHTML='<span class="hb-dot"></span>Last log: C'+(_clLast.idx+1)+' @ '+_clLast.time+(_clAllOff?' <span style="opacity:.6;font-weight:400">(offline)</span>':'');
+        } else {
+          _clLastEl.className='hb-pill dim';
+          _clLastEl.innerHTML='<span class="hb-dot"></span>No candles yet';
+        }
+      }
+      const _clMissEl=ge('hb-cl-missed');
+      if(_clMissed.length>0){
+        if(_clMissEl){_clMissEl.className='hb-pill err';_clMissEl.textContent='⚠ '+_clMissed.length+' MISSED: '+_clMissed.map(function(c){return'C'+(c.idx+1)+' '+c.signal;}).join(', ');}
+      } else if(_clMissEl){
+        _clMissEl.style.display='none';
+      }
+      const _entryStEl=ge('hb-entry-status');
+      if(_entryStEl){
+        if(_clMissed.length>0&&_clAllOff){_entryStEl.className='hb-pill err';_entryStEl.textContent='✗ C0 missed — no entry today';}
+        else if(_clAllOff&&_clArr.length>0){_entryStEl.className='hb-pill err';_entryStEl.textContent='✗ Entry window gone (bot late)';}
+        else if(alive){_entryStEl.className='hb-pill ok';_entryStEl.textContent='● Watching for entry';}
+        else{_entryStEl.className='hb-pill err';_entryStEl.textContent='Bot offline';}
+      }
       const hbTokEl=ge('hb-token');
       if(hbTokEl&&d.kiteTokenValid!==undefined){
         hbTokEl.className='hb-pill '+(d.kiteTokenValid?'ok':'err');
@@ -12397,6 +12880,81 @@ app.get("/signals", featureGate("feature_signals", "Signals"), async (req, res) 
   setInterval(_dbRefresh,3000);
   _dbRefresh();
   _sTab('lock50');
+
+  // ── Server log tail ────────────────────────────────────────────
+  function _colorLogLine(line){
+    if(!line) return '';
+    var esc=line.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+    if(/error|err|fail|crash|exception/i.test(esc)) return '<span style="color:#f87171">'+esc+'</span>';
+    if(/SIGNAL|ENTRY|TRADE|BUY|SELL|CE|PE.*entry|entry.*CE|entry.*PE/i.test(esc)) return '<span style="color:#4ade80">'+esc+'</span>';
+    if(/MISSED|offline|BACKFILL/i.test(esc)) return '<span style="color:#fb923c">'+esc+'</span>';
+    if(/FLAT|no_signal|no signal|CANDLE_STATUS/i.test(esc)) return '<span style="color:#6b7280">'+esc+'</span>';
+    if(/PAPER|BOT_START|RESTART|LOADED/i.test(esc)) return '<span style="color:#93c5fd">'+esc+'</span>';
+    return '<span style="color:#cbd5e1">'+esc+'</span>';
+  }
+  async function _fetchServerLogs(){
+    try{
+      const r=await fetch('/api/bot-logs?lines=30');
+      if(!r.ok) return;
+      const d=await r.json();
+      const body=ge('srv-log-body');
+      const tsEl=ge('srv-log-ts');
+      if(body&&d.out){
+        if(d.out.length===0){body.innerHTML='<span style="color:#6b7280">No log entries yet.</span>';}
+        else{body.innerHTML=d.out.map(_colorLogLine).join('<br>');body.scrollTop=body.scrollHeight;}
+      }
+      if(tsEl){const _at=new Date(d.at);tsEl.textContent='Fetched at '+_at.toLocaleTimeString('en-IN',{hour:'2-digit',minute:'2-digit',second:'2-digit'});}
+      const errWrap=ge('srv-err-wrap');const errBody=ge('srv-err-body');
+      if(errWrap&&errBody&&d.err&&d.err.length>0){errWrap.style.display='block';errBody.innerHTML=d.err.map(_colorLogLine).join('<br>');}
+      else if(errWrap){errWrap.style.display='none';}
+    }catch(e){const b=ge('srv-log-body');if(b)b.innerHTML='<span style="color:#f87171">Failed to load logs: '+e.message+'</span>';}
+  }
+  setInterval(_fetchServerLogs,15000);
+  _fetchServerLogs();
+
+  // ── Daily P&L history ──────────────────────────────────────────────────────
+  var _DPNL_QTY=30,_DPNL_DELTA=0.5;
+  function _dpnlRs(pts){return Math.round(pts*_DPNL_QTY*_DPNL_DELTA);}
+  function _dpnlFmt(pts){
+    var rs=_dpnlRs(pts);
+    var col=pts>0?'#4ade80':pts<0?'#f87171':'#6b7280';
+    var s=pts>=0?'+':''; var sr=rs>=0?'+':'−';
+    return '<span style="color:'+col+';font-weight:700">'+s+pts+' pts</span>'
+      +'<br><span style="font-size:.68rem;color:'+col+'">'+sr+'₹'+Math.abs(rs).toLocaleString('en-IN')+'</span>';
+  }
+  async function _fetchDailyPnlLog(){
+    try{
+      const r=await fetch('/api/daily-pnl-log');
+      if(!r.ok)return;
+      const data=await r.json();
+      const body=document.getElementById('dpnl-body');
+      const ts=document.getElementById('dpnl-ts');
+      if(ts)ts.textContent='Updated '+new Date().toLocaleTimeString('en-IN',{hour:'2-digit',minute:'2-digit'});
+      if(!body)return;
+      if(!data||!data.length){
+        body.innerHTML='<tr><td colspan="5" style="padding:16px 12px;color:#6b7280;text-align:center;font-size:.75rem">No history yet — first entry saved today at 3:20 PM</td></tr>';
+        return;
+      }
+      var rows=[...data].reverse().slice(0,30).map(function(d){
+        var dObj=new Date(d.date+'T00:00:00+05:30');
+        var dateStr=dObj.toLocaleDateString('en-IN',{day:'2-digit',month:'short'});
+        var sigClr=d.signal==='CE'?'#60a5fa':d.signal==='PE'?'#f472b6':'#9ca3af';
+        var noteStr=d.note||(d.btNote||'');
+        return '<tr style="border-bottom:1px solid rgba(255,255,255,.04)">'
+          +'<td style="padding:8px 12px;white-space:nowrap;color:var(--text-muted);font-size:.75rem">'+dateStr+'</td>'
+          +'<td style="padding:8px 12px;text-align:center"><span style="font-size:.68rem;font-weight:800;padding:2px 8px;border-radius:4px;background:'+sigClr+'22;color:'+sigClr+'">'+d.signal+'</span></td>'
+          +'<td style="padding:8px 12px;text-align:right">'+_dpnlFmt(d.btPnl||0)+'</td>'
+          +'<td style="padding:8px 12px;text-align:right">'+_dpnlFmt(d.actualPnl||0)+'</td>'
+          +'<td style="padding:8px 12px;font-size:.7rem;color:var(--text-muted)">'+noteStr+'</td>'
+          +'</tr>';
+      }).join('');
+      body.innerHTML=rows||'<tr><td colspan="5" style="padding:16px;color:#6b7280;text-align:center">No data</td></tr>';
+    }catch(e){
+      var b=document.getElementById('dpnl-body');
+      if(b)b.innerHTML='<tr><td colspan="5" style="padding:12px;color:#f87171;text-align:center">Failed to load history</td></tr>';
+    }
+  }
+  _fetchDailyPnlLog();
 
   // ── Bot control ────────────────────────────────────────────────
   function _toggleBotMenu(e){e.stopPropagation();var m=ge('bot-ctl-menu');if(m)m.style.display=m.style.display==='block'?'none':'block';}

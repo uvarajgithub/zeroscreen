@@ -1,4 +1,5 @@
 ﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿﻿import fs from "fs";
+import { exec as _cpExec } from "child_process";
 import { getPreviousCandle, getCurrentCandle, getTwoLastCandles, getStructureSeed, getSwingLevels, getLatest5MinCandle, getCurrentPrice, getBestOptionSymbol, getAvgCandleSize, getVWAP, getAvgVolume, getRecentCandles, getDayOpenPrice, getPrevDayHL, getPrevDayCandles, getTodayCandles, getOptionDayOHLC, getOptionLTP, getITMMonthlyOptionSymbol, getLatest1MinCandle } from "./market";
 import { KiteConnect } from "kiteconnect";
 import { getCandleBody, checkBreakout, isSideways, isStrongMomentum, isNearBreakout, isVwapAligned, isWeakMomentum, isStrongTrend, isBreakoutAccelerating, is15MinAligned, isBigMoveAlready, getTrailingSL, isWithinTime, isMomentumAligned, isHighWickCandle, isNearVwapChop, Candle, HybridReverseState, HybridSignal, createHybridState, processHybridCandle, trailLock50, trailDefault } from "./strategy";
@@ -7,7 +8,8 @@ import { placeTrade, exitTrade, stopTradingForDay, isTradingStopped, squareOffAl
 import { config } from "./config";
 import readline from "readline";
 import { logTrade, logDecision } from "./logger";
-import { sendTelegram, notifyStrikeEOD } from "./notifier";
+import { sendTelegram as _sendTelegramRaw, notifyStrikeEOD } from "./notifier";
+const sendTelegram = (msg: string) => _tgSilenced ? Promise.resolve() : _sendTelegramRaw(msg);
 import { generateMonthlyReport } from "./report";
 
 // ─── Structured logger ───────────────────────────────────
@@ -117,6 +119,8 @@ async function syncBotWithBroker() {
 let tradeCount        = 0;
 let dailyPnL          = 0;
 let stopForDay        = false;
+let _tgSilenced       = false;  // once set, no more Telegram for rest of day
+let _dailyPnlLogSaved = false;  // ensures daily-pnl-log.json written only once per day
 let earlyEntryDone    = false;
 let mainEntryDone     = false;
 let pyramidDone       = false;     // Upgrade 1: pyramid scale-in
@@ -188,6 +192,8 @@ let bhavState:          BhavState    = createBhavState();
 let bhavTodayCandles:   BhavCandle[] = [];
 let bhavPrevDayCandles: BhavCandle[] = [];
 let bhavLastCandleKey   = "";
+interface BhavCandleLogEntry { idx: number; time: string; close: number; bodyPct: number; signal: string | null; reason: string; offline?: boolean; }
+let bhavCandleLog: BhavCandleLogEntry[] = [];
 
 
 let entryPremium  = 0;   // option LTP at trade entry
@@ -435,6 +441,23 @@ async function monitorCandleBreakouts() {
         strategyCtx = `━━━━━━━━━━━━━━━━━━\n🔷 *LOCK50*\n` + strategyCtx.replace(/^━━━━━━━━━━━━━━━━━━\n/, "");
       }
 
+      // Clean candle summary line → visible in server log section
+      const _bPct = finalPrev.high !== finalPrev.low
+        ? Math.round(((finalPrev.close - finalPrev.open) / (finalPrev.high - finalPrev.low)) * 100)
+        : 0;
+      const _bSign = _bPct >= 0 ? '+' : '';
+      const _cIdx = ACTIVE_STRATEGY === 'BHAV_V3' ? bhavTodayCandles.length : '';
+      console.log(`${new Date().toLocaleString('en-IN',{timeZone:'Asia/Kolkata'})} 🕯️ Candle${_cIdx ? ' C'+_cIdx : ''} | Close:${finalPrev.close} | Body:${_bSign}${_bPct}% | ${colour} | O:${finalPrev.open} H:${finalPrev.high} L:${finalPrev.low}`);
+
+      // Skip candle notifications if done for the day
+      const _doneForDay =
+        (ACTIVE_STRATEGY === "BHAV_V3" && bhavState.firstDone && !bhavState.inTrade) ||
+        (ACTIVE_STRATEGY === "HYBRID_REVERSE" && hybridState.firstDone && !hybridState.waitReEntry && !(activeTrade || mainEntryDone || earlyEntryDone));
+      if (_doneForDay) {
+        log("CANDLE_STATUS", { status, candle: finalPrev, price, skipped: "done_for_day" });
+        return;
+      }
+
       await sendTelegram(
         `🕯️ *15-Min Candle*  ${ist}  ${colour}\n` +
         `O: ${finalPrev.open}  H: ${finalPrev.high}  L: ${finalPrev.low}  C: ${finalPrev.close}\n` +
@@ -634,6 +657,8 @@ function printStatus() {
 // ─── Main Loop ───────────────────────────────────────────
 let runBotActive = false; // prevents concurrent runBot calls stacking up when API hangs
 let tokenAlertLastSent = 0; // ms timestamp, re-alerts every 30min (0=never sent)
+let _tokenAutoRefreshing = false; // prevents multiple concurrent auto-refresh attempts
+let _candleHealthAlerted = false; // prevents duplicate 9:45 AM candle-silence alerts
 
 // ══════════════════════════════════════════════════════════════════════════════
 //  ITM_HOLD STRATEGY — runs when activeStrategy = "ITM_HOLD"
@@ -1125,7 +1150,10 @@ async function runBhavBot() {
     bhavTodayCandles    = [];
     bhavPrevDayCandles  = [];
     bhavLastCandleKey   = "";
+    bhavCandleLog       = [];
     stopForDay          = false;
+    // Clear persisted candle log for the new day
+    try { fs.writeFileSync('candle-log.json', JSON.stringify({ date: '', log: [] })); } catch(_e) {}
     capitalProtectionTriggered = false;
     dailyPnL            = 0;
     tradeCount          = 0;
@@ -1145,6 +1173,39 @@ async function runBhavBot() {
       bhavPrevDayCandles = candles;
       log("BHAV_PREV_DAY_LOADED", { count: candles.length, ph: Math.max(...candles.map((c: BhavCandle) => c.high)), pl: Math.min(...candles.map((c: BhavCandle) => c.low)) });
     }).catch(e => log("BHAV_PREV_DAY_FAIL", { error: String(e) }));
+  }
+
+  // ── 9:45 AM candle silence check — fires if C1 was never received ──────────
+  if (h === 9 && m === 45 && ist.getSeconds() < 16 && !_candleHealthAlerted) {
+    _candleHealthAlerted = true;
+    if (bhavTodayCandles.length === 0) {
+      await sendTelegram(
+        `⚠️ CANDLE ALERT — 9:45 AM health check\n` +
+        `No 15-min candles received since market open.\n` +
+        `C1 (9:15–9:30 AM) should have been processed by now.\n` +
+        `Bot may be stuck or data feed is down.\n` +
+        `Check: pm2 logs amina-100-variant-b --lines 20`
+      ).catch(() => {});
+    }
+  }
+
+  // ── 9:10 AM pre-market token health check (BEFORE isWithinTime guard) ────
+  if (h === 9 && m === 10 && ist.getSeconds() < 16) {
+    try {
+      const _tokenAge = fs.existsSync('access_token.txt')
+        ? Math.round((Date.now() - fs.statSync('access_token.txt').mtimeMs) / 60000)
+        : 9999;
+      const _tokenOk = _tokenAge < 180;
+      if (!_tokenOk) {
+        // Only alert on problem — no message on good days
+        await sendTelegram(
+          `🚨 TOKEN PROBLEM — Pre-market check @ 9:10 AM\n` +
+          `🔑 Token: STALE or MISSING (last seen ${_tokenAge}m ago)\n` +
+          `⚠️ Run auto_token NOW — only 20 mins before C1 closes!\n` +
+          `SSH: node /home/ubuntu/trading-bot/auto_token.js`
+        ).catch(() => {});
+      }
+    } catch(_e) {}
   }
 
   if (!isWithinTime(9, 15, 15, 30)) return;
@@ -1264,6 +1325,62 @@ async function runBhavBot() {
     // First entry: pattern detection from open
     entrySig = findBhavEntry(bhavTodayCandles, bhavPrevDayCandles);
   }
+
+  // ── Log candle evaluation ─────────────────────────────────────────────
+  const _bhavNow = new Date();
+  const _bhavIst = new Date(_bhavNow.getTime() + 5.5 * 3600000);
+  const _bhavTime = _bhavIst.getUTCHours().toString().padStart(2, '0') + ':' + _bhavIst.getUTCMinutes().toString().padStart(2, '0');
+  const _bhavBP = (bc.high - bc.low) > 0 ? Math.round((bc.close - bc.open) / (bc.high - bc.low) * 100) : 0;
+  // ── Compute specific no-signal reason for the log ────────────────────
+  const _bhavNoSigReason = (() => {
+    const _lastIdx = bhavTodayCandles.length - 1;
+    const _pdh = bhavPrevDayCandles.length > 0 ? Math.max(...bhavPrevDayCandles.map((c: BhavCandle) => c.high)) : 0;
+    const _pdl = bhavPrevDayCandles.length > 0 ? Math.min(...bhavPrevDayCandles.map((c: BhavCandle) => c.low)) : 0;
+    const _c0 = bhavTodayCandles[0];
+    const _c0bp = _c0 && (_c0.high - _c0.low) > 0 ? Math.round((_c0.close - _c0.open) / (_c0.high - _c0.low) * 100) : 0;
+    if (bhavState.firstDone) {
+      // Already had first trade today — re-entry path
+      if (bhavState.reCount >= 3) return 'Re-entry limit reached (3 of 3 used today)';
+      if (bhavState.lastExitIdx < 0) return 'Re-entry: no completed exit yet';
+      if (bhavState.lastExitPts < 20) return `Re-entry blocked — last exit was only +${bhavState.lastExitPts.toFixed(0)} pts (minimum needed: 20 pts)`;
+      return `Re-entry: no strong confirming candle yet after C${bhavState.lastExitIdx + 1} exit`;
+    }
+    // First entry path
+    if (_lastIdx > 0) {
+      // C0 entry window has expired
+      const _c0dir = _c0bp >= 0 ? `+${_c0bp}%` : `${_c0bp}%`;
+      return `Entry window expired — BHAV V3 only reads C1 close (9:30 AM). C1 was ${_c0dir} body, today's entry opportunity is gone`;
+    }
+    // At C0 (first candle of day)
+    if (_pdh > 0 && bc.close > _pdh) {
+      if (_bhavBP > 55) return `C1 body too strong (+${_bhavBP}%) — inside_c0 pattern requires body ≤55% (not a runaway gap candle)`;
+      if (_bhavBP < -29) return `C1 closed above PDH but bearish body (${_bhavBP}%) — direction mismatch for CE entry`;
+      const _gapPts = _c0 ? Math.round(_c0.open - _pdh) : 0;
+      if (_gapPts > 50) return `Gap-up open +${_gapPts} pts above PDH — entry filtered (too large a gap)`;
+      return `C1 above PDH by ${Math.round(bc.close - _pdh)} pts but body/range filter blocked`;
+    }
+    if (_pdl > 0 && bc.close < _pdl) {
+      if (_bhavBP < -55) return `C1 body too strong (${_bhavBP}%) — inside_c0 pattern requires body ≥-55%`;
+      const _gapPts = _c0 ? Math.round(_pdl - _c0.open) : 0;
+      if (_gapPts > 50) return `Gap-down open ${_gapPts} pts below PDL — entry filtered (too large a gap)`;
+      return `C1 below PDL by ${Math.round(_pdl - bc.close)} pts but body/range filter blocked`;
+    }
+    if (_pdh > 0 && _pdl > 0) {
+      return `C1 closed inside range — no breakout (close ${bc.close.toFixed(0)} between PDL ${_pdl} and PDH ${_pdh})`;
+    }
+    return 'No signal — prev day levels not loaded yet';
+  })();
+  bhavCandleLog.push({
+    idx: bhavTodayCandles.length - 1,
+    time: _bhavTime,
+    close: bc.close,
+    bodyPct: _bhavBP,
+    signal: entrySig ? entrySig.side : null,
+    reason: entrySig ? entrySig.reason : _bhavNoSigReason,
+    // offline omitted (undefined) = bot was live for this candle
+  });
+  // Persist log to disk so restarts don't lose live evaluations
+  try { fs.writeFileSync('candle-log.json', JSON.stringify({ date: _bhavIst.toISOString().slice(0,10), log: bhavCandleLog })); } catch(_e) {}
 
   if (!entrySig) {
     log("BHAV_CANDLE", { idx: bhavTodayCandles.length - 1, close: bc.close, no_signal: true });
@@ -1390,6 +1507,28 @@ async function runBot() {
   // Time-based safety buffer
   const now = new Date();
   const ist = new Date(now.toLocaleString("en-US", { timeZone: "Asia/Kolkata" }));
+  // ── 9:10 AM pre-market health check ───────────────────────────────────────
+  if (ist.getHours() === 9 && ist.getMinutes() === 10 && ist.getSeconds() < 16) {
+    try {
+      const _hbAge = fs.existsSync('bot-heartbeat.json')
+        ? Math.round((Date.now() - new Date(JSON.parse(fs.readFileSync('bot-heartbeat.json','utf-8')).at).getTime()) / 1000)
+        : 9999;
+      const _tokenAge = fs.existsSync('access_token.txt')
+        ? Math.round((Date.now() - fs.statSync('access_token.txt').mtimeMs) / 60000)
+        : 9999;
+      const _tokenOk = _tokenAge < 180; // written within last 3 hours = today's token
+      const _botOk = _hbAge < 120; // heartbeat within 2 min
+      const _status = _tokenOk && _botOk ? '✅ ALL SYSTEMS GO' : '🚨 PROBLEM DETECTED';
+      await sendTelegram(
+        `${_status} — Pre-market check @ 9:10 AM\n` +
+        `🔑 Token: ${_tokenOk ? `✅ valid (refreshed ${_tokenAge}m ago)` : `❌ MISSING or stale (${_tokenAge}m ago)`}\n` +
+        `🤖 Bot: ${_botOk ? `✅ online (heartbeat ${_hbAge}s ago)` : `❌ OFFLINE (last seen ${_hbAge}s ago)`}\n` +
+        `📊 Strategy: ${ACTIVE_STRATEGY} | Mode: ${config.mode}\n` +
+        (_tokenOk && _botOk ? `C1 closes at 9:30 AM — entry window open ✔` : `⚠️ Fix now — 20 mins before C1 closes`)
+      );
+    } catch(_e) {}
+  }
+
   // State reset at 9:15
   if (ist.getHours() === 9 && ist.getMinutes() === 15) {
     activeTrade = false;
@@ -1416,6 +1555,9 @@ async function runBot() {
     log("STATE_RESET", { time: ist });
     rcWaiting = false; rcBreakoutDir = null; rcTrade2Active = false; rcIndexSL = 0;
     hybridState = createHybridState(); hybridPrevCandle = null; hybridLastCandleKey = "";
+    _dailyPnlLogSaved = false;  // reset for the new day
+    _tokenAutoRefreshing = false; // allow fresh auto-refresh next day if needed
+    _candleHealthAlerted = false;  // allow fresh candle health check next day
   }
   // 15:15:00 - stop new trades
   if (ist.getHours() === 15 && ist.getMinutes() >= 15 && ist.getMinutes() < 20) {
@@ -1437,6 +1579,7 @@ async function runBot() {
     await squareOffAll();
     await sendEODSummary();
     generateMonthlyReport().catch(e => log("REPORT_FAIL", { error: e?.message }));
+    if (!_dailyPnlLogSaved) { _dailyPnlLogSaved = true; saveDailyPnlLog().catch(() => {}); }
     stopForDay = true;
     await notifyBotStop("15:20 exit all positions");
     log("TIME_BUFFER", { message: "Exited all positions at 15:20" });
@@ -1444,6 +1587,7 @@ async function runBot() {
   }
   // End-of-day forced exit
   if (ist.getHours() > 15 || (ist.getHours() === 15 && ist.getMinutes() >= 30)) {
+    if (!_dailyPnlLogSaved) { _dailyPnlLogSaved = true; saveDailyPnlLog().catch(() => {}); }
     await squareOffAll();
     stopForDay = true;
     await notifyBotStop("EOD exit");
@@ -1476,7 +1620,7 @@ async function runBot() {
   if (tradeCount >= MAX_TRADES && !activeTrade) {
     console.log("Max trades reached. Stopping for day.");
     stopForDay = true;
-    await notifyBotStop("Max trades reached");
+    if (!_tgSilenced) { await notifyBotStop("Max trades reached"); _tgSilenced = true; }
     return;
   }
 
@@ -1935,22 +2079,82 @@ async function preStartPrompt() {
     }, 5 * 60 * 1000);
     // Load prev day + today candles at startup for BHAV_V3 (handles mid-day restarts)
     if (ACTIVE_STRATEGY === "BHAV_V3") {
-      getPrevDayCandles().then(candles => {
-        bhavPrevDayCandles = candles;
-        log("BHAV_PREV_DAY_LOADED", { at: "startup", count: candles.length });
-      }).catch(e => log("BHAV_PREV_DAY_FAIL", { at: "startup", error: String(e) }));
-      // Backfill today's candles so pattern detection works on mid-day restart
-      getTodayCandles().then(candles => {
+      // Load both prev-day AND today candles together so prev candles are available when evaluating backfill signals
+      Promise.all([getPrevDayCandles(), getTodayCandles()]).then(([prevCandles, candles]) => {
+        bhavPrevDayCandles = prevCandles;
+        log("BHAV_PREV_DAY_LOADED", { at: "startup", count: prevCandles.length });
         if (candles.length > 0) {
-          bhavTodayCandles = candles.map(c => ({ open: c.open, high: c.high, low: c.low, close: c.close }));
-          // Set last candle key to avoid re-processing the last seeded candle
-          if (candles.length > 0) {
-            const last = candles[candles.length - 1];
-            bhavLastCandleKey = last.date ?? `${last.high}_${last.low}`;
+          // Filter out the currently-forming candle: only include candles whose 15-min window has fully closed
+          const nowMs = Date.now();
+          const closedCandles = candles.filter((c, i) => {
+            if (i < candles.length - 1) return true;  // all except last are definitely closed
+            const candleStart = new Date(c.date).getTime();
+            return nowMs >= candleStart + 15 * 60_000;  // last candle: check its window has passed
+          });
+          bhavTodayCandles = closedCandles.map(c => ({ open: c.open, high: c.high, low: c.low, close: c.close }));
+          // Set last candle key to the last FULLY CLOSED candle to avoid re-processing
+          if (closedCandles.length > 0) {
+            const last = closedCandles[closedCandles.length - 1];
+            bhavLastCandleKey = last.date ? String(new Date(last.date)) : `${last.high}_${last.low}`;
           }
-          log("BHAV_TODAY_BACKFILL", { at: "startup", count: candles.length });
+          // Load persisted candle log from today (if any) — preserves live evaluations across restarts
+          const _istNow = new Date(new Date().getTime() + 5.5 * 3600000);
+          const _todayDate = _istNow.toISOString().slice(0, 10);
+          let _savedLog: BhavCandleLogEntry[] = [];
+          try {
+            const _saved = JSON.parse(fs.readFileSync('candle-log.json', 'utf-8'));
+            if (_saved.date === _todayDate && Array.isArray(_saved.log)) _savedLog = _saved.log;
+          } catch(_e) {}
+          // Re-evaluate strategy on each historical candle to accurately show missed entry opportunities
+          bhavCandleLog = [];
+          for (let _i = 0; _i < closedCandles.length; _i++) {
+            const _c = closedCandles[_i];
+            const _bp = (_c.high - _c.low) > 0 ? Math.round((_c.close - _c.open) / (_c.high - _c.low) * 100) : 0;
+            const _d = new Date(_c.date);
+            const _ist = new Date(_d.getTime() + 5.5 * 3600000);
+            const _t = _ist.getUTCHours().toString().padStart(2, '0') + ':' + _ist.getUTCMinutes().toString().padStart(2, '0');
+            // Use saved live entry if available (preserves correct offline status from before restart)
+            const _saved = _savedLog.find(s => s.idx === _i);
+            if (_saved) {
+              bhavCandleLog.push(_saved);
+            } else {
+              // Re-run strategy on partial candle array (same as if bot had been live up to this point)
+              const _partial = closedCandles.slice(0, _i + 1).map(x => ({ open: x.open, high: x.high, low: x.low, close: x.close }));
+              const _evalSig = findBhavEntry(_partial, bhavPrevDayCandles);
+              // EOD candles (15:15+) are never traded — don't flag them as "bot offline"
+              const _isEodCandle = _t >= '15:15';
+              bhavCandleLog.push({
+                idx: _i,
+                time: _t,
+                close: _c.close,
+                bodyPct: _bp,
+                signal: _evalSig ? _evalSig.side : null,
+                reason: _evalSig ? _evalSig.reason : 'no_signal',
+                offline: _isEodCandle ? undefined : true,  // undefined = not offline (EOD), true = truly missed
+              });
+            }
+          }
+          const _missedEntries = bhavCandleLog.filter(e => e.offline && e.signal);
+          if (_missedEntries.length > 0) {
+            _missedEntries.forEach(e => {
+              log("🚨 MISSED_ENTRY", { candle: `C${e.idx}`, time: e.time, direction: e.signal, reason: e.reason, note: "Bot was offline when this signal occurred" });
+            });
+          }
+          // If C1 (idx=0) is already in backfill, entry window is gone — notify once
+          if (closedCandles.length > 0) {
+            const _missedSig = _missedEntries.find(e => e.idx === 0);
+            sendTelegram(
+              `⛔ *Done for today* — Bot came online after 9:30 AM\n` +
+              (_missedSig
+                ? `🚨 MISSED signal: ${_missedSig.signal} at C1 (${_missedSig.reason.replace(/_/g,' ')})\n`
+                : `📭 No signal at C1 — entry window already passed\n`) +
+              `No new trades will be placed today.\nNext opportunity: tomorrow 9:30 AM`
+            ).catch(() => {});
+            _tgSilenced = true;  // silence all further Telegram for today
+          }
+          log("BHAV_TODAY_BACKFILL", { at: "startup", count: closedCandles.length, raw: candles.length, missedEntries: _missedEntries.length });
         }
-      }).catch(e => log("BHAV_TODAY_BACKFILL_FAIL", { at: "startup", error: String(e) }));
+      }).catch(e => log("BHAV_TODAY_BACKFILL_FAIL", { at: "startup", error: e instanceof Error ? e.message : JSON.stringify(e) }));
     }
     log("BOT_START", { message: "Waiting for market hours (9:25 IST)..." });
     // Register trading intervals FIRST — Telegram must never block the bot from starting
@@ -1967,7 +2171,7 @@ async function preStartPrompt() {
           dailyPnL,
           unrealisedPnL: _unrealised,
           tradeCount,        qty: config.quantity,
-        slPts: config.tradeManagement?.stopLossPoints ?? 100,
+        slPts: ACTIVE_STRATEGY === "BHAV_V3" ? 150 : (config.tradeManagement?.stopLossPoints ?? 100),
         dailyCapPts: config.risk?.dailyLossCap ?? 350,          strategy: ACTIVE_STRATEGY,
           mode: config.mode,
           inTrade: _inTrade,
@@ -1983,6 +2187,7 @@ async function preStartPrompt() {
           bhavPrevDayHigh: ACTIVE_STRATEGY === "BHAV_V3" && bhavPrevDayCandles.length > 0 ? Math.max(...bhavPrevDayCandles.map((c: {high:number}) => c.high)) : undefined,
           bhavPrevDayLow: ACTIVE_STRATEGY === "BHAV_V3" && bhavPrevDayCandles.length > 0 ? Math.min(...bhavPrevDayCandles.map((c: {low:number}) => c.low)) : undefined,
           bhavCandles: ACTIVE_STRATEGY === "BHAV_V3" ? bhavTodayCandles.length : undefined,
+          bhavCandleLog: ACTIVE_STRATEGY === "BHAV_V3" ? bhavCandleLog.slice(-20) : undefined,
         }));
       } catch (_) {}
       if (runBotActive) { log("SKIP_CYCLE", { reason: "prevCycleStillRunning" }); return; }
@@ -1999,18 +2204,17 @@ async function preStartPrompt() {
           // ── One-time token-expired alert (fires once, not every 15s) ──────
           const errMsg = (err?.message ?? String(err)).toLowerCase();
           const isTokenErr = errMsg.includes("incorrect") && (errMsg.includes("api_key") || errMsg.includes("access_token"));
-          if (isTokenErr && (Date.now() - tokenAlertLastSent > 30 * 60 * 1000)) {
+          if (isTokenErr && !_tokenAutoRefreshing) {
+            _tokenAutoRefreshing = true;
             tokenAlertLastSent = Date.now();
-            const ist = new Date().toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata" });
-            sendTelegram(
-              `🔴 *TOKEN EXPIRED — Action Required*\n` +
-              `━━━━━━━━━━━━━━━━━━━━━\n` +
-              `Zerodha access token is invalid or expired.\n` +
-              `*Bot is not trading until you re-authenticate.*\n\n` +
-              `👉 Open this link, log in & paste the redirect URL:\n` +
-              `https://139-59-18-52.nip.io/login\n\n` +
-              `⏰ Detected at: ${ist} IST`
-            ).catch(() => {});
+            const _ist = new Date().toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata" });
+            sendTelegram(`🔄 Token expired detected at ${_ist} IST — auto-refreshing now...`).catch(() => {});
+            // Spawn auto_token.js independently — it will update .env and restart the bot via PM2
+            _cpExec('node /home/ubuntu/trading-bot/auto_token.js >> /home/ubuntu/trading-bot/logs/auto_token.log 2>&1', (_execErr) => {
+              // On success: auto_token.js restarts the bot via PM2 — this process will be killed
+              // On failure: auto_token.js already sent its own 🚨 FAILED telegram with login URL
+              // Flag stays true — no infinite retry loop. User must act manually (restart bot after fixing).
+            });
           }
           // Still write heartbeat so dashboards know the bot is alive
           try {
@@ -2024,7 +2228,7 @@ async function preStartPrompt() {
               dailyPnL,
               unrealisedPnL: _unrealised2,
               tradeCount,        qty: config.quantity,
-        slPts: config.tradeManagement?.stopLossPoints ?? 100,
+        slPts: ACTIVE_STRATEGY === "BHAV_V3" ? 150 : (config.tradeManagement?.stopLossPoints ?? 100),
         dailyCapPts: config.risk?.dailyLossCap ?? 350,              mode: config.mode,
               inTrade: _inTrade2,
               direction: tradeDirection ?? null,
@@ -2044,7 +2248,7 @@ async function preStartPrompt() {
     // Fire-and-forget startup Telegram — failure must not prevent trading
     if (restored && activeTrade && tradeDirection && entryPrice > 0) {
       // ── Restart with ACTIVE trade — show position details
-      const slLevel = tradeDirection === "CE" ? entryPrice - 100 : entryPrice + 100;
+      const slLevel = tradeDirection === "CE" ? entryPrice - 150 : entryPrice + 150;
       const entryIST = entryTime > 0
         ? new Date(entryTime).toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata", hour: "2-digit", minute: "2-digit" })
         : "–";
@@ -2056,8 +2260,8 @@ async function preStartPrompt() {
         `━━━━━━━━━━━━━━━━━━━━━\n` +
         `📌 Position: *${tradeDirection}* | ${tradeSymbol}\n` +
         `Entry: *${entryPrice}* (@ ${entryIST})\n` +
-        `SL: *${slLevel}* (−100 pts)${waitReEntryInfo}\n` +
-        `Mode: ${config.mode.toUpperCase()} | Qty: ${config.quantity}\n` +
+        `SL: *${slLevel}* (−150 pts)${waitReEntryInfo}\n` +
+        `Strategy: BHAV V3 · LOCK20 | Mode: ${config.mode.toUpperCase()} | Qty: ${config.quantity}\n` +
         `⏰ ${new Date().toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata" })}\n` +
         `🔑 [Refresh Token](https://139-59-18-52.nip.io/login)`
       ).catch(e => console.error("[Telegram restart notify failed]", e?.message ?? e));
@@ -2079,10 +2283,9 @@ async function preStartPrompt() {
       sendTelegram(
         `🟢 *BANKNIFTY Bot Started*\n` +
         `━━━━━━━━━━━━━━━━━━━━━\n` +
-        `Strategy: *HYBRID REVERSE*\n` +
+        `Strategy: *BHAV V3 · LOCK20*\n` +
         `Mode: *${config.mode.toUpperCase()}* | Qty: ${config.quantity}\n` +
-        `Premium: ₹${config.optionSelection?.minPremium ?? 450}–₹${config.optionSelection?.maxPremium ?? 600}\n` +
-        `SL: ${config.tradeManagement.stopLossPoints} pts | Entry buffer: 25 pts\n` +
+        `SL: 150 pts | Trail: LOCK20 (peak−20)\n` +
         `⏰ ${new Date().toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata" })}\n` +
         `🔑 [Refresh Token if needed](https://139-59-18-52.nip.io/login)`
       ).catch(e => console.error("[Telegram startup notify failed]", e?.message ?? e));
@@ -2208,6 +2411,75 @@ async function sendEODSummary() {
   await notifySummary(trades, wins, losses, netPnL, maxDrawdown);
 }
 
+// ── Daily P&L Log — saves backtest simulation + actual P&L to daily-pnl-log.json ──────────────
+async function saveDailyPnlLog() {
+  try {
+    const istNow = new Date(new Date().getTime() + 5.5 * 3600000);
+    const todayDate = istNow.toISOString().slice(0, 10);
+
+    // 1. Read candle-log.json
+    type CL = { idx: number; time: string; close: number; signal: string | null; reason: string; offline?: boolean };
+    let candleLog: CL[] = [];
+    try {
+      const saved = JSON.parse(fs.readFileSync('candle-log.json', 'utf-8'));
+      if (saved.date === todayDate && Array.isArray(saved.log)) candleLog = saved.log;
+    } catch (_) {}
+
+    // 2. Simulate BHAV V3 LOCK50 candle-close SL on today's candles
+    let signal = 'FLAT', btPnl = 0, btNote = 'No signal today';
+    const c0 = candleLog.find(e => e.idx === 0 && e.signal);
+    if (c0 && c0.signal) {
+      const dir = c0.signal as 'CE' | 'PE';
+      signal = dir;
+      const entryPx = c0.close;
+      let sl = dir === 'CE' ? entryPx - 100 : entryPx + 100;
+      let exited = false;
+      const rest = candleLog.filter(e => e.idx > 0).sort((a, b) => a.idx - b.idx);
+      for (const c of rest) {
+        const gain = dir === 'CE' ? c.close - entryPx : entryPx - c.close;
+        if (gain >= 50) {  // LOCK50: lock SL to breakeven once +50 pts achieved
+          if (dir === 'CE' && sl < entryPx) sl = entryPx;
+          if (dir === 'PE' && sl > entryPx) sl = entryPx;
+        }
+        const slHit = dir === 'CE' ? c.close <= sl : c.close >= sl;
+        if (slHit) {
+          btPnl = Math.round(dir === 'CE' ? sl - entryPx : entryPx - sl);
+          btNote = `SL hit C${c.idx} (${c.time})`;
+          exited = true; break;
+        }
+      }
+      if (!exited && rest.length > 0) {
+        const last = rest[rest.length - 1];
+        btPnl = Math.round(dir === 'CE' ? last.close - entryPx : entryPx - last.close);
+        btNote = `EOD exit C${last.idx} (${last.time})`;
+      }
+    }
+
+    // 3. Actual trades P&L from trades.json
+    let actualPnl = 0, actualTrades = 0;
+    try {
+      const allTrades = JSON.parse(fs.readFileSync('trades.json', 'utf-8'));
+      const todayTrades = allTrades.filter((t: any) => (t.date || '').startsWith(todayDate) && t.exitPrice > 0);
+      actualTrades = todayTrades.length;
+      actualPnl = Math.round(todayTrades.reduce((s: number, t: any) => s + (t.pnl || 0), 0));
+    } catch (_) {}
+
+    // 4. Build record and upsert into daily-pnl-log.json
+    const note = c0?.offline ? 'Bot offline' : signal === 'FLAT' ? 'No signal' : '';
+    const record = { date: todayDate, signal, reason: c0?.reason ?? 'no_signal', btPnl, btNote, actualPnl, actualTrades, note };
+    const logFile = 'daily-pnl-log.json';
+    let logData: any[] = [];
+    try { logData = JSON.parse(fs.readFileSync(logFile, 'utf-8')); } catch (_) {}
+    const existing = logData.findIndex((e: any) => e.date === todayDate);
+    if (existing >= 0) logData[existing] = record; else logData.push(record);
+    logData.sort((a: any, b: any) => a.date < b.date ? -1 : 1);
+    fs.writeFileSync(logFile, JSON.stringify(logData, null, 2));
+    log('DAILY_PNL_SAVED', { date: todayDate, signal, btPnl, actualPnl, note });
+  } catch (e: any) {
+    log('DAILY_PNL_SAVE_FAIL', { error: e?.message ?? String(e) });
+  }
+}
+
 // Helper for direction alignment
 function isDirectionAligned(fiveMin: {open: number, close: number}, fifteenMin: {open: number, close: number}) {
   return (fiveMin.close > fiveMin.open && fifteenMin.close > fifteenMin.open) ||
@@ -2261,13 +2533,13 @@ async function notifyExit(exit: number, pnl: number, reason: string, ctx?: { dir
   const rsSign    = pnl >= 0 ? "+" : "−";
   const emoji     = pnl >= 0 ? "✅" : pnl > -10 ? "⚠️" : "❌";
   const dirLine   = ctx?.dir    ? `Direction: *${ctx.dir}*\n`       : "";
-  const entryLine = ctx?.entry  ? `Entry index: ${ctx.entry}\n`     : "";
+  const entryLine = ctx?.entry  ? `Index entry: ${ctx.entry}\n`     : "";
   const symLine   = ctx?.symbol ? `Symbol: \`${ctx.symbol}\`\n`    : "";
   const dailySign = dailyPnL >= 0 ? "+" : "";
   await sendTelegram(
-    `${emoji} *◆ LOCK50 · EXIT — ${reason}*\n` +
+    `${emoji} *◆ BHAV V3 · LOCK20 — EXIT → ${reason}*\n` +
     symLine + dirLine + entryLine +
-    `Exit index: ${exit}\n` +
+    `Index exit: ${exit}\n` +
     `Index P&L: *${pnlSign}${Math.abs(pnl)} pts*\n` +
     `₹ est: *${rsSign}₹${rupeesEst.toLocaleString("en-IN")}* (${qty}qty×0.5δ)\n` +
     `━━━━━━━━━━━━━━\n` +
@@ -2302,7 +2574,7 @@ async function notifySummary(trades: number, wins: number, losses: number, netPn
   const emoji     = netPnL > 0 ? "🟢" : netPnL < 0 ? "🔴" : "⚪";
   const today     = new Date().toLocaleDateString("en-IN", { timeZone: "Asia/Kolkata", day: "2-digit", month: "short", year: "numeric" });
   await sendTelegram(
-    `📊 *DAILY SUMMARY — HYBRID REVERSE*\n` +
+    `📊 *DAILY SUMMARY — BHAV V3 · LOCK20*\n` +
     `${today}\n` +
     `━━━━━━━━━━━━━━━━━━━━\n` +
     `${emoji} Index P&L: *${pnlSign}${Math.abs(netPnL)} pts*\n` +

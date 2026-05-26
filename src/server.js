@@ -10116,6 +10116,19 @@ app.get("/bot-analytics", featureGate("feature_dashboard", "Dashboard"), async (
             </tr>`;
     }).join("")}
         </tbody>
+        <tfoot>
+          <tr style="border-top:2px solid var(--border);font-weight:700">
+            <td class="dash-td-month">TOTAL</td>
+            <td>${mKeys.reduce((s,k)=>s+(monthly[k].days??0),0)}</td>
+            <td class="${bbPnl>=0?'dash-green':'dash-red'}">${bbPnl>=0?'+':''}${bbPnl.toFixed(1)}</td>
+            <td>${allBbTrades}</td>
+            <td>${allBbWins}/${allBbTrades-allBbWins}</td>
+            <td class="${rcPnl>=0?'dash-green':'dash-red'}">${rcPnl>=0?'+':''}${rcPnl.toFixed(1)}</td>
+            <td>${allRcTrades}</td>
+            <td>${allRcWins}/${allRcTrades-allRcWins}</td>
+            <td class="${totalPnl>=0?'dash-green dash-td-bold':'dash-red dash-td-bold'}">${totalPnl>=0?'+':''}${totalPnl.toFixed(1)}</td>
+          </tr>
+        </tfoot>
       </table>
     </div>
 

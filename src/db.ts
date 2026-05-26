@@ -1023,6 +1023,8 @@ export interface PaperTradeConfig {
   default_sl_pct: number; default_tgt_pct: number; max_positions: number;
   auto_paper_mode?: string;   // 'picks' | 'custom'
   auto_paper_stocks?: string; // JSON array of symbols
+  picks_capital?: number;     // fixed Rs per pick; qty = picks_capital ÷ price; 0 = use default_qty
+  risk_pct?: number;          // risk % per trade
 }
 
 export async function getPaperPortfolio(userId: number): Promise<{ balance: number }> {
