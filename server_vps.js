@@ -9252,7 +9252,8 @@ app.get("/dashboard", requireAuth, async (req, res) => {
         <span style="font-size:.75rem;color:var(--text-muted)">Each 15-min candle evaluated by strategy</span>
       </div>
       ${(()=>{
-        const _cl = hb && hb.bhavCandleLog;
+        const _hb = readBotJSON("bot-heartbeat.json", null);
+        const _cl = _hb && _hb.bhavCandleLog;
         if (!_cl || !_cl.length) return '<div class="cl-empty">No candle data yet today. Log fills after 9:30 AM during market hours.</div>';
         let _rows = '';
         _cl.forEach(function(c){
@@ -10081,6 +10082,7 @@ app.get("/bot-analytics", featureGate("feature_dashboard", "Dashboard"), async (
             <th>Model B Trades</th>
             <th>Model B W/L</th>
             <th>Combined</th>
+            <th>Skipped</th>
           </tr>
         </thead>
         <tbody>
@@ -10088,6 +10090,10 @@ app.get("/bot-analytics", featureGate("feature_dashboard", "Dashboard"), async (
         const m = monthly[k];
         const comb = (m.bbTotal ?? 0) + (m.rcTotal ?? 0);
         const isPos = comb >= 0;
+        const skipped = noTradeByMonth[k] || [];
+        const skippedCell = skipped.length === 0
+          ? `<td style="color:var(--muted)">—</td>`
+          : `<td style="color:#f59e0b;font-size:0.78rem" title="${skipped.map(d => d.date + ': ' + d.reason).join('&#10;')}">${skipped.length} day${skipped.length > 1 ? 's' : ''}<br><span style="font-size:0.7rem;color:var(--muted)">${skipped.map(d => d.date.slice(5)).join(', ')}</span></td>`;
         return `<tr class="${isPos ? "dash-row-win" : "dash-row-loss"}">
               <td class="dash-td-month">${k}</td>
               <td>${m.days ?? "—"}</td>
@@ -10098,6 +10104,7 @@ app.get("/bot-analytics", featureGate("feature_dashboard", "Dashboard"), async (
               <td>${m.rcTrades ?? "—"}</td>
               <td>${m.rcWins ?? 0}/${(m.rcTrades ?? 0) - (m.rcWins ?? 0)}</td>
               <td class="${isPos ? "dash-green dash-td-bold" : "dash-red dash-td-bold"}">${isPos ? "+" : ""}${comb.toFixed(1)}</td>
+              ${skippedCell}
             </tr>`;
     }).join("")}
         </tbody>
@@ -10112,6 +10119,7 @@ app.get("/bot-analytics", featureGate("feature_dashboard", "Dashboard"), async (
             <td>${allRcTrades}</td>
             <td>${allRcWins}/${allRcTrades-allRcWins}</td>
             <td class="${totalPnl>=0?'dash-green dash-td-bold':'dash-red dash-td-bold'}">${totalPnl>=0?'+':''}${totalPnl.toFixed(1)}</td>
+            <td style="color:#f59e0b;font-weight:700">${(backtest.noTradeDays||[]).length} days</td>
           </tr>
         </tfoot>
       </table>
@@ -10330,6 +10338,13 @@ app.get("/signals", featureGate("feature_signals", "Signals"), async (req, res) 
     const loggedIn = !!req.session?.userId;
     const backtest = readBotJSON("5year-backtest-result.json", {});
     const monthly = backtest.monthly || {};
+    // Group no-trade days by month
+    const noTradeByMonth = {};
+    for (const d of (backtest.noTradeDays || [])) {
+      const mk = d.date.slice(0, 7);
+      if (!noTradeByMonth[mk]) noTradeByMonth[mk] = [];
+      noTradeByMonth[mk].push(d);
+    }
     // Build last 4 months summary (no strategy names exposed)
     function monthLabel(key) {
         const [y, m] = key.split("-");
@@ -10475,6 +10490,16 @@ app.get("/signals", featureGate("feature_signals", "Signals"), async (req, res) 
           } else if (_de.note) {
             if (!_btLiveObj[_de.date].some(x => x[1] === 'note:' + _de.note))
               _btLiveObj[_de.date].push([null, 'note:' + _de.note]);
+          }
+        }
+        // Inject no-trade days as [dayNum, null, reason] so they appear in drill-down
+        for (const _nd of (backtest.noTradeDays || [])) {
+          const _mk = _nd.date.slice(0, 7);
+          const _dd = _nd.date.slice(8, 10);
+          if (!_btMonthsObj[_mk]) continue;
+          if (!_btMonthsObj[_mk].d.some(x => x[0] === _dd)) {
+            _btMonthsObj[_mk].d.push([_dd, null, _nd.reason || 'no_signal']);
+            _btMonthsObj[_mk].d.sort((a, b) => a[0] < b[0] ? -1 : 1);
           }
         }
         const btDataJson = JSON.stringify({y:_btYears, m:_btMonthsObj, l:_btLiveObj});
@@ -11357,13 +11382,22 @@ app.get("/signals", featureGate("feature_signals", "Signals"), async (req, res) 
         var moIdx=parseInt(mk.slice(5,7))-1;
         var html='<table class="tt" style="width:100%;margin:0;border-radius:0"><thead><tr style="background:rgba(124,58,237,.08)"><th>Date</th><th>BT Index P&amp;L</th><th>BT &#8377;</th><th>Result</th><th>Live Trade</th></tr></thead><tbody>';
         md.d.forEach(function(d){
-          var dayNum=d[0]; var pts=d[1]; var fullDate=mk+'-'+dayNum;
+          var dayNum=d[0]; var pts=d[1]; var skipReason=d[2]; var fullDate=mk+'-'+dayNum;
+          var dStr=dayNum+' '+MNS_BT[moIdx];
+          // No-trade day
+          if(pts===null||pts===undefined){
+            html+='<tr style="border-bottom:1px solid rgba(255,255,255,.05);opacity:.65">';
+            html+='<td style="font-size:.72rem;padding:5px 10px;font-weight:600;color:#94a3b8">'+dStr+'</td>';
+            html+='<td colspan="3" style="padding:5px 8px"><span style="color:#f59e0b;font-weight:700;font-size:.72rem">— NO TRADE</span> <span style="color:#64748b;font-size:.68rem">'+(skipReason||'').replace(/_/g,' ')+'</span></td>';
+            html+='<td style="padding:5px 10px"><span style="color:#475569">&#8212;</span></td>';
+            html+='</tr>';
+            return;
+          }
           var rs2=Math.round(pts*15); var pCls=pts>=0?'g':'r';
           var wl=pts>=0
             ?'<span style="background:rgba(5,150,105,.15);color:#059669;padding:1px 6px;border-radius:4px;font-weight:700;font-size:.68rem">WIN</span>'
             :'<span style="background:rgba(220,38,38,.12);color:#dc2626;padding:1px 6px;border-radius:4px;font-weight:700;font-size:.68rem">LOSS</span>';
           var rsStr=(rs2>=0?'+':'&#8722;')+'&#8377;'+Math.abs(rs2).toLocaleString('en-IN');
-          var dStr=dayNum+' '+MNS_BT[moIdx];
           var lt=BT_DATA.l[fullDate];
           var liveHtml='<span style="color:#475569">&#8212;</span>';
           if(lt&&lt.length){

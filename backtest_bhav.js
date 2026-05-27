@@ -711,6 +711,7 @@ const resultJson = {
   period: { from: ALL[0], to: ALL[ALL.length - 1] },
   monthly: monthlyJson,
   daily: dailyResults.map(e => ({ date: e.date, bbPnL: Math.round((e.bbPnL / PTS_PER_RS) * 10) / 10 })),
+  noTradeDays: rows.filter(r => !r.traded).map(r => ({ date: r.date, ctx: r.ctx, reason: r.reason })),
 };
 const outPath = path.join(__dirname, '5year-backtest-result.json');
 fs.writeFileSync(outPath, JSON.stringify(resultJson, null, 2));

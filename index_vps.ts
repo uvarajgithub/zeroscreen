@@ -246,6 +246,9 @@ async function monitorCandleBreakouts() {
     if (!price || price <= 0) return;
     // Guard: ensure candle has valid OHLC — bad API response returns empty/partial data
     if (!prev || !prev.high || !prev.low || !prev.open || !prev.close) {
+      // Before 9:30 AM the first candle hasn't closed yet — API returning empty is expected, stay silent
+      const _preIst = new Date(new Date().getTime() + 5.5 * 3600000);
+      if (_preIst.getUTCHours() < 9 || (_preIst.getUTCHours() === 9 && _preIst.getUTCMinutes() < 30)) return;
       log("CANDLE_MONITOR_ERR", { reason: "Invalid candle data from API", prev });
       return;
     }
@@ -649,7 +652,8 @@ function printStatus() {
   if (ACTIVE_STRATEGY === "BHAV_V3") {
     const _pdH = bhavPrevDayCandles.length > 0 ? Math.max(...bhavPrevDayCandles.map((c: {high:number}) => c.high)).toFixed(0) : "?";
     const _pdL = bhavPrevDayCandles.length > 0 ? Math.min(...bhavPrevDayCandles.map((c: {low:number}) => c.low)).toFixed(0) : "?";
-    console.log(`[${ist}] [${mode}] | BHAV: ${pnlSign}${livePnL.toFixed(0)}pts T:${tradeCount}/${MAX_TRADES} ${tradeStatus} | PDH:${_pdH} PDL:${_pdL} C${bhavTodayCandles.length}`);
+    const _hhmm = ist.split(',')[1]?.trim().slice(0, 8) ?? ist;
+    console.log(`[${_hhmm}] [${mode}] BHAV: ${pnlSign}${livePnL.toFixed(0)}pts  T:${tradeCount}/${MAX_TRADES}  ${tradeStatus}  PDH:${_pdH} PDL:${_pdL} C${bhavTodayCandles.length}`);
   } else {
   }
 }
@@ -1345,11 +1349,20 @@ async function runBhavBot() {
       if (bhavState.lastExitPts < 20) return `Re-entry blocked — last exit was only +${bhavState.lastExitPts.toFixed(0)} pts (minimum needed: 20 pts)`;
       return `Re-entry: no strong confirming candle yet after C${bhavState.lastExitIdx + 1} exit`;
     }
-    // First entry path
+    // First entry path — still watching (BHAV V3 can enter C1 through C20 depending on context)
     if (_lastIdx > 0) {
-      // C0 entry window has expired
-      const _c0dir = _c0bp >= 0 ? `+${_c0bp}%` : `${_c0bp}%`;
-      return `Entry window expired — BHAV V3 only reads C1 close (9:30 AM). C1 was ${_c0dir} body, today's entry opportunity is gone`;
+      const _cN = _lastIdx + 1;
+      const _bpStr = _bhavBP >= 0 ? `+${_bhavBP}%` : `${_bhavBP}%`;
+      const _ctx = _pdh > 0 && _c0 && _c0.close > _pdh ? 'ABOVE_PDH'
+                 : _pdl > 0 && _c0 && _c0.close < _pdl ? 'BELOW_PDL'
+                 : 'INSIDE';
+      const _c1bp = _c0bp >= 0 ? `+${_c0bp}%` : `${_c0bp}%`;
+      if (_ctx === 'INSIDE') {
+        if (_lastIdx >= 4) return `C${_cN} body ${_bpStr} — INSIDE · no PDH/PDL test signal on C${_cN} (waiting for strong breakout candle)`;
+        return `C${_cN} body ${_bpStr} — INSIDE context (C1 was ${_c1bp}), waiting for strong confirming candle`;
+      }
+      if (_ctx === 'ABOVE_PDH') return `C${_cN} body ${_bpStr} — ABOVE_PDH context (C1 was ${_c1bp}), no CE/PE entry pattern matched`;
+      return `C${_cN} body ${_bpStr} — BELOW_PDL context (C1 was ${_c1bp}), no entry pattern matched`;
     }
     // At C0 (first candle of day)
     if (_pdh > 0 && bc.close > _pdh) {
@@ -2154,7 +2167,16 @@ async function preStartPrompt() {
           }
           log("BHAV_TODAY_BACKFILL", { at: "startup", count: closedCandles.length, raw: candles.length, missedEntries: _missedEntries.length });
         }
-      }).catch(e => log("BHAV_TODAY_BACKFILL_FAIL", { at: "startup", error: e instanceof Error ? e.message : JSON.stringify(e) }));
+      }).catch(e => {
+        // Before 9:15 AM the market isn't open — API returning no data is expected, not an error
+        const _preIst2 = new Date(new Date().getTime() + 5.5 * 3600000);
+        const _h = _preIst2.getUTCHours(), _m = _preIst2.getUTCMinutes();
+        if (_h < 9 || (_h === 9 && _m < 15)) {
+          log("BHAV_STARTUP_PRE_MARKET", { note: "Started before 9:15 AM — no today candles yet, normal" });
+        } else {
+          log("BHAV_TODAY_BACKFILL_FAIL", { at: "startup", error: e instanceof Error ? e.message : JSON.stringify(e) });
+        }
+      });
     }
     log("BOT_START", { message: "Waiting for market hours (9:25 IST)..." });
     // Register trading intervals FIRST — Telegram must never block the bot from starting
