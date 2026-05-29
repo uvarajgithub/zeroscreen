@@ -3,7 +3,7 @@ import { exec as _cpExec } from "child_process";
 import { getPreviousCandle, getCurrentCandle, getTwoLastCandles, getStructureSeed, getSwingLevels, getLatest5MinCandle, getCurrentPrice, getBestOptionSymbol, getAvgCandleSize, getVWAP, getAvgVolume, getRecentCandles, getDayOpenPrice, getPrevDayHL, getPrevDayCandles, getTodayCandles, getOptionDayOHLC, getOptionLTP, getITMMonthlyOptionSymbol, getLatest1MinCandle } from "./market";
 import { KiteConnect } from "kiteconnect";
 import { getCandleBody, checkBreakout, isSideways, isStrongMomentum, isNearBreakout, isVwapAligned, isWeakMomentum, isStrongTrend, isBreakoutAccelerating, is15MinAligned, isBigMoveAlready, getTrailingSL, isWithinTime, isMomentumAligned, isHighWickCandle, isNearVwapChop, Candle, HybridReverseState, HybridSignal, createHybridState, processHybridCandle, trailLock50, trailDefault } from "./strategy";
-import { BhavCandle, BhavState, BhavDir, BhavEntrySignal, createBhavState, findBhavEntry, findBhavReEntry, updateBhavTrail } from "./bhav_strategy";
+import { DrishtiCandle, DrishtiState, DrishtiDir, DrishtiEntrySignal, createDrishtiState, findDrishtiEntry, findDrishtiReEntry, updateDrishtiTrail } from "./drishti_strategy";
 import { placeTrade, exitTrade, stopTradingForDay, isTradingStopped, squareOffAll } from "./order";
 import { config } from "./config";
 import readline from "readline";
@@ -126,8 +126,8 @@ let mainEntryDone     = false;
 let pyramidDone       = false;     // Upgrade 1: pyramid scale-in
 let lastTradeProfit   = false;
 let consecutiveLosses = 0;
-let bhavWins    = 0;
-let bhavLosses  = 0;
+let drishtiWins    = 0;
+let drishtiLosses  = 0;
 let entryPrice        = 0;
 let tradeSymbol       = "";
 let tradeDirection: "CE" | "PE" | null = null;
@@ -187,13 +187,15 @@ let hybridPrevCandle:     Candle | null      = null;  // candle BEFORE the last 
 let hybridLastCandleKey:  string             = "";
 
 // ─── SHADOW LOCK50 — runs in parallel, paper-only, no real orders ─────────────
-// ── BHAV V3 state ─────────────────────────────────────────────────────────
-let bhavState:          BhavState    = createBhavState();
-let bhavTodayCandles:   BhavCandle[] = [];
-let bhavPrevDayCandles: BhavCandle[] = [];
-let bhavLastCandleKey   = "";
-interface BhavCandleLogEntry { idx: number; time: string; close: number; bodyPct: number; signal: string | null; reason: string; offline?: boolean; }
-let bhavCandleLog: BhavCandleLogEntry[] = [];
+// ── DRISHTI V1 state ─────────────────────────────────────────────────────────
+let DrishtiState:          DrishtiState    = createDrishtiState();
+let drishtiTodayCandles:   DrishtiCandle[] = [];
+let drishtiPrevDayCandles: DrishtiCandle[] = [];
+let drishtiLastCandleKey   = "";
+let drishtiIntradayPeak:   number       = 0;   // updated every 60s by LTP monitor
+let ltpMonitorInterval: NodeJS.Timeout | null = null;
+interface DrishtiCandleLogEntry { idx: number; time: string; close: number; bodyPct: number; signal: string | null; reason: string; offline?: boolean; }
+let DrishtiCandleLog: DrishtiCandleLogEntry[] = [];
 
 
 let entryPremium  = 0;   // option LTP at trade entry
@@ -341,7 +343,7 @@ async function monitorCandleBreakouts() {
             `🔵 *In Trade · ${tradeDirection}*\n` +
             `Entry: ${entryPrice}  ·  SL: ${slLevel}  (−100 pts)\n` +
             `🟢 *${pnlSign}${unrealised.toFixed(0)} pts gathered* \u00B7 SL: ${typeof slLevel === "number" ? slLevel.toFixed(0) : slLevel}\n` +
-            `📊 *${dailyPnL >= 0 ? "+" : ""}${Math.round(dailyPnL)} pts*  ·  ${bhavWins}W ${bhavLosses}L  ·  T:${tradeCount}/5`;
+            `📊 *${dailyPnL >= 0 ? "+" : ""}${Math.round(dailyPnL)} pts*  ·  ${drishtiWins}W ${drishtiLosses}L  ·  T:${tradeCount}/5`;
 
         } else if (hybridState.waitReEntry && hybridState.dir) {
           // ── WATCHING FOR RE-ENTRY (after wick-only SL) ──────────────────────
@@ -362,13 +364,13 @@ async function monitorCandleBreakouts() {
               `⏳ *Re-Entry · ${dir}*\n` +
               `Next: ${dir} close ${symbol} *${refLevel}*  ·  ${distStr}\n` +
               `Live: *${price}*\n` +
-              `📊 *${dailyPnL >= 0 ? "+" : ""}${Math.round(dailyPnL)} pts*  ·  ${bhavWins}W ${bhavLosses}L  ·  T:${tradeCount}/5`;
+              `📊 *${dailyPnL >= 0 ? "+" : ""}${Math.round(dailyPnL)} pts*  ·  ${drishtiWins}W ${drishtiLosses}L  ·  T:${tradeCount}/5`;
           } else {
             strategyCtx =
               `━━━━━━━━━━━━━━━━━━\n` +
               `⏳ *WATCHING FOR RE-ENTRY · ${dir}*\n` +
               `⚠️ Re-entry level not available\n` +
-              `📊 *${dailyPnL >= 0 ? "+" : ""}${Math.round(dailyPnL)} pts*  ·  ${bhavWins}W ${bhavLosses}L  ·  T:${tradeCount}/5`;
+              `📊 *${dailyPnL >= 0 ? "+" : ""}${Math.round(dailyPnL)} pts*  ·  ${drishtiWins}W ${drishtiLosses}L  ·  T:${tradeCount}/5`;
           }
 
         } else if (hybridState.firstDone && !hybridState.waitReEntry && !inTrade) {
@@ -376,7 +378,7 @@ async function monitorCandleBreakouts() {
           strategyCtx =
             `━━━━━━━━━━━━━━━━━━\n` +
             `✅ Done for Day\n` +
-            `📊 *${dailyPnL >= 0 ? "+" : ""}${Math.round(dailyPnL)} pts*  ·  ${bhavWins}W ${bhavLosses}L  ·  T:${tradeCount}/5`;
+            `📊 *${dailyPnL >= 0 ? "+" : ""}${Math.round(dailyPnL)} pts*  ·  ${drishtiWins}W ${drishtiLosses}L  ·  T:${tradeCount}/5`;
 
         } else {
           // ── WATCHING FOR BREAKOUT (no trade yet today) ──────────────────────
@@ -404,42 +406,42 @@ async function monitorCandleBreakouts() {
             `━━━━━━━━━━━━━━━━━━\n` +
             `👁 👁 Watching\n` +
             `${sigStatus}\n` +
-            `📊 *${dailyPnL >= 0 ? "+" : ""}${Math.round(dailyPnL)} pts*  ·  ${bhavWins}W ${bhavLosses}L  ·  T:${tradeCount}/5`;
+            `📊 *${dailyPnL >= 0 ? "+" : ""}${Math.round(dailyPnL)} pts*  ·  ${drishtiWins}W ${drishtiLosses}L  ·  T:${tradeCount}/5`;
         }
       }
 
-      // BHAV_V3 context
-      if (ACTIVE_STRATEGY === "BHAV_V3") {
-        const _bPH = bhavPrevDayCandles.length > 0 ? Math.max(...bhavPrevDayCandles.map((c: {high:number}) => c.high)).toFixed(0) : "?";
-        const _bPL = bhavPrevDayCandles.length > 0 ? Math.min(...bhavPrevDayCandles.map((c: {low:number}) => c.low)).toFixed(0) : "?";
+      // DRISHTI_V1 context
+      if (ACTIVE_STRATEGY === "DRISHTI_V1") {
+        const _bPH = drishtiPrevDayCandles.length > 0 ? Math.max(...drishtiPrevDayCandles.map((c: {high:number}) => c.high)).toFixed(0) : "?";
+        const _bPL = drishtiPrevDayCandles.length > 0 ? Math.min(...drishtiPrevDayCandles.map((c: {low:number}) => c.low)).toFixed(0) : "?";
         const _bCtx = price > parseFloat(_bPH) ? "ABOVE PDH" : price < parseFloat(_bPL) ? "BELOW PDL" : "INSIDE";
         const _bSign = dailyPnL >= 0 ? "+" : "";
-        if (bhavState.inTrade && tradeDirection) {
+        if (DrishtiState.inTrade && tradeDirection) {
           const _bu = tradeDirection === "CE" ? price - entryPrice : entryPrice - price;
           const _bUS = _bu >= 0 ? "+" : "";
-          const _bSL = bhavState.trailStop <= 0
+          const _bSL = DrishtiState.trailStop <= 0
             ? (tradeDirection === "CE" ? entryPrice - 150 : entryPrice + 150).toFixed(0)
-            : (entryPrice + (tradeDirection === "CE" ? bhavState.trailStop : -bhavState.trailStop)).toFixed(0);
-          const _bSLlabel = bhavState.trailStop <= 0 ? "Hard SL" : "Trail lock";
+            : (entryPrice + (tradeDirection === "CE" ? DrishtiState.trailStop : -DrishtiState.trailStop)).toFixed(0);
+          const _bSLlabel = DrishtiState.trailStop <= 0 ? "Hard SL" : "Trail lock";
           strategyCtx = `In Trade (${tradeDirection}) | ${_bCtx}\n`
             + `Entry: ${entryPrice.toFixed(0)} | ${_bSLlabel}: ${_bSL}\n`
-            + `P&L: ${_bUS}${_bu.toFixed(0)} pts | Peak: ${bhavState.peakPts.toFixed(0)} pts\n`
-            + `Day: ${_bSign}${dailyPnL.toFixed(0)} | ${bhavWins}W ${bhavLosses}L | T:${tradeCount}/5`;
-        } else if (bhavState.firstDone && !bhavState.inTrade) {
-          const _re = bhavState.reCount < 3 && bhavState.lastExitPts >= 20
-            ? ` | RE #${bhavState.reCount + 1} watching` : "";
+            + `P&L: ${_bUS}${_bu.toFixed(0)} pts | Peak: ${DrishtiState.peakPts.toFixed(0)} pts\n`
+            + `Day: ${_bSign}${dailyPnL.toFixed(0)} | ${drishtiWins}W ${drishtiLosses}L | T:${tradeCount}/5`;
+        } else if (DrishtiState.firstDone && !DrishtiState.inTrade) {
+          const _re = DrishtiState.reCount < 5
+            ? ` | RE #${DrishtiState.reCount + 1} watching` : "";
           strategyCtx = `Done${_re}\n`
-            + `Day: ${_bSign}${dailyPnL.toFixed(0)} | ${bhavWins}W ${bhavLosses}L | T:${tradeCount}/5`;
+            + `Day: ${_bSign}${dailyPnL.toFixed(0)} | ${drishtiWins}W ${drishtiLosses}L | T:${tradeCount}/5`;
         } else {
-          strategyCtx = `Watching | Candle #${bhavTodayCandles.length}\n`
+          strategyCtx = `Watching | Candle #${drishtiTodayCandles.length}\n`
             + `PDH: ${_bPH} | PDL: ${_bPL} | ${_bCtx}\n`
             + `Live: ${price} | SL: 150 pts\n`
             + `Day: ${_bSign}${dailyPnL.toFixed(0)} | T:${tradeCount}/5`;
         }
       }
       // TG_LABEL
-      if (strategyCtx && ACTIVE_STRATEGY === "BHAV_V3") {
-        strategyCtx = `━━━━━━━━━━━━━━━━━━\n📈 *BHAV V3*\n` + strategyCtx;
+      if (strategyCtx && ACTIVE_STRATEGY === "DRISHTI_V1") {
+        strategyCtx = `━━━━━━━━━━━━━━━━━━\n📈 *DRISHTI V1*\n` + strategyCtx;
       } else if (strategyCtx) {
         strategyCtx = `━━━━━━━━━━━━━━━━━━\n🔷 *LOCK50*\n` + strategyCtx.replace(/^━━━━━━━━━━━━━━━━━━\n/, "");
       }
@@ -449,15 +451,24 @@ async function monitorCandleBreakouts() {
         ? Math.round(((finalPrev.close - finalPrev.open) / (finalPrev.high - finalPrev.low)) * 100)
         : 0;
       const _bSign = _bPct >= 0 ? '+' : '';
-      const _cIdx = ACTIVE_STRATEGY === 'BHAV_V3' ? bhavTodayCandles.length : '';
+      const _cIdx = ACTIVE_STRATEGY === 'DRISHTI_V1' ? drishtiTodayCandles.length : '';
       console.log(`${new Date().toLocaleString('en-IN',{timeZone:'Asia/Kolkata'})} 🕯️ Candle${_cIdx ? ' C'+_cIdx : ''} | Close:${finalPrev.close} | Body:${_bSign}${_bPct}% | ${colour} | O:${finalPrev.open} H:${finalPrev.high} L:${finalPrev.low}`);
 
-      // Skip candle notifications if done for the day
+      // Skip candle notifications if done for the day OR no-trade day
+      // Case 1: trade happened and exited (firstDone)
+      // Case 2: stopForDay is set, no active trade — bot blocked (loss cap / late start / token issue)
+      // Case 3: DRISHTI_V1 watching all day with no trade, past C20 (~2:15 PM) — entry window effectively closed
+      const _noTradeAllDay = ACTIVE_STRATEGY === "DRISHTI_V1"
+        && !DrishtiState.firstDone && !DrishtiState.inTrade && tradeCount === 0
+        && drishtiTodayCandles.length > 20;
       const _doneForDay =
-        (ACTIVE_STRATEGY === "BHAV_V3" && bhavState.firstDone && !bhavState.inTrade) ||
-        (ACTIVE_STRATEGY === "HYBRID_REVERSE" && hybridState.firstDone && !hybridState.waitReEntry && !(activeTrade || mainEntryDone || earlyEntryDone));
+        (ACTIVE_STRATEGY === "DRISHTI_V1" && DrishtiState.firstDone && !DrishtiState.inTrade) ||
+        (ACTIVE_STRATEGY === "DRISHTI_V1" && stopForDay && !activeTrade) ||
+        _noTradeAllDay ||
+        (ACTIVE_STRATEGY === "HYBRID_REVERSE" && hybridState.firstDone && !hybridState.waitReEntry && !(activeTrade || mainEntryDone || earlyEntryDone)) ||
+        (ACTIVE_STRATEGY === "HYBRID_REVERSE" && stopForDay && !activeTrade);
       if (_doneForDay) {
-        log("CANDLE_STATUS", { status, candle: finalPrev, price, skipped: "done_for_day" });
+        log("CANDLE_STATUS", { status, candle: finalPrev, price, skipped: _noTradeAllDay ? "no_trade_day_c20+" : "done_for_day" });
         return;
       }
 
@@ -531,8 +542,8 @@ function saveTradeState() {
     rcTrade2Active,
     rcIndexSL,
     entryPremium,
-    bhavWins,
-    bhavLosses,
+    drishtiWins,
+    drishtiLosses,
     // HYBRID_REVERSE live state — must survive restarts (PM2 auto-restart)
     hybridState: {
       inTrade:     hybridState.inTrade,
@@ -605,8 +616,8 @@ function restoreTradeState(): boolean {
     rcIndexSL        = s.rcIndexSL        ?? 0;
     entryPremium     = s.entryPremium     ?? 0;
     // Restore LOCK50 live stats
-    bhavWins   = s.bhavWins   ?? 0;
-    bhavLosses = s.bhavLosses ?? 0;    // Restore HYBRID_REVERSE state so waitReEntry / refHigh survive PM2 restarts
+    drishtiWins   = s.drishtiWins   ?? 0;
+    drishtiLosses = s.drishtiLosses ?? 0;    // Restore HYBRID_REVERSE state so waitReEntry / refHigh survive PM2 restarts
     if (s.hybridState) {
       hybridState.inTrade     = s.hybridState.inTrade     ?? false;
       hybridState.dir         = s.hybridState.dir         ?? null;
@@ -649,11 +660,11 @@ function printStatus() {
   const tradeStatus = inTrade
     ? `IN TRADE (${tradeDirection ?? "?"}) | Entry: ${entryPrice} | Live: ${lastKnownPrice}`
     : "FLAT";
-  if (ACTIVE_STRATEGY === "BHAV_V3") {
-    const _pdH = bhavPrevDayCandles.length > 0 ? Math.max(...bhavPrevDayCandles.map((c: {high:number}) => c.high)).toFixed(0) : "?";
-    const _pdL = bhavPrevDayCandles.length > 0 ? Math.min(...bhavPrevDayCandles.map((c: {low:number}) => c.low)).toFixed(0) : "?";
+  if (ACTIVE_STRATEGY === "DRISHTI_V1") {
+    const _pdH = drishtiPrevDayCandles.length > 0 ? Math.max(...drishtiPrevDayCandles.map((c: {high:number}) => c.high)).toFixed(0) : "?";
+    const _pdL = drishtiPrevDayCandles.length > 0 ? Math.min(...drishtiPrevDayCandles.map((c: {low:number}) => c.low)).toFixed(0) : "?";
     const _hhmm = ist.split(',')[1]?.trim().slice(0, 8) ?? ist;
-    console.log(`[${_hhmm}] [${mode}] BHAV: ${pnlSign}${livePnL.toFixed(0)}pts  T:${tradeCount}/${MAX_TRADES}  ${tradeStatus}  PDH:${_pdH} PDL:${_pdL} C${bhavTodayCandles.length}`);
+    console.log(`[${_hhmm}] [${mode}] DRISHTI: ${pnlSign}${livePnL.toFixed(0)}pts  T:${tradeCount}/${MAX_TRADES}  ${tradeStatus}  PDH:${_pdH} PDL:${_pdL} C${drishtiTodayCandles.length}`);
   } else {
   }
 }
@@ -845,8 +856,8 @@ async function runHybridReverseBot() {
     tradeSymbol           = "";
     entryPrice            = 0;
     entryTime             = 0;
-    bhavWins   = 0;
-    bhavLosses = 0;
+    drishtiWins   = 0;
+    drishtiLosses = 0;
     log("STATE_RESET", { strategy: "HYBRID_REVERSE" });
     // Fetch previous day high/low for PDH/PDL context (non-blocking)
     pdhHigh = 0; pdhLow = 0; pdhContext = "NEUTRAL";
@@ -900,7 +911,7 @@ async function runHybridReverseBot() {
       }
       dailyPnL += pts;
       if (pts <= 0) consecutiveLosses++;
-      if (pts > 0) bhavWins++; else bhavLosses++;
+      if (pts > 0) drishtiWins++; else drishtiLosses++;
       activeTrade = false; mainEntryDone = false;
       tradeDirection = null; tradeSymbol = ""; entryPrice = 0; entryTime = 0;
       entryPremium = 0; lastOptionLTP = 0;
@@ -955,8 +966,8 @@ async function runHybridReverseBot() {
   log("HYBRID_CANDLE", { action: sig.action, close: candle.close, prevBodyHigh, prevBodyLow, sl: hybridState.sl, dir: hybridState.dir });
 
   // ── Act on signal ──────────────────────────────────────────────────────────
-  // BHAV_V3 has its own runner below — skip legacy hybrid signal processing for BHAV_V3
-  if (ACTIVE_STRATEGY !== "BHAV_V3") switch (sig.action) {
+  // DRISHTI_V1 has its own runner below — skip legacy hybrid signal processing for DRISHTI_V1
+  if (ACTIVE_STRATEGY !== "DRISHTI_V1") switch (sig.action) {
 
     case "REVERSE_ENTER":
     case "ENTER": {
@@ -989,7 +1000,7 @@ async function runHybridReverseBot() {
           ? (sig.price - 100) - capturedEntry  // approximation: exited at SL (entry−100)
           : capturedEntry - (sig.price + 100);
         dailyPnL += -100; if (-100 < 0) consecutiveLosses++;
-        bhavLosses++;
+        drishtiLosses++;
         await sendTelegram(
           `🔄 *REVERSE — ${capturedDir} exited, ${sig.dir} entered*\n` +
           `Exited ${capturedDir} at index: ${sig.price} | P&L: *−100 pts ≈ −₹${(100 * config.quantity * 0.5).toLocaleString("en-IN")}* (est)\n` +
@@ -1071,7 +1082,7 @@ async function runHybridReverseBot() {
         log("EXIT_FAIL", { error: e instanceof Error ? e.message : String(e) });
       }
       dailyPnL += sig.pts; consecutiveLosses++;
-      if (sig.pts > 0) bhavWins++; else bhavLosses++;
+      if (sig.pts > 0) drishtiWins++; else drishtiLosses++;
       activeTrade = false; mainEntryDone = false;
       tradeDirection = null; tradeSymbol = ""; entryPrice = 0; entryTime = 0;
       entryPremium = 0; lastOptionLTP = 0;
@@ -1092,7 +1103,7 @@ async function runHybridReverseBot() {
         log("EXIT_FAIL", { error: e instanceof Error ? e.message : String(e) });
       }
       dailyPnL += sig.pts; consecutiveLosses++;
-      if (sig.pts > 0) bhavWins++; else bhavLosses++;
+      if (sig.pts > 0) drishtiWins++; else drishtiLosses++;
       activeTrade = false; mainEntryDone = false;
       tradeDirection = null; tradeSymbol = ""; entryPrice = 0; entryTime = 0;
       entryPremium = 0; lastOptionLTP = 0;
@@ -1114,7 +1125,7 @@ async function runHybridReverseBot() {
       }
       dailyPnL += sig.pts;
       if (sig.pts > 0) { lastTradeProfit = true; consecutiveLosses = 0; } else consecutiveLosses++;
-      if (sig.pts > 0) bhavWins++; else bhavLosses++;
+      if (sig.pts > 0) drishtiWins++; else drishtiLosses++;
       activeTrade = false; mainEntryDone = false;
       tradeDirection = null; tradeSymbol = ""; entryPrice = 0; entryTime = 0;
       hybridState = createHybridState();
@@ -1137,24 +1148,118 @@ async function runHybridReverseBot() {
 const HR_SL_PTS_LOCAL = 100;
 
 
+// ─── 1-Minute LTP Monitor for DRISHTI intraday trail/SL ───────────────────────
+// Polls current price every 60s while in a DRISHTI trade.
+// Updates intraday peak and fires exit if trail or SL is hit between candle closes.
+// This eliminates the candle-close exit discrepancy and matches backtest V15 logic.
+const DRISHTI_TRAIL_GAP = 10;  // LOCK10 — same as backtest_verify.js V15 config
+const DRISHTI_SL_PTS    = 150; // Hard SL — same as backtest
+
+function stopDrishtiLTPMonitor() {
+  if (ltpMonitorInterval) { clearInterval(ltpMonitorInterval); ltpMonitorInterval = null; }
+  drishtiIntradayPeak = 0;
+  log("LTP_MONITOR_STOP", {});
+}
+
+async function executeDrishtiLTPExit(ltp: number, pts: number, reason: string) {
+  if (!activeTrade || !DrishtiState.inTrade) return;
+  const capturedEntry  = entryPrice;
+  const capturedDir    = tradeDirection;
+  const capturedTime   = entryTime;
+  const capturedSymbol = tradeSymbol;
+  const capturedPeak   = drishtiIntradayPeak;
+
+  stopDrishtiLTPMonitor();
+
+  try { await exitTrade(tradeSymbol, config.quantity); } catch (e) {
+    log("EXIT_FAIL", { error: e instanceof Error ? e.message : String(e) });
+  }
+
+  dailyPnL += pts;
+  if (pts > 0) { consecutiveLosses = 0; drishtiWins++; } else { consecutiveLosses++; drishtiLosses++; }
+
+  DrishtiState.inTrade      = false;
+  DrishtiState.firstDone    = true;
+  DrishtiState.lastExitPts  = capturedPeak;
+  DrishtiState.lastExitIdx  = drishtiTodayCandles.length - 1;
+  DrishtiState.lastExitDir  = capturedDir as DrishtiDir;
+
+  activeTrade = false; mainEntryDone = false;
+  tradeDirection = null; tradeSymbol = ""; entryPrice = 0; entryTime = 0;
+  entryPremium = 0; lastOptionLTP = 0;
+
+  saveTradeState();
+  await notifyExit(ltp, pts, reason, { dir: capturedDir, entry: capturedEntry, symbol: capturedSymbol, qty: config.quantity }).catch(() => {});
+  logTrade({ date: new Date().toISOString(), type: "DRISHTI_V1", direction: capturedDir ?? "CE", symbol: capturedSymbol, premiumEntry: entryPremium, premiumExit: 0, qty: config.quantity, entryPrice: capturedEntry, exitPrice: ltp, pnl: pts, reasonEntry: "drishti_entry", reasonExit: reason, aiScore: 1, slippage: 0, duration: capturedTime > 0 ? Math.round((Date.now() - capturedTime) / 1000) : 0 });
+}
+
+function startDrishtiLTPMonitor() {
+  if (ltpMonitorInterval) return;  // already running
+  drishtiIntradayPeak = 0;
+
+  ltpMonitorInterval = setInterval(async () => {
+    if (!activeTrade || !DrishtiState.inTrade || !tradeDirection || entryPrice <= 0) {
+      stopDrishtiLTPMonitor(); return;
+    }
+    if (!isWithinTime(9, 15, 15, 30)) { stopDrishtiLTPMonitor(); return; }
+    try {
+      const ltp = await getCurrentPrice();
+      if (!ltp || ltp <= 0) return;
+      lastKnownPrice = ltp;
+
+      const sign = tradeDirection === "CE" ? 1 : -1;
+      const pts  = sign * (ltp - entryPrice);
+
+      // Update intraday peak and sync to DrishtiState
+      if (pts > drishtiIntradayPeak) {
+        drishtiIntradayPeak = pts;
+        const newTrail = drishtiIntradayPeak >= DRISHTI_TRAIL_GAP ? drishtiIntradayPeak - DRISHTI_TRAIL_GAP : -DRISHTI_SL_PTS;
+        if (drishtiIntradayPeak > DrishtiState.peakPts) {
+          DrishtiState.peakPts   = drishtiIntradayPeak;
+          DrishtiState.trailStop = newTrail;
+        }
+      }
+
+      const currentTrail = drishtiIntradayPeak >= DRISHTI_TRAIL_GAP ? drishtiIntradayPeak - DRISHTI_TRAIL_GAP : -DRISHTI_SL_PTS;
+      log("LTP_MONITOR", { ltp, pts: pts.toFixed(1), peak: drishtiIntradayPeak.toFixed(1), trail: currentTrail, dir: tradeDirection });
+
+      // SL hit
+      if (pts <= -DRISHTI_SL_PTS) {
+        await executeDrishtiLTPExit(ltp, pts, "ltp_sl_hit");
+        return;
+      }
+      // Trail hit
+      if (currentTrail > 0 && pts <= currentTrail) {
+        await executeDrishtiLTPExit(ltp, pts, `ltp_trail_${currentTrail.toFixed(0)}pts`);
+        return;
+      }
+    } catch (e) {
+      log("LTP_MONITOR_ERR", { error: e instanceof Error ? e.message : String(e) });
+    }
+  }, 60 * 1000);  // every 60 seconds
+
+  log("LTP_MONITOR_START", { entry: entryPrice, dir: tradeDirection, trailGap: DRISHTI_TRAIL_GAP });
+}
+
 // ═══════════════════════════════════════════════════════════════════════════
-// BHAV V3 — PDH/PDL Context + LOCK20 Trail (live bot)
-// Entry: findBhavEntry() detects pattern on each 15-min candle close
-// Trail: SL=150 pts; once peak>=20 pts, trail = peak-20 (candle-close only)
-// Re-entries: up to 3, each needs strong candle after last exit
+// DRISHTI V1 — PDH/PDL Context + LOCK10 Trail (live bot)
+// Entry: findDrishtiEntry() detects pattern on each 15-min candle close
+// Trail: SL=150 pts; once peak>=10 pts, trail = peak-10 (LOCK10, candle-close only)
+// Re-entries: up to 5, gate=OFF (lastExitPts>=0), reverse allowed after peak>=50
 // ═══════════════════════════════════════════════════════════════════════════
-async function runBhavBot() {
+async function runDrishtiBot() {
   const now = new Date();
   const ist = new Date(now.toLocaleString("en-US", { timeZone: "Asia/Kolkata" }));
   const h = ist.getHours(), m = ist.getMinutes();
 
   // ── Daily reset at 9:15 ───────────────────────────────────────────────
   if (h === 9 && m === 15) {
-    bhavState           = createBhavState();
-    bhavTodayCandles    = [];
-    bhavPrevDayCandles  = [];
-    bhavLastCandleKey   = "";
-    bhavCandleLog       = [];
+    DrishtiState           = createDrishtiState();
+    drishtiTodayCandles    = [];
+    drishtiPrevDayCandles  = [];
+    drishtiLastCandleKey   = "";
+    DrishtiCandleLog       = [];
+    stopDrishtiLTPMonitor();   // clear any stale monitor from previous day
     stopForDay          = false;
     // Clear persisted candle log for the new day
     try { fs.writeFileSync('candle-log.json', JSON.stringify({ date: '', log: [] })); } catch(_e) {}
@@ -1168,21 +1273,21 @@ async function runBhavBot() {
     tradeSymbol         = "";
     entryPrice          = 0;
     entryTime           = 0;
-    bhavWins          = 0;
-    bhavLosses        = 0;
-    log("STATE_RESET", { strategy: "BHAV_V3" });
+    drishtiWins          = 0;
+    drishtiLosses        = 0;
+    log("STATE_RESET", { strategy: "DRISHTI_V1" });
 
     // Load previous day candles (non-blocking)
     getPrevDayCandles().then(candles => {
-      bhavPrevDayCandles = candles;
-      log("BHAV_PREV_DAY_LOADED", { count: candles.length, ph: Math.max(...candles.map((c: BhavCandle) => c.high)), pl: Math.min(...candles.map((c: BhavCandle) => c.low)) });
-    }).catch(e => log("BHAV_PREV_DAY_FAIL", { error: String(e) }));
+      drishtiPrevDayCandles = candles;
+      log("DRISHTI_PREV_DAY_LOADED", { count: candles.length, ph: Math.max(...candles.map((c: DrishtiCandle) => c.high)), pl: Math.min(...candles.map((c: DrishtiCandle) => c.low)) });
+    }).catch(e => log("DRISHTI_PREV_DAY_FAIL", { error: String(e) }));
   }
 
   // ── 9:45 AM candle silence check — fires if C1 was never received ──────────
   if (h === 9 && m === 45 && ist.getSeconds() < 16 && !_candleHealthAlerted) {
     _candleHealthAlerted = true;
-    if (bhavTodayCandles.length === 0) {
+    if (drishtiTodayCandles.length === 0) {
       await sendTelegram(
         `⚠️ CANDLE ALERT — 9:45 AM health check\n` +
         `No 15-min candles received since market open.\n` +
@@ -1242,27 +1347,30 @@ async function runBhavBot() {
   const candleKey = (candle as any).date ?? `${candle.high}_${candle.low}`;
 
   // Seed on first cycle
-  if (bhavLastCandleKey === "") {
-    bhavLastCandleKey = candleKey;
-    log("BHAV_SEEDED", { candle });
+  if (drishtiLastCandleKey === "") {
+    drishtiLastCandleKey = candleKey;
+    log("DRISHTI_SEEDED", { candle });
     return;
   }
-  if (candleKey === bhavLastCandleKey) return;  // same candle, no new close
-  bhavLastCandleKey = candleKey;
+  if (candleKey === drishtiLastCandleKey) return;  // same candle, no new close
+  drishtiLastCandleKey = candleKey;
 
   // New candle closed — push to today stack
-  const bc: BhavCandle = { open: candle.open, high: candle.high, low: candle.low, close: candle.close };
-  bhavTodayCandles.push(bc);
+  const bc: DrishtiCandle = { open: candle.open, high: candle.high, low: candle.low, close: candle.close };
+  drishtiTodayCandles.push(bc);
 
-  const isEOD = h > 15 || (h === 15 && m >= 15);
+  // EOD at 3:30 PM close (3:15-3:30 candle) — matches backtest last candle exactly
+  // Previously m>=15 caused early exit at 3:15 PM (3:00-3:15 candle), one candle too early
+  const isEOD = h > 15 || (h === 15 && m >= 30);
 
   // ── Trail management when in trade ───────────────────────────────────
-  if (activeTrade && bhavState.inTrade) {
-    const trail = updateBhavTrail(bhavState, bc, isEOD);
-    bhavState.peakPts   = trail.peakPts;
-    bhavState.trailStop = trail.trailStop;
+  if (activeTrade && DrishtiState.inTrade) {
+    const trail = updateDrishtiTrail(DrishtiState, bc, isEOD);
+    DrishtiState.peakPts   = trail.peakPts;
+    DrishtiState.trailStop = trail.trailStop;
 
     if (trail.action !== "HOLD") {
+      stopDrishtiLTPMonitor();  // stop 1-min monitor — candle-close exit taking over
       const capturedEntry  = entryPrice;
       const capturedDir    = tradeDirection;
       const capturedTime   = entryTime;
@@ -1274,14 +1382,14 @@ async function runBhavBot() {
 
       const pts = trail.pts;
       dailyPnL += pts;
-      if (pts > 0) { consecutiveLosses = 0; bhavWins++; } else { consecutiveLosses++; bhavLosses++; }
+      if (pts > 0) { consecutiveLosses = 0; drishtiWins++; } else { consecutiveLosses++; drishtiLosses++; }
 
       // Set up re-entry tracking
-      bhavState.inTrade      = false;
-      bhavState.firstDone    = true;
-      bhavState.lastExitPts  = trail.peakPts;   // peak pts (threshold for RE)
-      bhavState.lastExitIdx  = bhavTodayCandles.length - 1;
-      bhavState.lastExitDir  = capturedDir as BhavDir;
+      DrishtiState.inTrade      = false;
+      DrishtiState.firstDone    = true;
+      DrishtiState.lastExitPts  = trail.peakPts;   // peak pts (threshold for RE)
+      DrishtiState.lastExitIdx  = drishtiTodayCandles.length - 1;
+      DrishtiState.lastExitDir  = capturedDir as DrishtiDir;
 
       activeTrade = false; mainEntryDone = false;
       tradeDirection = null; tradeSymbol = ""; entryPrice = 0; entryTime = 0;
@@ -1301,7 +1409,7 @@ async function runBhavBot() {
         await sendEODSummary().catch(() => {});
         generateMonthlyReport().catch(e => log("REPORT_FAIL", { error: e?.message }));
       }
-      logTrade({ date: new Date().toISOString(), type: "BHAV_V3", direction: capturedDir ?? "CE", symbol: capturedSymbol, premiumEntry: entryPremium, premiumExit: lastOptionLTP > 0 ? lastOptionLTP : 0, qty: config.quantity, entryPrice: capturedEntry, exitPrice: trail.exitPrice, pnl: pts, reasonEntry: "bhav_v3_entry", reasonExit: trail.action.toLowerCase(), aiScore: 1, slippage: 0, duration: capturedTime > 0 ? Math.round((Date.now() - capturedTime) / 1000) : 0 });
+      logTrade({ date: new Date().toISOString(), type: "DRISHTI_V1", direction: capturedDir ?? "CE", symbol: capturedSymbol, premiumEntry: entryPremium, premiumExit: lastOptionLTP > 0 ? lastOptionLTP : 0, qty: config.quantity, entryPrice: capturedEntry, exitPrice: trail.exitPrice, pnl: pts, reasonEntry: "drishti_entry", reasonExit: trail.action.toLowerCase(), aiScore: 1, slippage: 0, duration: capturedTime > 0 ? Math.round((Date.now() - capturedTime) / 1000) : 0 });
     }
     return;  // always return after trail check (don't look for new entries in same tick)
   }
@@ -1310,49 +1418,53 @@ async function runBhavBot() {
   if (tradeCount >= 5) return;
 
   // ── Prev day candles required ─────────────────────────────────────────
-  if (!bhavPrevDayCandles || bhavPrevDayCandles.length === 0) {
-    log("BHAV_NO_PREV_DAY", { candles: bhavTodayCandles.length });
+  if (!drishtiPrevDayCandles || drishtiPrevDayCandles.length === 0) {
+    log("DRISHTI_NO_PREV_DAY", { candles: drishtiTodayCandles.length });
     return;
   }
 
   // ── Find entry signal ─────────────────────────────────────────────────
-  let entrySig: BhavEntrySignal | null = null;
+  let entrySig: DrishtiEntrySignal | null = null;
 
-  if (bhavState.firstDone && bhavState.reCount < 3 && bhavState.lastExitPts >= 20 && bhavState.lastExitIdx >= 0 && bhavState.lastExitDir) {
-    // Re-entry: look for strong candle after last exit
-    const allowReverse = bhavState.lastExitPts >= 100;
-    const re = findBhavReEntry(bhavTodayCandles, bhavState.lastExitIdx, bhavState.lastExitDir, allowReverse);
-    if (re && re.idx === bhavTodayCandles.length - 1) {
+  if (DrishtiState.firstDone && DrishtiState.reCount < 5 && DrishtiState.lastExitPts >= 0 && DrishtiState.lastExitIdx >= 0 && DrishtiState.lastExitDir) {
+    // Re-entry: look for strong candle after last exit (RE_GATE=0, REV_UNLOCK=50)
+    const allowReverse = DrishtiState.lastExitPts >= 50;
+    const re = findDrishtiReEntry(drishtiTodayCandles, DrishtiState.lastExitIdx, DrishtiState.lastExitDir, allowReverse);
+    if (re && re.idx === drishtiTodayCandles.length - 1) {
       entrySig = { idx: re.idx, side: re.side, ctx: "INSIDE", reason: re.reason };
     }
-  } else if (!bhavState.firstDone) {
-    // First entry: pattern detection from open
-    entrySig = findBhavEntry(bhavTodayCandles, bhavPrevDayCandles);
+  } else if (!DrishtiState.firstDone) {
+    // First entry: V4 PDR filter — skip low-volatility days (prev day range < 150 pts)
+    const _pdrH = Math.max(...drishtiPrevDayCandles.map((c: DrishtiCandle) => c.high));
+    const _pdrL = Math.min(...drishtiPrevDayCandles.map((c: DrishtiCandle) => c.low));
+    if (_pdrH - _pdrL >= 150) {
+      entrySig = findDrishtiEntry(drishtiTodayCandles, drishtiPrevDayCandles);
+    }
   }
 
   // ── Log candle evaluation ─────────────────────────────────────────────
-  const _bhavNow = new Date();
-  const _bhavIst = new Date(_bhavNow.getTime() + 5.5 * 3600000);
-  const _bhavTime = _bhavIst.getUTCHours().toString().padStart(2, '0') + ':' + _bhavIst.getUTCMinutes().toString().padStart(2, '0');
-  const _bhavBP = (bc.high - bc.low) > 0 ? Math.round((bc.close - bc.open) / (bc.high - bc.low) * 100) : 0;
+  const _drishtiNow = new Date();
+  const _drishtiIst = new Date(_drishtiNow.getTime() + 5.5 * 3600000);
+  const _drishtiTime = _drishtiIst.getUTCHours().toString().padStart(2, '0') + ':' + _drishtiIst.getUTCMinutes().toString().padStart(2, '0');
+  const _drishtiBodyPct = (bc.high - bc.low) > 0 ? Math.round((bc.close - bc.open) / (bc.high - bc.low) * 100) : 0;
   // ── Compute specific no-signal reason for the log ────────────────────
-  const _bhavNoSigReason = (() => {
-    const _lastIdx = bhavTodayCandles.length - 1;
-    const _pdh = bhavPrevDayCandles.length > 0 ? Math.max(...bhavPrevDayCandles.map((c: BhavCandle) => c.high)) : 0;
-    const _pdl = bhavPrevDayCandles.length > 0 ? Math.min(...bhavPrevDayCandles.map((c: BhavCandle) => c.low)) : 0;
-    const _c0 = bhavTodayCandles[0];
+  const _drishtiNoSigReason = (() => {
+    const _lastIdx = drishtiTodayCandles.length - 1;
+    const _pdh = drishtiPrevDayCandles.length > 0 ? Math.max(...drishtiPrevDayCandles.map((c: DrishtiCandle) => c.high)) : 0;
+    const _pdl = drishtiPrevDayCandles.length > 0 ? Math.min(...drishtiPrevDayCandles.map((c: DrishtiCandle) => c.low)) : 0;
+    const _c0 = drishtiTodayCandles[0];
     const _c0bp = _c0 && (_c0.high - _c0.low) > 0 ? Math.round((_c0.close - _c0.open) / (_c0.high - _c0.low) * 100) : 0;
-    if (bhavState.firstDone) {
+    if (DrishtiState.firstDone) {
       // Already had first trade today — re-entry path
-      if (bhavState.reCount >= 3) return 'Re-entry limit reached (3 of 3 used today)';
-      if (bhavState.lastExitIdx < 0) return 'Re-entry: no completed exit yet';
-      if (bhavState.lastExitPts < 20) return `Re-entry blocked — last exit was only +${bhavState.lastExitPts.toFixed(0)} pts (minimum needed: 20 pts)`;
-      return `Re-entry: no strong confirming candle yet after C${bhavState.lastExitIdx + 1} exit`;
+      if (DrishtiState.reCount >= 5) return 'Re-entry limit reached (5 of 5 used today)';
+      if (DrishtiState.lastExitIdx < 0) return 'Re-entry: no completed exit yet';
+      if (DrishtiState.lastExitPts < 10) return `Re-entry: watching for strong candle after C${DrishtiState.lastExitIdx + 1} exit (peak was +${DrishtiState.lastExitPts.toFixed(0)} pts — gate OFF, any exit allowed)`;
+      return `Re-entry: no strong confirming candle yet after C${DrishtiState.lastExitIdx + 1} exit`;
     }
-    // First entry path — still watching (BHAV V3 can enter C1 through C20 depending on context)
+    // First entry path — still watching (DRISHTI V1 can enter C1 through C20 depending on context)
     if (_lastIdx > 0) {
       const _cN = _lastIdx + 1;
-      const _bpStr = _bhavBP >= 0 ? `+${_bhavBP}%` : `${_bhavBP}%`;
+      const _bpStr = _drishtiBodyPct >= 0 ? `+${_drishtiBodyPct}%` : `${_drishtiBodyPct}%`;
       const _ctx = _pdh > 0 && _c0 && _c0.close > _pdh ? 'ABOVE_PDH'
                  : _pdl > 0 && _c0 && _c0.close < _pdl ? 'BELOW_PDL'
                  : 'INSIDE';
@@ -1366,14 +1478,14 @@ async function runBhavBot() {
     }
     // At C0 (first candle of day)
     if (_pdh > 0 && bc.close > _pdh) {
-      if (_bhavBP > 55) return `C1 body too strong (+${_bhavBP}%) — inside_c0 pattern requires body ≤55% (not a runaway gap candle)`;
-      if (_bhavBP < -29) return `C1 closed above PDH but bearish body (${_bhavBP}%) — direction mismatch for CE entry`;
+      if (_drishtiBodyPct > 55) return `C1 body too strong (+${_drishtiBodyPct}%) — inside_c0 pattern requires body ≤55% (not a runaway gap candle)`;
+      if (_drishtiBodyPct < -29) return `C1 closed above PDH but bearish body (${_drishtiBodyPct}%) — direction mismatch for CE entry`;
       const _gapPts = _c0 ? Math.round(_c0.open - _pdh) : 0;
       if (_gapPts > 50) return `Gap-up open +${_gapPts} pts above PDH — entry filtered (too large a gap)`;
       return `C1 above PDH by ${Math.round(bc.close - _pdh)} pts but body/range filter blocked`;
     }
     if (_pdl > 0 && bc.close < _pdl) {
-      if (_bhavBP < -55) return `C1 body too strong (${_bhavBP}%) — inside_c0 pattern requires body ≥-55%`;
+      if (_drishtiBodyPct < -55) return `C1 body too strong (${_drishtiBodyPct}%) — inside_c0 pattern requires body ≥-55%`;
       const _gapPts = _c0 ? Math.round(_pdl - _c0.open) : 0;
       if (_gapPts > 50) return `Gap-down open ${_gapPts} pts below PDL — entry filtered (too large a gap)`;
       return `C1 below PDL by ${Math.round(_pdl - bc.close)} pts but body/range filter blocked`;
@@ -1383,20 +1495,20 @@ async function runBhavBot() {
     }
     return 'No signal — prev day levels not loaded yet';
   })();
-  bhavCandleLog.push({
-    idx: bhavTodayCandles.length - 1,
-    time: _bhavTime,
+  DrishtiCandleLog.push({
+    idx: drishtiTodayCandles.length - 1,
+    time: _drishtiTime,
     close: bc.close,
-    bodyPct: _bhavBP,
+    bodyPct: _drishtiBodyPct,
     signal: entrySig ? entrySig.side : null,
-    reason: entrySig ? entrySig.reason : _bhavNoSigReason,
+    reason: entrySig ? entrySig.reason : _drishtiNoSigReason,
     // offline omitted (undefined) = bot was live for this candle
   });
   // Persist log to disk so restarts don't lose live evaluations
-  try { fs.writeFileSync('candle-log.json', JSON.stringify({ date: _bhavIst.toISOString().slice(0,10), log: bhavCandleLog })); } catch(_e) {}
+  try { fs.writeFileSync('candle-log.json', JSON.stringify({ date: _drishtiIst.toISOString().slice(0,10), log: DrishtiCandleLog })); } catch(_e) {}
 
   if (!entrySig) {
-    log("BHAV_CANDLE", { idx: bhavTodayCandles.length - 1, close: bc.close, no_signal: true });
+    log("DRISHTI_CANDLE", { idx: drishtiTodayCandles.length - 1, close: bc.close, no_signal: true });
     return;
   }
 
@@ -1421,42 +1533,45 @@ async function runBhavBot() {
   activeTrade     = true;
   entryTime       = Date.now();
 
-  bhavState.inTrade   = true;
-  bhavState.dir       = entrySig.side;
-  bhavState.entry     = bc.close;
-  bhavState.entryIdx  = bhavTodayCandles.length - 1;
-  bhavState.trailStop = -150;
-  bhavState.peakPts   = 0;
+  DrishtiState.inTrade   = true;
+  DrishtiState.dir       = entrySig.side;
+  DrishtiState.entry     = bc.close;
+  DrishtiState.entryIdx  = drishtiTodayCandles.length - 1;
+  DrishtiState.trailStop = -150;
+  DrishtiState.peakPts   = 0;
+  startDrishtiLTPMonitor();  // start 1-min LTP polling to catch intraday trail/SL hits
 
   try {
     tradeInProgress = true;
     const order = await placeTrade(sym, freshPrice, config.quantity);
     tradeInProgress = false;
     if (!order || order.status !== "COMPLETE" || order.filled_quantity <= 0) {
+      stopDrishtiLTPMonitor();  // trade failed — stop LTP monitor
       log("ORDER_NOT_FILLED", { order });
       mainEntryDone = false; activeTrade = false; tradeDirection = null;
       tradeSymbol = ""; entryPrice = 0; entryTime = 0;
-      bhavState.inTrade = false;
+      DrishtiState.inTrade = false;
       return;
     }
   } catch (e) {
     tradeInProgress = false;
+    stopDrishtiLTPMonitor();  // trade rejected — stop LTP monitor
     log("ORDER_REJECTED", { error: e instanceof Error ? e.message : String(e) });
     mainEntryDone = false; activeTrade = false; tradeDirection = null;
     tradeSymbol = ""; entryPrice = 0; entryTime = 0;
-    bhavState.inTrade = false;
+    DrishtiState.inTrade = false;
     stopTradingForDay(); stopForDay = true;
     return;
   }
 
-  if (bhavState.firstDone) bhavState.reCount++;
+  if (DrishtiState.firstDone) DrishtiState.reCount++;
 
   tradeCount++;
   saveTradeState();
 
   const slLevel = entrySig.side === "CE" ? bc.close - 150 : bc.close + 150;
   await sendTelegram(
-    `📈 *BHAV V3 — ${entrySig.side === "CE" ? "CE (Bullish)" : "PE (Bearish)"}*
+    `📈 *DRISHTI V1 — ${entrySig.side === "CE" ? "CE (Bullish)" : "PE (Bearish)"}*
 ` +
     `Symbol: \`${sym}\`
 ` +
@@ -1474,7 +1589,7 @@ async function runBhavBot() {
   const premiumAtEntry = await getOptionLTP(sym).catch(() => 0);
   entryPremium  = premiumAtEntry;
   lastOptionLTP = premiumAtEntry;
-  logTrade({ date: new Date().toISOString(), type: "BHAV_V3", direction: entrySig.side, symbol: sym, premiumEntry: premiumAtEntry, premiumExit: 0, entryPrice: bc.close, exitPrice: 0, pnl: 0, reasonEntry: `bhav_${entrySig.ctx}_${entrySig.reason}`, reasonExit: "", aiScore: 1, slippage: Math.abs(freshPrice - bc.close), duration: 0 });
+  logTrade({ date: new Date().toISOString(), type: "DRISHTI_V1", direction: entrySig.side, symbol: sym, premiumEntry: premiumAtEntry, premiumExit: 0, entryPrice: bc.close, exitPrice: 0, pnl: 0, reasonEntry: `drishti_${entrySig.ctx}_${entrySig.reason}`, reasonExit: "", aiScore: 1, slippage: Math.abs(freshPrice - bc.close), duration: 0 });
 }
 
 async function runBot() {
@@ -1491,9 +1606,9 @@ async function runBot() {
     return;
   }
 
-  // ── BHAV_V3: PDH/PDL context + LOCK20 trail strategy ────────────────────
-  if (ACTIVE_STRATEGY === "BHAV_V3") {
-    await runBhavBot();
+  // ── DRISHTI_V1: PDH/PDL context + LOCK20 trail strategy ────────────────────
+  if (ACTIVE_STRATEGY === "DRISHTI_V1") {
+    await runDrishtiBot();
     return;
   }
 
@@ -1715,7 +1830,7 @@ async function runBot() {
         dailyPnL: parseFloat(livePnL.toFixed(0)),
         unrealisedPnL: _inTrade ? parseFloat(livePnL.toFixed(0)) : 0,
         tradeCount,        qty: config.quantity,
-        slPts: ACTIVE_STRATEGY === "BHAV_V3" ? 150 : (config.tradeManagement?.stopLossPoints ?? 100),
+        slPts: ACTIVE_STRATEGY === "DRISHTI_V1" ? 150 : (config.tradeManagement?.stopLossPoints ?? 100),
         dailyCapPts: config.risk?.dailyLossCap ?? 350,        mode: config.mode,
         inTrade: _inTrade,
         direction: tradeDirection ?? null,
@@ -2090,12 +2205,12 @@ async function preStartPrompt() {
     brokerSyncInterval = setInterval(() => {
       syncBotWithBroker().catch(e => log("BROKER_SYNC_INTERVAL_ERR", { error: e?.message ?? String(e) }));
     }, 5 * 60 * 1000);
-    // Load prev day + today candles at startup for BHAV_V3 (handles mid-day restarts)
-    if (ACTIVE_STRATEGY === "BHAV_V3") {
+    // Load prev day + today candles at startup for DRISHTI_V1 (handles mid-day restarts) (handles mid-day restarts)
+    if (ACTIVE_STRATEGY === "DRISHTI_V1") {
       // Load both prev-day AND today candles together so prev candles are available when evaluating backfill signals
       Promise.all([getPrevDayCandles(), getTodayCandles()]).then(([prevCandles, candles]) => {
-        bhavPrevDayCandles = prevCandles;
-        log("BHAV_PREV_DAY_LOADED", { at: "startup", count: prevCandles.length });
+        drishtiPrevDayCandles = prevCandles;
+        log("DRISHTI_PREV_DAY_LOADED", { at: "startup", count: prevCandles.length });
         if (candles.length > 0) {
           // Filter out the currently-forming candle: only include candles whose 15-min window has fully closed
           const nowMs = Date.now();
@@ -2104,22 +2219,22 @@ async function preStartPrompt() {
             const candleStart = new Date(c.date).getTime();
             return nowMs >= candleStart + 15 * 60_000;  // last candle: check its window has passed
           });
-          bhavTodayCandles = closedCandles.map(c => ({ open: c.open, high: c.high, low: c.low, close: c.close }));
+          drishtiTodayCandles = closedCandles.map(c => ({ open: c.open, high: c.high, low: c.low, close: c.close }));
           // Set last candle key to the last FULLY CLOSED candle to avoid re-processing
           if (closedCandles.length > 0) {
             const last = closedCandles[closedCandles.length - 1];
-            bhavLastCandleKey = last.date ? String(new Date(last.date)) : `${last.high}_${last.low}`;
+            drishtiLastCandleKey = last.date ? String(new Date(last.date)) : `${last.high}_${last.low}`;
           }
           // Load persisted candle log from today (if any) — preserves live evaluations across restarts
           const _istNow = new Date(new Date().getTime() + 5.5 * 3600000);
           const _todayDate = _istNow.toISOString().slice(0, 10);
-          let _savedLog: BhavCandleLogEntry[] = [];
+          let _savedLog: DrishtiCandleLogEntry[] = [];
           try {
             const _saved = JSON.parse(fs.readFileSync('candle-log.json', 'utf-8'));
             if (_saved.date === _todayDate && Array.isArray(_saved.log)) _savedLog = _saved.log;
           } catch(_e) {}
           // Re-evaluate strategy on each historical candle to accurately show missed entry opportunities
-          bhavCandleLog = [];
+          DrishtiCandleLog = [];
           for (let _i = 0; _i < closedCandles.length; _i++) {
             const _c = closedCandles[_i];
             const _bp = (_c.high - _c.low) > 0 ? Math.round((_c.close - _c.open) / (_c.high - _c.low) * 100) : 0;
@@ -2129,14 +2244,14 @@ async function preStartPrompt() {
             // Use saved live entry if available (preserves correct offline status from before restart)
             const _saved = _savedLog.find(s => s.idx === _i);
             if (_saved) {
-              bhavCandleLog.push(_saved);
+              DrishtiCandleLog.push(_saved);
             } else {
               // Re-run strategy on partial candle array (same as if bot had been live up to this point)
               const _partial = closedCandles.slice(0, _i + 1).map(x => ({ open: x.open, high: x.high, low: x.low, close: x.close }));
-              const _evalSig = findBhavEntry(_partial, bhavPrevDayCandles);
+              const _evalSig = findDrishtiEntry(_partial, drishtiPrevDayCandles);
               // EOD candles (15:15+) are never traded — don't flag them as "bot offline"
               const _isEodCandle = _t >= '15:15';
-              bhavCandleLog.push({
+              DrishtiCandleLog.push({
                 idx: _i,
                 time: _t,
                 close: _c.close,
@@ -2147,7 +2262,7 @@ async function preStartPrompt() {
               });
             }
           }
-          const _missedEntries = bhavCandleLog.filter(e => e.offline && e.signal);
+          const _missedEntries = DrishtiCandleLog.filter(e => e.offline && e.signal);
           if (_missedEntries.length > 0) {
             _missedEntries.forEach(e => {
               log("🚨 MISSED_ENTRY", { candle: `C${e.idx}`, time: e.time, direction: e.signal, reason: e.reason, note: "Bot was offline when this signal occurred" });
@@ -2165,16 +2280,16 @@ async function preStartPrompt() {
             ).catch(() => {});
             _tgSilenced = true;  // silence all further Telegram for today
           }
-          log("BHAV_TODAY_BACKFILL", { at: "startup", count: closedCandles.length, raw: candles.length, missedEntries: _missedEntries.length });
+          log("DRISHTI_TODAY_BACKFILL", { at: "startup", count: closedCandles.length, raw: candles.length, missedEntries: _missedEntries.length });
         }
       }).catch(e => {
         // Before 9:15 AM the market isn't open — API returning no data is expected, not an error
         const _preIst2 = new Date(new Date().getTime() + 5.5 * 3600000);
         const _h = _preIst2.getUTCHours(), _m = _preIst2.getUTCMinutes();
         if (_h < 9 || (_h === 9 && _m < 15)) {
-          log("BHAV_STARTUP_PRE_MARKET", { note: "Started before 9:15 AM — no today candles yet, normal" });
+          log("DRISHTI_STARTUP_PRE_MARKET", { note: "Started before 9:15 AM — no today candles yet, normal" });
         } else {
-          log("BHAV_TODAY_BACKFILL_FAIL", { at: "startup", error: e instanceof Error ? e.message : JSON.stringify(e) });
+          log("DRISHTI_TODAY_BACKFILL_FAIL", { at: "startup", error: e instanceof Error ? e.message : JSON.stringify(e) });
         }
       });
     }
@@ -2193,7 +2308,7 @@ async function preStartPrompt() {
           dailyPnL,
           unrealisedPnL: _unrealised,
           tradeCount,        qty: config.quantity,
-        slPts: ACTIVE_STRATEGY === "BHAV_V3" ? 150 : (config.tradeManagement?.stopLossPoints ?? 100),
+        slPts: ACTIVE_STRATEGY === "DRISHTI_V1" ? 150 : (config.tradeManagement?.stopLossPoints ?? 100),
         dailyCapPts: config.risk?.dailyLossCap ?? 350,          strategy: ACTIVE_STRATEGY,
           mode: config.mode,
           inTrade: _inTrade,
@@ -2203,13 +2318,13 @@ async function preStartPrompt() {
           symbol: tradeSymbol || null,
           entryPremium: _inTrade ? entryPremium || null : null,
           livePremium:  _inTrade ? lastOptionLTP || null : null,
-          sl: _inTrade ? (ACTIVE_STRATEGY === "BHAV_V3"
+          sl: _inTrade ? (ACTIVE_STRATEGY === "DRISHTI_V1"
             ? (tradeDirection === "CE" ? entryPrice - 150 : entryPrice + 150)
             : (tradeDirection === "CE" ? entryPrice - 100 : entryPrice + 100)) : null,
-          bhavPrevDayHigh: ACTIVE_STRATEGY === "BHAV_V3" && bhavPrevDayCandles.length > 0 ? Math.max(...bhavPrevDayCandles.map((c: {high:number}) => c.high)) : undefined,
-          bhavPrevDayLow: ACTIVE_STRATEGY === "BHAV_V3" && bhavPrevDayCandles.length > 0 ? Math.min(...bhavPrevDayCandles.map((c: {low:number}) => c.low)) : undefined,
-          bhavCandles: ACTIVE_STRATEGY === "BHAV_V3" ? bhavTodayCandles.length : undefined,
-          bhavCandleLog: ACTIVE_STRATEGY === "BHAV_V3" ? bhavCandleLog.slice(-20) : undefined,
+          drishtiPrevDayHigh: ACTIVE_STRATEGY === "DRISHTI_V1" && drishtiPrevDayCandles.length > 0 ? Math.max(...drishtiPrevDayCandles.map((c: {high:number}) => c.high)) : undefined,
+          drishtiPrevDayLow: ACTIVE_STRATEGY === "DRISHTI_V1" && drishtiPrevDayCandles.length > 0 ? Math.min(...drishtiPrevDayCandles.map((c: {low:number}) => c.low)) : undefined,
+          DrishtiCandles: ACTIVE_STRATEGY === "DRISHTI_V1" ? drishtiTodayCandles.length : undefined,
+          DrishtiCandleLog: ACTIVE_STRATEGY === "DRISHTI_V1" ? DrishtiCandleLog : undefined,
         }));
       } catch (_) {}
       if (runBotActive) { log("SKIP_CYCLE", { reason: "prevCycleStillRunning" }); return; }
@@ -2250,7 +2365,7 @@ async function preStartPrompt() {
               dailyPnL,
               unrealisedPnL: _unrealised2,
               tradeCount,        qty: config.quantity,
-        slPts: ACTIVE_STRATEGY === "BHAV_V3" ? 150 : (config.tradeManagement?.stopLossPoints ?? 100),
+        slPts: ACTIVE_STRATEGY === "DRISHTI_V1" ? 150 : (config.tradeManagement?.stopLossPoints ?? 100),
         dailyCapPts: config.risk?.dailyLossCap ?? 350,              mode: config.mode,
               inTrade: _inTrade2,
               direction: tradeDirection ?? null,
@@ -2283,7 +2398,7 @@ async function preStartPrompt() {
         `📌 Position: *${tradeDirection}* | ${tradeSymbol}\n` +
         `Entry: *${entryPrice}* (@ ${entryIST})\n` +
         `SL: *${slLevel}* (−150 pts)${waitReEntryInfo}\n` +
-        `Strategy: BHAV V3 · LOCK20 | Mode: ${config.mode.toUpperCase()} | Qty: ${config.quantity}\n` +
+        `Strategy: DRISHTI V1 · LOCK10 | Mode: ${config.mode.toUpperCase()} | Qty: ${config.quantity}\n` +
         `⏰ ${new Date().toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata" })}\n` +
         `🔑 [Refresh Token](https://139-59-18-52.nip.io/login)`
       ).catch(e => console.error("[Telegram restart notify failed]", e?.message ?? e));
@@ -2305,9 +2420,9 @@ async function preStartPrompt() {
       sendTelegram(
         `🟢 *BANKNIFTY Bot Started*\n` +
         `━━━━━━━━━━━━━━━━━━━━━\n` +
-        `Strategy: *BHAV V3 · LOCK20*\n` +
+        `Strategy: *DRISHTI V1 · LOCK10*\n` +
         `Mode: *${config.mode.toUpperCase()}* | Qty: ${config.quantity}\n` +
-        `SL: 150 pts | Trail: LOCK20 (peak−20)\n` +
+        `SL: 150 pts | Trail: LOCK10 (peak−10)\n` +
         `⏰ ${new Date().toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata" })}\n` +
         `🔑 [Refresh Token if needed](https://139-59-18-52.nip.io/login)`
       ).catch(e => console.error("[Telegram startup notify failed]", e?.message ?? e));
@@ -2447,7 +2562,7 @@ async function saveDailyPnlLog() {
       if (saved.date === todayDate && Array.isArray(saved.log)) candleLog = saved.log;
     } catch (_) {}
 
-    // 2. Simulate BHAV V3 LOCK50 candle-close SL on today's candles
+    // 2. Simulate DRISHTI V1 LOCK50 candle-close SL on today's candles
     let signal = 'FLAT', btPnl = 0, btNote = 'No signal today';
     const c0 = candleLog.find(e => e.idx === 0 && e.signal);
     if (c0 && c0.signal) {
@@ -2559,7 +2674,7 @@ async function notifyExit(exit: number, pnl: number, reason: string, ctx?: { dir
   const symLine   = ctx?.symbol ? `Symbol: \`${ctx.symbol}\`\n`    : "";
   const dailySign = dailyPnL >= 0 ? "+" : "";
   await sendTelegram(
-    `${emoji} *◆ BHAV V3 · LOCK20 — EXIT → ${reason}*\n` +
+    `${emoji} *◆ DRISHTI V1 · LOCK10 — EXIT → ${reason}*\n` +
     symLine + dirLine + entryLine +
     `Index exit: ${exit}\n` +
     `Index P&L: *${pnlSign}${Math.abs(pnl)} pts*\n` +
@@ -2596,7 +2711,7 @@ async function notifySummary(trades: number, wins: number, losses: number, netPn
   const emoji     = netPnL > 0 ? "🟢" : netPnL < 0 ? "🔴" : "⚪";
   const today     = new Date().toLocaleDateString("en-IN", { timeZone: "Asia/Kolkata", day: "2-digit", month: "short", year: "numeric" });
   await sendTelegram(
-    `📊 *DAILY SUMMARY — BHAV V3 · LOCK20*\n` +
+    `📊 *DAILY SUMMARY — DRISHTI V1 · LOCK10*\n` +
     `${today}\n` +
     `━━━━━━━━━━━━━━━━━━━━\n` +
     `${emoji} Index P&L: *${pnlSign}${Math.abs(netPnL)} pts*\n` +
