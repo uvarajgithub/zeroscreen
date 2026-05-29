@@ -456,14 +456,11 @@ async function monitorCandleBreakouts() {
 
       // Skip candle notifications if done for the day OR no-trade day
       // Case 1: trade happened and exited (firstDone)
-      // Case 2: stopForDay is set, no active trade — bot blocked (loss cap / late start / token issue)
-      // Case 3: DRISHTI_V1 watching all day with no trade, past C20 (~2:15 PM) — entry window effectively closed
+      // Case: DRISHTI_V1 watching all day with no trade, past C20 (~2:15 PM) — entry window effectively closed → skip TG
       const _noTradeAllDay = ACTIVE_STRATEGY === "DRISHTI_V1"
         && !DrishtiState.firstDone && !DrishtiState.inTrade && tradeCount === 0
         && drishtiTodayCandles.length > 20;
       const _doneForDay =
-        (ACTIVE_STRATEGY === "DRISHTI_V1" && DrishtiState.firstDone && !DrishtiState.inTrade) ||
-        (ACTIVE_STRATEGY === "DRISHTI_V1" && stopForDay && !activeTrade) ||
         _noTradeAllDay ||
         (ACTIVE_STRATEGY === "HYBRID_REVERSE" && hybridState.firstDone && !hybridState.waitReEntry && !(activeTrade || mainEntryDone || earlyEntryDone)) ||
         (ACTIVE_STRATEGY === "HYBRID_REVERSE" && stopForDay && !activeTrade);
