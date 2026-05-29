@@ -9,7 +9,7 @@
  *   T1 Tgt : NONE — hold to 3:14 PM EOD exit
  *   Re-entry: Always taken opposite direction when T1 SL hit. Same trail rules.
  *
- * 5yr backtest (Variant B): Rs 24,15,000 | Win rate 69.7% | MaxDD Rs 9,400 | PF 7.07
+ * 5yr backtest (BHAV V4 LOCK10): Max ₹40,50,725 | Live est ₹36,73,665 | Day WR 84% | Trade WR 94.7% | MaxDD ₹8,167 | PF 9.97
  * Variant B: buf=25 (candle-close buffer), trail=100, RE=opposite direction
  * Max loss/day: Rs -1,800 (T1 -60 + RE -60 = -120 pts × Rs 15)
  *
@@ -793,7 +793,7 @@ export async function startAmina(): Promise<void> {
     `🚀 *AMINA 100 — Variant B Started*\n`
     + `Date: ${todayIST()} | Mode: *${config.mode}*\n`
     + `Qty: ${config.quantity} | SL: 60 pts | Trail: 100 pts | Buffer: 25 pts\n`
-    + `5yr backtest: *+Rs 24,15,000* | WR 69.7% | MaxDD Rs 9,400 | PF 7.07 ✅`
+    + `5yr backtest: *+Rs 36,73,665* (live est) | *+Rs 40,50,725* (max) | Day WR 84% | Trade WR 94.7% | MaxDD Rs 8,167 ✅`
   ).catch(() => {});
 
   // Daily reset at midnight

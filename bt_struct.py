@@ -1,0 +1,10 @@
+import json
+bt = json.load(open('/home/ubuntu/trading-bot/5year-backtest-result.json'))
+print("Top keys:", list(bt.keys()))
+print("totals:", bt.get('totals'))
+print("winRate:", bt.get('winRate'))
+print("bbTotal:", bt.get('bbTotal'))
+print("bbWins:", bt.get('bbWins'))
+print("bbLosses:", bt.get('bbLosses'))
+print("Last 3 daily:", bt['daily'][-3:])
+print("noTradeDays sample:", bt.get('noTradeDays', [])[:3])

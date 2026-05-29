@@ -1,5 +1,6 @@
-// backtest_bhav5yr.js — BHAV V3 5-Year Backtest
-// Fetches BANKNIFTY 15-min data from Kite API, runs exact BHAV V3 logic
+﻿// backtest_bhav5yr.js — DRISHTI V1 5-Year Backtest (exact live bot params)
+// Fixes applied: LOCK10 trail, MAX_RE=5, re-entry body>40%, re-entry gate=0 (OFF), REV_UNLOCK=50,
+//   trap C1 threshold=72%, C0 seeding fix (skip 9:15 candle, use 9:30 as C0)
 // Outputs: 5year-backtest-result.json  (format: {daily:[{date,bbPnL}], monthly:{YYYY-MM:{bbTotal,bbTrades,bbWins}}})
 
 'use strict';
@@ -12,12 +13,13 @@ const kite = new KiteConnect({ api_key: process.env.API_KEY });
 kite.setAccessToken(process.env.ACCESS_TOKEN);
 
 const INSTRUMENT_TOKEN = 260105; // BANKNIFTY
-const SL_PTS    = 100;
-const TRAIL_GAP = 50;
+const SL_PTS    = 150;
+const TRAIL_GAP = 10;   // LOCK10 (live bot)
 const MAX_TRADES = 5;
-const MAX_RE     = 3;
+const MAX_RE     = 5;   // live bot allows 5 re-entries
+const DAILY_LOSS_CAP = 150; // live bot: user-settings.json dailyLossCap=150
 
-// ─── Strategy helpers (translated from bhav_strategy.ts) ────────────────────
+// ─── Strategy helpers (translated from drishti_strategy.ts) ────────────────────
 function bp(c)  { return (c.high - c.low) > 0 ? (c.close - c.open) / (c.high - c.low) * 100 : 0; }
 function pdh(cs){ return Math.max(...cs.map(c => c.high)); }
 function pdl(cs){ return Math.min(...cs.map(c => c.low)); }
@@ -39,7 +41,7 @@ function firstStrong(cs, from, thresh = 55) {
   return null;
 }
 
-function findBhavEntry(today, prev) {
+function findDrishtiEntry(today, prev) {
   if (!today || today.length < 1) return null;
   if (!prev  || prev.length  === 0) return null;
 
@@ -71,6 +73,7 @@ function findBhavEntry(today, prev) {
   // CONTEXT 1: ABOVE PDH
   if (ctx === 'ABOVE_PDH') {
     if (vsPDH > 1000) return at(0, 'CE', 'extraordinary_gap_ce');
+    if (C0bp > 85)    return at(0, 'CE', 'above_pdh_trend_day_ce');
     if (C0bp < -20)   return at(0, 'PE', 'above_pdh_c0_reversal_pe');
     const bearIdx = firstBear(today, 1, 35);
     if (bearIdx > 0 && bearIdx <= 7) return at(bearIdx, 'PE', 'above_pdh_delayed_pe');
@@ -81,6 +84,7 @@ function findBhavEntry(today, prev) {
 
   // CONTEXT 2: BELOW PDL
   if (ctx === 'BELOW_PDL') {
+    if (C0bp < -80) return at(0, 'PE', 'below_pdl_trend_day_pe');
     if (C0bp < -65) return null;
     if (C0bp > 65) {
       const i = firstBear(today, 1, 30);
@@ -117,7 +121,7 @@ function findBhavEntry(today, prev) {
     const c0isBull = C0bp > 0;
     const aligned  = (c0isBull && !gapDown) || (!c0isBull && !gapUp);
     if (aligned) {
-      if (today.length >= 2 && C1bp * C0bp < 0 && Math.abs(C1bp) > 65) {
+      if (today.length >= 2 && C1bp * C0bp < 0 && Math.abs(C1bp) > 72) {  // live: 72
         const s = at(1, C1bp > 0 ? 'CE' : 'PE', 'inside_c0_trap_c1_signal');
         if (s) return s;
       }
@@ -147,7 +151,7 @@ function findBhavEntry(today, prev) {
     }
   }
 
-  for (let i = 2; i <= 4; i++) {
+  for (let i = 2; i <= 8; i++) {
     if (i >= today.length) break;
     const cbp = bp(today[i]);
     if (Math.abs(cbp) > 55) {
@@ -175,28 +179,30 @@ function findBhavEntry(today, prev) {
   return null;
 }
 
-function findBhavReEntry(today, exitIdx, side, allowReverse) {
+function findDrishtiReEntry(today, exitIdx, side, allowReverse) {
   const lastIdx = today.length - 1;
   if (lastIdx <= exitIdx) return null;
 
+  // live bot: same dir body > 40%
   for (let i = exitIdx + 1; i <= lastIdx; i++) {
     const b = bp(today[i]);
-    if (side === 'CE' && b > 35) return { idx: i, side, reason: 're_same_dir' };
-    if (side === 'PE' && b < -35) return { idx: i, side, reason: 're_same_dir' };
+    if (side === 'CE' && b > 40) return { idx: i, side, reason: 're_same_dir' };
+    if (side === 'PE' && b < -40) return { idx: i, side, reason: 're_same_dir' };
   }
 
+  // live bot: reverse body > 40% (same threshold)
   if (allowReverse) {
     const revSide = side === 'CE' ? 'PE' : 'CE';
     for (let i = exitIdx + 1; i <= lastIdx; i++) {
       const b = bp(today[i]);
-      if (revSide === 'CE' && b > 65) return { idx: i, side: revSide, reason: 're_reverse' };
-      if (revSide === 'PE' && b < -65) return { idx: i, side: revSide, reason: 're_reverse' };
+      if (revSide === 'CE' && b > 40) return { idx: i, side: revSide, reason: 're_reverse' };
+      if (revSide === 'PE' && b < -40) return { idx: i, side: revSide, reason: 're_reverse' };
     }
   }
   return null;
 }
 
-function updateBhavTrail(state, candle, isEOD) {
+function updateDrishtiTrail(state, candle, isEOD) {
   const sign = state.dir === 'CE' ? 1 : -1;
   const favPts = state.dir === 'CE' ? candle.high - state.entry : state.entry - candle.low;
 
@@ -224,6 +230,12 @@ function updateBhavTrail(state, candle, isEOD) {
 
 // ─── Run one trading day ────────────────────────────────────────────────────
 function runDay(today, prev) {
+  // ── C0 SEEDING FIX ────────────────────────────────────────────────────────
+  // today[0] = 9:15-9:30 candle = seeded in live bot (NOT in drishtiTodayCandles)
+  // Live bot C0 = today[1] (9:30-9:45). Skip today[0] to match live exactly.
+  const liveCandles = today.slice(1);
+  if (liveCandles.length < 2) return { pnl: 0, trades: 0, wins: 0 };
+
   let state = {
     inTrade: false, dir: null, entry: 0, entryIdx: -1,
     trailStop: -SL_PTS, peakPts: 0,
@@ -232,15 +244,14 @@ function runDay(today, prev) {
   };
 
   let dayPnL = 0, trades = 0, wins = 0;
-  const MARKET_CANDLES = 26; // 9:15 to 3:15 PM = 26 candles
 
-  for (let ci = 0; ci < today.length; ci++) {
-    const bc    = today[ci];
-    const isEOD = ci >= today.length - 1; // last candle of the day
+  for (let li = 0; li < liveCandles.length; li++) {
+    const bc    = liveCandles[li];
+    const isEOD = li >= liveCandles.length - 1;
 
     // Trail management
     if (state.inTrade) {
-      const trail = updateBhavTrail(state, bc, isEOD);
+      const trail = updateDrishtiTrail(state, bc, isEOD);
       if (trail.action !== 'HOLD') {
         const pts = trail.pts;
         dayPnL += pts;
@@ -249,8 +260,8 @@ function runDay(today, prev) {
 
         state.inTrade      = false;
         state.firstDone    = true;
-        state.lastExitPts  = trail.peakPts;
-        state.lastExitIdx  = ci;
+        state.lastExitPts  = trail.peakPts;  // store PEAK (matches live bot)
+        state.lastExitIdx  = li;             // index in liveCandles
         state.lastExitDir  = state.dir;
         state.dir          = null;
         state.entry        = 0;
@@ -258,33 +269,35 @@ function runDay(today, prev) {
         state.peakPts      = 0;
         state.trailStop    = -SL_PTS;
       }
-      continue; // always continue after trail check
+      continue;
     }
 
     if (isEOD) continue;
     if (trades >= MAX_TRADES) continue;
+    if (dayPnL <= -DAILY_LOSS_CAP) continue;  // daily loss cap (matches live bot user-settings)
 
-    // Look for entry
     let sig = null;
-    const sliceNow = today.slice(0, ci + 1);
+    const sliceNow = liveCandles.slice(0, li + 1);  // live-aligned slice
 
-    if (state.firstDone && state.reCount < MAX_RE && state.lastExitIdx >= 0 && state.lastExitDir) {
-      const allowReverse = state.lastExitPts >= 100;
-      const re = findBhavReEntry(sliceNow, state.lastExitIdx, state.lastExitDir, allowReverse);
-      if (re && re.idx === ci) {
+    // Re-entry gate: lastExitPts >= 0 = OFF (5yr sweep: best setting, matches live bot)
+    if (state.firstDone && state.reCount < MAX_RE
+        && state.lastExitPts >= 0
+        && state.lastExitIdx >= 0 && state.lastExitDir) {
+      const allowReverse = state.lastExitPts >= 50;
+      const re = findDrishtiReEntry(sliceNow, state.lastExitIdx, state.lastExitDir, allowReverse);
+      if (re && re.idx === li) {
         sig = { idx: re.idx, side: re.side, ctx: 'INSIDE', reason: re.reason };
       }
     } else if (!state.firstDone) {
-      sig = findBhavEntry(sliceNow, prev);
+      sig = findDrishtiEntry(sliceNow, prev);
     }
 
     if (!sig) continue;
 
-    // Enter trade
     state.inTrade   = true;
     state.dir       = sig.side;
     state.entry     = bc.close;
-    state.entryIdx  = ci;
+    state.entryIdx  = li;
     state.trailStop = -SL_PTS;
     state.peakPts   = 0;
     if (state.firstDone) state.reCount++;
@@ -356,8 +369,8 @@ function groupByDay(candles) {
 
 // ─── Main ────────────────────────────────────────────────────────────────────
 async function main() {
-  console.log('BHAV V3 — 5-Year Backtest (Jan 2021 – May 2026)');
-  console.log('Instrument: BANKNIFTY (260105) | 15-min | SL:100 Trail:LOCK50\n');
+  console.log('DRISHTI V1 — 5-Year Backtest (Jan 2021 – May 2026)');
+  console.log('Instrument: BANKNIFTY (260105) | 15-min | SL:150 Trail:LOCK20\n');
 
   const startDate = new Date('2021-01-01');
   const endDate   = new Date('2026-05-25');
@@ -372,6 +385,7 @@ async function main() {
 
   const dailyResults = [];
   const monthlyAgg   = {};
+  const noTradeDays  = [];
 
   for (let di = 1; di < allDates.length; di++) {
     const date    = allDates[di];
@@ -385,6 +399,7 @@ async function main() {
 
     const rounded = Math.round(pnl * 10) / 10;
     dailyResults.push({ date, bbPnL: rounded });
+    if (trades === 0) noTradeDays.push({ date, reason: 'no_signal' });
 
     const mk = date.slice(0, 7); // YYYY-MM
     if (!monthlyAgg[mk]) monthlyAgg[mk] = { bbTotal: 0, bbTrades: 0, bbWins: 0 };
@@ -398,10 +413,6 @@ async function main() {
     monthlyAgg[mk].bbTotal = Math.round(monthlyAgg[mk].bbTotal * 10) / 10;
   }
 
-  const result = { daily: dailyResults, monthly: monthlyAgg };
-  const outPath = path.join(__dirname, '5year-backtest-result.json');
-  fs.writeFileSync(outPath, JSON.stringify(result, null, 2));
-
   // Print summary
   const totalPnL   = dailyResults.reduce((s, d) => s + d.bbPnL, 0);
   const totalDays  = dailyResults.length;
@@ -410,8 +421,21 @@ async function main() {
   const allWins    = Object.values(monthlyAgg).reduce((s, m) => s + m.bbWins, 0);
   const wr         = allTrades > 0 ? (allWins / allTrades * 100).toFixed(1) : 0;
 
+  const result = {
+    totals: { bodyBreakout: Math.round(totalPnL * 10) / 10 },
+    tradingDays: allDates.length,
+    tradedDays:  totalDays,
+    winRate:     parseFloat(wr),
+    period:      { from: startDate.toISOString().slice(0, 10), to: endDate.toISOString().slice(0, 10) },
+    monthly:     monthlyAgg,
+    daily:       dailyResults,
+    noTradeDays: noTradeDays,
+  };
+  const outPath = path.join(__dirname, '5year-backtest-result.json');
+  fs.writeFileSync(outPath, JSON.stringify(result, null, 2));
+
   console.log('═══════════════════════════════════════');
-  console.log('BHAV V3 — 5yr Backtest Results');
+  console.log('DRISHTI V1 — 5yr Backtest Results');
   console.log('═══════════════════════════════════════');
   console.log(`Total P&L   : ${totalPnL.toFixed(0)} pts`);
   console.log(`Total P&L ₹ : ₹${(totalPnL * 15).toFixed(0)}  (×15 QTY_MULT)`);

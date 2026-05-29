@@ -9473,8 +9473,15 @@ app.get("/dashboard", featureGate("feature_dashboard", "Dashboard"), async (req:
   // Backtest totals
   const btTotal = (backtest.totals?.bodyBreakout ?? 0) + (backtest.totals?.rcConfirm ?? 0);
   const btDays = backtest.tradingDays ?? 0;
+  const btLiveRs   = backtest.liveEstimate?.totalPnlRs ?? 0;
+  const btMaxRs    = backtest.totals?.totalPnlRs ?? 0;
+  const btDayWR    = backtest.totals?.dayWinRate ?? backtest.totals?.winRate ?? 0;
+  const btTradeWR  = backtest.totals?.tradeWinRate ?? 0;
+  const btMaxDD    = backtest.totals?.maxDDRs ?? 0;
+  const btPF       = backtest.totals?.profitFactor ?? 0;
   const btFrom = backtest.period?.from ?? "";
   const btTo   = backtest.period?.to ?? "";
+  const btYearly: Record<string, any> = backtest.yearly || {};
 
   // All monthly win rates
   const allBbTrades = mKeys.reduce((s, k) => s + (monthly[k].bbTrades ?? 0), 0);
@@ -9641,28 +9648,32 @@ app.get("/dashboard", featureGate("feature_dashboard", "Dashboard"), async (req:
     <div class="dash-section-label"><span class="dash-sl-dot dash-sl-purple"></span>5-Year Backtest (2021–2026)</div>
     <div class="dash-kpi-grid">
       <div class="dash-kpi">
-        <div class="dash-kpi-label">Total Backtest PnL</div>
-        <div class="dash-kpi-val dash-green">+${parseFloat(btTotal.toFixed(0)).toLocaleString("en-IN")} pts</div>
+        <div class="dash-kpi-label">Max Potential P&amp;L</div>
+        <div class="dash-kpi-val dash-green">₹${(btMaxRs/100000).toFixed(2)}L</div>
+        <div style="font-size:11px;color:var(--text-muted);margin-top:2px">Unlimited re-entries</div>
       </div>
       <div class="dash-kpi">
-        <div class="dash-kpi-label">Model A PnL</div>
-        <div class="dash-kpi-val dash-green">+${parseFloat((backtest.totals?.bodyBreakout ?? 0).toFixed(0)).toLocaleString("en-IN")} pts</div>
+        <div class="dash-kpi-label">Live Estimate P&amp;L</div>
+        <div class="dash-kpi-val dash-green">₹${(btLiveRs/100000).toFixed(2)}L</div>
+        <div style="font-size:11px;color:var(--text-muted);margin-top:2px">5-trade cap (live bot)</div>
       </div>
       <div class="dash-kpi">
-        <div class="dash-kpi-label">Model B PnL</div>
-        <div class="dash-kpi-val dash-green">+${parseFloat((backtest.totals?.rcConfirm ?? 0).toFixed(0)).toLocaleString("en-IN")} pts</div>
+        <div class="dash-kpi-label">Day Win Rate</div>
+        <div class="dash-kpi-val">${btDayWR}%</div>
+        <div style="font-size:11px;color:var(--text-muted);margin-top:2px">Winning days</div>
       </div>
       <div class="dash-kpi">
-        <div class="dash-kpi-label">Model A Win Rate</div>
-        <div class="dash-kpi-val">${bbWinRate}%</div>
+        <div class="dash-kpi-label">Trade Win Rate</div>
+        <div class="dash-kpi-val dash-green">${btTradeWR}%</div>
+        <div style="font-size:11px;color:var(--text-muted);margin-top:2px">Per individual trade</div>
       </div>
       <div class="dash-kpi">
-        <div class="dash-kpi-label">Model B Win Rate</div>
-        <div class="dash-kpi-val">${rcWinRate}%</div>
+        <div class="dash-kpi-label">Max Drawdown</div>
+        <div class="dash-kpi-val dash-red">₹${btMaxDD.toLocaleString("en-IN")}</div>
       </div>
       <div class="dash-kpi">
-        <div class="dash-kpi-label">Trading Days</div>
-        <div class="dash-kpi-val">${btDays}</div>
+        <div class="dash-kpi-label">Profit Factor</div>
+        <div class="dash-kpi-val">${btPF}</div>
       </div>
     </div>
 

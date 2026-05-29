@@ -302,38 +302,59 @@ function findEntry(candles, prevCandles) {
   return { entry: null, ctx, reason: 'inside_no_signal' };
 }
 
-// ─── P&L CALCULATOR — LOCK50 Candle-Close Trail ─────────────────────────────
-// Exit only at CANDLE CLOSE (not intrabar wick) — mirrors live LOCK50 behaviour
-// Trail: trailStop = max(-SL_PTS, peak - TRAIL_GAP)  =>  LOCK20 = peak - 20
+// ─── P&L CALCULATOR — Honest: no same-candle trail exits ────────────────────
+// PROBLEM (original): peak set from c.HIGH then c.LOW checked against NEW trail
+//   → trail could be SET and HIT within same 15-min candle (no SLM placed yet)
+// FIX: trail check uses trailStop from PREVIOUS candle close only.
+//   Peak IS still updated from intrabar HIGH (accurate SLM tracking for next candle)
+//   but the NEWLY updated trail only becomes active NEXT candle — not same candle.
+// Gap-through: if candle opens through the active SLM level → fills at open.
 function calcPL(candles, entryIdx, side) {
   const entryPrice = candles[entryIdx].close;
   const sign = side === 'CE' ? 1 : -1;
 
-  let trailStop = -SL_PTS;   // starts at hard SL (-150)
-  let peakPts   = 0;          // best intrabar pts seen
+  let trailStop = -SL_PTS;   // active SLM level (set at PREVIOUS candle close)
+  let peakPts   = 0;         // tracked via intrabar HIGH for accurate SLM positioning
 
   for (let i = entryIdx + 1; i < candles.length; i++) {
     const c = candles[i];
-    // Update peak with this candle's favorable intrabar extreme:
-    //   CE = candle HIGH  (price moving up is favorable)
-    //   PE = candle LOW   (price moving down is favorable, use entry - low)
+    // trailStop = SLM level placed at END of previous candle — active NOW
+
+    // Step 1: Gap-through check at open
+    const openPts = sign * (c.open - entryPrice);
+    if (trailStop > 0 && openPts < trailStop) {
+      // Opened through/below SLM → fills at open
+      return { pl: openPts * PTS_PER_RS, peakPts, exitIdx: i, exitType: 'TRAIL_GAP',
+               entryPrice, exitPrice: c.open };
+    }
+    if (trailStop <= 0 && openPts < -SL_PTS) {
+      // Opened through hard SL → exit at open
+      return { pl: openPts * PTS_PER_RS, peakPts, exitIdx: i, exitType: 'SL_GAP',
+               entryPrice, exitPrice: c.open };
+    }
+
+    // Step 2: Intrabar trail/SL check using trail from PREVIOUS candle close only
+    if (trailStop > 0) {
+      const adversePts = side === 'CE' ? (c.low - entryPrice) : (entryPrice - c.high);
+      if (adversePts <= trailStop) {
+        // SLM placed at previous-candle trail level fills intrabar
+        return { pl: trailStop * PTS_PER_RS, peakPts, exitIdx: i, exitType: 'TRAIL',
+                 entryPrice, exitPrice: entryPrice + sign * trailStop };
+      }
+    } else {
+      // SL zone: close check only (no SLM in SL zone)
+      const closePts = sign * (c.close - entryPrice);
+      if (closePts <= -SL_PTS) {
+        return { pl: closePts * PTS_PER_RS, peakPts, exitIdx: i, exitType: 'SL',
+                 entryPrice, exitPrice: c.close };
+      }
+    }
+
+    // Step 3: Update peak via intrabar HIGH — sets trailStop for NEXT candle ONLY
     const favPts = side === 'CE' ? (c.high - entryPrice) : (entryPrice - c.low);
     if (favPts > peakPts) {
       peakPts   = favPts;
-      // LOCK20: trail kicks in only after peak crosses TRAIL_GAP (20pts).
-      // Until then, hard SL of -SL_PTS applies.
-      // Once peak >= TRAIL_GAP, trail = peak - TRAIL_GAP (locks profit above 0).
       trailStop = peakPts >= TRAIL_GAP ? peakPts - TRAIL_GAP : -SL_PTS;
-    }
-    // Exit check at CANDLE CLOSE only
-    const closePts = sign * (c.close - entryPrice);
-    if (closePts <= trailStop) {
-      const exitType = trailStop <= 0 ? 'SL' : 'TRAIL';
-      // Credit at trail_stop_price (stop order fills at locked level)
-      // This is the same assumption Amina's backtest uses (max loss = -SL_PTS, not actual close)
-      const lockedPL = trailStop * PTS_PER_RS;
-      return { pl: lockedPL, peakPts, exitIdx: i, exitType,
-               entryPrice, exitPrice: entryPrice + sign * trailStop };
     }
   }
   // EOD exit at last candle's close
