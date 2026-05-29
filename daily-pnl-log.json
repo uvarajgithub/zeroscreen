@@ -8,5 +8,25 @@
     "actualPnl": 0,
     "actualTrades": 0,
     "note": "Bot offline"
+  },
+  {
+    "date": "2026-05-27",
+    "signal": "PE",
+    "reason": "below_pdl_partial_bounce_pe",
+    "btPnl": -213,
+    "btNote": "SL hit C2 close 55119.5 - entry 54906.3, SL level 55056.3, actual close loss 213 pts",
+    "actualPnl": 0,
+    "actualTrades": 0,
+    "note": "Stale compiled code - missed PE entry"
+  },
+  {
+    "date": "2026-05-28",
+    "signal": null,
+    "reason": null,
+    "btPnl": 0,
+    "btNote": "Market holiday - no trading",
+    "actualPnl": 0,
+    "actualTrades": 0,
+    "note": "Market holiday"
   }
 ]

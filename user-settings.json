@@ -1,5 +1,5 @@
 {
-  "activeStrategy": "HYBRID_REVERSE",
+  "activeStrategy": "DRISHTI_V1",
   "quantity": 30,
   "mode": "PAPER",
   "risk": {

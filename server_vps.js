@@ -1,4 +1,4 @@
-"use strict";
+﻿"use strict";
 /**
  * server.ts — ZeroScreen Express app
  */
@@ -9248,12 +9248,12 @@ app.get("/dashboard", requireAuth, async (req, res) => {
         .cl-empty{padding:32px;text-align:center;color:var(--text-muted);font-size:.9rem}
       </style>
       <div style="display:flex;align-items:center;gap:12px;margin-bottom:14px">
-        <h3 style="margin:0;font-size:1rem;color:var(--text-primary)">📊 BHAV V3 — Today's Candle Evaluation Log</h3>
+        <h3 style="margin:0;font-size:1rem;color:var(--text-primary)">📊 DRISHTI V1 — Today's Candle Evaluation Log</h3>
         <span style="font-size:.75rem;color:var(--text-muted)">Each 15-min candle evaluated by strategy</span>
       </div>
       ${(()=>{
         const _hb = readBotJSON("bot-heartbeat.json", null);
-        const _cl = _hb && _hb.bhavCandleLog;
+        const _cl = _hb && _hb.DrishtiCandleLog;
         if (!_cl || !_cl.length) return '<div class="cl-empty">No candle data yet today. Log fills after 9:30 AM during market hours.</div>';
         let _rows = '';
         _cl.forEach(function(c){
@@ -10445,6 +10445,7 @@ app.get("/signals", featureGate("feature_signals", "Signals"), async (req, res) 
         const _btAllDaily = backtest.daily || [];
         const _btAllMonthly = backtest.monthly || {};
         const _btYears = [...new Set(_btAllDaily.map(e => e.date.slice(0,4)))].sort();
+        const _ntDateSet = new Set((backtest.noTradeDays || []).map(nd => nd.date));
         const _btMonthsObj = {};
         for (const mk of Object.keys(_btAllMonthly)) {
           const bm = _btAllMonthly[mk];
@@ -10453,7 +10454,7 @@ app.get("/signals", featureGate("feature_signals", "Signals"), async (req, res) 
           _btMonthsObj[mk] = {
             p: bbTotal, t: bbt, w: bbw, l: bbt-bbw,
             r: bbt>0 ? Math.round((bbw/bbt)*1000)/10 : 0,
-            d: _btAllDaily.filter(e=>e.date&&e.date.startsWith(mk))
+            d: _btAllDaily.filter(e=>e.date&&e.date.startsWith(mk)&&!_ntDateSet.has(e.date))
                 .sort((a,b)=>a.date<b.date?-1:1)
                 .map(e=>[e.date.slice(8,10), Math.round((e.bbPnL||0)*10)/10])
           };
@@ -10776,8 +10777,8 @@ app.get("/signals", featureGate("feature_signals", "Signals"), async (req, res) 
     <div class="db-hdr">
       <div>
         <div class="db-title">📡 Live Bot Dashboard</div>
-        <div class="db-sub">BANKNIFTY &middot; BHAV V3 &middot; <strong>${mode2}</strong> &middot; 30 qty &middot; SL: ${_slPts2ssr} pts &middot; Entry: PDH/PDL Break &middot; Candle-close SL &middot; Max 5 trades/day</div>
-        <div class="db-sub" style="margin-top:3px">PDH: <span id="db-pdh" style="color:#10b981;font-weight:600">${hb2?.bhavPrevDayHigh ?? "&mdash;"}</span> &middot; PDL: <span id="db-pdl" style="color:#ef4444;font-weight:600">${hb2?.bhavPrevDayLow ?? "&mdash;"}</span> &middot; Candles today: <span id="db-cndl">${hb2?.bhavCandles ?? "&mdash;"}</span> &middot; &#8377; P&amp;L: idx pts &times; 15 &middot; prem pts &times; 30</div>
+        <div class="db-sub">BANKNIFTY &middot; DRISHTI V1 &middot; <strong>${mode2}</strong> &middot; 30 qty &middot; SL: ${_slPts2ssr} pts &middot; Entry: PDH/PDL Break &middot; Candle-close SL &middot; Max 5 trades/day</div>
+        <div class="db-sub" style="margin-top:3px">PDH: <span id="db-pdh" style="color:#10b981;font-weight:600">${hb2?.drishtiPrevDayHigh ?? "&mdash;"}</span> &middot; PDL: <span id="db-pdl" style="color:#ef4444;font-weight:600">${hb2?.drishtiPrevDayLow ?? "&mdash;"}</span> &middot; Candles today: <span id="db-cndl">${hb2?.DrishtiCandles ?? "&mdash;"}</span> &middot; &#8377; P&amp;L: idx pts &times; 15 &middot; prem pts &times; 30</div>
         <div class="db-sub" style="margin-top:3px">5yr Backtest (Jan&rsquo;21&ndash;May&rsquo;26): <strong style="color:#10b981">&#8377;${_bb5yrL}L</strong> &middot; ${_bb5yrWR}% WR &middot; &#8377;${_bb5yrAvg} avg/day &middot; MaxDD &#8377;${_bb5yrMaxDD}</div>
       </div>
       <div class="db-live"><span class="db-pulse"></span><span id="db-upd">Connecting…</span></div>
@@ -10814,7 +10815,7 @@ app.get("/signals", featureGate("feature_signals", "Signals"), async (req, res) 
       </div>
       <span class="hb-age" id="hb-last-seen">${isAlive2 ? 'Last seen just now' : ''}</span>
       ${(()=>{
-        const _cl2=hb2?.bhavCandleLog??[];
+        const _cl2=hb2?.DrishtiCandleLog??[];
         const _lastCl=_cl2.length>0?_cl2[_cl2.length-1]:null;
         const _missed=_cl2.filter(c=>c.offline&&c.signal);
         const _allOffline=_cl2.length>0&&_cl2.every(c=>c.offline);
@@ -10851,7 +10852,7 @@ app.get("/signals", featureGate("feature_signals", "Signals"), async (req, res) 
 
     <div class="stab-wrap">
       <div class="stab act" style="cursor:default;min-width:260px">
-        <span class="stab-name">&#9679; BHAV V3</span>
+        <span class="stab-name">&#9679; DRISHTI V1</span>
         <span class="stab-sub">${mode2} &middot; 30 qty &middot; SL: ${_slPts2ssr} pts</span>
         <span class="stab-pnl" id="stab-pnl-bhav" style="color:${an2.today.pnl>=0?'#059669':'#dc2626'}">${fmtRs2(an2.today.pnl)}</span>
       </div>
@@ -11114,7 +11115,7 @@ app.get("/signals", featureGate("feature_signals", "Signals"), async (req, res) 
       <!-- CANDLE LOG panel -->
       <div id="th-panel-cl" style="display:none">
         ${(()=>{
-          const _cl = hb2 && hb2.bhavCandleLog;
+          const _cl = hb2 && hb2.DrishtiCandleLog;
           if(!_cl || !_cl.length) return '<div style="padding:28px;text-align:center;color:var(--text-muted);font-size:.82rem">No candle data yet today.<br>Log fills from 9:30 AM during market hours.</div>';
           function _clReason(c){
             // c.offline = true → bot was not running when this candle closed (backfilled on restart)
@@ -11316,6 +11317,7 @@ app.get("/signals", featureGate("feature_signals", "Signals"), async (req, res) 
           var md=BT_DATA.m[mk]; if(!md)continue; mCnt++;
           var rs=Math.round(md.p*15); var pCls=md.p>=0?'g':'r';
           var hasLive=Object.keys(BT_DATA.l).some(function(dk){return dk.startsWith(mk);});
+          var ntCnt=md.d?md.d.filter(function(x){return x[1]===null||x[1]===undefined;}).length:0;
           rows+='<tr class="bt-mo-row" data-mk="'+mk+'" style="cursor:pointer">';
           rows+='<td style="font-weight:600">'+MNS_BT[m-1]+' '+yr+' <span id="bt-arr-'+mk.replace('-','_')+'" style="font-size:.65rem;color:#7c3aed">&#9654;</span></td>';
           rows+='<td class="'+pCls+'" style="font-weight:800">'+(rs>=0?'+':'&#8722;')+'&#8377;'+Math.abs(rs).toLocaleString('en-IN')+'</td>';
@@ -11323,7 +11325,7 @@ app.get("/signals", featureGate("feature_signals", "Signals"), async (req, res) 
           rows+='<td>'+md.t+'</td>';
           rows+='<td><span class="g">'+md.w+'W</span> / <span class="r">'+md.l+'L</span></td>';
           rows+='<td>'+(md.t>0?md.r+'%':'--')+'</td>';
-          rows+='<td style="font-size:.68rem">'+(hasLive?'<span style="color:#60a5fa;font-weight:700">&#10003; Live</span>':'')+'</td>';
+          rows+='<td style="font-size:.68rem">'+(hasLive?'<span style="color:#60a5fa;font-weight:700">&#10003; Live</span> ':'')+(ntCnt>0?'<span style="color:#f59e0b;font-weight:700;font-size:.65rem">&#8709;'+ntCnt+'NT</span>':'')+'</td>';
           rows+='</tr>';
           rows+='<tr id="bt-day-'+mk.replace('-','_')+'" style="display:none"><td colspan="7" style="padding:0"></td></tr>';
           totalP+=md.p; totalT+=md.t; totalW+=md.w; totalL+=md.l;
@@ -11380,16 +11382,43 @@ app.get("/signals", featureGate("feature_signals", "Signals"), async (req, res) 
         var md=BT_DATA.m[mk];
         if(!md){det.children[0].innerHTML='<div style="padding:12px;text-align:center;color:#8b949e">No data</div>';det.style.display='';return;}
         var moIdx=parseInt(mk.slice(5,7))-1;
-        var html='<table class="tt" style="width:100%;margin:0;border-radius:0"><thead><tr style="background:rgba(124,58,237,.08)"><th>Date</th><th>BT Index P&amp;L</th><th>BT &#8377;</th><th>Result</th><th>Live Trade</th></tr></thead><tbody>';
+        var html='<table class="tt" style="width:100%;margin:0;border-radius:0"><thead><tr style="background:rgba(124,58,237,.08)"><th>Date</th><th>BT P&amp;L (pts)</th><th>BT &#8377;</th><th>BT Result</th><th>Live P&amp;L</th><th>Live Status</th></tr></thead><tbody>';
         md.d.forEach(function(d){
           var dayNum=d[0]; var pts=d[1]; var skipReason=d[2]; var fullDate=mk+'-'+dayNum;
           var dStr=dayNum+' '+MNS_BT[moIdx];
+          var lt=BT_DATA.l[fullDate];
+          // Compute live P&L and status from _btLiveObj
+          var livePnlHtml='<span style="color:#475569">&#8212;</span>';
+          var liveStatusHtml='<span style="color:#475569">&#8212;</span>';
+          if(lt&&lt.length){
+            var pnlParts=[]; var noteParts=[];
+            lt.forEach(function(t){
+              if(t[1]&&t[1].indexOf('note:')===0){ noteParts.push(t[1].slice(5)); }
+              else if(t[0]!==null&&t[0]!==undefined){
+                var lCls=t[0]>=0?'g':'r';
+                pnlParts.push('<span class="'+lCls+'" style="font-weight:800">'+(t[0]>=0?'+':'')+t[0].toFixed(0)+'</span>');
+              }
+            });
+            if(pnlParts.length) livePnlHtml=pnlParts.join('<br>')+' <span style="font-size:.65rem;color:#8b949e">pts</span>';
+            if(noteParts.length){
+              var noteText=noteParts[0];
+              var noteColor='#64748b'; var noteBg='rgba(100,116,139,.12)';
+              if(noteText.toLowerCase().indexOf('offline')>=0||noteText.toLowerCase().indexOf('missed')>=0||noteText.toLowerCase().indexOf('stale')>=0){noteColor='#f59e0b';noteBg='rgba(245,158,11,.1)';}
+              liveStatusHtml='<span style="background:'+noteBg+';color:'+noteColor+';padding:1px 7px;border-radius:4px;font-size:.65rem;font-weight:700">'+noteText+'</span>';
+            } else if(pnlParts.length){
+              var totalLive=lt.reduce(function(s,t){return s+(t[0]||0);},0);
+              liveStatusHtml=totalLive>=0
+                ?'<span style="background:rgba(5,150,105,.15);color:#059669;padding:1px 6px;border-radius:4px;font-weight:700;font-size:.68rem">WIN</span>'
+                :'<span style="background:rgba(220,38,38,.12);color:#dc2626;padding:1px 6px;border-radius:4px;font-weight:700;font-size:.68rem">LOSS</span>';
+            }
+          }
           // No-trade day
           if(pts===null||pts===undefined){
             html+='<tr style="border-bottom:1px solid rgba(255,255,255,.05);opacity:.65">';
             html+='<td style="font-size:.72rem;padding:5px 10px;font-weight:600;color:#94a3b8">'+dStr+'</td>';
             html+='<td colspan="3" style="padding:5px 8px"><span style="color:#f59e0b;font-weight:700;font-size:.72rem">— NO TRADE</span> <span style="color:#64748b;font-size:.68rem">'+(skipReason||'').replace(/_/g,' ')+'</span></td>';
-            html+='<td style="padding:5px 10px"><span style="color:#475569">&#8212;</span></td>';
+            html+='<td style="padding:5px 10px">'+livePnlHtml+'</td>';
+            html+='<td style="padding:5px 10px">'+liveStatusHtml+'</td>';
             html+='</tr>';
             return;
           }
@@ -11398,23 +11427,13 @@ app.get("/signals", featureGate("feature_signals", "Signals"), async (req, res) 
             ?'<span style="background:rgba(5,150,105,.15);color:#059669;padding:1px 6px;border-radius:4px;font-weight:700;font-size:.68rem">WIN</span>'
             :'<span style="background:rgba(220,38,38,.12);color:#dc2626;padding:1px 6px;border-radius:4px;font-weight:700;font-size:.68rem">LOSS</span>';
           var rsStr=(rs2>=0?'+':'&#8722;')+'&#8377;'+Math.abs(rs2).toLocaleString('en-IN');
-          var lt=BT_DATA.l[fullDate];
-          var liveHtml='<span style="color:#475569">&#8212;</span>';
-          if(lt&&lt.length){
-            liveHtml=lt.map(function(t){
-              if(t[1]&&t[1].indexOf('note:')===0){
-                return '<span style="color:#6b7280;font-size:.7rem">'+t[1].slice(5)+'</span>';
-              }
-              var lCls=t[0]>=0?'g':'r';
-              return '<span class="'+lCls+'" style="font-weight:700">'+(t[0]>=0?'+':'')+t[0].toFixed(0)+'pts</span>'+(t[1]?' <span class="db-badge '+t[1].toLowerCase()+'" style="font-size:.6rem">'+t[1]+'</span>':'');
-            }).join('<br>');
-          }
           html+='<tr style="border-bottom:1px solid rgba(255,255,255,.05)">';
           html+='<td style="font-size:.72rem;padding:5px 10px;font-weight:600">'+dStr+'</td>';
           html+='<td class="'+pCls+'" style="font-weight:800;padding:5px 8px">'+(pts>=0?'+':'')+pts.toFixed(1)+' pts</td>';
           html+='<td style="padding:5px 8px"><span class="pnl-rs '+pCls+'" style="font-size:.73rem">'+rsStr+'</span></td>';
           html+='<td style="padding:5px 8px">'+wl+'</td>';
-          html+='<td style="padding:5px 10px">'+liveHtml+'</td>';
+          html+='<td style="padding:5px 8px">'+livePnlHtml+'</td>';
+          html+='<td style="padding:5px 10px">'+liveStatusHtml+'</td>';
           html+='</tr>';
         });
         html+='</tbody></table>';
@@ -12427,8 +12446,8 @@ app.get("/signals", featureGate("feature_signals", "Signals"), async (req, res) 
     try{
       const r=await fetch('/api/bot/status');
       const d=await r.json();
-      var _pd=d.heartbeat||{};var _pdh=document.getElementById('db-pdh');var _pdl=document.getElementById('db-pdl');var _pdc=document.getElementById('db-cndl');if(_pdh&&_pd.bhavPrevDayHigh)_pdh.textContent=_pd.bhavPrevDayHigh;if(_pdl&&_pd.bhavPrevDayLow)_pdl.textContent=_pd.bhavPrevDayLow;if(_pdc&&_pd.bhavCandles!==undefined)_pdc.textContent=_pd.bhavCandles;
-      var _pd=d.heartbeat||{};if(document.getElementById('db-pdh')&&_pd.bhavPrevDayHigh)document.getElementById('db-pdh').textContent=_pd.bhavPrevDayHigh;if(document.getElementById('db-pdl')&&_pd.bhavPrevDayLow)document.getElementById('db-pdl').textContent=_pd.bhavPrevDayLow;if(document.getElementById('db-cndl')&&_pd.bhavCandles!==undefined)document.getElementById('db-cndl').textContent=_pd.bhavCandles;
+      var _pd=d.heartbeat||{};var _pdh=document.getElementById('db-pdh');var _pdl=document.getElementById('db-pdl');var _pdc=document.getElementById('db-cndl');if(_pdh&&_pd.drishtiPrevDayHigh)_pdh.textContent=_pd.drishtiPrevDayHigh;if(_pdl&&_pd.drishtiPrevDayLow)_pdl.textContent=_pd.drishtiPrevDayLow;if(_pdc&&_pd.DrishtiCandles!==undefined)_pdc.textContent=_pd.DrishtiCandles;
+      var _pd=d.heartbeat||{};if(document.getElementById('db-pdh')&&_pd.drishtiPrevDayHigh)document.getElementById('db-pdh').textContent=_pd.drishtiPrevDayHigh;if(document.getElementById('db-pdl')&&_pd.drishtiPrevDayLow)document.getElementById('db-pdl').textContent=_pd.drishtiPrevDayLow;if(document.getElementById('db-cndl')&&_pd.DrishtiCandles!==undefined)document.getElementById('db-cndl').textContent=_pd.DrishtiCandles;
       ge('db-upd').textContent='Updated '+new Date().toLocaleTimeString('en-IN',{hour:'2-digit',minute:'2-digit',second:'2-digit'});
 
       const hb=d.heartbeat||{};
@@ -12453,7 +12472,7 @@ app.get("/signals", featureGate("feature_signals", "Signals"), async (req, res) 
         if(lsEl)lsEl.textContent='Last seen '+ageS+'s ago';
       }
       // ── Candle log health pills (live update) ──────────────
-      const _clArr=hb.bhavCandleLog||[];
+      const _clArr=hb.DrishtiCandleLog||[];
       const _clLast=_clArr.length>0?_clArr[_clArr.length-1]:null;
       const _clMissed=_clArr.filter(function(c){return c.offline&&c.signal;});
       const _clAllOff=_clArr.length>0&&_clArr.every(function(c){return c.offline;});
@@ -12529,13 +12548,13 @@ app.get("/signals", featureGate("feature_signals", "Signals"), async (req, res) 
         _ch+='</div>';
         el.innerHTML+=_ch;
       }
-      // Watching card — BHAV V3 candle status
+      // Watching card — DRISHTI V1 candle status
       if(!inT){
         const noEl=ge('pos-lock50-watch');
         if(noEl){
-          const _pdh=parseFloat(hb.bhavPrevDayHigh||0);
-          const _pdl=parseFloat(hb.bhavPrevDayLow||0);
-          const _cn=parseInt(hb.bhavCandles||0);
+          const _pdh=parseFloat(hb.drishtiPrevDayHigh||0);
+          const _pdl=parseFloat(hb.drishtiPrevDayLow||0);
+          const _cn=parseInt(hb.DrishtiCandles||0);
           const _ctx=_pdh>0?(lp>_pdh?'ABOVE PDH':((_pdl>0&&lp<_pdl)?'BELOW PDL':'INSIDE')):'';
           const _now=new Date();
           const _rm=_now.getMinutes();const _rs=_now.getSeconds();
