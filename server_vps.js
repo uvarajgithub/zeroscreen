@@ -13427,7 +13427,6 @@ async function ensureAdminEmail() {
                         if (inZone) {
                             await (0, db_1.updatePickEntry)(pick.id, livePrice);
                             console.log(`[PICK-MONITOR] ${pick.stock_symbol} ENTRY_TRIGGERED @ ${livePrice} (id:${pick.id})`);
-                            sendTelegramNotification(`📍 <b>Pick Entry Triggered</b>\n📈 ${pick.stock_symbol} (${pick.direction || 'LONG'})\n💰 Entry @ ₹${livePrice}\nSL: ₹${pick.stop_loss || '-'} | Target: ₹${pick.target || '-'}\n⏰ ${new Date().toLocaleString('en-IN', {timeZone:'Asia/Kolkata'})} IST`, 'tg_notify_pick_entry').catch(()=>{});
                         }
                         continue; // don't check exit until in position
                     }
