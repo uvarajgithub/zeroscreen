@@ -1456,17 +1456,12 @@ async function runDrishtiBot() {
   if (isEOD) return;  // no new entries after EOD
   if (tradeCount >= 5) return;
 
-  // ── Prev day candles required ─────────────────────────────────────────
-  if (!drishtiPrevDayCandles || drishtiPrevDayCandles.length === 0) {
-    log("DRISHTI_NO_PREV_DAY", { candles: drishtiTodayCandles.length });
-    return;
-  }
-
   // ── Find entry signal ─────────────────────────────────────────────────
   let entrySig: DrishtiEntrySignal | null = null;
 
   if (DrishtiState.firstDone && DrishtiState.reCount < 5 && DrishtiState.lastExitPts >= 0 && DrishtiState.lastExitIdx >= 0 && DrishtiState.lastExitDir) {
     // Re-entry: look for strong candle after last exit — always allow reverse (REV_UNLOCK=0)
+    // NOTE: prevDayCandles NOT required for re-entry (findDrishtiReEntry uses only today candles)
     const allowReverse = true;
     const re = findDrishtiReEntry(drishtiTodayCandles, DrishtiState.lastExitIdx, DrishtiState.lastExitDir, allowReverse);
     const lastIdx = drishtiTodayCandles.length - 1;
@@ -1485,7 +1480,12 @@ async function runDrishtiBot() {
       }
     }
   } else if (!DrishtiState.firstDone) {
-    // First entry: V4 PDR filter — skip low-volatility days (prev day range < 150 pts)
+    // First entry: needs prevDayCandles for PDH/PDL context — guard here, not before re-entry block
+    if (!drishtiPrevDayCandles || drishtiPrevDayCandles.length === 0) {
+      log("DRISHTI_NO_PREV_DAY", { candles: drishtiTodayCandles.length });
+      return;
+    }
+    // V4 PDR filter — skip low-volatility days (prev day range < 150 pts)
     const _pdrH = Math.max(...drishtiPrevDayCandles.map((c: DrishtiCandle) => c.high));
     const _pdrL = Math.min(...drishtiPrevDayCandles.map((c: DrishtiCandle) => c.low));
     if (_pdrH - _pdrL >= 150) {
@@ -2304,6 +2304,10 @@ async function preStartPrompt() {
           } catch(_e) {}
           // Re-evaluate strategy on each historical candle to accurately show missed entry opportunities
           DrishtiCandleLog = [];
+          // Mini state to track first-entry vs re-entry across the backfill loop
+          let _bfFirstDone = DrishtiState.firstDone && DrishtiState.lastExitIdx >= 0;
+          let _bfLastExitIdx = _bfFirstDone ? Math.min(DrishtiState.lastExitIdx, 0) : -1;
+          let _bfLastExitDir: DrishtiDir | null = _bfFirstDone ? DrishtiState.lastExitDir : null;
           for (let _i = 0; _i < backfillCandles.length; _i++) {
             const _c = backfillCandles[_i];
             const _bp = (_c.high - _c.low) > 0 ? Math.round((_c.close - _c.open) / (_c.high - _c.low) * 100) : 0;
@@ -2314,10 +2318,20 @@ async function preStartPrompt() {
             const _saved = _savedLog.find(s => s.idx === _i);
             if (_saved) {
               DrishtiCandleLog.push(_saved);
+              // Update mini state from saved live entry so subsequent candles stay in sync
+              if (_saved.signal) { _bfFirstDone = true; _bfLastExitIdx = _saved.idx; _bfLastExitDir = _saved.signal as DrishtiDir; }
             } else {
               // Re-run strategy on partial candle array (same as if bot had been live up to this point)
               const _partial = backfillCandles.slice(0, _i + 1).map(x => ({ open: x.open, high: x.high, low: x.low, close: x.close }));
-              const _evalSig = findDrishtiEntry(_partial, drishtiPrevDayCandles);
+              let _evalSig: DrishtiEntrySignal | null = null;
+              if (_bfFirstDone && _bfLastExitIdx >= 0 && _bfLastExitDir) {
+                // Re-entry mode: use findDrishtiReEntry so re-entry candles are correctly flagged
+                const _re = findDrishtiReEntry(_partial, _bfLastExitIdx, _bfLastExitDir, true);
+                if (_re && _re.idx === _i) _evalSig = { idx: _re.idx, side: _re.side, ctx: 'INSIDE', reason: _re.reason };
+              } else if (!_bfFirstDone) {
+                _evalSig = findDrishtiEntry(_partial, drishtiPrevDayCandles);
+              }
+              if (_evalSig) { _bfFirstDone = true; _bfLastExitIdx = _i; _bfLastExitDir = _evalSig.side; }
               // EOD candles (15:15+) are never traded — don't flag them as "bot offline"
               const _isEodCandle = _t >= '15:15';
               DrishtiCandleLog.push({
@@ -2338,16 +2352,19 @@ async function preStartPrompt() {
             });
           }
 
-          // Reconstruct DrishtiState.firstDone from tradeCount if drishtiState was not in save file
-          // (handles restarts on old state files that didn't save drishtiState)
-          if (!DrishtiState.firstDone && tradeCount > 0) {
+          // Reconstruct lastExitIdx/Dir when missing — covers two cases:
+          //   (a) Old state files that didn't save drishtiState at all
+          //   (b) Sync fallback in restoreTradeState() set firstDone=true but left lastExitIdx=-1
+          // Must check lastExitIdx<0 (not !firstDone) because the sync fallback already set firstDone=true,
+          // causing the old !firstDone condition to always be false and skipping reconstruction entirely.
+          if (DrishtiState.lastExitIdx < 0 && tradeCount > 0) {
             DrishtiState.firstDone = true;
             // Reconstruct lastExitDir/Idx from candle log — use last candle that had a signal
             const _lastSignal = [...DrishtiCandleLog].reverse().find(e => e.signal);
             if (_lastSignal) {
               DrishtiState.lastExitDir  = _lastSignal.signal as DrishtiDir;
               DrishtiState.lastExitIdx  = _lastSignal.idx;  // conservative: exit was on or after this
-              DrishtiState.lastExitPts  = 0;  // unknown — gate OFF so any exit qualifies
+              DrishtiState.lastExitPts  = DrishtiState.lastExitPts > 0 ? DrishtiState.lastExitPts : 0;
               log("STATE_RESTORE", { action: "DrishtiState reconstructed from candle log", firstDone: true, lastExitDir: DrishtiState.lastExitDir, lastExitIdx: DrishtiState.lastExitIdx });
             }
           }
