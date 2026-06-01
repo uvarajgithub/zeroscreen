@@ -199,32 +199,23 @@ export function findDrishtiEntry(
     }
   }
 
-  // Moderate C0 (30-55%)
-  // All patterns here fire at idx=0 only — non-blocking so late-entry loops are still reachable
-  if (Math.abs(C0bp) > 30) {
-    if (todayCandles.length >= 2 && C1bp * C0bp > 0) {
-      const s = at(0, C0bp > 0 ? 'CE' : 'PE', 'inside_c0_moderate_c1_confirmed');
-      if (s) return s;
-    }
-    if (todayCandles.length >= 3 && Math.abs(C1bp) > 65 && C1bp * C0bp < 0) {
-      const C2bp = _bp(todayCandles[2]);
-      if (C2bp * C0bp > 0 && Math.abs(C2bp) > 20) {
-        const s = at(0, C0bp > 0 ? 'CE' : 'PE', 'inside_c0_c1_fake_c2_confirms');
-        if (s) return s;
-      }
-    }
-  }
-
-  // Weak C0 (<30%): wait C3-C9, strong body >55% required
-  for (let i = 2; i <= 8; i++) {
-    if (i >= todayCandles.length) break;
-    const cbp = _bp(todayCandles[i]);
-    if (Math.abs(cbp) > 55) {
-      const signalBull = cbp > 0;
-      const oppGap    = (signalBull && gapDown) || (!signalBull && gapUp);
-      const c0ModOpp  = (signalBull && C0bp < -20) || (!signalBull && C0bp > 20);
+  // Structural candle break: close outside previous candle's range
+  // PE if close < prev.low, CE if close > prev.high
+  // Skip if signal opposes both gap direction AND C0 direction (fake counter-gap)
+  for (let i = 1; i < todayCandles.length; i++) {
+    const prevC = todayCandles[i - 1];
+    const curr  = todayCandles[i];
+    if (curr.close < prevC.low) {
+      const oppGap   = gapUp;
+      const c0ModOpp = C0bp > 20;
       if (oppGap && c0ModOpp) continue;
-      return at(i, cbp > 0 ? 'CE' : 'PE', `inside_c${i}_strong`);
+      const s = at(i, 'PE', `struct_c${i + 1}_pe`); if (s) return s;
+    }
+    if (curr.close > prevC.high) {
+      const oppGap   = gapDown;
+      const c0ModOpp = C0bp < -20;
+      if (oppGap && c0ModOpp) continue;
+      const s = at(i, 'CE', `struct_c${i + 1}_ce`); if (s) return s;
     }
   }
 

@@ -137,31 +137,18 @@ function findDrishtiEntry(today, prev) {
     }
   }
 
-  // Moderate C0 (30-55%)
-  if (Math.abs(C0bp) > 30) {
-    if (today.length >= 2 && C1bp * C0bp > 0) {
-      const s = at(0, C0bp > 0 ? 'CE' : 'PE', 'inside_c0_moderate_c1_confirmed');
-      if (s) return s;
+  // Structural candle break: close outside previous candle's range
+  for (let i = 1; i < today.length; i++) {
+    const prevC = today[i - 1], curr = today[i];
+    if (curr.close < prevC.low) {
+      const oppGap = gapUp, c0opp = C0bp > 20;
+      if (oppGap && c0opp) continue;
+      const s = at(i, 'PE', `struct_c${i + 1}_pe`); if (s) return s;
     }
-    if (today.length >= 3 && Math.abs(C1bp) > 65 && C1bp * C0bp < 0) {
-      const C2bp = bp(today[2]);
-      if (C2bp * C0bp > 0 && Math.abs(C2bp) > 20) {
-        const s = at(0, C0bp > 0 ? 'CE' : 'PE', 'inside_c0_c1_fake_c2_confirms');
-        if (s) return s;
-      }
-    }
-  }
-
-  // Weak C0: wait C3-C9, strong body >55% required
-  for (let i = 2; i <= 8; i++) {
-    if (i >= today.length) break;
-    const cbp = bp(today[i]);
-    if (Math.abs(cbp) > 55) {
-      const signalBull = cbp > 0;
-      const oppGap  = (signalBull && gapDown) || (!signalBull && gapUp);
-      const c0ModOpp= (signalBull && C0bp < -20) || (!signalBull && C0bp > 20);
-      if (oppGap && c0ModOpp) continue;
-      return at(i, cbp > 0 ? 'CE' : 'PE', `inside_c${i}_strong`);
+    if (curr.close > prevC.high) {
+      const oppGap = gapDown, c0opp = C0bp < -20;
+      if (oppGap && c0opp) continue;
+      const s = at(i, 'CE', `struct_c${i + 1}_ce`); if (s) return s;
     }
   }
 
