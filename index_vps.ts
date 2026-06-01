@@ -654,6 +654,14 @@ function restoreTradeState(): boolean {
       DrishtiState.lastExitPts = s.drishtiState.lastExitPts ?? 0;
       DrishtiState.lastExitIdx = s.drishtiState.lastExitIdx ?? -1;
       DrishtiState.lastExitDir = s.drishtiState.lastExitDir ?? null;
+    } else if ((s.tradeCount ?? 0) > 0) {
+      // Fallback for old state files that didn't save drishtiState:
+      // tradeCount > 0 means at least one trade happened today → firstDone must be true.
+      // Set synchronously here so the trading interval never sees firstDone=false
+      // (the async backfill reconstruction had a race condition on multi-restart days).
+      DrishtiState.firstDone   = true;
+      DrishtiState.lastExitPts = 0;   // unknown — gate OFF, any exit qualifies for re-entry
+      log("STATE_RESTORE", { action: "DrishtiState.firstDone=true inferred from tradeCount (no drishtiState in file)" });
     }
     log("STATE_RESTORE", {
       action: "Trade state restored from file",
@@ -1265,7 +1273,7 @@ function startDrishtiLTPMonitor() {
     } catch (e) {
       log("LTP_MONITOR_ERR", { error: e instanceof Error ? e.message : String(e) });
     }
-  }, 60 * 1000);  // every 60 seconds
+  }, 15 * 1000);  // every 15 seconds (tighter trail detection — 60s caused 20+ pt slippage on fast reversals)
 
   log("LTP_MONITOR_START", { entry: entryPrice, dir: tradeDirection, trailGap: DRISHTI_TRAIL_GAP });
 }
