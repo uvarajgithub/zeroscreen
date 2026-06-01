@@ -2267,14 +2267,24 @@ async function preStartPrompt() {
             const candleStart = new Date(c.date).getTime();
             return nowMs >= candleStart + 15 * 60_000;  // last candle: check its window has passed
           });
-          drishtiTodayCandles = closedCandles.map(c => ({ open: c.open, high: c.high, low: c.low, close: c.close }));
-          // Set last candle key to the last FULLY CLOSED candle to avoid re-processing
-          if (closedCandles.length > 0) {
-            const last = closedCandles[closedCandles.length - 1];
+          // Skip first candle (the 9:15-9:30 "seed" candle).
+          // In normal operation: the first candle seen by runDrishtiBot is SEEDED (key stored, NOT pushed).
+          // The first actual push is the 9:30-9:45 candle → drishtiTodayCandles[0].
+          // getTodayCandles() returns ALL candles including 9:15, causing an off-by-one shift in indices.
+          // This breaks lastExitIdx (saved as 3 = entry candle pre-restart, but now points to wrong candle).
+          const backfillCandles = closedCandles.slice(1);
+          drishtiTodayCandles = backfillCandles.map(c => ({ open: c.open, high: c.high, low: c.low, close: c.close }));
+          // Set last candle key to the last FULLY CLOSED backfill candle to avoid re-processing
+          if (backfillCandles.length > 0) {
+            const last = backfillCandles[backfillCandles.length - 1];
             // Use raw date string (same format as running code uses for candleKey) — avoids
             // String(new Date(...)) which produces a different locale-based string and causes
             // the last backfill candle to be re-processed as "new" on the first runDrishtiBot cycle
             drishtiLastCandleKey = last.date ? String(last.date) : `${last.high}_${last.low}`;
+          } else if (closedCandles.length > 0) {
+            // Only the seed candle closed so far — seed on it (no push)
+            const seed = closedCandles[0];
+            drishtiLastCandleKey = seed.date ? String(seed.date) : `${seed.high}_${seed.low}`;
           }
           // Load persisted candle log from today (if any) — preserves live evaluations across restarts
           const _istNow = new Date(new Date().getTime() + 5.5 * 3600000);
@@ -2286,8 +2296,8 @@ async function preStartPrompt() {
           } catch(_e) {}
           // Re-evaluate strategy on each historical candle to accurately show missed entry opportunities
           DrishtiCandleLog = [];
-          for (let _i = 0; _i < closedCandles.length; _i++) {
-            const _c = closedCandles[_i];
+          for (let _i = 0; _i < backfillCandles.length; _i++) {
+            const _c = backfillCandles[_i];
             const _bp = (_c.high - _c.low) > 0 ? Math.round((_c.close - _c.open) / (_c.high - _c.low) * 100) : 0;
             const _d = new Date(_c.date);
             const _ist = new Date(_d.getTime() + 5.5 * 3600000);
@@ -2298,7 +2308,7 @@ async function preStartPrompt() {
               DrishtiCandleLog.push(_saved);
             } else {
               // Re-run strategy on partial candle array (same as if bot had been live up to this point)
-              const _partial = closedCandles.slice(0, _i + 1).map(x => ({ open: x.open, high: x.high, low: x.low, close: x.close }));
+              const _partial = backfillCandles.slice(0, _i + 1).map(x => ({ open: x.open, high: x.high, low: x.low, close: x.close }));
               const _evalSig = findDrishtiEntry(_partial, drishtiPrevDayCandles);
               // EOD candles (15:15+) are never traded — don't flag them as "bot offline"
               const _isEodCandle = _t >= '15:15';
@@ -2336,7 +2346,7 @@ async function preStartPrompt() {
 
           // Only silence TG and mark "done" if this is a FRESH LATE START (no trade happened today)
           // For mid-day RESTARTS (tradeCount > 0), bot was already running — continue normally
-          if (closedCandles.length > 0 && tradeCount === 0) {
+          if (backfillCandles.length > 0 && tradeCount === 0) {
             const _missedSig = _missedEntries.find(e => e.idx === 0);
             sendTelegram(
               `⛔ *Done for today* — Bot came online after 9:30 AM\n` +
@@ -2346,10 +2356,10 @@ async function preStartPrompt() {
               `No new trades will be placed today.\nNext opportunity: tomorrow 9:30 AM`
             ).catch(() => {});
             _tgSilenced = true;  // silence all further Telegram for today
-          } else if (closedCandles.length > 0 && tradeCount > 0) {
-            log("DRISHTI_RESTART_MID_DAY", { candles: closedCandles.length, tradeCount, firstDone: DrishtiState.firstDone, lastExitDir: DrishtiState.lastExitDir });
+          } else if (backfillCandles.length > 0 && tradeCount > 0) {
+            log("DRISHTI_RESTART_MID_DAY", { candles: backfillCandles.length, tradeCount, firstDone: DrishtiState.firstDone, lastExitDir: DrishtiState.lastExitDir });
           }
-          log("DRISHTI_TODAY_BACKFILL", { at: "startup", count: closedCandles.length, raw: candles.length, missedEntries: _missedEntries.length });
+          log("DRISHTI_TODAY_BACKFILL", { at: "startup", count: backfillCandles.length, raw: candles.length, missedEntries: _missedEntries.length });
         }
       }).catch(e => {
         // Before 9:15 AM the market isn't open — API returning no data is expected, not an error
