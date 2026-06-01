@@ -215,21 +215,15 @@ export function findDrishtiEntry(
     }
   }
 
-  // Weak C0 (<30%): wait C2-C8
+  // Weak C0 (<30%): wait C3-C9, strong body >55% required
   for (let i = 2; i <= 8; i++) {
     if (i >= todayCandles.length) break;
     const cbp = _bp(todayCandles[i]);
     if (Math.abs(cbp) > 55) {
       const signalBull = cbp > 0;
-      const oppGap = (signalBull && gapDown) || (!signalBull && gapUp);
-      const c0ModOpp = (signalBull && C0bp < -20) || (!signalBull && C0bp > 20);
+      const oppGap    = (signalBull && gapDown) || (!signalBull && gapUp);
+      const c0ModOpp  = (signalBull && C0bp < -20) || (!signalBull && C0bp > 20);
       if (oppGap && c0ModOpp) continue;
-
-      const prev = _bp(todayCandles[i - 1]);
-      if (Math.abs(prev) > 60 && prev * cbp < 0) {
-        if (i + 1 < todayCandles.length && _bp(todayCandles[i + 1]) * cbp < 0 && Math.abs(_bp(todayCandles[i + 1])) > 60)
-          return null;  // whipsaw
-      }
       return at(i, cbp > 0 ? 'CE' : 'PE', `inside_c${i}_strong`);
     }
   }
@@ -258,22 +252,30 @@ export function findDrishtiReEntry(
   const lastIdx = todayCandles.length - 1;
   if (lastIdx <= exitIdx) return null;
 
-  // Same direction first
+  // Return the FIRST strong candle after exitIdx — whichever direction appears earliest wins.
+  // Previously: same-dir loop ran first, so a same-dir signal at C8 would win over a reverse
+  // signal at C6, causing the earlier (more timely) entry to be missed.
+  const revSide: DrishtiDir = side === 'CE' ? 'PE' : 'CE';
+  let sameDirMatch: { idx: number; side: DrishtiDir; reason: string } | null = null;
+  let revMatch:     { idx: number; side: DrishtiDir; reason: string } | null = null;
+
   for (let i = exitIdx + 1; i <= lastIdx; i++) {
     const b = _bp(todayCandles[i]);
-    if (side === 'CE' && b > 40) return { idx: i, side, reason: 're_same_dir' };
-    if (side === 'PE' && b < -40) return { idx: i, side, reason: 're_same_dir' };
+    if (!sameDirMatch) {
+      if (side === 'CE' && b > 40) sameDirMatch = { idx: i, side, reason: 're_same_dir' };
+      if (side === 'PE' && b < -40) sameDirMatch = { idx: i, side, reason: 're_same_dir' };
+    }
+    if (!revMatch && allowReverse) {
+      if (revSide === 'CE' && b > 40) revMatch = { idx: i, side: revSide, reason: 're_reverse' };
+      if (revSide === 'PE' && b < -40) revMatch = { idx: i, side: revSide, reason: 're_reverse' };
+    }
+    if (sameDirMatch && (!allowReverse || revMatch)) break;  // found both — no need to scan further
   }
 
-  // Reverse direction (after big T1 peak >= 100)
-  if (allowReverse) {
-    const revSide: DrishtiDir = side === 'CE' ? 'PE' : 'CE';
-    for (let i = exitIdx + 1; i <= lastIdx; i++) {
-      const b = _bp(todayCandles[i]);
-      if (revSide === 'CE' && b > 40) return { idx: i, side: revSide, reason: 're_reverse' };
-      if (revSide === 'PE' && b < -40) return { idx: i, side: revSide, reason: 're_reverse' };
-    }
-  }
+  // Pick the one that appeared earlier; if tied (same candle strong both ways — impossible), prefer same-dir
+  if (sameDirMatch && revMatch) return sameDirMatch.idx <= revMatch.idx ? sameDirMatch : revMatch;
+  if (sameDirMatch) return sameDirMatch;
+  if (revMatch) return revMatch;
   return null;
 }
 

@@ -553,6 +553,20 @@ function saveTradeState() {
       waitReEntry: hybridState.waitReEntry,
       isC1:        hybridState.isC1,
     },
+    // DRISHTI_V1 live state — must survive restarts
+    drishtiState: {
+      inTrade:     DrishtiState.inTrade,
+      dir:         DrishtiState.dir,
+      entry:       DrishtiState.entry,
+      entryIdx:    DrishtiState.entryIdx,
+      trailStop:   DrishtiState.trailStop,
+      peakPts:     DrishtiState.peakPts,
+      firstDone:   DrishtiState.firstDone,
+      reCount:     DrishtiState.reCount,
+      lastExitPts: DrishtiState.lastExitPts,
+      lastExitIdx: DrishtiState.lastExitIdx,
+      lastExitDir: DrishtiState.lastExitDir,
+    },
   };
   try {
     fs.writeFileSync(STATE_FILE, JSON.stringify(state, null, 2));
@@ -614,7 +628,8 @@ function restoreTradeState(): boolean {
     entryPremium     = s.entryPremium     ?? 0;
     // Restore LOCK50 live stats
     drishtiWins   = s.drishtiWins   ?? 0;
-    drishtiLosses = s.drishtiLosses ?? 0;    // Restore HYBRID_REVERSE state so waitReEntry / refHigh survive PM2 restarts
+    drishtiLosses = s.drishtiLosses ?? 0;
+    // Restore HYBRID_REVERSE state so waitReEntry / refHigh survive PM2 restarts
     if (s.hybridState) {
       hybridState.inTrade     = s.hybridState.inTrade     ?? false;
       hybridState.dir         = s.hybridState.dir         ?? null;
@@ -625,6 +640,20 @@ function restoreTradeState(): boolean {
       hybridState.reUsed      = s.hybridState.reUsed      ?? false;
       hybridState.waitReEntry = s.hybridState.waitReEntry ?? false;
       hybridState.isC1        = s.hybridState.isC1        ?? false;
+    }
+    // Restore DRISHTI_V1 state so active trades survive PM2 restarts
+    if (s.drishtiState) {
+      DrishtiState.inTrade     = s.drishtiState.inTrade     ?? false;
+      DrishtiState.dir         = s.drishtiState.dir         ?? null;
+      DrishtiState.entry       = s.drishtiState.entry       ?? 0;
+      DrishtiState.entryIdx    = s.drishtiState.entryIdx    ?? -1;
+      DrishtiState.trailStop   = s.drishtiState.trailStop   ?? -150;
+      DrishtiState.peakPts     = s.drishtiState.peakPts     ?? 0;
+      DrishtiState.firstDone   = s.drishtiState.firstDone   ?? false;
+      DrishtiState.reCount     = s.drishtiState.reCount     ?? 0;
+      DrishtiState.lastExitPts = s.drishtiState.lastExitPts ?? 0;
+      DrishtiState.lastExitIdx = s.drishtiState.lastExitIdx ?? -1;
+      DrishtiState.lastExitDir = s.drishtiState.lastExitDir ?? null;
     }
     log("STATE_RESTORE", {
       action: "Trade state restored from file",
@@ -1160,13 +1189,16 @@ function stopDrishtiLTPMonitor() {
 
 async function executeDrishtiLTPExit(ltp: number, pts: number, reason: string) {
   if (!activeTrade || !DrishtiState.inTrade) return;
-  const capturedEntry  = entryPrice;
-  const capturedDir    = tradeDirection;
-  const capturedTime   = entryTime;
-  const capturedSymbol = tradeSymbol;
-  const capturedPeak   = drishtiIntradayPeak;
+  const capturedEntry        = entryPrice;
+  const capturedDir          = tradeDirection;
+  const capturedTime         = entryTime;
+  const capturedSymbol       = tradeSymbol;
+  const capturedPeak         = drishtiIntradayPeak;
+  const capturedPremiumEntry = entryPremium;
+  const capturedPremiumExit  = lastOptionLTP;
 
   stopDrishtiLTPMonitor();
+  const exitOptionLTP = await getOptionLTP(capturedSymbol).catch(() => 0);
 
   try { await exitTrade(tradeSymbol, config.quantity); } catch (e) {
     log("EXIT_FAIL", { error: e instanceof Error ? e.message : String(e) });
@@ -1187,7 +1219,7 @@ async function executeDrishtiLTPExit(ltp: number, pts: number, reason: string) {
 
   saveTradeState();
   await notifyExit(ltp, pts, reason, { dir: capturedDir, entry: capturedEntry, symbol: capturedSymbol, qty: config.quantity }).catch(() => {});
-  logTrade({ date: new Date().toISOString(), type: "DRISHTI_V1", direction: capturedDir ?? "CE", symbol: capturedSymbol, premiumEntry: entryPremium, premiumExit: 0, qty: config.quantity, entryPrice: capturedEntry, exitPrice: ltp, pnl: pts, reasonEntry: "drishti_entry", reasonExit: reason, aiScore: 1, slippage: 0, duration: capturedTime > 0 ? Math.round((Date.now() - capturedTime) / 1000) : 0 });
+  logTrade({ date: new Date().toISOString(), type: "DRISHTI_V1", direction: capturedDir ?? "CE", symbol: capturedSymbol, premiumEntry: capturedPremiumEntry, premiumExit: exitOptionLTP, qty: config.quantity, entryPrice: capturedEntry, exitPrice: ltp, pnl: pts, reasonEntry: "drishti_entry", reasonExit: reason, aiScore: 1, slippage: 0, duration: capturedTime > 0 ? Math.round((Date.now() - capturedTime) / 1000) : 0 });
 }
 
 function startDrishtiLTPMonitor() {
@@ -1242,7 +1274,7 @@ function startDrishtiLTPMonitor() {
 // DRISHTI V1 — PDH/PDL Context + LOCK10 Trail (live bot)
 // Entry: findDrishtiEntry() detects pattern on each 15-min candle close
 // Trail: SL=150 pts; once peak>=10 pts, trail = peak-10 (LOCK10, candle-close only)
-// Re-entries: up to 5, gate=OFF (lastExitPts>=0), reverse allowed after peak>=50
+// Re-entries: up to 5, gate=OFF (lastExitPts>=0), reverse always allowed (REV_UNLOCK=0)
 // ═══════════════════════════════════════════════════════════════════════════
 async function runDrishtiBot() {
   const now = new Date();
@@ -1368,10 +1400,12 @@ async function runDrishtiBot() {
 
     if (trail.action !== "HOLD") {
       stopDrishtiLTPMonitor();  // stop 1-min monitor — candle-close exit taking over
-      const capturedEntry  = entryPrice;
-      const capturedDir    = tradeDirection;
-      const capturedTime   = entryTime;
-      const capturedSymbol = tradeSymbol;
+      const capturedEntry        = entryPrice;
+      const capturedDir          = tradeDirection;
+      const capturedTime         = entryTime;
+      const capturedSymbol       = tradeSymbol;
+      const capturedPremiumEntry = entryPremium;
+      const capturedPremiumExit  = await getOptionLTP(tradeSymbol).catch(() => 0);
 
       try { await exitTrade(tradeSymbol, config.quantity); } catch (e) {
         log("EXIT_FAIL", { error: e instanceof Error ? e.message : String(e) });
@@ -1406,7 +1440,7 @@ async function runDrishtiBot() {
         await sendEODSummary().catch(() => {});
         generateMonthlyReport().catch(e => log("REPORT_FAIL", { error: e?.message }));
       }
-      logTrade({ date: new Date().toISOString(), type: "DRISHTI_V1", direction: capturedDir ?? "CE", symbol: capturedSymbol, premiumEntry: entryPremium, premiumExit: lastOptionLTP > 0 ? lastOptionLTP : 0, qty: config.quantity, entryPrice: capturedEntry, exitPrice: trail.exitPrice, pnl: pts, reasonEntry: "drishti_entry", reasonExit: trail.action.toLowerCase(), aiScore: 1, slippage: 0, duration: capturedTime > 0 ? Math.round((Date.now() - capturedTime) / 1000) : 0 });
+      logTrade({ date: new Date().toISOString(), type: "DRISHTI_V1", direction: capturedDir ?? "CE", symbol: capturedSymbol, premiumEntry: capturedPremiumEntry, premiumExit: capturedPremiumExit, qty: config.quantity, entryPrice: capturedEntry, exitPrice: trail.exitPrice, pnl: pts, reasonEntry: "drishti_entry", reasonExit: trail.action.toLowerCase(), aiScore: 1, slippage: 0, duration: capturedTime > 0 ? Math.round((Date.now() - capturedTime) / 1000) : 0 });
     }
     return;  // always return after trail check (don't look for new entries in same tick)
   }
@@ -1424,11 +1458,23 @@ async function runDrishtiBot() {
   let entrySig: DrishtiEntrySignal | null = null;
 
   if (DrishtiState.firstDone && DrishtiState.reCount < 5 && DrishtiState.lastExitPts >= 0 && DrishtiState.lastExitIdx >= 0 && DrishtiState.lastExitDir) {
-    // Re-entry: look for strong candle after last exit (RE_GATE=0, REV_UNLOCK=50)
-    const allowReverse = DrishtiState.lastExitPts >= 50;
+    // Re-entry: look for strong candle after last exit — always allow reverse (REV_UNLOCK=0)
+    const allowReverse = true;
     const re = findDrishtiReEntry(drishtiTodayCandles, DrishtiState.lastExitIdx, DrishtiState.lastExitDir, allowReverse);
-    if (re && re.idx === drishtiTodayCandles.length - 1) {
-      entrySig = { idx: re.idx, side: re.side, ctx: "INSIDE", reason: re.reason };
+    const lastIdx = drishtiTodayCandles.length - 1;
+    if (re) {
+      if (re.idx === lastIdx) {
+        // Signal on current candle — normal entry
+        entrySig = { idx: re.idx, side: re.side, ctx: "INSIDE", reason: re.reason };
+      } else if (re.idx === lastIdx - 1) {
+        // Signal was on previous candle (missed) — enter on current candle
+        // unless current candle is strongly opposing (body < -40% for CE, > +40% for PE)
+        const curBody = (bc.high - bc.low) > 0 ? Math.round((bc.close - bc.open) / (bc.high - bc.low) * 100) : 0;
+        const curNotOpposing = re.side === 'CE' ? curBody > -40 : curBody < 40;
+        if (curNotOpposing) {
+          entrySig = { idx: re.idx, side: re.side, ctx: "INSIDE", reason: re.reason + '_next_candle' };
+        }
+      }
     }
   } else if (!DrishtiState.firstDone) {
     // First entry: V4 PDR filter — skip low-volatility days (prev day range < 150 pts)
@@ -2188,6 +2234,11 @@ async function preStartPrompt() {
         hybridState.sl      = restoredSL;
         console.log(`✅  hybridState seeded: dir=${tradeDirection} entry=${entryPrice} sl=${restoredSL}`);
       }
+      // ── CRITICAL: resume Drishti LTP monitor if trade was active ──
+      if (ACTIVE_STRATEGY === "DRISHTI_V1" && DrishtiState.inTrade && activeTrade && entryPrice > 0) {
+        log("STATE_RESTORE", { action: "Resuming Drishti LTP monitor after restart", entry: entryPrice, dir: DrishtiState.dir });
+        startDrishtiLTPMonitor();
+      }
     }
     // Restore ITM_HOLD positions (multi-day, survive across restarts)
     if (ACTIVE_STRATEGY === "ITM_HOLD") {
@@ -2220,7 +2271,10 @@ async function preStartPrompt() {
           // Set last candle key to the last FULLY CLOSED candle to avoid re-processing
           if (closedCandles.length > 0) {
             const last = closedCandles[closedCandles.length - 1];
-            drishtiLastCandleKey = last.date ? String(new Date(last.date)) : `${last.high}_${last.low}`;
+            // Use raw date string (same format as running code uses for candleKey) — avoids
+            // String(new Date(...)) which produces a different locale-based string and causes
+            // the last backfill candle to be re-processed as "new" on the first runDrishtiBot cycle
+            drishtiLastCandleKey = last.date ? String(last.date) : `${last.high}_${last.low}`;
           }
           // Load persisted candle log from today (if any) — preserves live evaluations across restarts
           const _istNow = new Date(new Date().getTime() + 5.5 * 3600000);
@@ -2265,8 +2319,24 @@ async function preStartPrompt() {
               log("🚨 MISSED_ENTRY", { candle: `C${e.idx}`, time: e.time, direction: e.signal, reason: e.reason, note: "Bot was offline when this signal occurred" });
             });
           }
-          // If C1 (idx=0) is already in backfill, entry window is gone — notify once
-          if (closedCandles.length > 0) {
+
+          // Reconstruct DrishtiState.firstDone from tradeCount if drishtiState was not in save file
+          // (handles restarts on old state files that didn't save drishtiState)
+          if (!DrishtiState.firstDone && tradeCount > 0) {
+            DrishtiState.firstDone = true;
+            // Reconstruct lastExitDir/Idx from candle log — use last candle that had a signal
+            const _lastSignal = [...DrishtiCandleLog].reverse().find(e => e.signal);
+            if (_lastSignal) {
+              DrishtiState.lastExitDir  = _lastSignal.signal as DrishtiDir;
+              DrishtiState.lastExitIdx  = _lastSignal.idx;  // conservative: exit was on or after this
+              DrishtiState.lastExitPts  = 0;  // unknown — gate OFF so any exit qualifies
+              log("STATE_RESTORE", { action: "DrishtiState reconstructed from candle log", firstDone: true, lastExitDir: DrishtiState.lastExitDir, lastExitIdx: DrishtiState.lastExitIdx });
+            }
+          }
+
+          // Only silence TG and mark "done" if this is a FRESH LATE START (no trade happened today)
+          // For mid-day RESTARTS (tradeCount > 0), bot was already running — continue normally
+          if (closedCandles.length > 0 && tradeCount === 0) {
             const _missedSig = _missedEntries.find(e => e.idx === 0);
             sendTelegram(
               `⛔ *Done for today* — Bot came online after 9:30 AM\n` +
@@ -2276,6 +2346,8 @@ async function preStartPrompt() {
               `No new trades will be placed today.\nNext opportunity: tomorrow 9:30 AM`
             ).catch(() => {});
             _tgSilenced = true;  // silence all further Telegram for today
+          } else if (closedCandles.length > 0 && tradeCount > 0) {
+            log("DRISHTI_RESTART_MID_DAY", { candles: closedCandles.length, tradeCount, firstDone: DrishtiState.firstDone, lastExitDir: DrishtiState.lastExitDir });
           }
           log("DRISHTI_TODAY_BACKFILL", { at: "startup", count: closedCandles.length, raw: candles.length, missedEntries: _missedEntries.length });
         }

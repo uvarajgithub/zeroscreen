@@ -137,6 +137,7 @@ function findDrishtiEntry(today, prev) {
     }
   }
 
+  // Moderate C0 (30-55%)
   if (Math.abs(C0bp) > 30) {
     if (today.length >= 2 && C1bp * C0bp > 0) {
       const s = at(0, C0bp > 0 ? 'CE' : 'PE', 'inside_c0_moderate_c1_confirmed');
@@ -151,6 +152,7 @@ function findDrishtiEntry(today, prev) {
     }
   }
 
+  // Weak C0: wait C3-C9, strong body >55% required
   for (let i = 2; i <= 8; i++) {
     if (i >= today.length) break;
     const cbp = bp(today[i]);
@@ -159,11 +161,6 @@ function findDrishtiEntry(today, prev) {
       const oppGap  = (signalBull && gapDown) || (!signalBull && gapUp);
       const c0ModOpp= (signalBull && C0bp < -20) || (!signalBull && C0bp > 20);
       if (oppGap && c0ModOpp) continue;
-      const prev2 = bp(today[i - 1]);
-      if (Math.abs(prev2) > 60 && prev2 * cbp < 0) {
-        if (i + 1 < today.length && bp(today[i + 1]) * cbp < 0 && Math.abs(bp(today[i + 1])) > 60)
-          return null;
-      }
       return at(i, cbp > 0 ? 'CE' : 'PE', `inside_c${i}_strong`);
     }
   }
