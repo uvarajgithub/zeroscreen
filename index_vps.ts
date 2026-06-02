@@ -428,9 +428,10 @@ async function monitorCandleBreakouts() {
             + `P&L: ${_bUS}${_bu.toFixed(0)} pts | Peak: ${DrishtiState.peakPts.toFixed(0)} pts\n`
             + `Day: ${_bSign}${dailyPnL.toFixed(0)} | ${drishtiWins}W ${drishtiLosses}L | T:${tradeCount}/5`;
         } else if (DrishtiState.firstDone && !DrishtiState.inTrade) {
+          const _reNum = DrishtiState.reCount + 1;
           const _re = DrishtiState.reCount < 5
-            ? ` | RE #${DrishtiState.reCount + 1} watching` : "";
-          strategyCtx = `Done${_re}\n`
+            ? `⏳ Watching RE #${_reNum}` : `✅ All trades done`;
+          strategyCtx = `${_re}\n`
             + `Day: ${_bSign}${dailyPnL.toFixed(0)} | ${drishtiWins}W ${drishtiLosses}L | T:${tradeCount}/5`;
         } else {
           strategyCtx = `Watching | Candle #${drishtiTodayCandles.length}\n`
@@ -462,6 +463,7 @@ async function monitorCandleBreakouts() {
         && drishtiTodayCandles.length > 20;
       const _doneForDay =
         _noTradeAllDay ||
+        (ACTIVE_STRATEGY === "DRISHTI_V1" && stopForDay && !DrishtiState.inTrade) ||
         (ACTIVE_STRATEGY === "HYBRID_REVERSE" && hybridState.firstDone && !hybridState.waitReEntry && !(activeTrade || mainEntryDone || earlyEntryDone)) ||
         (ACTIVE_STRATEGY === "HYBRID_REVERSE" && stopForDay && !activeTrade);
       if (_doneForDay) {
@@ -1227,7 +1229,7 @@ async function executeDrishtiLTPExit(ltp: number, pts: number, reason: string) {
 
   saveTradeState();
   await notifyExit(ltp, pts, reason, { dir: capturedDir, entry: capturedEntry, symbol: capturedSymbol, qty: config.quantity }).catch(() => {});
-  logTrade({ date: new Date().toISOString(), type: "DRISHTI_V1", direction: capturedDir ?? "CE", symbol: capturedSymbol, premiumEntry: capturedPremiumEntry, premiumExit: exitOptionLTP, qty: config.quantity, entryPrice: capturedEntry, exitPrice: ltp, pnl: pts, reasonEntry: "drishti_entry", reasonExit: reason, aiScore: 1, slippage: 0, duration: capturedTime > 0 ? Math.round((Date.now() - capturedTime) / 1000) : 0 });
+  logTrade({ date: new Date().toISOString(), type: "DRISHTI_V1", direction: capturedDir ?? "CE", symbol: capturedSymbol, premiumEntry: capturedPremiumEntry, premiumExit: exitOptionLTP || capturedPremiumExit, qty: config.quantity, entryPrice: capturedEntry, exitPrice: ltp, pnl: pts, reasonEntry: "drishti_entry", reasonExit: reason, aiScore: 1, slippage: 0, duration: capturedTime > 0 ? Math.round((Date.now() - capturedTime) / 1000) : 0 });
 }
 
 function startDrishtiLTPMonitor() {
@@ -1273,7 +1275,7 @@ function startDrishtiLTPMonitor() {
     } catch (e) {
       log("LTP_MONITOR_ERR", { error: e instanceof Error ? e.message : String(e) });
     }
-  }, 15 * 1000);  // every 15 seconds (tighter trail detection — 60s caused 20+ pt slippage on fast reversals)
+  }, 5 * 1000);   // every 5 seconds — fast trail detection, ~3-4 pt slippage (options must exit while still ITM)
 
   log("LTP_MONITOR_START", { entry: entryPrice, dir: tradeDirection, trailGap: DRISHTI_TRAIL_GAP });
 }
@@ -1283,7 +1285,30 @@ function startDrishtiLTPMonitor() {
 // Entry: findDrishtiEntry() detects pattern on each 15-min candle close
 // Trail: SL=150 pts; once peak>=10 pts, trail = peak-10 (LOCK10, candle-close only)
 // Re-entries: up to 5, gate=OFF (lastExitPts>=0), reverse always allowed (REV_UNLOCK=0)
+// Instrument: BankNifty FUTURES (not options) — P&L = index pts × 30 exact
 // ═══════════════════════════════════════════════════════════════════════════
+
+// Returns the nearest-expiry BankNifty futures symbol (e.g. BANKNIFTY26JUNFUT)
+// Rolls automatically: picks the front-month until last-Thursday expiry, then next month
+function getDrishtiFuturesSymbol(): Promise<string> {
+  const { KiteConnect } = require('kiteconnect');
+  const kite = new KiteConnect({ api_key: process.env.API_KEY || '' });
+  kite.setAccessToken(process.env.ACCESS_TOKEN || '');
+  return kite.getInstruments('NFO').then((ins: any[]) => {
+    const fut = ins
+      .filter((i: any) => i.name === 'BANKNIFTY' && i.instrument_type === 'FUT')
+      .sort((a: any, b: any) => new Date(a.expiry).getTime() - new Date(b.expiry).getTime());
+    if (!fut.length) throw new Error('No BankNifty futures found');
+    // Use front month unless within 1 day of expiry — then use next month
+    const today = new Date();
+    const front = fut[0];
+    const expiry = new Date(front.expiry);
+    const daysToExpiry = (expiry.getTime() - today.getTime()) / 86400000;
+    const chosen = daysToExpiry <= 1 && fut.length > 1 ? fut[1] : front;
+    return chosen.tradingsymbol as string;
+  });
+}
+
 async function runDrishtiBot() {
   const now = new Date();
   const ist = new Date(now.toLocaleString("en-US", { timeZone: "Asia/Kolkata" }));
@@ -1415,7 +1440,7 @@ async function runDrishtiBot() {
       const capturedPremiumEntry = entryPremium;
       const capturedPremiumExit  = await getOptionLTP(tradeSymbol).catch(() => 0);
 
-      try { await exitTrade(tradeSymbol, config.quantity); } catch (e) {
+      try { await exitTrade(tradeSymbol, config.quantity, capturedDir === "PE" ? "BUY" : "SELL"); } catch (e) {
         log("EXIT_FAIL", { error: e instanceof Error ? e.message : String(e) });
       }
 
@@ -1469,15 +1494,8 @@ async function runDrishtiBot() {
       if (re.idx === lastIdx) {
         // Signal on current candle — normal entry
         entrySig = { idx: re.idx, side: re.side, ctx: "INSIDE", reason: re.reason };
-      } else if (re.idx === lastIdx - 1) {
-        // Signal was on previous candle (missed) — enter on current candle
-        // unless current candle is strongly opposing (body < -40% for CE, > +40% for PE)
-        const curBody = (bc.high - bc.low) > 0 ? Math.round((bc.close - bc.open) / (bc.high - bc.low) * 100) : 0;
-        const curNotOpposing = re.side === 'CE' ? curBody > -40 : curBody < 40;
-        if (curNotOpposing) {
-          entrySig = { idx: re.idx, side: re.side, ctx: "INSIDE", reason: re.reason + '_next_candle' };
-        }
       }
+      // NOTE: _next_candle path removed — backtest only enters on exact candle (sig.idx === i)
     }
   } else if (!DrishtiState.firstDone) {
     // First entry: needs prevDayCandles for PDH/PDL context — guard here, not before re-entry block
@@ -1563,15 +1581,15 @@ async function runDrishtiBot() {
     return;
   }
 
-  // ── Place trade ───────────────────────────────────────────────────────
+  // ── Place trade (BankNifty FUTURES) ────────────────────────────────────
   let sym = "";
   try {
     sym = await Promise.race([
-      getBestOptionSymbol(entrySig.side),
-      new Promise<string>((_, rej) => setTimeout(() => rej(new Error("option select timeout")), 10000)),
+      getDrishtiFuturesSymbol(),
+      new Promise<string>((_, rej) => setTimeout(() => rej(new Error("futures symbol timeout")), 10000)),
     ]);
   } catch (e) {
-    log("OPTION_SELECT_FAIL", { error: String(e) });
+    log("FUTURES_SYMBOL_FAIL", { error: String(e) });
     return;
   }
 
@@ -1590,11 +1608,11 @@ async function runDrishtiBot() {
   DrishtiState.entryIdx  = drishtiTodayCandles.length - 1;
   DrishtiState.trailStop = -150;
   DrishtiState.peakPts   = 0;
-  startDrishtiLTPMonitor();  // start 1-min LTP polling to catch intraday trail/SL hits
+  // startDrishtiLTPMonitor();  // DISABLED — candle-close exit only (matches backtest)
 
   try {
     tradeInProgress = true;
-    const order = await placeTrade(sym, freshPrice, config.quantity);
+    const order = await placeTrade(sym, freshPrice, config.quantity, entrySig.side === "PE" ? "SELL" : "BUY");
     tradeInProgress = false;
     if (!order || order.status !== "COMPLETE" || order.filled_quantity <= 0) {
       stopDrishtiLTPMonitor();  // trade failed — stop LTP monitor
@@ -1622,11 +1640,11 @@ async function runDrishtiBot() {
 
   const slLevel = entrySig.side === "CE" ? bc.close - 150 : bc.close + 150;
   await sendTelegram(
-    `📈 *DRISHTI V1 — ${entrySig.side === "CE" ? "CE (Bullish)" : "PE (Bearish)"}*
+    `📈 *DRISHTI V1 — ${entrySig.side === "CE" ? "LONG BNF Futures" : "SHORT BNF Futures"}*
 ` +
     `Symbol: \`${sym}\`
 ` +
-    `Premium: *₹${freshPrice}* | Qty: ${config.quantity}
+    `Futures price: *₹${freshPrice}* | Qty: ${config.quantity}
 ` +
     `Index entry: *${bc.close.toFixed(0)}* | SL: ${slLevel.toFixed(0)} (−150 pts)
 ` +
@@ -2245,7 +2263,7 @@ async function preStartPrompt() {
       // ── CRITICAL: resume Drishti LTP monitor if trade was active ──
       if (ACTIVE_STRATEGY === "DRISHTI_V1" && DrishtiState.inTrade && activeTrade && entryPrice > 0) {
         log("STATE_RESTORE", { action: "Resuming Drishti LTP monitor after restart", entry: entryPrice, dir: DrishtiState.dir });
-        startDrishtiLTPMonitor();
+        // startDrishtiLTPMonitor();  // DISABLED — candle-close exit only (matches backtest)
       }
     }
     // Restore ITM_HOLD positions (multi-day, survive across restarts)
@@ -2381,6 +2399,7 @@ async function preStartPrompt() {
               `No new trades will be placed today.\nNext opportunity: tomorrow 9:30 AM`
             ).catch(() => {});
             _tgSilenced = true;  // silence all further Telegram for today
+            stopForDay = true;   // prevent silent trade entries on late start
           } else if (backfillCandles.length > 0 && tradeCount > 0) {
             log("DRISHTI_RESTART_MID_DAY", { candles: backfillCandles.length, tradeCount, firstDone: DrishtiState.firstDone, lastExitDir: DrishtiState.lastExitDir });
           }
@@ -2769,7 +2788,7 @@ async function notifyEntry(
 // 4. EXIT ALERT
 async function notifyExit(exit: number, pnl: number, reason: string, ctx?: { dir?: string | null; entry?: number; symbol?: string; qty?: number }) {
   const qty   = ctx?.qty ?? config.quantity;
-  const rupeesEst = Math.round(Math.abs(pnl) * qty * 0.5);
+  const rupeesEst = Math.round(Math.abs(pnl) * qty);  // futures: delta=1.0, 1 pt = ₹1 per unit
   const pnlSign   = pnl >= 0 ? "+" : "−";
   const rsSign    = pnl >= 0 ? "+" : "−";
   const emoji     = pnl >= 0 ? "✅" : pnl > -10 ? "⚠️" : "❌";
@@ -2782,7 +2801,7 @@ async function notifyExit(exit: number, pnl: number, reason: string, ctx?: { dir
     symLine + dirLine + entryLine +
     `Index exit: ${exit}\n` +
     `Index P&L: *${pnlSign}${Math.abs(pnl)} pts*\n` +
-    `₹ est: *${rsSign}₹${rupeesEst.toLocaleString("en-IN")}* (${qty}qty×0.5δ)\n` +
+    `₹ est: *${rsSign}₹${rupeesEst.toLocaleString("en-IN")}* (futures ${qty}qty)\n` +
     `━━━━━━━━━━━━━━\n` +
     `Day P&L so far: ${dailySign}${dailyPnL} pts`
   );
@@ -2808,10 +2827,10 @@ async function notifyCrash(reason: string) {
 async function notifySummary(trades: number, wins: number, losses: number, netPnL: number, maxDrawdown: number) {
   const winPct    = trades > 0 ? Math.round((wins / trades) * 100) : 0;
   const qty       = config.quantity;
-  const rupeesEst = Math.round(Math.abs(netPnL) * qty * 0.5);
+  const rupeesEst = Math.round(Math.abs(netPnL) * qty);  // futures: delta=1.0
   const pnlSign   = netPnL >= 0 ? "+" : "−";
   const rsSign    = netPnL >= 0 ? "+" : "−";
-  const ddRupees  = Math.round(Math.abs(maxDrawdown) * qty * 0.5);
+  const ddRupees  = Math.round(Math.abs(maxDrawdown) * qty);
   const emoji     = netPnL > 0 ? "🟢" : netPnL < 0 ? "🔴" : "⚪";
   const today     = new Date().toLocaleDateString("en-IN", { timeZone: "Asia/Kolkata", day: "2-digit", month: "short", year: "numeric" });
   await sendTelegram(
@@ -2819,7 +2838,7 @@ async function notifySummary(trades: number, wins: number, losses: number, netPn
     `${today}\n` +
     `━━━━━━━━━━━━━━━━━━━━\n` +
     `${emoji} Index P&L: *${pnlSign}${Math.abs(netPnL)} pts*\n` +
-    `₹ est: *${rsSign}₹${rupeesEst.toLocaleString("en-IN")}* (${qty}qty×0.5δ)\n` +
+    `₹ est: *${rsSign}₹${rupeesEst.toLocaleString("en-IN")}* (futures ${qty}qty)\n` +
     `━━━━━━━━━━━━━━━━━━━━\n` +
     `Trades: ${trades} | W: ${wins} L: ${losses} | Win: *${winPct}%*\n` +
     `Max DD: −${Math.abs(maxDrawdown)} pts ≈ −₹${ddRupees.toLocaleString("en-IN")}\n` +
