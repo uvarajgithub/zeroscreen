@@ -35,7 +35,11 @@ function simulateDay(todayCandles, prevCandles) {
 
   for (let i = 0; i < todayCandles.length; i++) {
     const c     = todayCandles[i];
-    const isEOD = c.h > 15 || (c.h === 15 && c.m >= 30);
+    // Match live bot: EOD fires when 3:15 PM candle closes (at 3:30 PM real time)
+    // h/m present in old data; new data uses candle index (last candle = EOD)
+    const isEOD = c.h !== undefined
+      ? (c.h > 15 || (c.h === 15 && c.m >= 15))
+      : (i === todayCandles.length - 1);
     const partial = todayCandles.slice(0, i + 1);
 
     // ── 1. Monitor active trade ───────────────────────────────────────────
@@ -131,8 +135,14 @@ for (let di = 1; di < dates.length; di++) {
   const prevDay = raw[dates[di - 1]];
   if (!today || today.length < 5 || !prevDay || prevDay.length < 5) continue;
 
-  // Strip h/m for strategy functions
-  const todayC = today.map(c => ({ open: c.open, high: c.high, low: c.low, close: c.close }));
+  // Skip 9:15 AM candle — matches live bot which seeds it and starts C0 from 9:30 AM
+  // Add h/m from index for candles that lack timestamp fields (recent cache data)
+  const todayC = today.slice(1).map((c, i) => {
+    const totalMin = 9*60 + 30 + i*15;  // C0=9:30, C1=9:45, ..., C23=3:15
+    return { open:c.open, high:c.high, low:c.low, close:c.close,
+             h: c.h !== undefined ? c.h : Math.floor(totalMin/60),
+             m: c.m !== undefined ? c.m : totalMin % 60 };
+  });
   const prevC  = prevDay.map(c => ({ open: c.open, high: c.high, low: c.low, close: c.close }));
 
   const { dayPts, trades } = simulateDay(todayC, prevC);

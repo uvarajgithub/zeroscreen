@@ -419,14 +419,26 @@ async function monitorCandleBreakouts() {
         if (DrishtiState.inTrade && tradeDirection) {
           const _bu = tradeDirection === "CE" ? price - entryPrice : entryPrice - price;
           const _bUS = _bu >= 0 ? "+" : "";
-          const _bSL = DrishtiState.trailStop <= 0
+          // Re-compute peak/trail inline so TG is accurate even if it fires before runBot
+          let _pk = DrishtiState.peakPts, _lk = DrishtiState.trailStop;
+          const _afterEntry = drishtiTodayCandles.length > (DrishtiState.entryIdx + 1);
+          if (_afterEntry && drishtiTodayCandles.length > 0) {
+            const _lc = drishtiTodayCandles[drishtiTodayCandles.length - 1];
+            const _fp = tradeDirection === "CE" ? _lc.high - entryPrice : entryPrice - _lc.low;
+            if (_fp > _pk) { _pk = _fp; _lk = _pk >= 10 ? _pk - 10 : -150; }
+          }
+          const _bSL = _lk <= 0
             ? (tradeDirection === "CE" ? entryPrice - 150 : entryPrice + 150).toFixed(0)
-            : (entryPrice + (tradeDirection === "CE" ? DrishtiState.trailStop : -DrishtiState.trailStop)).toFixed(0);
-          const _bSLlabel = DrishtiState.trailStop <= 0 ? "Hard SL" : "Trail lock";
+            : (entryPrice + (tradeDirection === "CE" ? _lk : -_lk)).toFixed(0);
+          const _lockLine = _lk > 0
+            ? `🔒 *Trail locked: +${_lk.toFixed(0)} pts*  (exit ≥ ${_bSL})\n`
+            : `⚠️ No lock yet — Hard SL @ ${_bSL} (−150 pts)\n`;
+          const _dayTotal = dailyPnL + (_lk > 0 ? _lk : 0);
           strategyCtx = `In Trade (${tradeDirection}) | ${_bCtx}\n`
-            + `Entry: ${entryPrice.toFixed(0)} | ${_bSLlabel}: ${_bSL}\n`
-            + `P&L: ${_bUS}${_bu.toFixed(0)} pts | Peak: ${DrishtiState.peakPts.toFixed(0)} pts\n`
-            + `Day: ${_bSign}${dailyPnL.toFixed(0)} | ${drishtiWins}W ${drishtiLosses}L | T:${tradeCount}/5`;
+            + `Entry: ${entryPrice.toFixed(0)} | Peak: ${_pk.toFixed(0)} pts\n`
+            + _lockLine
+            + `Spot: ${_bUS}${_bu.toFixed(0)} pts (live vs entry)\n`
+            + `Day+lock: ${_dayTotal >= 0 ? "+" : ""}${_dayTotal.toFixed(0)} | ${drishtiWins}W ${drishtiLosses}L | T:${tradeCount}/5`;
         } else if (DrishtiState.firstDone && !DrishtiState.inTrade) {
           const _reNum = DrishtiState.reCount + 1;
           const _re = DrishtiState.reCount < 5
