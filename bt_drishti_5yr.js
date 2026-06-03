@@ -9,13 +9,40 @@ const { findDrishtiEntry, findDrishtiReEntry, updateDrishtiTrail, createDrishtiS
 const MAX_TRADES    = 5;
 const DAILY_LOSS_CAP = 150;  // stop day after -150 pts (matches live bot config)
 const RS_PER_PT     = 30;   // 30 qty x 1.0 (futures, delta=1.0) = 1 lot
+const RISK_FREE     = 0.07; // 7% annual risk-free rate for fair premium calc
+
+// ── Fair futures premium calculator ─────────────────────────────────────────
+// Returns days-to-expiry for a given date (BankNifty monthly = last Thursday of month)
+function getDTE(dateStr) {
+  const d = new Date(dateStr);
+  const year = d.getFullYear(), month = d.getMonth();
+  // Find last Thursday of same month
+  const lastDay = new Date(year, month + 1, 0);  // last day of month
+  const dow = lastDay.getDay();  // 0=Sun, 4=Thu
+  const lastThursday = new Date(lastDay);
+  lastThursday.setDate(lastDay.getDate() - ((dow >= 4 ? dow - 4 : dow + 3)));
+  // If already past expiry this month, use next month's expiry
+  const expiry = d >= lastThursday ? new Date(year, month + 2, 0) : lastThursday;
+  if (d >= expiry) {
+    const nm = new Date(year, month + 2, 0);
+    const ndow = nm.getDay();
+    nm.setDate(nm.getDate() - (ndow >= 4 ? ndow - 4 : ndow + 3));
+    return Math.max(1, Math.ceil((nm - d) / 86400000));
+  }
+  return Math.max(1, Math.ceil((expiry - d) / 86400000));
+}
+
+// Fair futures price = index × (1 + risk_free × DTE / 365)
+function fairPremium(indexPrice, dte) {
+  return Math.round(indexPrice * RISK_FREE * dte / 365);
+}
 
 // ── Load data ────────────────────────────────────────────────────────────────
 const raw   = JSON.parse(fs.readFileSync('./cache/banknifty_5yr.json', 'utf-8'));
 const dates = Object.keys(raw).sort();   // chronological order
 
 // ── Results storage ──────────────────────────────────────────────────────────
-let totalPts = 0, wins = 0, losses = 0, tradedDays = 0, totalTrades = 0, totalRE = 0;
+let totalPts = 0, totalFutPts = 0, wins = 0, losses = 0, tradedDays = 0, totalTrades = 0, totalRE = 0;
 let maxDD = 0, peak = 0, maxWin = 0, maxLoss = 0;
 let consec = 0, maxConsecW = 0, maxConsecL = 0, lastResult = 0;
 const byYear = {}, byMonth = {}, byCandle = {}, byReason = {};
@@ -23,9 +50,9 @@ const monthlyRows = [];
 const dailyResults = {};  // date → dayPts
 
 // ── Simulate one trading day ─────────────────────────────────────────────────
-function simulateDay(todayCandles, prevCandles) {
+function simulateDay(todayCandles, prevCandles, dte) {
   const state  = createDrishtiState();
-  let tradeCount = 0, dayPts = 0;
+  let tradeCount = 0, dayPts = 0, dayFutPts = 0;
   let tradesLog = [];
 
   // PDR filter — skip first entry on low-volatility days (matches live bot)
@@ -49,12 +76,26 @@ function simulateDay(todayCandles, prevCandles) {
       state.trailStop = trail.trailStop;
 
       if (trail.action !== 'HOLD') {
-        dayPts     += trail.pts;
-        totalPts   += trail.pts;
+        // Index-based P&L (backtest standard)
+        const idxPts = trail.pts;
+        dayPts     += idxPts;
+        totalPts   += idxPts;
         totalTrades++;
-        if (trail.pts > maxWin)  maxWin  = trail.pts;
-        if (trail.pts < maxLoss) maxLoss = trail.pts;
-        tradesLog.push({ dir: state.dir, entry: state.entry, pts: trail.pts, entryCandle: state.entryIdx, exitCandle: i, reason: trail.action });
+        if (idxPts > maxWin)  maxWin  = idxPts;
+        if (idxPts < maxLoss) maxLoss = idxPts;
+
+        // Futures-based P&L with fair premium (new)
+        // entry futures = state.entry + fairPrem(entry)
+        // exit futures  = trail.exitPrice + fairPrem(exit)
+        // Both same day → DTE is same → premium change = (exitPrice - entry) × RISK_FREE × DTE/365
+        const _prem = fairPremium(state.entry, dte);
+        const _futEntry = state.entry + _prem;
+        const _futExit  = trail.exitPrice + fairPremium(trail.exitPrice, dte);
+        const _futPts   = state.dir === 'CE' ? _futExit - _futEntry : _futEntry - _futExit;
+        dayFutPts  += _futPts;
+        totalFutPts += _futPts;
+
+        tradesLog.push({ dir: state.dir, entry: state.entry, pts: idxPts, futPts: _futPts, entryCandle: state.entryIdx, exitCandle: i, reason: trail.action });
         if (trail.action !== 'EXIT_EOD') {
           state.lastExitPts = trail.pts;
           state.lastExitIdx = i;
@@ -100,10 +141,17 @@ function simulateDay(todayCandles, prevCandles) {
   if (state.inTrade) {
     const lastC = todayCandles[todayCandles.length - 1];
     const trail = updateDrishtiTrail(state, lastC, true);
-    dayPts     += trail.pts;
-    totalPts   += trail.pts;
+    const idxPts = trail.pts;
+    dayPts     += idxPts;
+    totalPts   += idxPts;
     totalTrades++;
-    tradesLog.push({ dir: state.dir, entry: state.entry, pts: trail.pts, entryCandle: state.entryIdx, exitCandle: todayCandles.length - 1, reason: 'EXIT_EOD_FORCED' });
+    const _prem = fairPremium(state.entry, dte);
+    const _futPts = state.dir === 'CE'
+      ? (trail.exitPrice + fairPremium(trail.exitPrice, dte)) - (state.entry + _prem)
+      : (state.entry + _prem) - (trail.exitPrice + fairPremium(trail.exitPrice, dte));
+    dayFutPts  += _futPts;
+    totalFutPts += _futPts;
+    tradesLog.push({ dir: state.dir, entry: state.entry, pts: idxPts, futPts: _futPts, entryCandle: state.entryIdx, exitCandle: todayCandles.length - 1, reason: 'EXIT_EOD_FORCED' });
   }
 
   // Update byCandle stats
@@ -120,7 +168,7 @@ function simulateDay(todayCandles, prevCandles) {
     }
   }
 
-  return { dayPts, trades: tradeCount, tradesLog };
+  return { dayPts, dayFutPts, trades: tradeCount, tradesLog };
 }
 
 // ── Main loop ─────────────────────────────────────────────────────────────────
@@ -145,7 +193,8 @@ for (let di = 1; di < dates.length; di++) {
   });
   const prevC  = prevDay.map(c => ({ open: c.open, high: c.high, low: c.low, close: c.close }));
 
-  const { dayPts, trades } = simulateDay(todayC, prevC);
+  const dte = getDTE(date);
+  const { dayPts, dayFutPts, trades } = simulateDay(todayC, prevC, dte);
   if (trades === 0) continue;
 
   dailyResults[date] = parseFloat(dayPts.toFixed(1));
@@ -188,13 +237,24 @@ const totalDays = dates.length - 1;
 const WR   = tradedDays > 0 ? (wins / tradedDays * 100).toFixed(1) : 0;
 const avgD = tradedDays > 0 ? (totalPts / tradedDays).toFixed(1) : 0;
 
+const avgFutD = tradedDays > 0 ? (totalFutPts / tradedDays).toFixed(1) : 0;
+const premDelta = totalFutPts - totalPts;
+const premDeltaPct = totalPts > 0 ? (premDelta / totalPts * 100).toFixed(2) : 0;
+
 console.log('\n' + '═'.repeat(70));
 console.log(' DRISHTI_V1 — FULL RESULTS');
 console.log('═'.repeat(70));
-console.log(` P&L:         ${totalPts > 0 ? '+' : ''}${totalPts.toFixed(1)} pts  =  ₹${(totalPts * RS_PER_PT).toFixed(0)}`);
+console.log(` ── INDEX-BASED (backtest, no premium) ──`);
+console.log(` P&L:         ${totalPts > 0 ? '+' : ''}${totalPts.toFixed(1)} pts  =  ₹${(totalPts * RS_PER_PT).toLocaleString('en-IN', {maximumFractionDigits:0})}`);
+console.log(` Avg per day: ${avgD} pts = ₹${(parseFloat(avgD) * RS_PER_PT).toFixed(0)}`);
+console.log('');
+console.log(` ── FUTURES-BASED (fair premium = index × 7% × DTE/365) ──`);
+console.log(` P&L:         ${totalFutPts > 0 ? '+' : ''}${totalFutPts.toFixed(1)} pts  =  ₹${(totalFutPts * RS_PER_PT).toLocaleString('en-IN', {maximumFractionDigits:0})}`);
+console.log(` Avg per day: ${avgFutD} pts = ₹${(parseFloat(avgFutD) * RS_PER_PT).toFixed(0)}`);
+console.log(` Premium delta (5yr): ${premDelta > 0 ? '+' : ''}${premDelta.toFixed(0)} pts = ₹${(premDelta*RS_PER_PT).toLocaleString('en-IN',{maximumFractionDigits:0})}  (${premDeltaPct}% of index)`);
+console.log('');
 console.log(` Win rate:    ${WR}%  (${wins}W / ${losses}L / ${tradedDays - wins - losses} flat)`);
 console.log(` Traded days: ${tradedDays} / ${totalDays} total`);
-console.log(` Avg per day: ${avgD} pts = ₹${(parseFloat(avgD) * RS_PER_PT).toFixed(0)}`);
 console.log(` Total trades:${totalTrades}  |  Re-entries: ${totalRE}`);
 console.log(` Max DD:      ${maxDD.toFixed(1)} pts = ₹${(maxDD * RS_PER_PT).toFixed(0)}`);
 console.log(` Max win:     +${maxWin.toFixed(1)} pts = ₹${(maxWin * RS_PER_PT).toFixed(0)}`);
