@@ -264,4 +264,36 @@ const result = {
 
 fs.writeFileSync('./5year-backtest-result.json', JSON.stringify(result, null, 2));
 console.log('\n ✅ 5year-backtest-result.json updated for dashboard.');
+
+// ── REAL FUTURES COST BREAKDOWN ───────────────────────────────────────────────
+// Cost per trade (Zerodha BankNifty Futures, 1 lot = 30 qty, avg contract ~₹48k×30=₹14.4L):
+//   STT on sell side : 0.01% × 14.4L = ₹144
+//   Brokerage        : ₹20 × 2       = ₹40
+//   Exchange + SEBI  :                  ₹30
+//   Slippage         : 3 pts × 2 × 30 = ₹180
+//   ─────────────────────────────────────────
+//   Total per trade  :                  ₹394  (use ₹400 round number)
+const COST_PER_TRADE = 400;
+const ROLLOVER_PER_MONTH = 1500;   // monthly futures rollover
+const months5yr = Object.keys(byMonth).length;
+const grossRs = totalPts * RS_PER_PT;
+const tradeCosts = totalTrades * COST_PER_TRADE;
+const rolloverCosts = months5yr * ROLLOVER_PER_MONTH;
+const totalCosts = tradeCosts + rolloverCosts;
+const netRs = grossRs - totalCosts;
+const netMonthlyAvg = netRs / months5yr;
+
+console.log('\n' + '═'.repeat(70));
+console.log(' FUTURES REALITY CHECK (same rules, real costs)');
+console.log('═'.repeat(70));
+console.log(` Gross P&L        : ₹${grossRs.toLocaleString('en-IN', {maximumFractionDigits:0})}`);
+console.log(` Trade costs      : -₹${tradeCosts.toLocaleString('en-IN', {maximumFractionDigits:0})}  (${totalTrades} trades × ₹${COST_PER_TRADE}/trade)`);
+console.log(` Rollover costs   : -₹${rolloverCosts.toLocaleString('en-IN', {maximumFractionDigits:0})}  (${months5yr} months × ₹${ROLLOVER_PER_MONTH}/month)`);
+console.log(` Total costs      : -₹${totalCosts.toLocaleString('en-IN', {maximumFractionDigits:0})}`);
+console.log('─'.repeat(70));
+console.log(` NET P&L (5yr)    : ₹${netRs.toLocaleString('en-IN', {maximumFractionDigits:0})}`);
+console.log(` NET monthly avg  : ₹${netMonthlyAvg.toLocaleString('en-IN', {maximumFractionDigits:0})}`);
+console.log(` Cost drag        : ${(totalCosts / grossRs * 100).toFixed(1)}% of gross`);
+console.log('═'.repeat(70));
+
 console.log('\n Done.\n');

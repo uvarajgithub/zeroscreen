@@ -1401,7 +1401,7 @@ async function runDrishtiBot() {
   }
 
   if (stopForDay && !activeTrade) return;
-  if (tradeCount >= 5) return;  // max 5 trades/day
+  if (tradeCount >= 5 && !activeTrade) return;  // max 5 trades — but still trail/exit if in trade
 
   // ── Detect new 15-min candle ─────────────────────────────────────────
   const candle = await getPreviousCandle();
@@ -1451,7 +1451,7 @@ async function runDrishtiBot() {
       // Set up re-entry tracking
       DrishtiState.inTrade      = false;
       DrishtiState.firstDone    = true;
-      DrishtiState.lastExitPts  = trail.peakPts;   // peak pts (threshold for RE)
+      DrishtiState.lastExitPts  = trail.pts;   // actual P&L pts (matches backtest)
       DrishtiState.lastExitIdx  = drishtiTodayCandles.length - 1;
       DrishtiState.lastExitDir  = capturedDir as DrishtiDir;
 
@@ -1484,7 +1484,7 @@ async function runDrishtiBot() {
   // ── Find entry signal ─────────────────────────────────────────────────
   let entrySig: DrishtiEntrySignal | null = null;
 
-  if (DrishtiState.firstDone && DrishtiState.reCount < 5 && DrishtiState.lastExitPts >= 0 && DrishtiState.lastExitIdx >= 0 && DrishtiState.lastExitDir) {
+  if (DrishtiState.firstDone && DrishtiState.reCount < 5 && DrishtiState.lastExitIdx >= 0 && DrishtiState.lastExitDir) {
     // Re-entry: look for strong candle after last exit — always allow reverse (REV_UNLOCK=0)
     // NOTE: prevDayCandles NOT required for re-entry (findDrishtiReEntry uses only today candles)
     const allowReverse = true;
@@ -2191,6 +2191,8 @@ function printConfigSummary(cfg: any) {
     ? "ITM Hold (BB signal → ITM monthly option → hold multi-day)"
     : ACTIVE_STRATEGY === "HYBRID_REVERSE"
     ? "Hybrid Reverse (body breakout + C1-3 early exit + hybrid SL reverse)"
+    : ACTIVE_STRATEGY === "DRISHTI_V1"
+    ? "DRISHTI V1 · LOCK10 (BankNifty Futures, candle-close SL=150, TRAIL_GAP=10)"
     : "Body Breakout (direct entry on candle close)";
   console.log("===== BOT CONFIG =====");
   console.log(`Mode: ${cfg.mode}`);

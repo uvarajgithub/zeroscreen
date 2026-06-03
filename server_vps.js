@@ -11003,8 +11003,11 @@ app.get("/signals", featureGate("feature_signals", "Signals"), async (req, res) 
             </div>` : ''}
           </div>
           ` : `
-          <div class="watch-card" id="pos-lock50-flat">
-            <div class="watch-title"><span>⏳</span>Watching for Next Signal</div>
+          <div class="watch-card" id="pos-lock50-flat" style="padding:14px 16px">
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
+              <span style="font-size:.65rem;text-transform:uppercase;letter-spacing:1px;color:#f59e0b;font-weight:700">⏳ Watching for Signal</span>
+              <span id="pos-watch-ctx-badge"></span>
+            </div>
             <div id="pos-lock50-watch" style="font-size:.78rem;color:var(--muted)"><span style="opacity:.4">Loading trigger levels…</span></div>
           </div>`}
         </div>
@@ -12530,20 +12533,34 @@ app.get("/signals", featureGate("feature_signals", "Signals"), async (req, res) 
         var _td3=new Date().toISOString().slice(0,10);
         var _ctds=(d.recentTrades||[]).filter(function(t){return t.exitPrice&&t.exitPrice>0&&(t.date||'').startsWith(_td3);});
         if(!_ctds.length)return;
-        var _ch='<div style="margin-top:10px;border-top:1px solid rgba(255,255,255,.06);padding-top:8px">';
-        _ch+='<div style="font-size:.58rem;text-transform:uppercase;letter-spacing:.8px;color:#475569;margin-bottom:5px">Closed Today</div>';
+        var _ch='<div style="margin-top:10px;border-top:1px solid rgba(255,255,255,.07);padding-top:8px">';
+        _ch+='<div style="font-size:.58rem;text-transform:uppercase;letter-spacing:.8px;color:#475569;font-weight:700;margin-bottom:6px">Closed Today</div>';
         _ctds.slice().reverse().forEach(function(t,i){
           var _ti=(t.premiumEntry>0&&t.premiumExit>0)?Math.round((t.premiumExit-t.premiumEntry)*(t.qty||30)):Math.round((t.pnl||0)*15);
+          var _pts=t.pnl||0;
           var _tc=_ti>=0?'#4ade80':'#fb923c';
+          var _ptc=_pts>=0?'#4ade80':'#fb923c';
           var _dc=t.direction==='CE'?'#38bdf8':'#c084fc';
+          var _dbg=t.direction==='CE'?'rgba(56,189,248,.12)':'rgba(192,132,252,.12)';
           var _tm=t.date?new Date(t.date).toLocaleTimeString('en-IN',{hour:'2-digit',minute:'2-digit',timeZone:'Asia/Kolkata'}):'';
-          var _re=t.reasonExit?'<span style="color:#475569;font-size:.6rem"> '+t.reasonExit+'</span>':'';
-          _ch+='<div style="display:flex;align-items:center;gap:8px;padding:3px 0;font-size:.68rem">'
-            +'<span style="color:#64748b">'+_tm+'</span>'
-            +(t.direction?'<span style="color:'+_dc+';font-weight:700">'+t.direction+'</span>':'')
-            +'<b style="color:'+_tc+'">'+(_ti>=0?'+':'-')+'&#8377;'+Math.abs(_ti)+'</b>'
-            +_re
-            +'</div>';
+          var _re=t.reasonExit||'';
+          var _dur=t.duration?(t.duration<60?t.duration+'s':Math.round(t.duration/60)+'m'):'';
+          var _bp=(t.premiumEntry||0)>0?'&#8377;'+t.premiumEntry.toFixed(0):'&mdash;';
+          var _sp=(t.premiumExit||0)>0?'&#8377;'+t.premiumExit.toFixed(0):'&mdash;';
+          _ch+='<div style="background:rgba(255,255,255,.03);border:1px solid rgba(255,255,255,.08);border-radius:8px;padding:8px 10px;margin-bottom:5px">';
+          _ch+='<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">';
+          _ch+='<span style="font-size:.6rem;color:#64748b">'+_tm+'</span>';
+          if(t.direction)_ch+='<span style="background:'+_dbg+';color:'+_dc+';font-size:.65rem;font-weight:700;padding:1px 7px;border-radius:4px;border:1px solid '+_dc+'30">'+t.direction+'</span>';
+          _ch+='<span style="font-size:.68rem;color:#94a3b8;font-family:monospace">'+((t.entryPrice||0)>0?t.entryPrice.toFixed(0):'&mdash;')+'<span style="color:#475569">&rarr;</span>'+((t.exitPrice||0)>0?t.exitPrice.toFixed(0):'&mdash;')+'</span>';
+          _ch+='<b style="color:'+_ptc+';font-size:.72rem">'+(_pts>=0?'+':'')+_pts.toFixed(0)+' pts</b>';
+          _ch+='<b style="color:'+_tc+';font-size:.72rem;margin-left:auto">'+(_ti>=0?'+':'&minus;')+'&#8377;'+Math.abs(_ti).toLocaleString('en-IN')+'</b>';
+          _ch+='</div>';
+          _ch+='<div style="display:flex;align-items:center;gap:6px;margin-top:4px;flex-wrap:wrap">';
+          _ch+='<span style="font-size:.58rem;color:#475569">Prem: <span style="color:#60a5fa">'+_bp+'</span> &rarr; <span style="color:#fca5a5">'+_sp+'</span></span>';
+          if(_re)_ch+='<span style="font-size:.58rem;color:#818cf8;background:rgba(99,102,241,.12);padding:1px 6px;border-radius:3px">'+_re+'</span>';
+          if(_dur)_ch+='<span style="font-size:.58rem;color:#475569;margin-left:auto">'+_dur+'</span>';
+          _ch+='</div>';
+          _ch+='</div>';
         });
         _ch+='</div>';
         el.innerHTML+=_ch;
@@ -12555,22 +12572,51 @@ app.get("/signals", featureGate("feature_signals", "Signals"), async (req, res) 
           const _pdh=parseFloat(hb.drishtiPrevDayHigh||0);
           const _pdl=parseFloat(hb.drishtiPrevDayLow||0);
           const _cn=parseInt(hb.DrishtiCandles||0);
-          const _ctx=_pdh>0?(lp>_pdh?'ABOVE PDH':((_pdl>0&&lp<_pdl)?'BELOW PDL':'INSIDE')):'';
+          const _ctx=_pdh>0?(lp>_pdh?'ABOVE PDH':((_pdl>0&&lp<_pdl)?'BELOW PDL':'INSIDE')):'?';
           const _now=new Date();
           const _rm=_now.getMinutes();const _rs=_now.getSeconds();
           const _rem=(15-(_rm%15))*60-_rs;
           const _remFix=_rem<=0?_rem+900:_rem;
           const _remStr=Math.floor(_remFix/60)+':'+(_remFix%60<10?'0':'')+(_remFix%60);
+          const _progPct=Math.min(100,Math.round(((900-_remFix)/900)*100));
+          // Context badge in header
+          const _ctxBadge=ge('pos-watch-ctx-badge');
+          if(_ctxBadge){
+            const _cc=_ctx==='ABOVE PDH'?'#dc2626':_ctx==='BELOW PDL'?'#10b981':'#d97706';
+            const _cbg=_ctx==='ABOVE PDH'?'rgba(220,38,38,.15)':_ctx==='BELOW PDL'?'rgba(16,185,129,.15)':'rgba(217,119,6,.15)';
+            const _cl=_ctx==='ABOVE PDH'?'&#128200; ABOVE PDH':_ctx==='BELOW PDL'?'&#128201; BELOW PDL':'&#128230; INSIDE';
+            _ctxBadge.innerHTML='<span style="background:'+_cbg+';color:'+_cc+';font-size:.62rem;font-weight:700;padding:2px 8px;border-radius:5px;border:1px solid '+_cc+'30">'+_cl+'</span>';
+          }
           let _wh='';
           if(_pdh>0){
-            // PDH row — pe-row style (above PDH → PE fade)
-            const _pdhDist=lp>0?Math.abs(lp-_pdh).toFixed(0):'';
+            const _pdhDist=lp>0?Math.round(Math.abs(lp-_pdh)):0;
+            const _pdlDist=lp>0&&_pdl>0?Math.round(Math.abs(lp-_pdl)):0;
             const _pdhAbove=lp>_pdh;
-            const _pdhCol=_pdhAbove?'#dc2626':'#64748b';
-            const _pdhNote=lp>0?(' <span style="color:'+_pdhCol+'">'+(_pdhAbove?'&#8593; '+_pdhDist+' above &rarr; PE fade':''+_pdhDist+' pts below')+'</span>'):'';
-            _wh+='<div class="watch-lvl-row watch-pe-row"><span class="watch-lvl-dir" style="color:#dc2626">PDH &#9660;</span><span class="watch-lvl-val">'+_pdh.toFixed(0)+'</span><span class="watch-lvl-dist">'+(_pdl>0?'PDL '+_pdl.toFixed(0):'')+''+_pdhNote+'</span></div>';
-            // Candle row — amber style
-            _wh+='<div class="watch-lvl-row watch-cnd-row"><span class="watch-lvl-dir" style="color:#d97706;min-width:28px">&#8987;</span><span class="watch-lvl-val" style="font-size:.85rem">Candle #'+(_cn+1)+'</span><span class="watch-lvl-dist" style="color:#94a3b8">next close <b style="color:#fbbf24">'+_remStr+'</b>'+(lp>0?' &middot; spot <b style="color:var(--text-main)">'+lp.toFixed(0)+'</b>':'')+'</span></div>';
+            const _pdlBelow=_pdl>0&&lp<_pdl;
+            // PDH / PDL grid
+            _wh+='<div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-bottom:8px">';
+            _wh+='<div style="background:rgba(220,38,38,.07);border:1px solid rgba(220,38,38,.2);border-radius:8px;padding:7px 10px">';
+            _wh+='<div style="font-size:.55rem;text-transform:uppercase;letter-spacing:.8px;color:#ef4444;margin-bottom:2px">PDH &#9660;</div>';
+            _wh+='<div style="font-size:.9rem;font-weight:700;color:#f1f5f9">'+_pdh.toLocaleString('en-IN')+'</div>';
+            if(_pdhDist>0)_wh+='<div style="font-size:.6rem;color:'+(_pdhAbove?'#fca5a5':'#64748b')+'">'+(_pdhAbove?'&#8593; '+_pdhDist+' pts above':'&#8595; '+_pdhDist+' pts below')+'</div>';
+            _wh+='</div>';
+            _wh+='<div style="background:rgba(16,185,129,.07);border:1px solid rgba(16,185,129,.2);border-radius:8px;padding:7px 10px">';
+            _wh+='<div style="font-size:.55rem;text-transform:uppercase;letter-spacing:.8px;color:#10b981;margin-bottom:2px">PDL &#9650;</div>';
+            _wh+='<div style="font-size:.9rem;font-weight:700;color:#f1f5f9">'+(_pdl>0?_pdl.toLocaleString('en-IN'):'&mdash;')+'</div>';
+            if(_pdlDist>0)_wh+='<div style="font-size:.6rem;color:'+(_pdlBelow?'#6ee7b7':'#64748b')+'">'+(_pdlBelow?'&#8595; '+_pdlDist+' pts below':'&#8593; '+_pdlDist+' pts above')+'</div>';
+            _wh+='</div>';
+            _wh+='</div>';
+            // Candle countdown with progress bar
+            _wh+='<div style="background:rgba(251,191,36,.06);border:1px solid rgba(251,191,36,.15);border-radius:8px;padding:8px 10px">';
+            _wh+='<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:5px">';
+            _wh+='<span style="font-size:.7rem;font-weight:600;color:#fbbf24">&#128557; Candle #'+(_cn+1)+'</span>';
+            _wh+='<span style="font-size:.68rem;color:#94a3b8">closes in <b style="color:#fbbf24">'+_remStr+'</b></span>';
+            _wh+='</div>';
+            _wh+='<div style="height:3px;background:rgba(255,255,255,.08);border-radius:2px;overflow:hidden;margin-bottom:5px">';
+            _wh+='<div style="height:100%;width:'+_progPct+'%;background:linear-gradient(90deg,#f59e0b,#fbbf24);border-radius:2px"></div>';
+            _wh+='</div>';
+            if(lp>0)_wh+='<div style="font-size:.62rem;color:#94a3b8">Spot <b style="color:var(--text-main)">'+lp.toLocaleString('en-IN',{minimumFractionDigits:0,maximumFractionDigits:0})+'</b></div>';
+            _wh+='</div>';
           } else {
             _wh='<span style="opacity:.4;font-size:.78rem">Waiting for first 15-min candle&#8230;</span>';
           }
