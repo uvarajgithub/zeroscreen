@@ -1,272 +1,264 @@
-"use strict";
-/**
+﻿/**
  * server.ts — ZeroScreen Express app
  */
-var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
-    if (k2 === undefined) k2 = k;
-    var desc = Object.getOwnPropertyDescriptor(m, k);
-    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
-      desc = { enumerable: true, get: function() { return m[k]; } };
-    }
-    Object.defineProperty(o, k2, desc);
-}) : (function(o, m, k, k2) {
-    if (k2 === undefined) k2 = k;
-    o[k2] = m[k];
-}));
-var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
-    Object.defineProperty(o, "default", { enumerable: true, value: v });
-}) : function(o, v) {
-    o["default"] = v;
-});
-var __importStar = (this && this.__importStar) || (function () {
-    var ownKeys = function(o) {
-        ownKeys = Object.getOwnPropertyNames || function (o) {
-            var ar = [];
-            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
-            return ar;
-        };
-        return ownKeys(o);
-    };
-    return function (mod) {
-        if (mod && mod.__esModule) return mod;
-        var result = {};
-        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
-        __setModuleDefault(result, mod);
-        return result;
-    };
-})();
-var __importDefault = (this && this.__importDefault) || function (mod) {
-    return (mod && mod.__esModule) ? mod : { "default": mod };
-};
-Object.defineProperty(exports, "__esModule", { value: true });
-const dotenv_1 = __importDefault(require("dotenv"));
-dotenv_1.default.config();
-const express_1 = __importDefault(require("express"));
-const express_session_1 = __importDefault(require("express-session"));
-const path_1 = __importDefault(require("path"));
-const bcrypt_1 = __importDefault(require("bcrypt"));
-const db_1 = require("./db");
-const scheduler_1 = require("./scheduler");
-const scraper_1 = require("./scraper");
-const mailer_1 = require("./mailer");
-const crypto_1 = __importDefault(require("crypto"));
-const https_1 = __importDefault(require("https"));
-const fs_1 = __importDefault(require("fs"));
-const child_process_1 = require("child_process");
+
+import dotenv from "dotenv";
+dotenv.config();
+
+import express, { Request, Response, NextFunction } from "express";
+import session from "express-session";
+import path from "path";
+import bcrypt from "bcrypt";
+import {
+  screenStocks, getStock, getWatchlists, getWatchlist, createWatchlist,
+  addToWatchlist, removeFromWatchlist, deleteWatchlist, getDbStats,
+  getSectors, ScreenerFilter, initDb, upsertStock,
+  createUser, getUserByEmail, getUserById, countUsers, UserRow, getAllUsers, dbRun, dbAll,
+  getAlerts, createAlert, deleteAlert, getAllActiveAlerts,
+  createResetToken, getResetToken, markResetTokenUsed, updateUserPassword,
+  updateUserName, searchStocks,
+  getActivePicks, getAllPicks, createPick, updatePickStatus, deletePick, PickRow,
+  getSetting, setSetting, getAllSettings,
+  createOrder, activateSubscription, getActiveSubscription, expireOldSubscriptions, getAllSubscriptions,
+  getPaperPortfolio, getPaperPositions, getPaperTrades, paperBuy, paperSell, paperReset,
+  PaperPosition, PaperTrade,
+  storePhoneOtp, verifyPhoneOtp, setUserMobile, getUserByMobile, countPaperTrades,
+  getPaperTradeConfig, savePaperTradeConfig, PaperTradeConfig,
+  saveBotState, getBotState, saveBotTrade, getBotTrades, BotTrade,
+  getUsersWithAutoPicks, setAutoPaperPicks, getAutoPaperPicks,
+} from "./db";
+import { refreshPrices, refreshFundamentals, startScheduler } from "./scheduler";
+import { fetchFundamentals } from "./scraper";
+import { sendWelcomeEmail, sendContactNotification, sendAlertEmail, sendPasswordResetEmail } from "./mailer";
+import crypto from "crypto";
+import https from "https";
+import fs from "fs";
+import { execSync } from "child_process";
+
 // ── Telegram notify helper ─────────────────────────────────────────────────────
-const TG_BOT = process.env.TELEGRAM_BOT_TOKEN || "";
-const TG_CHAT = process.env.TELEGRAM_CHAT_ID || "";
-function notifyTelegram(text) {
-    if (!TG_BOT || !TG_CHAT)
-        return;
-    const encoded = encodeURIComponent(text);
-    const url = `https://api.telegram.org/bot${TG_BOT}/sendMessage?chat_id=${TG_CHAT}&text=${encoded}`;
-    https_1.default.get(url, (r) => { r.resume(); }).on("error", () => { });
+const TG_BOT   = process.env.TELEGRAM_BOT_TOKEN || "";
+const TG_CHAT  = process.env.TELEGRAM_CHAT_ID   || "";
+function notifyTelegram(text: string): void {
+  if (!TG_BOT || !TG_CHAT) return;
+  const encoded = encodeURIComponent(text);
+  const url = `https://api.telegram.org/bot${TG_BOT}/sendMessage?chat_id=${TG_CHAT}&text=${encoded}`;
+  https.get(url, (r) => { r.resume(); }).on("error", () => {});
 }
-const app = (0, express_1.default)();
+
+const app  = express();
 const PORT = parseInt(process.env.PORT || "4000", 10);
 const SESSION_SECRET = process.env.SESSION_SECRET || "zeroscreen-dev-secret-change-in-prod";
+
 // ── Google OAuth config ────────────────────────────────────────────────────────
-const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID || "";
+const GOOGLE_CLIENT_ID     = process.env.GOOGLE_CLIENT_ID     || "";
 const GOOGLE_CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET || "";
-const GOOGLE_CALLBACK_URL = process.env.GOOGLE_CALLBACK_URL || "http://139-59-18-52.nip.io:4000/auth/google/callback";
-const STRATEGIES = [
-    { id: "quality", icon: "🏆", label: "Quality Blue Chips",
-        desc: "High ROCE, low debt, strong promoter holding",
-        params: { minRoce: "20", maxDe: "0.5", minPromoter: "50", allProfit: "1", sortBy: "roce" } },
-    { id: "debtfree", icon: "💎", label: "Debt-Free Champions",
-        desc: "Zero-debt companies with consistent profits",
-        params: { maxDe: "0", minRoce: "15", allProfit: "1", sortBy: "roce" } },
-    { id: "growth", icon: "🚀", label: "Growth Compounders",
-        desc: "Rising profits every year, strong ROCE",
-        params: { uptrend: "1", allProfit: "1", minRoce: "15", sortBy: "roce" } },
-    { id: "value", icon: "💰", label: "Value Picks",
-        desc: "Undervalued stocks with decent fundamentals",
-        params: { maxPe: "15", minRoce: "10", maxDe: "1", sortBy: "pe" } },
-    { id: "highroce", icon: "⚡", label: "High ROCE Machines",
-        desc: "Capital allocation champions — ROCE above 30%",
-        params: { minRoce: "30", allProfit: "1", sortBy: "roce" } },
-    { id: "dividend", icon: "💵", label: "Dividend Earners",
-        desc: "Consistent dividend-paying stocks",
-        params: { minDivYield: "1.5", minRoce: "10", allProfit: "1", sortBy: "dividend" } },
-    { id: "promoter", icon: "👑", label: "Promoter Backed",
-        desc: "High insider ownership — skin in the game",
-        params: { minPromoter: "65", minRoce: "15", sortBy: "promoter" } },
-    { id: "smallcap", icon: "🌱", label: "Small Cap Gems",
-        desc: "High-quality small caps under ₹5,000 Cr",
-        params: { maxPrice: "300", minRoce: "20", allProfit: "1", sortBy: "roce" } },
-    // ── Trading-style presets ─────────────────────────────────────────────────
-    { id: "penny", icon: "🪙", label: "Penny Stocks",
-        desc: "Low-price stocks under ₹50 with decent volume — high risk, high reward",
-        params: { maxPrice: "50", minVolume: "100000", sortBy: "volume" } },
-    { id: "highvalue", icon: "🏛️", label: "High Value Blue Chips",
-        desc: "Premium-priced quality stocks above ₹500 with strong fundamentals",
-        params: { minPrice: "500", minRoce: "15", allProfit: "1", sortBy: "price" } },
-    { id: "longterm", icon: "📅", label: "Long Term Compounders",
-        desc: "Consistent profits, low debt, high ROCE — hold for 3-5 years",
-        params: { minRoce: "18", maxDe: "0.5", minPromoter: "50", allProfit: "1", uptrend: "1", sortBy: "roce" } },
-    { id: "shortterm", icon: "⚡", label: "Short Term Momentum",
-        desc: "High volume gainers with upward profit trend — 1 to 4 weeks",
-        params: { minVolume: "500000", uptrend: "1", minRoce: "10", sortBy: "volume" } },
-    { id: "swing", icon: "🎯", label: "Swing Trading Picks",
-        desc: "Positive day momentum + high volume + strong fundamentals — 3 to 10 day moves",
-        params: { minChangePct: "0.3", uptrend: "1", minVolume: "200000", minRoce: "10", sortBy: "change_pct" } },
-    { id: "options", icon: "📊", label: "Options-Ready Stocks",
-        desc: "Highly liquid NSE stocks suitable for F&O — high volume, good fundamentals",
-        params: { minVolume: "500000", minRoce: "10", sortBy: "volume" } },
-    { id: "highroe", icon: "💯", label: "High ROE Stars",
-        desc: "Top return on equity above 25% — efficient businesses",
-        params: { minRoe: "25", allProfit: "1", sortBy: "roe" } },
-    { id: "innews", icon: "📰", label: "In News Today",
-        desc: "Stocks mentioned in today's market news headlines",
-        params: { inNews: "1", sortBy: "volume" } },
-];
-function strategyParams(s) {
-    return new URLSearchParams(s.params).toString();
+const GOOGLE_CALLBACK_URL  = process.env.GOOGLE_CALLBACK_URL  || "http://139-59-18-52.nip.io:4000/auth/google/callback";
+
+// ── Strategy Presets ───────────────────────────────────────────────────────────
+interface Strategy {
+  id: string; label: string; icon: string; desc: string;
+  params: Record<string, string>;
 }
-let _newsCache = [];
+const STRATEGIES: Strategy[] = [
+  { id: "quality",    icon: "🏆", label: "Quality Blue Chips",
+    desc: "High ROCE, low debt, strong promoter holding",
+    params: { minRoce: "20", maxDe: "0.5", minPromoter: "50", allProfit: "1", sortBy: "roce" } },
+  { id: "debtfree",   icon: "💎", label: "Debt-Free Champions",
+    desc: "Zero-debt companies with consistent profits",
+    params: { maxDe: "0", minRoce: "15", allProfit: "1", sortBy: "roce" } },
+  { id: "growth",     icon: "🚀", label: "Growth Compounders",
+    desc: "Rising profits every year, strong ROCE",
+    params: { uptrend: "1", allProfit: "1", minRoce: "15", sortBy: "roce" } },
+  { id: "value",      icon: "💰", label: "Value Picks",
+    desc: "Undervalued stocks with decent fundamentals",
+    params: { maxPe: "15", minRoce: "10", maxDe: "1", sortBy: "pe" } },
+  { id: "highroce",   icon: "⚡", label: "High ROCE Machines",
+    desc: "Capital allocation champions — ROCE above 30%",
+    params: { minRoce: "30", allProfit: "1", sortBy: "roce" } },
+  { id: "dividend",   icon: "💵", label: "Dividend Earners",
+    desc: "Consistent dividend-paying stocks",
+    params: { minDivYield: "1.5", minRoce: "10", allProfit: "1", sortBy: "dividend" } },
+  { id: "promoter",   icon: "👑", label: "Promoter Backed",
+    desc: "High insider ownership — skin in the game",
+    params: { minPromoter: "65", minRoce: "15", sortBy: "promoter" } },
+  { id: "smallcap",   icon: "🌱", label: "Small Cap Gems",
+    desc: "High-quality small caps under ₹5,000 Cr",
+    params: { maxPrice: "300", minRoce: "20", allProfit: "1", sortBy: "roce" } },
+
+  // ── Trading-style presets ─────────────────────────────────────────────────
+  { id: "penny",      icon: "🪙", label: "Penny Stocks",
+    desc: "Low-price stocks under ₹50 with decent volume — high risk, high reward",
+    params: { maxPrice: "50", minVolume: "100000", sortBy: "volume" } },
+  { id: "highvalue",  icon: "🏛️", label: "High Value Blue Chips",
+    desc: "Premium-priced quality stocks above ₹500 with strong fundamentals",
+    params: { minPrice: "500", minRoce: "15", allProfit: "1", sortBy: "price" } },
+  { id: "longterm",   icon: "📅", label: "Long Term Compounders",
+    desc: "Consistent profits, low debt, high ROCE — hold for 3-5 years",
+    params: { minRoce: "18", maxDe: "0.5", minPromoter: "50", allProfit: "1", uptrend: "1", sortBy: "roce" } },
+  { id: "shortterm",  icon: "⚡", label: "Short Term Momentum",
+    desc: "High volume gainers with upward profit trend — 1 to 4 weeks",
+    params: { minVolume: "500000", uptrend: "1", minRoce: "10", sortBy: "volume" } },
+  { id: "swing",      icon: "🎯", label: "Swing Trading Picks",
+    desc: "Positive day momentum + high volume + strong fundamentals — 3 to 10 day moves",
+    params: { minChangePct: "0.3", uptrend: "1", minVolume: "200000", minRoce: "10", sortBy: "change_pct" } },
+  { id: "options",    icon: "📊", label: "Options-Ready Stocks",
+    desc: "Highly liquid NSE stocks suitable for F&O — high volume, good fundamentals",
+    params: { minVolume: "500000", minRoce: "10", sortBy: "volume" } },
+  { id: "highroe",    icon: "💯", label: "High ROE Stars",
+    desc: "Top return on equity above 25% — efficient businesses",
+    params: { minRoe: "25", allProfit: "1", sortBy: "roe" } },
+  { id: "innews",     icon: "📰", label: "In News Today",
+    desc: "Stocks mentioned in today's market news headlines",
+    params: { inNews: "1", sortBy: "volume" } },
+];
+
+function strategyParams(s: Strategy): string {
+  return new URLSearchParams(s.params).toString();
+}
+
+// ── News cache ─────────────────────────────────────────────────────────────────
+interface NewsItem { title: string; link: string; pubDate: string; source: string; }
+let _newsCache: NewsItem[] = [];
 let _newsCacheAt = 0;
 const NEWS_TTL = 5 * 60 * 1000; // 5 min
-async function fetchMarketNews() {
-    if (Date.now() - _newsCacheAt < NEWS_TTL && _newsCache.length)
-        return _newsCache;
-    const feeds = [
-        { url: "https://www.livemint.com/rss/markets", source: "Mint" },
-        { url: "https://feeds.feedburner.com/ndtvprofit-latest", source: "NDTV Profit" },
-    ];
-    const UA = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
-    const results = [];
-    const fetchXml = (url) => new Promise((resolve, reject) => {
-        const req = https_1.default.get(url, { timeout: 8000, headers: { "User-Agent": UA } }, res => {
-            if (res.statusCode && res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
-                https_1.default.get(res.headers.location, { timeout: 8000, headers: { "User-Agent": UA } }, res2 => {
-                    let d = "";
-                    res2.on("data", c => d += c);
-                    res2.on("end", () => resolve(d));
-                }).on("error", reject);
-                return;
-            }
-            let d = "";
-            res.on("data", c => d += c);
-            res.on("end", () => resolve(d));
-        });
-        req.on("error", reject);
-        req.on("timeout", () => { req.destroy(); reject(new Error("timeout")); });
+
+async function fetchMarketNews(): Promise<NewsItem[]> {
+  if (Date.now() - _newsCacheAt < NEWS_TTL && _newsCache.length) return _newsCache;
+  const feeds = [
+    { url: "https://www.livemint.com/rss/markets",               source: "Mint" },
+    { url: "https://feeds.feedburner.com/ndtvprofit-latest",     source: "NDTV Profit" },
+  ];
+  const UA = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
+  const results: NewsItem[] = [];
+
+  const fetchXml = (url: string): Promise<string> => new Promise((resolve, reject) => {
+    const req = https.get(url, { timeout: 8000, headers: { "User-Agent": UA } }, res => {
+      if (res.statusCode && res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+        https.get(res.headers.location, { timeout: 8000, headers: { "User-Agent": UA } }, res2 => {
+          let d = ""; res2.on("data", c => d += c); res2.on("end", () => resolve(d));
+        }).on("error", reject);
+        return;
+      }
+      let d = ""; res.on("data", c => d += c); res.on("end", () => resolve(d));
     });
-    for (const feed of feeds) {
-        try {
-            const xml = await fetchXml(feed.url);
-            const items = xml.match(/<item>([\s\S]*?)<\/item>/g) || [];
-            for (const item of items.slice(0, 10)) {
-                const title = (item.match(/<title><!\[CDATA\[(.*?)\]\]><\/title>/) ||
-                    item.match(/<title>(.*?)<\/title>/) || [])[1]?.trim() || "";
-                const link = (item.match(/<link>(.*?)<\/link>/) ||
-                    item.match(/<guid[^>]*>(.*?)<\/guid>/) ||
-                    item.match(/<link\s[^>]*href="([^"]+)"/) || [])[1]?.trim() || "";
-                const pubDate = (item.match(/<pubDate>(.*?)<\/pubDate>/) || [])[1]?.trim() || "";
-                if (title && title.length > 10 && link)
-                    results.push({ title, link, pubDate, source: feed.source });
-            }
-        }
-        catch (_) { /* skip failing feed */ }
-    }
-    if (results.length) {
-        _newsCache = results.slice(0, 15);
-        _newsCacheAt = Date.now();
-    }
-    return _newsCache;
+    req.on("error", reject); req.on("timeout", () => { req.destroy(); reject(new Error("timeout")); });
+  });
+
+  for (const feed of feeds) {
+    try {
+      const xml = await fetchXml(feed.url);
+      const items = xml.match(/<item>([\s\S]*?)<\/item>/g) || [];
+      for (const item of items.slice(0, 10)) {
+        const title   = (item.match(/<title><!\[CDATA\[(.*?)\]\]><\/title>/) ||
+                         item.match(/<title>(.*?)<\/title>/) || [])[1]?.trim() || "";
+        const link    = (item.match(/<link>(.*?)<\/link>/) ||
+                         item.match(/<guid[^>]*>(.*?)<\/guid>/) ||
+                         item.match(/<link\s[^>]*href="([^"]+)"/) || [])[1]?.trim() || "";
+        const pubDate = (item.match(/<pubDate>(.*?)<\/pubDate>/) || [])[1]?.trim() || "";
+        if (title && title.length > 10 && link) results.push({ title, link, pubDate, source: feed.source });
+      }
+    } catch (_) { /* skip failing feed */ }
+  }
+  if (results.length) { _newsCache = results.slice(0, 15); _newsCacheAt = Date.now(); }
+  return _newsCache;
 }
+
 // ── Session ────────────────────────────────────────────────────────────────────
 // eslint-disable-next-line @typescript-eslint/no-var-requires
-const SQLiteStore = require("connect-sqlite3")(express_session_1.default);
-app.use((0, express_session_1.default)({
-    store: new SQLiteStore({ db: "sessions.db", dir: path_1.default.join(__dirname, "..") }),
-    secret: SESSION_SECRET,
-    resave: false,
-    saveUninitialized: false,
-    cookie: { httpOnly: true, sameSite: "lax", maxAge: 7 * 24 * 60 * 60 * 1000 },
+const SQLiteStore = require("connect-sqlite3")(session);
+app.use(session({
+  store: new SQLiteStore({ db: "sessions.db", dir: path.join(__dirname, "..") }),
+  secret: SESSION_SECRET,
+  resave: false,
+  saveUninitialized: false,
+  cookie: { httpOnly: true, sameSite: "lax", maxAge: 7 * 24 * 60 * 60 * 1000 },
 }));
-app.use(express_1.default.json());
-app.use(express_1.default.urlencoded({ extended: true }));
-app.use("/public", express_1.default.static(path_1.default.join(__dirname, "..", "public")));
-// Bypass ngrok browser warning for all responses
-app.use((_req, res, next) => {
-    res.setHeader("ngrok-skip-browser-warning", "true");
-    next();
-});
-// ── Analytics middleware ───────────────────────────────────────────────────────
-app.use((req, _res, next) => {
-    if (req.method === "GET" &&
-        !req.path.startsWith("/api/") &&
-        !req.path.startsWith("/public/") &&
-        !req.path.startsWith("/auth/")) {
-        const ip = (req.headers["x-forwarded-for"] || req.socket.remoteAddress || "").split(",")[0].trim();
-        const ipHash = crypto_1.default.createHash("sha256").update(ip + "zs2026").digest("hex").slice(0, 16);
-        const ua = (req.headers["user-agent"] || "").slice(0, 150);
-        const ref = (req.headers["referer"] || "").slice(0, 200);
-        (0, db_1.dbRun)(`INSERT INTO page_views (path, ip_hash, user_agent, referrer, is_logged_in, created_at)
-       VALUES (?,?,?,?,?,datetime('now','localtime'))`, [req.path, ipHash, ua, ref, req.session?.userId ? 1 : 0]).catch(() => { });
-    }
-    next();
-});
-// ── Security helpers ───────────────────────────────────────────────────────────
-/** HTML-escape user-controlled strings before rendering into HTML to prevent XSS */
-function esc(str) {
-    if (!str)
-        return "";
-    return str
-        .replace(/&/g, "&amp;")
-        .replace(/</g, "&lt;")
-        .replace(/>/g, "&gt;")
-        .replace(/"/g, "&quot;")
-        .replace(/'/g, "&#x27;");
+
+declare module "express-session" {
+  interface SessionData { userId: number; userName: string; userRole: string; oauthState: string; guestMode: boolean; mobileVerified: boolean; }
 }
+
+app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
+app.use("/public", express.static(path.join(__dirname, "..", "public")));
+
+// Bypass ngrok browser warning for all responses
+app.use((_req: Request, res: Response, next: NextFunction) => {
+  res.setHeader("ngrok-skip-browser-warning", "true");
+  next();
+});
+
+// ── Analytics middleware ───────────────────────────────────────────────────────
+app.use((req: Request, _res: Response, next: NextFunction) => {
+  if (req.method === "GET" &&
+      !req.path.startsWith("/api/") &&
+      !req.path.startsWith("/public/") &&
+      !req.path.startsWith("/auth/")) {
+    const ip = (req.headers["x-forwarded-for"] as string || req.socket.remoteAddress || "").split(",")[0].trim();
+    const ipHash = crypto.createHash("sha256").update(ip + "zs2026").digest("hex").slice(0, 16);
+    const ua  = (req.headers["user-agent"] || "").slice(0, 150);
+    const ref = (req.headers["referer"]    || "").slice(0, 200);
+    dbRun(
+      `INSERT INTO page_views (path, ip_hash, user_agent, referrer, is_logged_in, created_at)
+       VALUES (?,?,?,?,?,datetime('now','localtime'))`,
+      [req.path, ipHash, ua, ref, req.session?.userId ? 1 : 0]
+    ).catch(() => {});
+  }
+  next();
+});
+
+// ── Security helpers ───────────────────────────────────────────────────────────
+
+/** HTML-escape user-controlled strings before rendering into HTML to prevent XSS */
+function esc(str: string | undefined | null): string {
+  if (!str) return "";
+  return str
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#x27;");
+}
+
 /** Simple in-memory rate limiter — max attempts per window per IP */
-const _rateLimits = new Map();
-function checkRateLimit(key, maxAttempts, windowMs) {
-    const now = Date.now();
-    const entry = _rateLimits.get(key);
-    if (!entry || now > entry.resetAt) {
-        _rateLimits.set(key, { count: 1, resetAt: now + windowMs });
-        return true; // allowed
-    }
-    entry.count++;
-    if (entry.count > maxAttempts)
-        return false; // blocked
-    return true;
+const _rateLimits = new Map<string, { count: number; resetAt: number }>();
+function checkRateLimit(key: string, maxAttempts: number, windowMs: number): boolean {
+  const now = Date.now();
+  const entry = _rateLimits.get(key);
+  if (!entry || now > entry.resetAt) {
+    _rateLimits.set(key, { count: 1, resetAt: now + windowMs });
+    return true; // allowed
+  }
+  entry.count++;
+  if (entry.count > maxAttempts) return false; // blocked
+  return true;
 }
 // Clean up stale entries every 10 minutes
 setInterval(() => {
-    const now = Date.now();
-    for (const [k, v] of _rateLimits) {
-        if (now > v.resetAt)
-            _rateLimits.delete(k);
-    }
+  const now = Date.now();
+  for (const [k, v] of _rateLimits) { if (now > v.resetAt) _rateLimits.delete(k); }
 }, 10 * 60 * 1000);
-function requireAuth(req, res, next) {
-    if (!req.session.userId) {
-        res.redirect("/login?next=" + encodeURIComponent(req.path));
-        return;
-    }
-    next();
+
+function requireAuth(req: Request, res: Response, next: NextFunction) {
+  if (!req.session.userId) {
+    res.redirect("/login?next=" + encodeURIComponent(req.path));
+    return;
+  }
+  next();
 }
-function requireAdmin(req, res, next) {
-    if (!req.session.userId) {
-        res.redirect("/login?next=" + encodeURIComponent(req.path));
-        return;
-    }
-    if (req.session.userRole !== "admin") {
-        res.status(403).send(`<!DOCTYPE html><html><head><title>Access Denied</title><link rel="stylesheet" href="/public/css/style.css"></head><body>${nav("", req)}<div class="container"><div class="admin-denied"><h2>🔒 Admin Only</h2><p>You don't have permission to view this page.</p><a href="/" class="btn-primary">Back to Screener</a></div></div></body></html>`);
-        return;
-    }
-    next();
+
+function requireAdmin(req: Request, res: Response, next: NextFunction) {
+  if (!req.session.userId) { res.redirect("/login?next=" + encodeURIComponent(req.path)); return; }
+  if (req.session.userRole !== "admin") { res.status(403).send(`<!DOCTYPE html><html><head><title>Access Denied</title><link rel="stylesheet" href="/public/css/style.css"></head><body>${nav("", req)}<div class="container"><div class="admin-denied"><h2>🔒 Admin Only</h2><p>You don't have permission to view this page.</p><a href="/" class="btn-primary">Back to Screener</a></div></div></body></html>`); return; }
+  next();
 }
+
 /** Middleware: blocks access when app_setting[key] === 'false' */
-function featureGate(settingKey, featureName) {
-    return async (req, res, next) => {
-        const enabled = (await (0, db_1.getSetting)(settingKey)) !== "false";
-        if (!enabled) {
-            res.status(404).send(`<!DOCTYPE html>
+function featureGate(settingKey: string, featureName: string) {
+  return async (req: Request, res: Response, next: NextFunction) => {
+    const enabled = (await getSetting(settingKey)) !== "false";
+    if (!enabled) {
+      res.status(404).send(`<!DOCTYPE html>
 <html lang="en"><head>
   <meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
   <title>${featureName} Unavailable — ZeroScreen</title>
@@ -281,164 +273,160 @@ function featureGate(settingKey, featureName) {
   </div>
   <script src="/public/js/app.js"></script>
 </body></html>`);
-            return;
-        }
-        next();
-    };
+      return;
+    }
+    next();
+  };
 }
+
 /** Middleware: redirects to upgrade page when app_setting[key] === 'true' and user is not premium */
-function premiumGate(settingKey, featureName) {
-    return async (req, res, next) => {
-        const premiumOnly = (await (0, db_1.getSetting)(settingKey)) === "true";
-        if (premiumOnly && !userIsPremium(req)) {
-            res.redirect("/my-paper-trade/upgrade?err=" + encodeURIComponent(`${featureName} requires a Premium subscription.`));
-            return;
-        }
-        next();
-    };
+function premiumGate(settingKey: string, featureName: string) {
+  return async (req: Request, res: Response, next: NextFunction) => {
+    const premiumOnly = (await getSetting(settingKey)) === "true";
+    if (premiumOnly && !userIsPremium(req)) {
+      res.redirect("/my-paper-trade/upgrade?err=" + encodeURIComponent(`${featureName} requires a Premium subscription.`));
+      return;
+    }
+    next();
+  };
 }
-function userIsPremium(req) {
-    const role = req.session?.userRole;
-    return role === "premium" || role === "admin";
+
+function userIsPremium(req: Request): boolean {
+  const role = req.session?.userRole;
+  return role === "premium" || role === "admin";
 }
+
 /** Returns true if current IST time is within NSE market hours (Mon–Fri 9:15–15:30) */
-function isMarketHours() {
-    const ist = new Date(Date.now() + 5.5 * 60 * 60 * 1000);
-    const day = ist.getUTCDay(); // 0=Sun, 6=Sat
-    if (day === 0 || day === 6)
-        return false;
-    const mins = ist.getUTCHours() * 60 + ist.getUTCMinutes();
-    return mins >= 555 && mins <= 930; // 9:15=555, 15:30=930
+function isMarketHours(): boolean {
+  const ist  = new Date(Date.now() + 5.5 * 60 * 60 * 1000);
+  const day  = ist.getUTCDay(); // 0=Sun, 6=Sat
+  if (day === 0 || day === 6) return false;
+  const mins = ist.getUTCHours() * 60 + ist.getUTCMinutes();
+  return mins >= 555 && mins <= 930; // 9:15=555, 15:30=930
 }
+
 /** Send OTP via Fast2SMS. Falls back to console log when FAST2SMS_API_KEY is unset. */
-async function sendSmsOtp(mobile, otp) {
-    const apiKey = process.env.FAST2SMS_API_KEY;
-    if (!apiKey) {
-        console.log(`[OTP-DEV] Mobile: ${mobile} | OTP: ${otp}`);
-        return true;
-    }
-    try {
-        const message = `Your ZeroScreen OTP is ${otp}. Valid for 10 minutes. Do not share.`;
-        const url = `https://www.fast2sms.com/dev/bulkV2?authorization=${encodeURIComponent(apiKey)}&message=${encodeURIComponent(message)}&language=english&route=q&numbers=${mobile}`;
-        const resp = await fetch(url, { signal: AbortSignal.timeout(10000), headers: { "cache-control": "no-cache" } });
-        const data = await resp.json();
-        if (!data.return)
-            console.error("[OTP-SMS] Fast2SMS error:", JSON.stringify(data));
-        return data.return === true;
-    }
-    catch (e) {
-        console.error("[OTP-SMS] Exception:", e);
-        return false;
-    }
+async function sendSmsOtp(mobile: string, otp: string): Promise<boolean> {
+  const apiKey = process.env.FAST2SMS_API_KEY;
+  if (!apiKey) {
+    console.log(`[OTP-DEV] Mobile: ${mobile} | OTP: ${otp}`);
+    return true;
+  }
+  try {
+    const message = `Your ZeroScreen OTP is ${otp}. Valid for 10 minutes. Do not share.`;
+    const url = `https://www.fast2sms.com/dev/bulkV2?authorization=${encodeURIComponent(apiKey)}&message=${encodeURIComponent(message)}&language=english&route=q&numbers=${mobile}`;
+    const resp = await fetch(url, { signal: AbortSignal.timeout(10000), headers: { "cache-control": "no-cache" } });
+    const data = await resp.json() as any;
+    if (!data.return) console.error("[OTP-SMS] Fast2SMS error:", JSON.stringify(data));
+    return data.return === true;
+  } catch (e) { console.error("[OTP-SMS] Exception:", e); return false; }
 }
+
 // ── Razorpay ──────────────────────────────────────────────────────────────────
-const RAZORPAY_KEY_ID = process.env.RAZORPAY_KEY_ID || "";
+const RAZORPAY_KEY_ID     = process.env.RAZORPAY_KEY_ID     || "";
 const RAZORPAY_KEY_SECRET = process.env.RAZORPAY_KEY_SECRET || "";
 const PREMIUM_PRICE_PAISE = 49900; // ₹499
+
 // ── Template helper ────────────────────────────────────────────────────────────
-function fmt(n, decimals = 2) {
-    if (n == null)
-        return "—";
-    return n.toFixed(decimals);
+function fmt(n: number | null | undefined, decimals = 2): string {
+  if (n == null) return "—";
+  return n.toFixed(decimals);
 }
-function fmtCr(n) {
-    if (n == null)
-        return "—";
-    if (Math.abs(n) >= 1e5)
-        return (n / 1e5).toFixed(1) + " Lcr";
-    if (Math.abs(n) >= 1e3)
-        return (n / 1e3).toFixed(1) + "k Cr";
-    return n.toFixed(0) + " Cr";
+
+function fmtCr(n: number | null | undefined): string {
+  if (n == null) return "—";
+  if (Math.abs(n) >= 1e5) return (n / 1e5).toFixed(1) + " Lcr";
+  if (Math.abs(n) >= 1e3) return (n / 1e3).toFixed(1) + "k Cr";
+  return n.toFixed(0) + " Cr";
 }
-function fmtVol(v) {
-    if (v == null)
-        return "—";
-    if (v >= 1e7)
-        return (v / 1e7).toFixed(1) + "Cr";
-    if (v >= 1e5)
-        return (v / 1e5).toFixed(1) + "L";
-    if (v >= 1e3)
-        return (v / 1e3).toFixed(1) + "K";
-    return String(v);
+
+function fmtVol(v: number | null | undefined): string {
+  if (v == null) return "—";
+  if (v >= 1e7) return (v / 1e7).toFixed(1) + "Cr";
+  if (v >= 1e5) return (v / 1e5).toFixed(1) + "L";
+  if (v >= 1e3) return (v / 1e3).toFixed(1) + "K";
+  return String(v);
 }
-function roceColor(r) {
-    if (r == null)
-        return "#888";
-    if (r >= 25)
-        return "#2ecc71";
-    if (r >= 15)
-        return "#82e0aa";
-    if (r >= 8)
-        return "#f39c12";
-    return "#e74c3c";
+
+function roceColor(r: number | null): string {
+  if (r == null) return "#888";
+  if (r >= 25)  return "#2ecc71";
+  if (r >= 15)  return "#82e0aa";
+  if (r >= 8)   return "#f39c12";
+  return "#e74c3c";
 }
-function deColor(d) {
-    if (d == null)
-        return "#888";
-    if (d === 0)
-        return "#2ecc71";
-    if (d <= 0.3)
-        return "#82e0aa";
-    if (d <= 1.0)
-        return "#f39c12";
-    return "#e74c3c";
+
+function deColor(d: number | null): string {
+  if (d == null) return "#888";
+  if (d === 0)  return "#2ecc71";
+  if (d <= 0.3) return "#82e0aa";
+  if (d <= 1.0) return "#f39c12";
+  return "#e74c3c";
 }
-function changeColor(c) {
-    if (c == null)
-        return "#888";
-    return c >= 0 ? "#2ecc71" : "#e74c3c";
+
+function changeColor(c: number | null): string {
+  if (c == null) return "#888";
+  return c >= 0 ? "#2ecc71" : "#e74c3c";
 }
+
 // ── Nav HTML ──────────────────────────────────────────────────────────────────
-function nav(active, req) {
-    const isLoggedIn = !!(req?.session?.userId);
-    const userName = req?.session?.userName || "";
-    const userRole = req?.session?.userRole || "guest";
-    const isAdmin = userRole === "admin";
-    const isPremium = userRole === "premium" || isAdmin;
-    // ── Tier-based dropdowns ───────────────────────────────────────────────────
-    // 🟢 BEGINNERS — learn by watching, no real money
-    const beginnerLinks = [
-        ["paper-trade", "/paper-trade", "📋 Paper Trade"],
-        ["strategies", "/strategies", "🎓 How Strategies Work"],
-        ["compare", "/compare", "⚖️ Compare Stocks"],
-        ["about", "/about", "ℹ️ About ZeroScreen"],
-    ];
-    // 🟡 TRADERS (mid-level) — curated ideas + tools
-    const traderLinks = [
-        ["today", "/today", "🔥 Today's Picks"],
-        ["signals", "/signals", "🤖 Live Bot Signals"],
-        ["dashboard", "/dashboard", "📈 Bot Analytics"],
-        ["strategy-builder", "/strategy-builder", "🏗️ Strategy Builder"],
-    ];
-    // 🔴 INVESTORS (advanced) — do your own research
-    const investorLinks = [
-        ["home", "/", "🔍 Stock Screener"],
-        ["compare", "/compare", "⚖️ Compare Stocks"],
-        ...(isLoggedIn
-            ? [["watchlists", "/watchlists", "⭐ Watchlists"],
-                ["alerts", "/alerts", "🔔 Price Alerts"],
-                [isAdmin ? "my-paper-trade" : "my-portfolio",
-                    isAdmin ? "/my-paper-trade" : "/my-portfolio", "💼 My Portfolio"]]
-            : [["premium", "/premium", "💎 Go Premium"]]),
-    ];
-    // Admin dropdown — admin only
-    const adminLinks = isAdmin ? [
-        ["admin", "/admin", "🧠 Overview"],
-        ["admin-picks", "/admin/picks", "🛠 Picks Manager"],
-        ["admin-users", "/admin/users", "👥 Users"],
-        ["admin-analytics", "/admin/analytics", "📊 Analytics"],
-        ["admin-content", "/admin/content", "📢 Content"],
-        ["admin-signals", "/admin/signals", "🤖 Signal Control"],
-        ["admin-subs", "/admin/subs", "💳 Subscriptions"],
-        ["holdings", "/holdings", "📊 My Holdings"],
-    ] : [];
-    const allTiered = [...beginnerLinks, ...traderLinks, ...investorLinks];
-    const beginnerActive = beginnerLinks.some(([k]) => k === active);
-    const traderActive = traderLinks.some(([k]) => k === active);
-    const investorActive = investorLinks.some(([k]) => k === active);
-    const adminActive = adminLinks.some(([k]) => k === active);
-    function dropMenu(id, btnLabel, isActive, sections) {
-        return `<div class="nav-more" id="nav-drop-${id}">
+function nav(active: string, req?: Request): string {
+  const isLoggedIn = !!(req?.session?.userId);
+  const userName   = req?.session?.userName || "";
+  const userRole   = req?.session?.userRole || "guest";
+  const isAdmin    = userRole === "admin";
+  const isPremium  = userRole === "premium" || isAdmin;
+
+  // ── Tier-based dropdowns ───────────────────────────────────────────────────
+
+  // 🟢 BEGINNERS — learn by watching, no real money
+  const beginnerLinks: [string, string, string][] = [
+    ["paper-trade",  "/paper-trade",  "📋 Paper Trade"],
+    ["strategies",   "/strategies",   "🎓 How Strategies Work"],
+    ["compare",      "/compare",      "⚖️ Compare Stocks"],
+    ["about",        "/about",        "ℹ️ About ZeroScreen"],
+  ];
+
+  // 🟡 TRADERS (mid-level) — curated ideas + tools
+  const traderLinks: [string, string, string][] = [
+    ["today",            "/today",            "🔥 Today's Picks"],
+    ["signals",          "/signals",          "🤖 Live Bot Signals"],
+    ["dashboard",        "/dashboard",        "📈 Bot Analytics"],
+    ["strategy-builder", "/strategy-builder", "🏗️ Strategy Builder"],
+  ];
+
+  // 🔴 INVESTORS (advanced) — do your own research
+  const investorLinks: [string, string, string][] = [
+    ["home",    "/",        "🔍 Stock Screener"],
+    ["compare", "/compare", "⚖️ Compare Stocks"],
+    ...(isLoggedIn
+      ? [["watchlists",  "/watchlists",  "⭐ Watchlists"]                                          as [string,string,string],
+         ["alerts",      "/alerts",      "🔔 Price Alerts"]                                        as [string,string,string],
+         [isAdmin ? "my-paper-trade" : "my-portfolio",
+          isAdmin ? "/my-paper-trade" : "/my-portfolio", "💼 My Portfolio"]                        as [string,string,string]]
+      : [["premium", "/premium", "💎 Go Premium"]                                                  as [string,string,string]]),
+  ];
+
+  // Admin dropdown — admin only
+  const adminLinks: [string, string, string][] = isAdmin ? [
+    ["admin",           "/admin",           "🧠 Overview"],
+    ["admin-picks",     "/admin/picks",     "🛠 Picks Manager"],
+    ["admin-users",     "/admin/users",     "👥 Users"],
+    ["admin-analytics", "/admin/analytics", "📊 Analytics"],
+    ["admin-content",   "/admin/content",   "📢 Content"],
+    ["admin-signals",   "/admin/signals",   "🤖 Signal Control"],
+    ["admin-subs",      "/admin/subs",      "💳 Subscriptions"],
+    ["holdings",        "/holdings",        "📊 My Holdings"],
+  ] : [];
+
+  const allTiered = [...beginnerLinks, ...traderLinks, ...investorLinks];
+  const beginnerActive = beginnerLinks.some(([k]) => k === active);
+  const traderActive   = traderLinks.some(([k]) => k === active);
+  const investorActive = investorLinks.some(([k]) => k === active);
+  const adminActive    = adminLinks.some(([k]) => k === active);
+
+  function dropMenu(id: string, btnLabel: string, isActive: boolean, sections: {label: string, color: string, links: [string,string,string][]}[]): string {
+    return `<div class="nav-more" id="nav-drop-${id}">
       <button class="nav-more-btn${isActive ? " active" : ""}" id="nav-drop-btn-${id}" aria-haspopup="true" aria-expanded="false">
         ${btnLabel} <span class="nav-more-chevron">▾</span>
       </button>
@@ -446,28 +434,35 @@ function nav(active, req) {
         ${sections.map(sec => `
           <div class="nav-tier-section">
             <div class="nav-tier-label" style="border-left:3px solid ${sec.color}; color:${sec.color}">${sec.label}</div>
-            ${sec.links.map(([key, href, label]) => `<a href="${href}" class="${active === key ? "active" : ""}" role="menuitem">${label}</a>`).join("")}
+            ${sec.links.map(([key, href, label]) =>
+              `<a href="${href}" class="${active === key ? "active" : ""}" role="menuitem">${label}</a>`
+            ).join("")}
           </div>`).join("")}
       </div>
     </div>`;
-    }
-    const exploreDropHtml = dropMenu("explore", "🧭 Explore", beginnerActive || traderActive || investorActive, [
-        { label: "🟢 Beginners — Learn First", color: "#10b981", links: beginnerLinks },
-        { label: "🟡 Traders — Ideas & Tools", color: "#f59e0b", links: traderLinks },
-        { label: "🔴 Investors — Research", color: "#ef4444", links: investorLinks },
-    ]);
-    const adminDropHtml = isAdmin
-        ? `<div class="nav-more" id="nav-drop-admin">
+  }
+
+  const exploreDropHtml = dropMenu("explore", "🧭 Explore", beginnerActive || traderActive || investorActive, [
+    { label: "🟢 Beginners — Learn First", color: "#10b981", links: beginnerLinks },
+    { label: "🟡 Traders — Ideas & Tools",  color: "#f59e0b", links: traderLinks },
+    { label: "🔴 Investors — Research",     color: "#ef4444", links: investorLinks },
+  ]);
+
+  const adminDropHtml = isAdmin
+    ? `<div class="nav-more" id="nav-drop-admin">
         <button class="nav-more-btn${adminActive ? " active" : ""}" id="nav-drop-btn-admin" aria-haspopup="true" aria-expanded="false">
           🛡️ Admin <span class="nav-more-chevron">▾</span>
         </button>
         <div class="nav-more-drop nav-more-drop-right" id="nav-drop-menu-admin" role="menu">
-          ${adminLinks.map(([key, href, label]) => `<a href="${href}" class="${active === key ? "active" : ""}" role="menuitem">${label}</a>`).join("")}
+          ${adminLinks.map(([key, href, label]) =>
+            `<a href="${href}" class="${active === key ? "active" : ""}" role="menuitem">${label}</a>`
+          ).join("")}
         </div>
       </div>`
-        : "";
-    const authLinks = isLoggedIn
-        ? `<div class="nav-user nav-user-menu" id="nav-user-menu">
+    : "";
+
+  const authLinks = isLoggedIn
+    ? `<div class="nav-user nav-user-menu" id="nav-user-menu">
          ${isPremium && !isAdmin ? `<span class="nav-premium-badge" title="Premium member">💎</span>` : ""}
          <button class="nav-avatar" id="nav-user-btn" aria-haspopup="true" aria-expanded="false" title="${userName}">${userName.charAt(0).toUpperCase()}</button>
          <div class="nav-user-drop" id="nav-user-drop" role="menu">
@@ -476,12 +471,13 @@ function nav(active, req) {
            <a href="/logout" class="nav-user-drop-logout" role="menuitem">↩ Sign Out</a>
          </div>
        </div>`
-        : `<div class="nav-auth">
+    : `<div class="nav-auth">
          <a href="/premium" class="btn-nav-premium${active === "premium" ? " active" : ""}">⚡ Premium</a>
          <a href="/login" class="btn-nav-login">Sign In</a>
        </div>`;
-    const mobileMobFooter = isLoggedIn
-        ? `<div class="nav-mobile-footer">
+
+  const mobileMobFooter = isLoggedIn
+    ? `<div class="nav-mobile-footer">
          <div class="nav-mob-identity">
            <span class="nav-mob-avatar">${userName.charAt(0).toUpperCase()}</span>
            <div class="nav-mob-identity-info">
@@ -494,11 +490,12 @@ function nav(active, req) {
          ${isAdmin ? `<a href="/admin" class="nav-mob-link">🛡️ Admin Panel</a>` : ""}
          <a href="/logout" class="nav-mob-logout">↩ Sign Out</a>
        </div>`
-        : `<div class="nav-mobile-footer">
+    : `<div class="nav-mobile-footer">
          <a href="/login" class="nav-mob-link">🔐 Sign In</a>
          <a href="/signup" class="nav-mob-signup">⚡ Create Free Account</a>
        </div>`;
-    return `<nav class="topnav">
+
+  return `<nav class="topnav">
     <a href="/" class="brand"><img src="/public/images/logo.svg" class="brand-logo" alt="ZeroScreen"><span class="brand-wordmark">Zero<em>Screen</em></span></a>
     <div class="nav-desktop-links">
       <a href="/" class="${active === "home" ? "active" : ""}">🔍 Screener</a>
@@ -568,9 +565,11 @@ function nav(active, req) {
     </div>
   </div>`;
 }
+
 // ── Auth pages ─────────────────────────────────────────────────────────────────
-function authLayout(title, content) {
-    return `<!DOCTYPE html>
+
+function authLayout(title: string, content: string): string {
+  return `<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
@@ -592,15 +591,13 @@ function authLayout(title, content) {
 </body>
 </html>`;
 }
+
 // GET /signup
-app.get("/signup", featureGate("registration_open", "New Registrations"), (req, res) => {
-    if (req.session.userId) {
-        res.redirect("/");
-        return;
-    }
-    const error = req.query.error;
-    const googleBtn = GOOGLE_CLIENT_ID
-        ? `<a href="/auth/google" class="btn-google">
+app.get("/signup", featureGate("registration_open", "New Registrations"), (req: Request, res: Response) => {
+  if (req.session.userId) { res.redirect("/"); return; }
+  const error = req.query.error as string | undefined;
+  const googleBtn = GOOGLE_CLIENT_ID
+    ? `<a href="/auth/google" class="btn-google">
          <svg width="18" height="18" viewBox="0 0 18 18" xmlns="http://www.w3.org/2000/svg" style="flex-shrink:0">
            <path fill="#4285F4" d="M17.64 9.2c0-.637-.057-1.251-.164-1.84H9v3.481h4.844c-.209 1.125-.843 2.078-1.796 2.717v2.258h2.908c1.702-1.567 2.684-3.875 2.684-6.615z"/>
            <path fill="#34A853" d="M9 18c2.43 0 4.467-.806 5.956-2.18l-2.908-2.259c-.806.54-1.837.86-3.048.86-2.344 0-4.328-1.584-5.036-3.711H.957v2.332A8.997 8.997 0 0 0 9 18z"/>
@@ -610,8 +607,8 @@ app.get("/signup", featureGate("registration_open", "New Registrations"), (req, 
          Sign up with Google
        </a>
        <div class="auth-divider"><span>or create with email</span></div>`
-        : "";
-    res.send(`<!DOCTYPE html>
+    : "";
+  res.send(`<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
@@ -851,55 +848,50 @@ app.get("/signup", featureGate("registration_open", "New Registrations"), (req, 
 </body>
 </html>`);
 });
+
 // POST /signup
-app.post("/signup", featureGate("registration_open", "New Registrations"), async (req, res) => {
-    const ip = (req.headers["x-forwarded-for"] || req.socket.remoteAddress || "unknown").split(",")[0].trim();
-    if (!checkRateLimit(`signup:${ip}`, 5, 60 * 60 * 1000)) {
-        res.redirect("/signup?error=Too+many+signups+from+this+IP.+Please+try+later.");
-        return;
-    }
-    const { name, email, password } = req.body;
-    if (!name || !email || !password) {
-        res.redirect("/signup?error=All+fields+are+required");
-        return;
-    }
-    if (password.length < 8) {
-        res.redirect("/signup?error=Password+must+be+at+least+8+characters");
-        return;
-    }
-    const existing = await (0, db_1.getUserByEmail)(email);
-    if (existing) {
-        res.redirect("/signup?error=An+account+with+that+email+already+exists");
-        return;
-    }
-    const hash = await bcrypt_1.default.hash(password, 12);
-    // First ever user OR the configured ADMIN_EMAIL gets admin role
-    const userCount = await (0, db_1.countUsers)();
-    const id = await (0, db_1.createUser)(name.trim(), email.trim(), hash);
-    const isAdminEmail = ADMIN_EMAIL && email.trim().toLowerCase() === ADMIN_EMAIL;
-    const role = (userCount === 0 || isAdminEmail) ? "admin" : "user";
-    if (role === "admin") {
-        await (0, db_1.dbRun)("UPDATE users SET role = 'admin' WHERE id = ?", [id]);
-    }
-    req.session.userId = id;
-    req.session.userName = name.trim();
-    req.session.userRole = role;
-    // Send welcome email (non-blocking)
-    (0, mailer_1.sendWelcomeEmail)(name.trim(), email.trim()).catch(() => { });
-    // Notify admin on Telegram
-    notifyTelegram(`🆕 New ZeroScreen signup!\nName: ${name.trim()}\nEmail: ${email.trim()}\nRole: ${role}\nTime: ${new Date().toLocaleString("en-IN", { timeZone: "Asia/Kolkata" })} IST`);
-    res.redirect("/");
+app.post("/signup", featureGate("registration_open", "New Registrations"), async (req: Request, res: Response) => {
+  const ip = (req.headers["x-forwarded-for"] as string || req.socket.remoteAddress || "unknown").split(",")[0].trim();
+  if (!checkRateLimit(`signup:${ip}`, 5, 60 * 60 * 1000)) {
+    res.redirect("/signup?error=Too+many+signups+from+this+IP.+Please+try+later."); return;
+  }
+  const { name, email, password } = req.body;
+  if (!name || !email || !password) {
+    res.redirect("/signup?error=All+fields+are+required"); return;
+  }
+  if (password.length < 8) {
+    res.redirect("/signup?error=Password+must+be+at+least+8+characters"); return;
+  }
+  const existing = await getUserByEmail(email);
+  if (existing) {
+    res.redirect("/signup?error=An+account+with+that+email+already+exists"); return;
+  }
+  const hash = await bcrypt.hash(password, 12);
+  // First ever user OR the configured ADMIN_EMAIL gets admin role
+  const userCount = await countUsers();
+  const id = await createUser(name.trim(), email.trim(), hash);
+  const isAdminEmail = ADMIN_EMAIL && email.trim().toLowerCase() === ADMIN_EMAIL;
+  const role = (userCount === 0 || isAdminEmail) ? "admin" : "user";
+  if (role === "admin") {
+    await dbRun("UPDATE users SET role = 'admin' WHERE id = ?", [id]);
+  }
+  req.session.userId = id;
+  req.session.userName = name.trim();
+  req.session.userRole = role;
+  // Send welcome email (non-blocking)
+  sendWelcomeEmail(name.trim(), email.trim()).catch(() => {});
+  // Notify admin on Telegram
+  notifyTelegram(`🆕 New ZeroScreen signup!\nName: ${name.trim()}\nEmail: ${email.trim()}\nRole: ${role}\nTime: ${new Date().toLocaleString("en-IN", { timeZone: "Asia/Kolkata" })} IST`);
+  res.redirect("/");
 });
+
 // GET /login
-app.get("/login", (req, res) => {
-    if (req.session.userId) {
-        res.redirect("/");
-        return;
-    }
-    const error = req.query.error;
-    const next = req.query.next;
-    const googleBtn = GOOGLE_CLIENT_ID
-        ? `<a href="/auth/google" class="zl-google">
+app.get("/login", (req: Request, res: Response) => {
+  if (req.session.userId) { res.redirect("/"); return; }
+  const error = req.query.error as string | undefined;
+  const next  = req.query.next as string | undefined;
+  const googleBtn = GOOGLE_CLIENT_ID
+    ? `<a href="/auth/google" class="zl-google">
          <svg width="20" height="20" viewBox="0 0 18 18" xmlns="http://www.w3.org/2000/svg" style="flex-shrink:0">
            <path fill="#4285F4" d="M17.64 9.2c0-.637-.057-1.251-.164-1.84H9v3.481h4.844c-.209 1.125-.843 2.078-1.796 2.717v2.258h2.908c1.702-1.567 2.684-3.875 2.684-6.615z"/>
            <path fill="#34A853" d="M9 18c2.43 0 4.467-.806 5.956-2.18l-2.908-2.259c-.806.54-1.837.86-3.048.86-2.344 0-4.328-1.584-5.036-3.711H.957v2.332A8.997 8.997 0 0 0 9 18z"/>
@@ -908,8 +900,8 @@ app.get("/login", (req, res) => {
          </svg>
          Continue with Google
        </a>`
-        : "";
-    res.send(`<!DOCTYPE html>
+    : "";
+  res.send(`<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
@@ -1268,128 +1260,117 @@ app.get("/login", (req, res) => {
 </body>
 </html>`);
 });
+
 // POST /login
-app.post("/login", async (req, res) => {
-    const ip = (req.headers["x-forwarded-for"] || req.socket.remoteAddress || "unknown").split(",")[0].trim();
-    if (!checkRateLimit(`login:${ip}`, 10, 15 * 60 * 1000)) {
-        res.redirect("/login?error=Too+many+attempts.+Please+wait+15+minutes.");
-        return;
-    }
-    const { email, password, next } = req.body;
-    if (!email || !password) {
-        res.redirect("/login?error=Email+and+password+are+required");
-        return;
-    }
-    const user = await (0, db_1.getUserByEmail)(email);
+app.post("/login", async (req: Request, res: Response) => {
+  const ip = (req.headers["x-forwarded-for"] as string || req.socket.remoteAddress || "unknown").split(",")[0].trim();
+  if (!checkRateLimit(`login:${ip}`, 10, 15 * 60 * 1000)) {
+    res.redirect("/login?error=Too+many+attempts.+Please+wait+15+minutes."); return;
+  }
+  const { email, password, next } = req.body;
+  if (!email || !password) {
+    res.redirect("/login?error=Email+and+password+are+required"); return;
+  }
+  const user = await getUserByEmail(email);
+  if (!user) {
+    res.redirect("/login?error=Invalid+email+or+password"); return;
+  }
+  const match = await bcrypt.compare(password, user.password);
+  if (!match) {
+    res.redirect("/login?error=Invalid+email+or+password"); return;
+  }
+  req.session.userId = user.id;
+  req.session.userName = user.name;
+  req.session.userRole = user.role;
+  const redirectTo = (next && next.startsWith("/") && !next.startsWith("//")) ? next : "/";
+  res.redirect(redirectTo);
+});
+
+// GET /logout
+app.get("/logout", (req: Request, res: Response) => {
+  req.session.destroy(err => {
+    res.clearCookie("connect.sid", { path: "/" });
+    res.redirect("/login");
+  });
+});
+
+// ── Google OAuth ───────────────────────────────────────────────────────────────
+app.get("/auth/google", (req: Request, res: Response) => {
+  if (!GOOGLE_CLIENT_ID) {
+    res.redirect("/login?error=Google+Sign-In+is+not+configured+yet"); return;
+  }
+  const state = crypto.randomBytes(16).toString("hex");
+  req.session.oauthState = state;
+  const url = new URL("https://accounts.google.com/o/oauth2/v2/auth");
+  url.searchParams.set("client_id",     GOOGLE_CLIENT_ID);
+  url.searchParams.set("redirect_uri",  GOOGLE_CALLBACK_URL);
+  url.searchParams.set("response_type", "code");
+  url.searchParams.set("scope",         "openid email profile");
+  url.searchParams.set("state",         state);
+  url.searchParams.set("prompt",        "select_account");
+  res.redirect(url.toString());
+});
+
+app.get("/auth/google/callback", async (req: Request, res: Response) => {
+  if (!GOOGLE_CLIENT_ID || !GOOGLE_CLIENT_SECRET) {
+    res.redirect("/login?error=Google+Sign-In+not+configured"); return;
+  }
+  const { code, state, error: oauthErr } = req.query;
+  if (oauthErr)                            { res.redirect("/login?error=Google+sign-in+cancelled"); return; }
+  if (!code || state !== req.session.oauthState) { res.redirect("/login?error=OAuth+state+mismatch"); return; }
+  try {
+    // Exchange code for access token
+    const tokenRes = await fetch("https://oauth2.googleapis.com/token", {
+      method:  "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body:    new URLSearchParams({
+        code:          code as string,
+        client_id:     GOOGLE_CLIENT_ID,
+        client_secret: GOOGLE_CLIENT_SECRET,
+        redirect_uri:  GOOGLE_CALLBACK_URL,
+        grant_type:    "authorization_code",
+      }),
+    });
+    const tokenData = await tokenRes.json() as { access_token?: string };
+    if (!tokenData.access_token) throw new Error("No access token from Google");
+
+    // Get Google user info
+    const infoRes  = await fetch("https://www.googleapis.com/oauth2/v2/userinfo", {
+      headers: { Authorization: `Bearer ${tokenData.access_token}` },
+    });
+    const gUser = await infoRes.json() as { id: string; email: string; name: string; picture?: string };
+
+    // Find or create local user
+    let user = await getUserByEmail(gUser.email);
     if (!user) {
-        res.redirect("/login?error=Invalid+email+or+password");
-        return;
+      const userCount = await countUsers();
+      const id = await createUser(gUser.name || gUser.email.split("@")[0], gUser.email, "");
+      const isAdminEmail = ADMIN_EMAIL && gUser.email.toLowerCase() === ADMIN_EMAIL;
+      const role = (userCount === 0 || isAdminEmail) ? "admin" : "user";
+      await dbRun("UPDATE users SET google_id=?, avatar_url=?, role=? WHERE id=?", [gUser.id, gUser.picture || "", role, id]);
+      user = await getUserById(id);
+      notifyTelegram(`🆕 New ZeroScreen signup via Google!\nName: ${gUser.name}\nEmail: ${gUser.email}`);
+    } else {
+      // Update google_id if not set
+      await dbRun("UPDATE users SET google_id=COALESCE(google_id,?), avatar_url=COALESCE(avatar_url,?) WHERE id=?",
+        [gUser.id, gUser.picture || "", user.id]);
     }
-    const match = await bcrypt_1.default.compare(password, user.password);
-    if (!match) {
-        res.redirect("/login?error=Invalid+email+or+password");
-        return;
-    }
-    req.session.userId = user.id;
+    if (!user) throw new Error("User not found after create");
+    req.session.userId   = user.id;
     req.session.userName = user.name;
     req.session.userRole = user.role;
-    const redirectTo = (next && next.startsWith("/") && !next.startsWith("//")) ? next : "/";
-    res.redirect(redirectTo);
+    res.redirect("/");
+  } catch {
+    res.redirect("/login?error=Google+sign-in+failed.+Please+try+again");
+  }
 });
-// GET /logout
-app.get("/logout", (req, res) => {
-    req.session.destroy(err => {
-        res.clearCookie("connect.sid", { path: "/" });
-        res.redirect("/login");
-    });
-});
-// ── Google OAuth ───────────────────────────────────────────────────────────────
-app.get("/auth/google", (req, res) => {
-    if (!GOOGLE_CLIENT_ID) {
-        res.redirect("/login?error=Google+Sign-In+is+not+configured+yet");
-        return;
-    }
-    const state = crypto_1.default.randomBytes(16).toString("hex");
-    req.session.oauthState = state;
-    const url = new URL("https://accounts.google.com/o/oauth2/v2/auth");
-    url.searchParams.set("client_id", GOOGLE_CLIENT_ID);
-    url.searchParams.set("redirect_uri", GOOGLE_CALLBACK_URL);
-    url.searchParams.set("response_type", "code");
-    url.searchParams.set("scope", "openid email profile");
-    url.searchParams.set("state", state);
-    url.searchParams.set("prompt", "select_account");
-    res.redirect(url.toString());
-});
-app.get("/auth/google/callback", async (req, res) => {
-    if (!GOOGLE_CLIENT_ID || !GOOGLE_CLIENT_SECRET) {
-        res.redirect("/login?error=Google+Sign-In+not+configured");
-        return;
-    }
-    const { code, state, error: oauthErr } = req.query;
-    if (oauthErr) {
-        res.redirect("/login?error=Google+sign-in+cancelled");
-        return;
-    }
-    if (!code || state !== req.session.oauthState) {
-        res.redirect("/login?error=OAuth+state+mismatch");
-        return;
-    }
-    try {
-        // Exchange code for access token
-        const tokenRes = await fetch("https://oauth2.googleapis.com/token", {
-            method: "POST",
-            headers: { "Content-Type": "application/x-www-form-urlencoded" },
-            body: new URLSearchParams({
-                code: code,
-                client_id: GOOGLE_CLIENT_ID,
-                client_secret: GOOGLE_CLIENT_SECRET,
-                redirect_uri: GOOGLE_CALLBACK_URL,
-                grant_type: "authorization_code",
-            }),
-        });
-        const tokenData = await tokenRes.json();
-        if (!tokenData.access_token)
-            throw new Error("No access token from Google");
-        // Get Google user info
-        const infoRes = await fetch("https://www.googleapis.com/oauth2/v2/userinfo", {
-            headers: { Authorization: `Bearer ${tokenData.access_token}` },
-        });
-        const gUser = await infoRes.json();
-        // Find or create local user
-        let user = await (0, db_1.getUserByEmail)(gUser.email);
-        if (!user) {
-            const userCount = await (0, db_1.countUsers)();
-            const id = await (0, db_1.createUser)(gUser.name || gUser.email.split("@")[0], gUser.email, "");
-            const isAdminEmail = ADMIN_EMAIL && gUser.email.toLowerCase() === ADMIN_EMAIL;
-            const role = (userCount === 0 || isAdminEmail) ? "admin" : "user";
-            await (0, db_1.dbRun)("UPDATE users SET google_id=?, avatar_url=?, role=? WHERE id=?", [gUser.id, gUser.picture || "", role, id]);
-            user = await (0, db_1.getUserById)(id);
-            notifyTelegram(`🆕 New ZeroScreen signup via Google!\nName: ${gUser.name}\nEmail: ${gUser.email}`);
-        }
-        else {
-            // Update google_id if not set
-            await (0, db_1.dbRun)("UPDATE users SET google_id=COALESCE(google_id,?), avatar_url=COALESCE(avatar_url,?) WHERE id=?", [gUser.id, gUser.picture || "", user.id]);
-        }
-        if (!user)
-            throw new Error("User not found after create");
-        req.session.userId = user.id;
-        req.session.userName = user.name;
-        req.session.userRole = user.role;
-        res.redirect("/");
-    }
-    catch {
-        res.redirect("/login?error=Google+sign-in+failed.+Please+try+again");
-    }
-});
+
 // ── Forgot / Reset password ────────────────────────────────────────────────────
-app.get("/forgot-password", (req, res) => {
-    if (req.session.userId) {
-        res.redirect("/");
-        return;
-    }
-    const sent = req.query.sent === "1";
-    const error = req.query.error;
-    res.send(authLayout("Forgot Password", `
+app.get("/forgot-password", (req: Request, res: Response) => {
+  if (req.session.userId) { res.redirect("/"); return; }
+  const sent = req.query.sent === "1";
+  const error = req.query.error as string | undefined;
+  res.send(authLayout("Forgot Password", `
     <h2>Reset your password</h2>
     <p class="auth-sub">Enter your email and we'll send a reset link.</p>
     ${sent ? '<div class="auth-success">✅ If that email exists, a reset link has been sent.</div>' : ""}
@@ -1404,45 +1385,40 @@ app.get("/forgot-password", (req, res) => {
     <p class="auth-switch"><a href="/login">← Back to Sign In</a></p>
   `));
 });
-app.post("/forgot-password", async (req, res) => {
-    const ip = (req.headers["x-forwarded-for"] || req.socket.remoteAddress || "unknown").split(",")[0].trim();
-    if (!checkRateLimit(`forgot:${ip}`, 5, 60 * 60 * 1000)) {
-        res.redirect("/forgot-password?sent=1");
-        return; // silently swallow — don't reveal rate limit
-    }
-    const { email } = req.body;
-    if (!email) {
-        res.redirect("/forgot-password?error=Email+is+required");
-        return;
-    }
-    const user = await (0, db_1.getUserByEmail)(email.trim().toLowerCase());
-    if (user) {
-        const token = crypto_1.default.randomBytes(32).toString("hex");
-        await (0, db_1.createResetToken)(user.id, token);
-        const APP_URL = (process.env.APP_URL || `http://localhost:${PORT}`).replace(/\/$/, "");
-        const resetUrl = `${APP_URL}/reset-password/${token}`;
-        (0, mailer_1.sendPasswordResetEmail)(user.email, user.name, resetUrl).catch(() => { });
-    }
-    // Always show same message to prevent email enumeration
-    res.redirect("/forgot-password?sent=1");
+
+app.post("/forgot-password", async (req: Request, res: Response) => {
+  const ip = (req.headers["x-forwarded-for"] as string || req.socket.remoteAddress || "unknown").split(",")[0].trim();
+  if (!checkRateLimit(`forgot:${ip}`, 5, 60 * 60 * 1000)) {
+    res.redirect("/forgot-password?sent=1"); return; // silently swallow — don't reveal rate limit
+  }
+  const { email } = req.body;
+  if (!email) { res.redirect("/forgot-password?error=Email+is+required"); return; }
+  const user = await getUserByEmail(email.trim().toLowerCase());
+  if (user) {
+    const token = crypto.randomBytes(32).toString("hex");
+    await createResetToken(user.id, token);
+    const APP_URL = (process.env.APP_URL || `http://localhost:${PORT}`).replace(/\/$/, "");
+    const resetUrl = `${APP_URL}/reset-password/${token}`;
+    sendPasswordResetEmail(user.email, user.name, resetUrl).catch(() => {});
+  }
+  // Always show same message to prevent email enumeration
+  res.redirect("/forgot-password?sent=1");
 });
-app.get("/reset-password/:token", async (req, res) => {
-    if (req.session.userId) {
-        res.redirect("/");
-        return;
-    }
-    const record = await (0, db_1.getResetToken)(req.params.token);
-    const expired = !record || record.used === 1 || new Date(record.expires_at) < new Date();
-    if (expired) {
-        res.send(authLayout("Link Expired", `
+
+app.get("/reset-password/:token", async (req: Request, res: Response) => {
+  if (req.session.userId) { res.redirect("/"); return; }
+  const record = await getResetToken(req.params.token);
+  const expired = !record || record.used === 1 || new Date(record.expires_at) < new Date();
+  if (expired) {
+    res.send(authLayout("Link Expired", `
       <h2>Link expired or invalid</h2>
       <p class="auth-sub">This reset link has already been used or expired.</p>
       <a href="/forgot-password" class="btn-auth" style="text-align:center;display:block">Request a new link →</a>
     `));
-        return;
-    }
-    const error = req.query.error;
-    res.send(authLayout("Set New Password", `
+    return;
+  }
+  const error = req.query.error as string | undefined;
+  res.send(authLayout("Set New Password", `
     <h2>Set a new password</h2>
     <p class="auth-sub">Choose a strong password for your account.</p>
     ${error ? `<div class="auth-error">${esc(error)}</div>` : ""}
@@ -1459,37 +1435,31 @@ app.get("/reset-password/:token", async (req, res) => {
     </form>
   `));
 });
-app.post("/reset-password/:token", async (req, res) => {
-    const { password, confirm } = req.body;
-    const record = await (0, db_1.getResetToken)(req.params.token);
-    const expired = !record || record.used === 1 || new Date(record.expires_at) < new Date();
-    if (expired) {
-        res.redirect("/forgot-password?error=Link+expired+please+request+again");
-        return;
-    }
-    if (!password || password.length < 8) {
-        res.redirect(`/reset-password/${req.params.token}?error=Password+must+be+at+least+8+characters`);
-        return;
-    }
-    if (password !== confirm) {
-        res.redirect(`/reset-password/${req.params.token}?error=Passwords+do+not+match`);
-        return;
-    }
-    const hash = await bcrypt_1.default.hash(password, 12);
-    await (0, db_1.updateUserPassword)(record.user_id, hash);
-    await (0, db_1.markResetTokenUsed)(req.params.token);
-    res.redirect("/login?success=Password+updated+successfully+please+sign+in");
+
+app.post("/reset-password/:token", async (req: Request, res: Response) => {
+  const { password, confirm } = req.body;
+  const record = await getResetToken(req.params.token);
+  const expired = !record || record.used === 1 || new Date(record.expires_at) < new Date();
+  if (expired) { res.redirect("/forgot-password?error=Link+expired+please+request+again"); return; }
+  if (!password || password.length < 8) {
+    res.redirect(`/reset-password/${req.params.token}?error=Password+must+be+at+least+8+characters`); return;
+  }
+  if (password !== confirm) {
+    res.redirect(`/reset-password/${req.params.token}?error=Passwords+do+not+match`); return;
+  }
+  const hash = await bcrypt.hash(password, 12);
+  await updateUserPassword(record.user_id, hash);
+  await markResetTokenUsed(req.params.token);
+  res.redirect("/login?success=Password+updated+successfully+please+sign+in");
 });
+
 // ── Profile page ───────────────────────────────────────────────────────────────
-app.get("/profile", requireAuth, async (req, res) => {
-    const user = await (0, db_1.getUserById)(req.session.userId);
-    if (!user) {
-        res.redirect("/login");
-        return;
-    }
-    const success = req.query.success;
-    const error = req.query.error;
-    res.send(`<!DOCTYPE html>
+app.get("/profile", requireAuth, async (req: Request, res: Response) => {
+  const user = await getUserById(req.session.userId!);
+  if (!user) { res.redirect("/login"); return; }
+  const success = req.query.success as string | undefined;
+  const error   = req.query.error   as string | undefined;
+  res.send(`<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
@@ -1503,7 +1473,7 @@ app.get("/profile", requireAuth, async (req, res) => {
       <h1>👤 My Profile</h1>
     </div>
     ${success ? `<div class="auth-success" style="margin-bottom:18px">✅ ${esc(success)}</div>` : ""}
-    ${error ? `<div class="auth-error"   style="margin-bottom:18px">⚠️ ${esc(error)}</div>` : ""}
+    ${error   ? `<div class="auth-error"   style="margin-bottom:18px">⚠️ ${esc(error)}</div>` : ""}
 
     <!-- Change name -->
     <div class="profile-card">
@@ -1548,47 +1518,37 @@ app.get("/profile", requireAuth, async (req, res) => {
 </body>
 </html>`);
 });
-app.post("/profile/name", requireAuth, async (req, res) => {
-    const { name } = req.body;
-    if (!name || name.trim().length < 2) {
-        res.redirect("/profile?error=Name+must+be+at+least+2+characters");
-        return;
-    }
-    await (0, db_1.updateUserName)(req.session.userId, name.trim().substring(0, 80));
-    req.session.userName = name.trim();
-    res.redirect("/profile?success=Name+updated+successfully");
+
+app.post("/profile/name", requireAuth, async (req: Request, res: Response) => {
+  const { name } = req.body;
+  if (!name || name.trim().length < 2) {
+    res.redirect("/profile?error=Name+must+be+at+least+2+characters"); return;
+  }
+  await updateUserName(req.session.userId!, name.trim().substring(0, 80));
+  req.session.userName = name.trim();
+  res.redirect("/profile?success=Name+updated+successfully");
 });
-app.post("/profile/password", requireAuth, async (req, res) => {
-    const { current, password, confirm } = req.body;
-    const user = await (0, db_1.getUserById)(req.session.userId);
-    if (!user) {
-        res.redirect("/login");
-        return;
-    }
-    const match = await bcrypt_1.default.compare(current, user.password);
-    if (!match) {
-        res.redirect("/profile?error=Current+password+is+incorrect");
-        return;
-    }
-    if (!password || password.length < 8) {
-        res.redirect("/profile?error=New+password+must+be+at+least+8+characters");
-        return;
-    }
-    if (password !== confirm) {
-        res.redirect("/profile?error=Passwords+do+not+match");
-        return;
-    }
-    const hash = await bcrypt_1.default.hash(password, 12);
-    await (0, db_1.updateUserPassword)(req.session.userId, hash);
-    res.redirect("/profile?success=Password+changed+successfully");
+
+app.post("/profile/password", requireAuth, async (req: Request, res: Response) => {
+  const { current, password, confirm } = req.body;
+  const user = await getUserById(req.session.userId!);
+  if (!user) { res.redirect("/login"); return; }
+  const match = await bcrypt.compare(current, user.password);
+  if (!match) { res.redirect("/profile?error=Current+password+is+incorrect"); return; }
+  if (!password || password.length < 8) { res.redirect("/profile?error=New+password+must+be+at+least+8+characters"); return; }
+  if (password !== confirm) { res.redirect("/profile?error=Passwords+do+not+match"); return; }
+  const hash = await bcrypt.hash(password, 12);
+  await updateUserPassword(req.session.userId!, hash);
+  res.redirect("/profile?success=Password+changed+successfully");
 });
+
 // ── GET /verify-mobile ─────────────────────────────────────────────────────────
-app.get("/verify-mobile", requireAuth, (req, res) => {
-    const mobile = esc(req.query.mobile || "");
-    const sent = req.query.sent === "1";
-    const err = esc(req.query.err || "");
-    const next = esc(req.query.next || "/my-paper-trade");
-    res.send(`<!DOCTYPE html><html lang="en"><head>
+app.get("/verify-mobile", requireAuth, (req: Request, res: Response) => {
+  const mobile = esc(req.query.mobile as string || "");
+  const sent   = req.query.sent === "1";
+  const err    = esc(req.query.err as string || "");
+  const next   = esc(req.query.next as string || "/my-paper-trade");
+  res.send(`<!DOCTYPE html><html lang="en"><head>
   <meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
   <title>Verify Mobile — ZeroScreen</title>
   <link rel="stylesheet" href="/public/css/style.css">
@@ -1630,153 +1590,152 @@ app.get("/verify-mobile", requireAuth, (req, res) => {
 </div>
 <script src="/public/js/app.js"></script></body></html>`);
 });
+
 // POST /verify-mobile/send — generate & send OTP
-app.post("/verify-mobile/send", requireAuth, async (req, res) => {
-    const raw = (req.body.mobile || "").replace(/\D/g, "");
-    const mobile = raw.slice(-10);
-    const next = (req.body.next || "/my-paper-trade").replace(/[^a-zA-Z0-9/?=&_\-]/g, "");
-    if (mobile.length !== 10) {
-        res.redirect(`/verify-mobile?err=${encodeURIComponent("Please enter a valid 10-digit mobile number")}&next=${encodeURIComponent(next)}`);
-        return;
-    }
-    const ip = (req.headers["x-forwarded-for"] || req.socket.remoteAddress || "x").split(",")[0].trim();
-    if (!checkRateLimit(`otp:${ip}:${mobile}`, 3, 60 * 60 * 1000)) {
-        res.redirect(`/verify-mobile?err=${encodeURIComponent("Too many OTP requests. Please wait an hour.")}&next=${encodeURIComponent(next)}`);
-        return;
-    }
-    const otp = Math.floor(100000 + Math.random() * 900000).toString();
-    await (0, db_1.storePhoneOtp)(mobile, otp);
-    const sent = await sendSmsOtp(mobile, otp);
-    if (!sent) {
-        res.redirect(`/verify-mobile?err=${encodeURIComponent("Failed to send OTP. Please try again.")}&next=${encodeURIComponent(next)}`);
-        return;
-    }
-    res.redirect(`/verify-mobile?mobile=${mobile}&sent=1&next=${encodeURIComponent(next)}`);
+app.post("/verify-mobile/send", requireAuth, async (req: Request, res: Response) => {
+  const raw    = ((req.body.mobile as string) || "").replace(/\D/g, "");
+  const mobile = raw.slice(-10);
+  const next   = ((req.body.next as string) || "/my-paper-trade").replace(/[^a-zA-Z0-9/?=&_\-]/g, "");
+  if (mobile.length !== 10) {
+    res.redirect(`/verify-mobile?err=${encodeURIComponent("Please enter a valid 10-digit mobile number")}&next=${encodeURIComponent(next)}`); return;
+  }
+  const ip = (req.headers["x-forwarded-for"] as string || req.socket.remoteAddress || "x").split(",")[0].trim();
+  if (!checkRateLimit(`otp:${ip}:${mobile}`, 3, 60 * 60 * 1000)) {
+    res.redirect(`/verify-mobile?err=${encodeURIComponent("Too many OTP requests. Please wait an hour.")}&next=${encodeURIComponent(next)}`); return;
+  }
+  const otp = Math.floor(100000 + Math.random() * 900000).toString();
+  await storePhoneOtp(mobile, otp);
+  const sent = await sendSmsOtp(mobile, otp);
+  if (!sent) {
+    res.redirect(`/verify-mobile?err=${encodeURIComponent("Failed to send OTP. Please try again.")}&next=${encodeURIComponent(next)}`); return;
+  }
+  res.redirect(`/verify-mobile?mobile=${mobile}&sent=1&next=${encodeURIComponent(next)}`);
 });
+
 // POST /verify-mobile/confirm — verify OTP
-app.post("/verify-mobile/confirm", requireAuth, async (req, res) => {
-    const mobile = (req.body.mobile || "").replace(/\D/g, "").slice(-10);
-    const otp = (req.body.otp || "").trim();
-    const next = (req.body.next || "/my-paper-trade").replace(/[^a-zA-Z0-9/?=&_\-]/g, "");
-    if (mobile.length !== 10 || !/^\d{6}$/.test(otp)) {
-        res.redirect(`/verify-mobile?mobile=${mobile}&sent=1&err=${encodeURIComponent("Invalid input")}&next=${encodeURIComponent(next)}`);
-        return;
-    }
-    const ok = await (0, db_1.verifyPhoneOtp)(mobile, otp);
-    if (!ok) {
-        res.redirect(`/verify-mobile?mobile=${mobile}&sent=1&err=${encodeURIComponent("Invalid or expired OTP. Please try again.")}&next=${encodeURIComponent(next)}`);
-        return;
-    }
-    // Block if this mobile is already verified on a DIFFERENT account
-    const existingUser = await (0, db_1.getUserByMobile)(mobile);
-    if (existingUser && existingUser.id !== req.session.userId) {
-        res.redirect(`/verify-mobile?err=${encodeURIComponent("This mobile number is already linked to another account.")}&next=${encodeURIComponent(next)}`);
-        return;
-    }
-    await (0, db_1.setUserMobile)(req.session.userId, mobile);
-    req.session.mobileVerified = true;
-    res.redirect(next + (next.includes("?") ? "&" : "?") + "msg=" + encodeURIComponent("Mobile verified! You can now paper trade."));
+app.post("/verify-mobile/confirm", requireAuth, async (req: Request, res: Response) => {
+  const mobile = ((req.body.mobile as string) || "").replace(/\D/g, "").slice(-10);
+  const otp    = ((req.body.otp as string) || "").trim();
+  const next   = ((req.body.next as string) || "/my-paper-trade").replace(/[^a-zA-Z0-9/?=&_\-]/g, "");
+  if (mobile.length !== 10 || !/^\d{6}$/.test(otp)) {
+    res.redirect(`/verify-mobile?mobile=${mobile}&sent=1&err=${encodeURIComponent("Invalid input")}&next=${encodeURIComponent(next)}`); return;
+  }
+  const ok = await verifyPhoneOtp(mobile, otp);
+  if (!ok) {
+    res.redirect(`/verify-mobile?mobile=${mobile}&sent=1&err=${encodeURIComponent("Invalid or expired OTP. Please try again.")}&next=${encodeURIComponent(next)}`); return;
+  }
+  // Block if this mobile is already verified on a DIFFERENT account
+  const existingUser = await getUserByMobile(mobile);
+  if (existingUser && existingUser.id !== req.session.userId) {
+    res.redirect(`/verify-mobile?err=${encodeURIComponent("This mobile number is already linked to another account.")}&next=${encodeURIComponent(next)}`); return;
+  }
+  await setUserMobile(req.session.userId!, mobile);
+  req.session.mobileVerified = true;
+  res.redirect(next + (next.includes("?") ? "&" : "?") + "msg=" + encodeURIComponent("Mobile verified! You can now paper trade."));
 });
+
 // ── GET / — Screener ───────────────────────────────────────────────────────────
-app.get("/", async (req, res) => {
-    // Redirect unauthenticated non-guest users to login
-    if (!req.session?.userId) {
-        if (req.query.guest === "1") {
-            req.session.guestMode = true; // persist guest choice
-        }
-        else if (!req.session?.guestMode) {
-            res.redirect("/login");
-            return;
-        }
+app.get("/", async (req: Request, res: Response) => {
+  // Redirect unauthenticated non-guest users to login
+  if (!req.session?.userId) {
+    if (req.query.guest === "1") {
+      req.session.guestMode = true; // persist guest choice
+    } else if (!req.session?.guestMode) {
+      res.redirect("/login"); return;
     }
-    const PAGE_SIZE = 50;
-    const page = Math.max(1, parseInt(req.query.page || "1", 10));
-    const offset = (page - 1) * PAGE_SIZE;
-    const f = {
-        minRoce: req.query.minRoce ? parseFloat(req.query.minRoce) : undefined,
-        maxRoce: req.query.maxRoce ? parseFloat(req.query.maxRoce) : undefined,
-        maxDe: req.query.maxDe ? parseFloat(req.query.maxDe) : undefined,
-        minPromoter: req.query.minPromoter ? parseFloat(req.query.minPromoter) : undefined,
-        maxPe: req.query.maxPe ? parseFloat(req.query.maxPe) : undefined,
-        minPe: req.query.minPe ? parseFloat(req.query.minPe) : undefined,
-        minPrice: req.query.minPrice ? parseFloat(req.query.minPrice) : undefined,
-        maxPrice: req.query.maxPrice ? parseFloat(req.query.maxPrice) : undefined,
-        minVolume: req.query.minVolume ? parseInt(req.query.minVolume, 10) : undefined,
-        minMarketCap: req.query.minMc ? parseFloat(req.query.minMc) : undefined,
-        maxMarketCap: req.query.maxMc ? parseFloat(req.query.maxMc) : undefined,
-        minDividendYield: req.query.minDivYield ? parseFloat(req.query.minDivYield) : undefined,
-        // Indicator filters
-        minRoe: req.query.minRoe ? parseFloat(req.query.minRoe) : undefined,
-        minEps: req.query.minEps ? parseFloat(req.query.minEps) : undefined,
-        minCurrentRatio: req.query.minCr ? parseFloat(req.query.minCr) : undefined,
-        maxPbRatio: req.query.maxPb ? parseFloat(req.query.maxPb) : undefined,
-        minChangePct: req.query.minChg ? parseFloat(req.query.minChg) : undefined,
-        maxChangePct: req.query.maxChg ? parseFloat(req.query.maxChg) : undefined,
-        near52High: req.query.near52H ? parseFloat(req.query.near52H) : undefined,
-        near52Low: req.query.near52L ? parseFloat(req.query.near52L) : undefined,
-        allProfitable: req.query.allProfit === "1",
-        profitUptrend: req.query.uptrend === "1",
-        sector: req.query.sector ? req.query.sector : undefined,
-        sortBy: req.query.sortBy || "roce",
-        sortDir: req.query.sortDir || "desc",
-        limit: PAGE_SIZE + 1,
-        offset,
-    };
-    // ── In-News filter: extract NSE symbols from news headlines ──────────────
-    if (req.query.inNews === "1") {
-        const newsItems = await fetchMarketNews();
-        // Extract only from titles (not links which have CDATA/URL garbage)
-        const rawWords = newsItems.flatMap(n => (n.title || '').match(/\b([A-Z]{3,10})\b/g) || []);
-        const skipWords = new Set([
-            "NSE", "BSE", "IPO", "FII", "DII", "GDP", "RBI", "SEBI", "FY", "Q1", "Q2", "Q3", "Q4",
-            "CEO", "CFO", "MD", "AGM", "EGM", "USA", "UAE", "IRAN", "GOLD", "MINT", "CDATA",
-            "HTTP", "HTTPS", "COM", "WWW", "HTML", "RSS", "XML", "API", "USD", "INR",
-            "MARKET", "STOCK", "STOCKS", "SHARE", "SHARES", "INDIA", "NIFTY", "SENSEX",
-            "BANK", "RATE", "YEAR", "WEEKLY", "DAILY", "TRADE", "TRADING", "JUNE",
-            "JULY", "AUG", "SEP", "OCT", "NOV", "DEC", "JAN", "FEB", "MAR", "APR", "MAY",
-        ]);
-        const candidates = [...new Set(rawWords.filter(w => !skipWords.has(w)))];
-        if (candidates.length > 0) {
-            f.symbolsIn = candidates.slice(0, 60);
-        }
-        else {
-            // Fallback: show top movers if no stock symbols found in news
-            f.minChangePct = 0.5;
-        }
+  }
+  const PAGE_SIZE = 50;
+  const page = Math.max(1, parseInt((req.query.page as string) || "1", 10));
+  const offset = (page - 1) * PAGE_SIZE;
+
+  const f: ScreenerFilter = {
+    minRoce:          req.query.minRoce     ? parseFloat(req.query.minRoce as string)     : undefined,
+    maxRoce:          req.query.maxRoce     ? parseFloat(req.query.maxRoce as string)     : undefined,
+    maxDe:            req.query.maxDe       ? parseFloat(req.query.maxDe as string)       : undefined,
+    minPromoter:      req.query.minPromoter ? parseFloat(req.query.minPromoter as string) : undefined,
+    maxPe:            req.query.maxPe       ? parseFloat(req.query.maxPe as string)       : undefined,
+    minPe:            req.query.minPe       ? parseFloat(req.query.minPe as string)       : undefined,
+    minPrice:         req.query.minPrice    ? parseFloat(req.query.minPrice as string)    : undefined,
+    maxPrice:         req.query.maxPrice    ? parseFloat(req.query.maxPrice as string)    : undefined,
+    minVolume:        req.query.minVolume   ? parseInt(req.query.minVolume as string, 10) : undefined,
+    minMarketCap:     req.query.minMc       ? parseFloat(req.query.minMc as string)       : undefined,
+    maxMarketCap:     req.query.maxMc       ? parseFloat(req.query.maxMc as string)       : undefined,
+    minDividendYield: req.query.minDivYield ? parseFloat(req.query.minDivYield as string) : undefined,
+    // Indicator filters
+    minRoe:          req.query.minRoe         ? parseFloat(req.query.minRoe as string)         : undefined,
+    minEps:          req.query.minEps         ? parseFloat(req.query.minEps as string)         : undefined,
+    minCurrentRatio: req.query.minCr          ? parseFloat(req.query.minCr as string)          : undefined,
+    maxPbRatio:      req.query.maxPb          ? parseFloat(req.query.maxPb as string)          : undefined,
+    minChangePct:    req.query.minChg         ? parseFloat(req.query.minChg as string)         : undefined,
+    maxChangePct:    req.query.maxChg         ? parseFloat(req.query.maxChg as string)         : undefined,
+    near52High:      req.query.near52H        ? parseFloat(req.query.near52H as string)        : undefined,
+    near52Low:       req.query.near52L        ? parseFloat(req.query.near52L as string)        : undefined,
+    allProfitable:    req.query.allProfit === "1",
+    profitUptrend:    req.query.uptrend  === "1",
+    sector:           req.query.sector      ? req.query.sector as string                  : undefined,
+    sortBy:           (req.query.sortBy as string) || "roce",
+    sortDir:          (req.query.sortDir as "asc" | "desc") || "desc",
+    limit:            PAGE_SIZE + 1,
+    offset,
+  };
+
+  // ── In-News filter: extract NSE symbols from news headlines ──────────────
+  if (req.query.inNews === "1") {
+    const newsItems = await fetchMarketNews();
+    // Extract only from titles (not links which have CDATA/URL garbage)
+    const rawWords = newsItems.flatMap(n =>
+      (n.title || '').match(/\b([A-Z]{3,10})\b/g) || []
+    );
+    const skipWords = new Set([
+      "NSE","BSE","IPO","FII","DII","GDP","RBI","SEBI","FY","Q1","Q2","Q3","Q4",
+      "CEO","CFO","MD","AGM","EGM","USA","UAE","IRAN","GOLD","MINT","CDATA",
+      "HTTP","HTTPS","COM","WWW","HTML","RSS","XML","API","USD","INR",
+      "MARKET","STOCK","STOCKS","SHARE","SHARES","INDIA","NIFTY","SENSEX",
+      "BANK","RATE","YEAR","WEEKLY","DAILY","TRADE","TRADING","JUNE",
+      "JULY","AUG","SEP","OCT","NOV","DEC","JAN","FEB","MAR","APR","MAY",
+    ]);
+    const candidates = [...new Set(rawWords.filter(w => !skipWords.has(w)))];
+    if (candidates.length > 0) {
+      f.symbolsIn = candidates.slice(0, 60);
+    } else {
+      // Fallback: show top movers if no stock symbols found in news
+      f.minChangePct = 0.5;
     }
-    const FILTER_KEYS = ['minRoce', 'maxRoce', 'maxDe', 'minPromoter', 'maxPromoter', 'minPe', 'maxPe', 'minPrice', 'maxPrice', 'minVolume', 'minMc', 'maxMc', 'minDivYield', 'allProfit', 'uptrend', 'sector', 'strategy', 'minRoe', 'minEps', 'minCr', 'maxPb', 'minChg', 'maxChg', 'near52H', 'near52L', 'inNews'];
-    const hasFilters = FILTER_KEYS.some(k => req.query[k] && req.query[k] !== '');
-    // Only expand the filter panel when the user has MANUALLY set filters (not from a strategy click)
-    const openFilters = !req.query.strategy && FILTER_KEYS.filter(k => k !== 'strategy').some(k => req.query[k] && req.query[k] !== '');
-    const filterCount = FILTER_KEYS.filter(k => k !== 'strategy' && req.query[k] && req.query[k] !== '').length;
-    const rawStocks = await (0, db_1.screenStocks)(f);
-    const hasNextPage = rawStocks.length > PAGE_SIZE;
-    const stocks = hasNextPage ? rawStocks.slice(0, PAGE_SIZE) : rawStocks;
-    const sectors = await (0, db_1.getSectors)();
-    const todayPicks = await (0, db_1.getActivePicks)();
-    const activeStrategy = req.query.strategy;
-    const dbStats = await (0, db_1.getDbStats)();
-    const priceAsOf = dbStats.lastPriceUpdate
-        ? new Date(dbStats.lastPriceUpdate).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric", timeZone: "Asia/Kolkata" })
-        : null;
-    // Build pagination query string (preserve all filters, change page)
-    const paginationQ = new URLSearchParams(req.query);
-    const prevPageQ = new URLSearchParams(paginationQ);
-    prevPageQ.set("page", String(page - 1));
-    const nextPageQ = new URLSearchParams(paginationQ);
-    nextPageQ.set("page", String(page + 1));
-    const rows = stocks.map(s => {
-        const chgPill = s.change_pct != null
-            ? `<span class="${s.change_pct >= 0 ? "pill-up" : "pill-dn"}">${s.change_pct >= 0 ? "+" : ""}${fmt(s.change_pct, 2)}%</span>`
-            : "—";
-        const roceClass = s.roce >= 20 ? "roce-hi" : s.roce >= 10 ? "roce-md" : "roce-lo";
-        const deStr = s.de_ratio === 0
-            ? `<span class="badge-debtfree">💎 Debt-free</span>`
-            : `<span style="color:${deColor(s.de_ratio)}">${fmt(s.de_ratio)}</span>`;
-        const cleanSector = (s.sector && s.sector.length >= 3 && !/^\[?\d+\]?$/.test(s.sector) && !/edit|about/i.test(s.sector))
-            ? s.sector : null;
-        void cleanSector; // kept for potential future use
-        return `
+  }
+
+  const FILTER_KEYS = ['minRoce','maxRoce','maxDe','minPromoter','maxPromoter','minPe','maxPe','minPrice','maxPrice','minVolume','minMc','maxMc','minDivYield','allProfit','uptrend','sector','strategy','minRoe','minEps','minCr','maxPb','minChg','maxChg','near52H','near52L','inNews'];
+  const hasFilters = FILTER_KEYS.some(k => req.query[k] && req.query[k] !== '');
+  // Only expand the filter panel when the user has MANUALLY set filters (not from a strategy click)
+  const openFilters = !req.query.strategy && FILTER_KEYS.filter(k => k !== 'strategy').some(k => req.query[k] && req.query[k] !== '');
+  const filterCount = FILTER_KEYS.filter(k => k !== 'strategy' && req.query[k] && req.query[k] !== '').length;
+  const rawStocks = await screenStocks(f);
+  const hasNextPage = rawStocks.length > PAGE_SIZE;
+  const stocks = hasNextPage ? rawStocks.slice(0, PAGE_SIZE) : rawStocks;
+  const sectors = await getSectors();
+  const todayPicks = await getActivePicks();
+  const activeStrategy = req.query.strategy as string | undefined;
+  const dbStats = await getDbStats();
+  const priceAsOf = dbStats.lastPriceUpdate
+    ? new Date(dbStats.lastPriceUpdate).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric", timeZone: "Asia/Kolkata" })
+    : null;
+
+  // Build pagination query string (preserve all filters, change page)
+  const paginationQ = new URLSearchParams(req.query as any);
+  const prevPageQ = new URLSearchParams(paginationQ); prevPageQ.set("page", String(page - 1));
+  const nextPageQ = new URLSearchParams(paginationQ); nextPageQ.set("page", String(page + 1));
+
+  const rows = stocks.map(s => {
+    const chgPill = s.change_pct != null
+      ? `<span class="${s.change_pct >= 0 ? "pill-up" : "pill-dn"}">${s.change_pct >= 0 ? "+" : ""}${fmt(s.change_pct, 2)}%</span>`
+      : "—";
+    const roceClass = s.roce >= 20 ? "roce-hi" : s.roce >= 10 ? "roce-md" : "roce-lo";
+    const deStr = s.de_ratio === 0
+      ? `<span class="badge-debtfree">💎 Debt-free</span>`
+      : `<span style="color:${deColor(s.de_ratio)}">${fmt(s.de_ratio)}</span>`;
+    const cleanSector = (s.sector && s.sector.length >= 3 && !/^\[?\d+\]?$/.test(s.sector) && !/edit|about/i.test(s.sector))
+      ? s.sector : null;
+    void cleanSector; // kept for potential future use
+    return `
     <tr>
       <td class="cmp-check-cell"><input type="checkbox" class="cmp-check" value="${s.symbol}" onchange="updateCompare()"></td>
       <td><a href="/stock/${s.symbol}" class="sym-link">${s.symbol}</a></td>
@@ -1791,22 +1750,29 @@ app.get("/", async (req, res) => {
       <td>${fmt(s.pe_ratio, 1)}</td>
       <td>${s.all_profitable ? "✅" : "❌"} ${s.profit_uptrend ? "↑" : "↓"}</td>
     </tr>`;
-    }).join("");
-    const sectorOptions = sectors.map(s => `<option value="${s}" ${f.sector === s ? "selected" : ""}>${s}</option>`).join("");
-    const sortOptions = [
-        ["roce", "ROCE %"], ["roe", "ROE %"], ["de", "D/E Ratio"], ["promoter", "Promoter %"],
-        ["pe", "P/E Ratio"], ["price", "Price"], ["volume", "Volume"],
-        ["market_cap", "Market Cap"], ["change_pct", "Change %"], ["dividend", "Dividend Yield"],
-        ["eps", "EPS"], ["book_value", "Book Value"], ["current_ratio", "Current Ratio"],
-    ];
-    const q = req.query;
-    const strategyCards = STRATEGIES.map(s => `
+  }).join("");
+
+  const sectorOptions = sectors.map(s =>
+    `<option value="${s}" ${f.sector === s ? "selected" : ""}>${s}</option>`
+  ).join("");
+
+  const sortOptions = [
+    ["roce","ROCE %"], ["roe","ROE %"], ["de","D/E Ratio"], ["promoter","Promoter %"],
+    ["pe","P/E Ratio"], ["price","Price"], ["volume","Volume"],
+    ["market_cap","Market Cap"], ["change_pct","Change %"], ["dividend","Dividend Yield"],
+    ["eps","EPS"], ["book_value","Book Value"], ["current_ratio","Current Ratio"],
+  ];
+
+  const q = req.query;
+
+  const strategyCards = STRATEGIES.map(s => `
     <a href="/?strategy=${s.id}&${strategyParams(s)}" class="strategy-card s-${s.id} ${activeStrategy === s.id ? "active" : ""}" title="${s.desc}">
       <span class="s-flag">🇮🇳</span>
       <span class="s-emoji">${s.icon}</span>
       <span class="strategy-label">${s.label}</span>
     </a>`).join("");
-    res.send(`<!DOCTYPE html>
+
+  res.send(`<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
@@ -1909,7 +1875,7 @@ app.get("/", async (req, res) => {
               ${p.pick_type ? `<span class="today-pick-type">${p.pick_type}</span>` : ""}
             </div>
             <div class="today-pick-sym">${esc(p.stock_symbol)}</div>
-            ${p.company_name ? `<div class="today-pick-co">${esc(p.company_name.length > 20 ? p.company_name.slice(0, 19) + '…' : p.company_name)}</div>` : ""}
+            ${p.company_name ? `<div class="today-pick-co">${esc(p.company_name.length > 20 ? p.company_name.slice(0,19)+'…' : p.company_name)}</div>` : ""}
             <div class="today-pick-range">₹${p.entry_low} – ₹${p.entry_high}</div>
             <div class="today-pick-meta">
               ${p.target ? `<span class="today-tgt">🎯 ₹${p.target}</span>` : ""}
@@ -1942,13 +1908,13 @@ app.get("/", async (req, res) => {
               <label>ROCE % ≥</label>
               <select name="minRoce">
                 <option value="">Any</option>
-                <option value="5"  ${q.minRoce === "5" ? "selected" : ""}>≥ 5%</option>
-                <option value="10" ${q.minRoce === "10" ? "selected" : ""}>≥ 10%</option>
-                <option value="15" ${q.minRoce === "15" ? "selected" : ""}>≥ 15%</option>
-                <option value="20" ${q.minRoce === "20" ? "selected" : ""}>≥ 20%</option>
-                <option value="25" ${q.minRoce === "25" ? "selected" : ""}>≥ 25%</option>
-                <option value="30" ${q.minRoce === "30" ? "selected" : ""}>≥ 30%</option>
-                <option value="40" ${q.minRoce === "40" ? "selected" : ""}>≥ 40%</option>
+                <option value="5"  ${q.minRoce==="5"  ?"selected":""}>≥ 5%</option>
+                <option value="10" ${q.minRoce==="10" ?"selected":""}>≥ 10%</option>
+                <option value="15" ${q.minRoce==="15" ?"selected":""}>≥ 15%</option>
+                <option value="20" ${q.minRoce==="20" ?"selected":""}>≥ 20%</option>
+                <option value="25" ${q.minRoce==="25" ?"selected":""}>≥ 25%</option>
+                <option value="30" ${q.minRoce==="30" ?"selected":""}>≥ 30%</option>
+                <option value="40" ${q.minRoce==="40" ?"selected":""}>≥ 40%</option>
               </select>
             </div>
 
@@ -1956,12 +1922,12 @@ app.get("/", async (req, res) => {
               <label>D/E Ratio ≤</label>
               <select name="maxDe">
                 <option value="">Any</option>
-                <option value="0"   ${q.maxDe === "0" ? "selected" : ""}>0 — Debt-free 💎</option>
-                <option value="0.1" ${q.maxDe === "0.1" ? "selected" : ""}>≤ 0.1</option>
-                <option value="0.3" ${q.maxDe === "0.3" ? "selected" : ""}>≤ 0.3</option>
-                <option value="0.5" ${q.maxDe === "0.5" ? "selected" : ""}>≤ 0.5</option>
-                <option value="1"   ${q.maxDe === "1" ? "selected" : ""}>≤ 1.0</option>
-                <option value="2"   ${q.maxDe === "2" ? "selected" : ""}>≤ 2.0</option>
+                <option value="0"   ${q.maxDe==="0"   ?"selected":""}>0 — Debt-free 💎</option>
+                <option value="0.1" ${q.maxDe==="0.1" ?"selected":""}>≤ 0.1</option>
+                <option value="0.3" ${q.maxDe==="0.3" ?"selected":""}>≤ 0.3</option>
+                <option value="0.5" ${q.maxDe==="0.5" ?"selected":""}>≤ 0.5</option>
+                <option value="1"   ${q.maxDe==="1"   ?"selected":""}>≤ 1.0</option>
+                <option value="2"   ${q.maxDe==="2"   ?"selected":""}>≤ 2.0</option>
               </select>
             </div>
 
@@ -1969,13 +1935,13 @@ app.get("/", async (req, res) => {
               <label>Promoter % ≥</label>
               <select name="minPromoter">
                 <option value="">Any</option>
-                <option value="30" ${q.minPromoter === "30" ? "selected" : ""}>≥ 30%</option>
-                <option value="40" ${q.minPromoter === "40" ? "selected" : ""}>≥ 40%</option>
-                <option value="50" ${q.minPromoter === "50" ? "selected" : ""}>≥ 50%</option>
-                <option value="60" ${q.minPromoter === "60" ? "selected" : ""}>≥ 60%</option>
-                <option value="65" ${q.minPromoter === "65" ? "selected" : ""}>≥ 65%</option>
-                <option value="70" ${q.minPromoter === "70" ? "selected" : ""}>≥ 70%</option>
-                <option value="75" ${q.minPromoter === "75" ? "selected" : ""}>≥ 75%</option>
+                <option value="30" ${q.minPromoter==="30" ?"selected":""}>≥ 30%</option>
+                <option value="40" ${q.minPromoter==="40" ?"selected":""}>≥ 40%</option>
+                <option value="50" ${q.minPromoter==="50" ?"selected":""}>≥ 50%</option>
+                <option value="60" ${q.minPromoter==="60" ?"selected":""}>≥ 60%</option>
+                <option value="65" ${q.minPromoter==="65" ?"selected":""}>≥ 65%</option>
+                <option value="70" ${q.minPromoter==="70" ?"selected":""}>≥ 70%</option>
+                <option value="75" ${q.minPromoter==="75" ?"selected":""}>≥ 75%</option>
               </select>
             </div>
 
@@ -1983,14 +1949,14 @@ app.get("/", async (req, res) => {
               <label>P/E Ratio ≤</label>
               <select name="maxPe">
                 <option value="">Any</option>
-                <option value="8"  ${q.maxPe === "8" ? "selected" : ""}>≤ 8 (Deep Value)</option>
-                <option value="10" ${q.maxPe === "10" ? "selected" : ""}>≤ 10</option>
-                <option value="15" ${q.maxPe === "15" ? "selected" : ""}>≤ 15</option>
-                <option value="20" ${q.maxPe === "20" ? "selected" : ""}>≤ 20</option>
-                <option value="25" ${q.maxPe === "25" ? "selected" : ""}>≤ 25</option>
-                <option value="30" ${q.maxPe === "30" ? "selected" : ""}>≤ 30</option>
-                <option value="40" ${q.maxPe === "40" ? "selected" : ""}>≤ 40</option>
-                <option value="50" ${q.maxPe === "50" ? "selected" : ""}>≤ 50</option>
+                <option value="8"  ${q.maxPe==="8"  ?"selected":""}>≤ 8 (Deep Value)</option>
+                <option value="10" ${q.maxPe==="10" ?"selected":""}>≤ 10</option>
+                <option value="15" ${q.maxPe==="15" ?"selected":""}>≤ 15</option>
+                <option value="20" ${q.maxPe==="20" ?"selected":""}>≤ 20</option>
+                <option value="25" ${q.maxPe==="25" ?"selected":""}>≤ 25</option>
+                <option value="30" ${q.maxPe==="30" ?"selected":""}>≤ 30</option>
+                <option value="40" ${q.maxPe==="40" ?"selected":""}>≤ 40</option>
+                <option value="50" ${q.maxPe==="50" ?"selected":""}>≤ 50</option>
               </select>
             </div>
 
@@ -1998,11 +1964,11 @@ app.get("/", async (req, res) => {
               <label>P/E Ratio ≥</label>
               <select name="minPe">
                 <option value="">Any</option>
-                <option value="5"  ${q.minPe === "5" ? "selected" : ""}>≥ 5</option>
-                <option value="10" ${q.minPe === "10" ? "selected" : ""}>≥ 10</option>
-                <option value="15" ${q.minPe === "15" ? "selected" : ""}>≥ 15</option>
-                <option value="20" ${q.minPe === "20" ? "selected" : ""}>≥ 20</option>
-                <option value="30" ${q.minPe === "30" ? "selected" : ""}>≥ 30</option>
+                <option value="5"  ${q.minPe==="5"  ?"selected":""}>≥ 5</option>
+                <option value="10" ${q.minPe==="10" ?"selected":""}>≥ 10</option>
+                <option value="15" ${q.minPe==="15" ?"selected":""}>≥ 15</option>
+                <option value="20" ${q.minPe==="20" ?"selected":""}>≥ 20</option>
+                <option value="30" ${q.minPe==="30" ?"selected":""}>≥ 30</option>
               </select>
             </div>
 
@@ -2010,12 +1976,12 @@ app.get("/", async (req, res) => {
               <label>Dividend Yield ≥</label>
               <select name="minDivYield">
                 <option value="">Any</option>
-                <option value="0.5" ${q.minDivYield === "0.5" ? "selected" : ""}>≥ 0.5%</option>
-                <option value="1"   ${q.minDivYield === "1" ? "selected" : ""}>≥ 1%</option>
-                <option value="1.5" ${q.minDivYield === "1.5" ? "selected" : ""}>≥ 1.5%</option>
-                <option value="2"   ${q.minDivYield === "2" ? "selected" : ""}>≥ 2%</option>
-                <option value="3"   ${q.minDivYield === "3" ? "selected" : ""}>≥ 3%</option>
-                <option value="5"   ${q.minDivYield === "5" ? "selected" : ""}>≥ 5%</option>
+                <option value="0.5" ${q.minDivYield==="0.5" ?"selected":""}>≥ 0.5%</option>
+                <option value="1"   ${q.minDivYield==="1"   ?"selected":""}>≥ 1%</option>
+                <option value="1.5" ${q.minDivYield==="1.5" ?"selected":""}>≥ 1.5%</option>
+                <option value="2"   ${q.minDivYield==="2"   ?"selected":""}>≥ 2%</option>
+                <option value="3"   ${q.minDivYield==="3"   ?"selected":""}>≥ 3%</option>
+                <option value="5"   ${q.minDivYield==="5"   ?"selected":""}>≥ 5%</option>
               </select>
             </div>
 
@@ -2024,23 +1990,23 @@ app.get("/", async (req, res) => {
               <div class="filter-range-row">
                 <select name="minPrice" title="Min Price">
                   <option value="">₹ Min</option>
-                  <option value="10"   ${q.minPrice === "10" ? "selected" : ""}>≥ ₹10</option>
-                  <option value="50"   ${q.minPrice === "50" ? "selected" : ""}>≥ ₹50</option>
-                  <option value="100"  ${q.minPrice === "100" ? "selected" : ""}>≥ ₹100</option>
-                  <option value="200"  ${q.minPrice === "200" ? "selected" : ""}>≥ ₹200</option>
-                  <option value="500"  ${q.minPrice === "500" ? "selected" : ""}>≥ ₹500</option>
-                  <option value="1000" ${q.minPrice === "1000" ? "selected" : ""}>≥ ₹1,000</option>
-                  <option value="5000" ${q.minPrice === "5000" ? "selected" : ""}>≥ ₹5,000</option>
+                  <option value="10"   ${q.minPrice==="10"   ?"selected":""}>≥ ₹10</option>
+                  <option value="50"   ${q.minPrice==="50"   ?"selected":""}>≥ ₹50</option>
+                  <option value="100"  ${q.minPrice==="100"  ?"selected":""}>≥ ₹100</option>
+                  <option value="200"  ${q.minPrice==="200"  ?"selected":""}>≥ ₹200</option>
+                  <option value="500"  ${q.minPrice==="500"  ?"selected":""}>≥ ₹500</option>
+                  <option value="1000" ${q.minPrice==="1000" ?"selected":""}>≥ ₹1,000</option>
+                  <option value="5000" ${q.minPrice==="5000" ?"selected":""}>≥ ₹5,000</option>
                 </select>
                 <select name="maxPrice" title="Max Price">
                   <option value="">₹ Max</option>
-                  <option value="50"    ${q.maxPrice === "50" ? "selected" : ""}>≤ ₹50</option>
-                  <option value="100"   ${q.maxPrice === "100" ? "selected" : ""}>≤ ₹100</option>
-                  <option value="200"   ${q.maxPrice === "200" ? "selected" : ""}>≤ ₹200</option>
-                  <option value="500"   ${q.maxPrice === "500" ? "selected" : ""}>≤ ₹500</option>
-                  <option value="1000"  ${q.maxPrice === "1000" ? "selected" : ""}>≤ ₹1,000</option>
-                  <option value="5000"  ${q.maxPrice === "5000" ? "selected" : ""}>≤ ₹5,000</option>
-                  <option value="10000" ${q.maxPrice === "10000" ? "selected" : ""}>≤ ₹10,000</option>
+                  <option value="50"    ${q.maxPrice==="50"    ?"selected":""}>≤ ₹50</option>
+                  <option value="100"   ${q.maxPrice==="100"   ?"selected":""}>≤ ₹100</option>
+                  <option value="200"   ${q.maxPrice==="200"   ?"selected":""}>≤ ₹200</option>
+                  <option value="500"   ${q.maxPrice==="500"   ?"selected":""}>≤ ₹500</option>
+                  <option value="1000"  ${q.maxPrice==="1000"  ?"selected":""}>≤ ₹1,000</option>
+                  <option value="5000"  ${q.maxPrice==="5000"  ?"selected":""}>≤ ₹5,000</option>
+                  <option value="10000" ${q.maxPrice==="10000" ?"selected":""}>≤ ₹10,000</option>
                 </select>
               </div>
             </div>
@@ -2049,12 +2015,12 @@ app.get("/", async (req, res) => {
               <label>Volume ≥</label>
               <select name="minVolume">
                 <option value="">Any</option>
-                <option value="10000"   ${q.minVolume === "10000" ? "selected" : ""}>≥ 10,000</option>
-                <option value="50000"   ${q.minVolume === "50000" ? "selected" : ""}>≥ 50,000</option>
-                <option value="100000"  ${q.minVolume === "100000" ? "selected" : ""}>≥ 1 Lakh</option>
-                <option value="500000"  ${q.minVolume === "500000" ? "selected" : ""}>≥ 5 Lakh</option>
-                <option value="1000000" ${q.minVolume === "1000000" ? "selected" : ""}>≥ 10 Lakh</option>
-                <option value="5000000" ${q.minVolume === "5000000" ? "selected" : ""}>≥ 50 Lakh</option>
+                <option value="10000"   ${q.minVolume==="10000"   ?"selected":""}>≥ 10,000</option>
+                <option value="50000"   ${q.minVolume==="50000"   ?"selected":""}>≥ 50,000</option>
+                <option value="100000"  ${q.minVolume==="100000"  ?"selected":""}>≥ 1 Lakh</option>
+                <option value="500000"  ${q.minVolume==="500000"  ?"selected":""}>≥ 5 Lakh</option>
+                <option value="1000000" ${q.minVolume==="1000000" ?"selected":""}>≥ 10 Lakh</option>
+                <option value="5000000" ${q.minVolume==="5000000" ?"selected":""}>≥ 50 Lakh</option>
               </select>
             </div>
 
@@ -2062,10 +2028,10 @@ app.get("/", async (req, res) => {
               <label>Cap Size</label>
               <select id="capSizeSelect" onchange="applyCapSize(this.value)">
                 <option value="">All Cap Sizes</option>
-                <option value="large" ${q.minMc === "20000" && !q.maxMc ? "selected" : ""}>🏢 Large Cap (≥ ₹20k Cr)</option>
-                <option value="mid"   ${q.minMc === "5000" && q.maxMc === "20000" ? "selected" : ""}>🏬 Mid Cap (₹5k–20k Cr)</option>
-                <option value="small" ${!q.minMc && q.maxMc === "5000" ? "selected" : ""}>🌱 Small Cap (≤ ₹5k Cr)</option>
-                <option value="micro" ${!q.minMc && q.maxMc === "1000" ? "selected" : ""}>🔬 Micro Cap (≤ ₹1k Cr)</option>
+                <option value="large" ${q.minMc==="20000" && !q.maxMc          ?"selected":""}>🏢 Large Cap (≥ ₹20k Cr)</option>
+                <option value="mid"   ${q.minMc==="5000"  && q.maxMc==="20000" ?"selected":""}>🏬 Mid Cap (₹5k–20k Cr)</option>
+                <option value="small" ${!q.minMc           && q.maxMc==="5000"  ?"selected":""}>🌱 Small Cap (≤ ₹5k Cr)</option>
+                <option value="micro" ${!q.minMc           && q.maxMc==="1000"  ?"selected":""}>🔬 Micro Cap (≤ ₹1k Cr)</option>
               </select>
               <input type="hidden" id="minMcInput" name="minMc" value="${q.minMc || ""}">
               <input type="hidden" id="maxMcInput" name="maxMc" value="${q.maxMc || ""}">
@@ -2082,7 +2048,9 @@ app.get("/", async (req, res) => {
             <div class="filter-group">
               <label>Sort By</label>
               <select name="sortBy">
-                ${sortOptions.map(([k, label]) => `<option value="${k}" ${(q.sortBy || "roce") === k ? "selected" : ""}>${label}</option>`).join("")}
+                ${sortOptions.map(([k, label]) =>
+                  `<option value="${k}" ${(q.sortBy || "roce") === k ? "selected" : ""}>${label}</option>`
+                ).join("")}
               </select>
             </div>
 
@@ -2090,13 +2058,13 @@ app.get("/", async (req, res) => {
               <label>Sort Direction</label>
               <select name="sortDir">
                 <option value="desc" ${(q.sortDir || "desc") === "desc" ? "selected" : ""}>↓ High → Low</option>
-                <option value="asc"  ${q.sortDir === "asc" ? "selected" : ""}>↑ Low → High</option>
+                <option value="asc"  ${q.sortDir === "asc"  ? "selected" : ""}>↑ Low → High</option>
               </select>
             </div>
 
             <div class="filter-group checkbox-group">
               <label class="check-label"><input type="checkbox" name="allProfit" value="1" ${q.allProfit === "1" ? "checked" : ""}> ✅ All 3yr Profitable</label>
-              <label class="check-label"><input type="checkbox" name="uptrend"   value="1" ${q.uptrend === "1" ? "checked" : ""}> 📈 Profit Uptrend ↑</label>
+              <label class="check-label"><input type="checkbox" name="uptrend"   value="1" ${q.uptrend   === "1" ? "checked" : ""}> 📈 Profit Uptrend ↑</label>
             </div>
 
           </div>
@@ -2109,12 +2077,12 @@ app.get("/", async (req, res) => {
               <label>ROE % ≥</label>
               <select name="minRoe">
                 <option value="">Any</option>
-                <option value="5"  ${q.minRoe === "5" ? "selected" : ""}>≥ 5%</option>
-                <option value="10" ${q.minRoe === "10" ? "selected" : ""}>≥ 10%</option>
-                <option value="15" ${q.minRoe === "15" ? "selected" : ""}>≥ 15%</option>
-                <option value="20" ${q.minRoe === "20" ? "selected" : ""}>≥ 20%</option>
-                <option value="25" ${q.minRoe === "25" ? "selected" : ""}>≥ 25%</option>
-                <option value="30" ${q.minRoe === "30" ? "selected" : ""}>≥ 30%</option>
+                <option value="5"  ${q.minRoe==="5"  ?"selected":""}>≥ 5%</option>
+                <option value="10" ${q.minRoe==="10" ?"selected":""}>≥ 10%</option>
+                <option value="15" ${q.minRoe==="15" ?"selected":""}>≥ 15%</option>
+                <option value="20" ${q.minRoe==="20" ?"selected":""}>≥ 20%</option>
+                <option value="25" ${q.minRoe==="25" ?"selected":""}>≥ 25%</option>
+                <option value="30" ${q.minRoe==="30" ?"selected":""}>≥ 30%</option>
               </select>
             </div>
 
@@ -2122,12 +2090,12 @@ app.get("/", async (req, res) => {
               <label>EPS</label>
               <select name="minEps">
                 <option value="">Any</option>
-                <option value="0.01" ${q.minEps === "0.01" ? "selected" : ""}>Positive EPS (&gt; 0)</option>
-                <option value="5"    ${q.minEps === "5" ? "selected" : ""}>≥ 5</option>
-                <option value="10"   ${q.minEps === "10" ? "selected" : ""}>≥ 10</option>
-                <option value="20"   ${q.minEps === "20" ? "selected" : ""}>≥ 20</option>
-                <option value="50"   ${q.minEps === "50" ? "selected" : ""}>≥ 50</option>
-                <option value="100"  ${q.minEps === "100" ? "selected" : ""}>≥ 100</option>
+                <option value="0.01" ${q.minEps==="0.01" ?"selected":""}>Positive EPS (&gt; 0)</option>
+                <option value="5"    ${q.minEps==="5"    ?"selected":""}>≥ 5</option>
+                <option value="10"   ${q.minEps==="10"   ?"selected":""}>≥ 10</option>
+                <option value="20"   ${q.minEps==="20"   ?"selected":""}>≥ 20</option>
+                <option value="50"   ${q.minEps==="50"   ?"selected":""}>≥ 50</option>
+                <option value="100"  ${q.minEps==="100"  ?"selected":""}>≥ 100</option>
               </select>
             </div>
 
@@ -2135,10 +2103,10 @@ app.get("/", async (req, res) => {
               <label>Current Ratio ≥</label>
               <select name="minCr">
                 <option value="">Any</option>
-                <option value="1"   ${q.minCr === "1" ? "selected" : ""}>≥ 1.0 (Liquid)</option>
-                <option value="1.5" ${q.minCr === "1.5" ? "selected" : ""}>≥ 1.5</option>
-                <option value="2"   ${q.minCr === "2" ? "selected" : ""}>≥ 2.0 (Strong)</option>
-                <option value="3"   ${q.minCr === "3" ? "selected" : ""}>≥ 3.0</option>
+                <option value="1"   ${q.minCr==="1"   ?"selected":""}>≥ 1.0 (Liquid)</option>
+                <option value="1.5" ${q.minCr==="1.5" ?"selected":""}>≥ 1.5</option>
+                <option value="2"   ${q.minCr==="2"   ?"selected":""}>≥ 2.0 (Strong)</option>
+                <option value="3"   ${q.minCr==="3"   ?"selected":""}>≥ 3.0</option>
               </select>
             </div>
 
@@ -2146,11 +2114,11 @@ app.get("/", async (req, res) => {
               <label>Price/Book (P/B) ≤</label>
               <select name="maxPb">
                 <option value="">Any</option>
-                <option value="1"   ${q.maxPb === "1" ? "selected" : ""}>≤ 1.0 (Below Book)</option>
-                <option value="1.5" ${q.maxPb === "1.5" ? "selected" : ""}>≤ 1.5</option>
-                <option value="2"   ${q.maxPb === "2" ? "selected" : ""}>≤ 2.0</option>
-                <option value="3"   ${q.maxPb === "3" ? "selected" : ""}>≤ 3.0</option>
-                <option value="5"   ${q.maxPb === "5" ? "selected" : ""}>≤ 5.0</option>
+                <option value="1"   ${q.maxPb==="1"   ?"selected":""}>≤ 1.0 (Below Book)</option>
+                <option value="1.5" ${q.maxPb==="1.5" ?"selected":""}>≤ 1.5</option>
+                <option value="2"   ${q.maxPb==="2"   ?"selected":""}>≤ 2.0</option>
+                <option value="3"   ${q.maxPb==="3"   ?"selected":""}>≤ 3.0</option>
+                <option value="5"   ${q.maxPb==="5"   ?"selected":""}>≤ 5.0</option>
               </select>
             </div>
 
@@ -2159,22 +2127,22 @@ app.get("/", async (req, res) => {
               <div class="filter-range-row">
                 <select name="minChg" title="Min Change %">
                   <option value="">↑ Min</option>
-                  <option value="-10" ${q.minChg === "-10" ? "selected" : ""}>&lt; -10%</option>
-                  <option value="-5"  ${q.minChg === "-5" ? "selected" : ""}>&gt; -5%</option>
-                  <option value="0"   ${q.minChg === "0" ? "selected" : ""}>Positive only</option>
-                  <option value="1"   ${q.minChg === "1" ? "selected" : ""}>≥ +1%</option>
-                  <option value="2"   ${q.minChg === "2" ? "selected" : ""}>≥ +2%</option>
-                  <option value="3"   ${q.minChg === "3" ? "selected" : ""}>≥ +3%</option>
-                  <option value="5"   ${q.minChg === "5" ? "selected" : ""}>≥ +5%</option>
+                  <option value="-10" ${q.minChg==="-10" ?"selected":""}>&lt; -10%</option>
+                  <option value="-5"  ${q.minChg==="-5"  ?"selected":""}>&gt; -5%</option>
+                  <option value="0"   ${q.minChg==="0"   ?"selected":""}>Positive only</option>
+                  <option value="1"   ${q.minChg==="1"   ?"selected":""}>≥ +1%</option>
+                  <option value="2"   ${q.minChg==="2"   ?"selected":""}>≥ +2%</option>
+                  <option value="3"   ${q.minChg==="3"   ?"selected":""}>≥ +3%</option>
+                  <option value="5"   ${q.minChg==="5"   ?"selected":""}>≥ +5%</option>
                 </select>
                 <select name="maxChg" title="Max Change %">
                   <option value="">↓ Max</option>
-                  <option value="-5"  ${q.maxChg === "-5" ? "selected" : ""}>≤ -5% (Big dip)</option>
-                  <option value="-3"  ${q.maxChg === "-3" ? "selected" : ""}>≤ -3%</option>
-                  <option value="-1"  ${q.maxChg === "-1" ? "selected" : ""}>≤ -1%</option>
-                  <option value="0"   ${q.maxChg === "0" ? "selected" : ""}>Negative only</option>
-                  <option value="5"   ${q.maxChg === "5" ? "selected" : ""}>≤ +5%</option>
-                  <option value="10"  ${q.maxChg === "10" ? "selected" : ""}>≤ +10%</option>
+                  <option value="-5"  ${q.maxChg==="-5"  ?"selected":""}>≤ -5% (Big dip)</option>
+                  <option value="-3"  ${q.maxChg==="-3"  ?"selected":""}>≤ -3%</option>
+                  <option value="-1"  ${q.maxChg==="-1"  ?"selected":""}>≤ -1%</option>
+                  <option value="0"   ${q.maxChg==="0"   ?"selected":""}>Negative only</option>
+                  <option value="5"   ${q.maxChg==="5"   ?"selected":""}>≤ +5%</option>
+                  <option value="10"  ${q.maxChg==="10"  ?"selected":""}>≤ +10%</option>
                 </select>
               </div>
             </div>
@@ -2183,11 +2151,11 @@ app.get("/", async (req, res) => {
               <label>Near 52W High 🔥</label>
               <select name="near52H">
                 <option value="">Any</option>
-                <option value="3"  ${q.near52H === "3" ? "selected" : ""}>Within 3% (Breakout zone)</option>
-                <option value="5"  ${q.near52H === "5" ? "selected" : ""}>Within 5%</option>
-                <option value="10" ${q.near52H === "10" ? "selected" : ""}>Within 10%</option>
-                <option value="15" ${q.near52H === "15" ? "selected" : ""}>Within 15%</option>
-                <option value="20" ${q.near52H === "20" ? "selected" : ""}>Within 20%</option>
+                <option value="3"  ${q.near52H==="3"  ?"selected":""}>Within 3% (Breakout zone)</option>
+                <option value="5"  ${q.near52H==="5"  ?"selected":""}>Within 5%</option>
+                <option value="10" ${q.near52H==="10" ?"selected":""}>Within 10%</option>
+                <option value="15" ${q.near52H==="15" ?"selected":""}>Within 15%</option>
+                <option value="20" ${q.near52H==="20" ?"selected":""}>Within 20%</option>
               </select>
             </div>
 
@@ -2195,10 +2163,10 @@ app.get("/", async (req, res) => {
               <label>Near 52W Low 💰</label>
               <select name="near52L">
                 <option value="">Any</option>
-                <option value="10" ${q.near52L === "10" ? "selected" : ""}>Within 10% (Value zone)</option>
-                <option value="20" ${q.near52L === "20" ? "selected" : ""}>Within 20%</option>
-                <option value="30" ${q.near52L === "30" ? "selected" : ""}>Within 30%</option>
-                <option value="50" ${q.near52L === "50" ? "selected" : ""}>Within 50%</option>
+                <option value="10" ${q.near52L==="10" ?"selected":""}>Within 10% (Value zone)</option>
+                <option value="20" ${q.near52L==="20" ?"selected":""}>Within 20%</option>
+                <option value="30" ${q.near52L==="30" ?"selected":""}>Within 30%</option>
+                <option value="50" ${q.near52L==="50" ?"selected":""}>Within 50%</option>
               </select>
             </div>
 
@@ -2218,8 +2186,8 @@ app.get("/", async (req, res) => {
         <div class="results-actions">
           <button class="btn-ghost" id="cmp-btn" style="display:none" onclick="goCompare()">⚖️ Compare (0)</button>
           <button class="btn-ghost" onclick="document.getElementById('alertModal').style.display='flex'">🔔 Save Alert</button>
-          <a href="/api/screen/csv?${new URLSearchParams(req.query).toString()}" class="btn-ghost" download="zeroscreen.csv">⬇ CSV</a>
-          <a href="/api/screen?${new URLSearchParams(req.query).toString()}" class="btn-ghost" target="_blank">↗ JSON</a>
+          <a href="/api/screen/csv?${new URLSearchParams(req.query as any).toString()}" class="btn-ghost" download="zeroscreen.csv">⬇ CSV</a>
+          <a href="/api/screen?${new URLSearchParams(req.query as any).toString()}" class="btn-ghost" target="_blank">↗ JSON</a>
         </div>
       </div>
 
@@ -2408,37 +2376,43 @@ app.get("/", async (req, res) => {
 </body>
 </html>`);
 });
+
 // ── GET /stock/:symbol ─────────────────────────────────────────────────────────
-app.get("/stock/:symbol", async (req, res) => {
-    const symbol = req.params.symbol.toUpperCase();
-    const s = await (0, db_1.getStock)(symbol);
-    if (!s) {
-        res.status(404).send(`<!DOCTYPE html><html><head><title>Not Found</title>
+app.get("/stock/:symbol", async (req: Request, res: Response) => {
+  const symbol = req.params.symbol.toUpperCase();
+  const s = await getStock(symbol);
+
+  if (!s) {
+    res.status(404).send(`<!DOCTYPE html><html><head><title>Not Found</title>
     <link rel="stylesheet" href="/public/css/style.css"></head><body>
     ${nav("", req)}<div class="container"><h2>Stock "${symbol}" not found in database.</h2>
     <p><a href="/">Back to Screener</a></p></div></body></html>`);
-        return;
-    }
-    const screenerData = s.screener_data ? JSON.parse(s.screener_data) : {};
-    const netProfits = screenerData.netProfits || [];
-    const revenues = screenerData.revenues || [];
-    const chartYears = netProfits.map((_, i) => `FY${(new Date().getFullYear() - netProfits.length + i + 1).toString().slice(2)}`);
-    const watchlists = (await (0, db_1.getWatchlists)(req.session.userId));
-    const w52High = s.week52_high;
-    const w52Low = s.week52_low;
-    const pbRatio = (s.price && s.book_value && s.book_value > 0) ? s.price / s.book_value : null;
-    const incorporated = s.incorporated;
-    const about = s.about;
-    // 52W range position % for the visual slider
-    const w52Pos = (w52High && w52Low && s.price && w52High > w52Low)
-        ? Math.max(0, Math.min(100, ((s.price - w52Low) / (w52High - w52Low)) * 100))
-        : null;
-    // Profit margin % (latest year)
-    const latestProfit = netProfits[netProfits.length - 1] ?? null;
-    const latestRevenue = revenues[revenues.length - 1] ?? null;
-    const profitMargin = (latestProfit != null && latestRevenue && latestRevenue > 0)
-        ? (latestProfit / latestRevenue) * 100 : null;
-    res.send(`<!DOCTYPE html>
+    return;
+  }
+
+  const screenerData = s.screener_data ? JSON.parse(s.screener_data) : {};
+  const netProfits: number[] = screenerData.netProfits || [];
+  const revenues:   number[] = screenerData.revenues   || [];
+  const chartYears = netProfits.map((_, i) => `FY${(new Date().getFullYear() - netProfits.length + i + 1).toString().slice(2)}`);
+  const watchlists = (await getWatchlists(req.session.userId)) as any[];
+  const w52High = (s as any).week52_high as number | null;
+  const w52Low  = (s as any).week52_low  as number | null;
+  const pbRatio = (s.price && s.book_value && s.book_value > 0) ? s.price / s.book_value : null;
+  const incorporated = (s as any).incorporated as number | null;
+  const about        = (s as any).about        as string | null;
+
+  // 52W range position % for the visual slider
+  const w52Pos = (w52High && w52Low && s.price && w52High > w52Low)
+    ? Math.max(0, Math.min(100, ((s.price - w52Low) / (w52High - w52Low)) * 100))
+    : null;
+
+  // Profit margin % (latest year)
+  const latestProfit  = netProfits[netProfits.length - 1] ?? null;
+  const latestRevenue = revenues[revenues.length - 1] ?? null;
+  const profitMargin  = (latestProfit != null && latestRevenue && latestRevenue > 0)
+    ? (latestProfit / latestRevenue) * 100 : null;
+
+  res.send(`<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
@@ -2461,21 +2435,21 @@ app.get("/stock/:symbol", async (req, res) => {
           ${(s.sector && s.sector.length >= 3 && !/^\[?\d+\]?$/.test(s.sector) && !/edit|about/i.test(s.sector)) ? `<span class="sector-badge">${s.sector}</span>` : ""}
           ${incorporated ? `<span class="sector-badge">🗓️ Est. ${incorporated}</span>` : ""}
           ${s.all_profitable ? '<span class="sector-badge sdp-badge-green">✅ 3yr Profitable</span>' : ""}
-          ${s.profit_uptrend ? '<span class="sector-badge sdp-badge-blue">📈 Profit ↑</span>' : ""}
+          ${s.profit_uptrend  ? '<span class="sector-badge sdp-badge-blue">📈 Profit ↑</span>'       : ""}
         </div>
       </div>
       <div class="sdp-hero-right">
         <div class="sdp-price-main">₹${fmt(s.price, 2)}</div>
         <div class="sdp-change" style="color:${changeColor(s.change_pct)}">${s.change_pct != null ? (s.change_pct >= 0 ? "▲ +" : "▼ ") + fmt(s.change_pct, 2) + "%" : "—"}</div>
         <div class="sdp-ohlc">
-          <span>O ₹${fmt(s.prev_close, 2)}</span>
-          <span>H ₹${fmt(s.day_high, 2)}</span>
-          <span>L ₹${fmt(s.day_low, 2)}</span>
+          <span>O ₹${fmt(s.prev_close,2)}</span>
+          <span>H ₹${fmt(s.day_high,2)}</span>
+          <span>L ₹${fmt(s.day_low,2)}</span>
           <span>Vol ${fmtVol(s.volume)}</span>
         </div>
         ${w52Pos !== null ? `
         <div class="sdp-52w-wrap">
-          <div class="sdp-52w-labels"><span>₹${fmt(w52Low, 0)} 52W L</span><span>52W H ₹${fmt(w52High, 0)}</span></div>
+          <div class="sdp-52w-labels"><span>₹${fmt(w52Low,0)} 52W L</span><span>52W H ₹${fmt(w52High,0)}</span></div>
           <div class="sdp-52w-bar"><div class="sdp-52w-fill" style="width:${w52Pos.toFixed(1)}%"></div><div class="sdp-52w-dot" style="left:${w52Pos.toFixed(1)}%"></div></div>
         </div>` : ""}
       </div>
@@ -2543,7 +2517,7 @@ app.get("/stock/:symbol", async (req, res) => {
       <div class="sdp-chart-card sdp-chart-wide">
         <div class="sdp-chart-header">
           <span class="sdp-chart-title">Net Profit (₹ Cr)</span>
-          ${latestProfit != null ? `<span class="sdp-chart-badge" style="color:${latestProfit >= 0 ? '#059669' : '#dc2626'}">${latestProfit >= 0 ? '▲' : '▼'} ₹${fmtCr(latestProfit)}</span>` : ""}
+          ${latestProfit != null ? `<span class="sdp-chart-badge" style="color:${latestProfit>=0?'#059669':'#dc2626'}">${latestProfit>=0?'▲':'▼'} ₹${fmtCr(latestProfit)}</span>` : ""}
         </div>
         <div class="sdp-chart-wrap" style="height:220px"><canvas id="profitChart"></canvas></div>
       </div>
@@ -2592,7 +2566,7 @@ app.get("/stock/:symbol", async (req, res) => {
           <tr><td>D/E Ratio</td><td style="color:${deColor(s.de_ratio)}">${s.de_ratio === 0 ? "Debt-free 💎" : fmt(s.de_ratio)}</td><td>Promoter %</td><td>${fmt(s.promoter_pct)}%</td></tr>
           <tr><td>Market Cap</td><td>${fmtCr(s.market_cap)}</td><td>Volume</td><td>${fmtVol(s.volume)}</td></tr>
           ${w52High || w52Low ? `<tr><td>52W High</td><td>₹${fmt(w52High, 2)}</td><td>52W Low</td><td>₹${fmt(w52Low, 2)}</td></tr>` : ""}
-          ${profitMargin != null ? `<tr><td>Profit Margin</td><td style="color:${profitMargin >= 0 ? '#059669' : '#dc2626'}">${fmt(profitMargin, 1)}%</td><td>3yr Profitable</td><td>${s.all_profitable ? "✅ Yes" : "❌ No"}</td></tr>` : ""}
+          ${profitMargin != null ? `<tr><td>Profit Margin</td><td style="color:${profitMargin>=0?'#059669':'#dc2626'}">${fmt(profitMargin, 1)}%</td><td>3yr Profitable</td><td>${s.all_profitable ? "✅ Yes" : "❌ No"}</td></tr>` : ""}
         </tbody>
       </table>
     </div>
@@ -2606,7 +2580,7 @@ app.get("/stock/:symbol", async (req, res) => {
       <div class="watchlist-add">
         <select id="wlSelect">
           <option value="">Add to watchlist…</option>
-          ${watchlists.map((w) => `<option value="${w.id}">${w.name}</option>`).join("")}
+          ${watchlists.map((w: any) => `<option value="${w.id}">${w.name}</option>`).join("")}
         </select>
         <button class="btn-ghost" onclick="addToWatchlist('${symbol}')">+ Add</button>
       </div>
@@ -2777,10 +2751,11 @@ app.get("/stock/:symbol", async (req, res) => {
 </body>
 </html>`);
 });
+
 // ── GET /watchlists ────────────────────────────────────────────────────────────
-app.get("/watchlists", requireAuth, featureGate("feature_watchlists", "Watchlists"), premiumGate("watchlists_premium_only", "Watchlists"), async (req, res) => {
-    const lists = (await (0, db_1.getWatchlists)());
-    const cards = lists.map(w => `
+app.get("/watchlists", requireAuth, featureGate("feature_watchlists", "Watchlists"), premiumGate("watchlists_premium_only", "Watchlists"), async (req: Request, res: Response) => {
+  const lists = (await getWatchlists()) as any[];
+  const cards = lists.map(w => `
     <div class="wl-card">
       <a href="/watchlists/${w.id}" class="wl-name">${w.name}</a>
       <span class="wl-count">${w.stock_count} stocks</span>
@@ -2790,7 +2765,8 @@ app.get("/watchlists", requireAuth, featureGate("feature_watchlists", "Watchlist
         <button class="btn-danger" onclick="deleteWl(${w.id})">Delete</button>
       </div>
     </div>`).join("");
-    res.send(`<!DOCTYPE html>
+
+  res.send(`<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
@@ -2838,14 +2814,13 @@ app.get("/watchlists", requireAuth, featureGate("feature_watchlists", "Watchlist
 </body>
 </html>`);
 });
+
 // ── GET /watchlists/:id ────────────────────────────────────────────────────────
-app.get("/watchlists/:id", requireAuth, async (req, res) => {
-    const wl = (await (0, db_1.getWatchlist)(parseInt(req.params.id, 10), req.session.userId));
-    if (!wl) {
-        res.status(404).send("Watchlist not found");
-        return;
-    }
-    const rows = wl.stocks.map((s) => `
+app.get("/watchlists/:id", requireAuth, async (req: Request, res: Response) => {
+  const wl = (await getWatchlist(parseInt(req.params.id, 10), req.session.userId)) as any;
+  if (!wl) { res.status(404).send("Watchlist not found"); return; }
+
+  const rows = wl.stocks.map((s: any) => `
     <tr>
       <td><a href="/stock/${s.symbol}" class="sym-link">${s.symbol}</a></td>
       <td>₹${fmt(s.price, 2)}</td>
@@ -2857,7 +2832,8 @@ app.get("/watchlists/:id", requireAuth, async (req, res) => {
       <td>${s.notes || ""}</td>
       <td><button class="btn-danger-sm" onclick="removeStock(${wl.id}, '${s.symbol}')">✕</button></td>
     </tr>`).join("");
-    res.send(`<!DOCTYPE html>
+
+  res.send(`<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
@@ -2897,61 +2873,56 @@ app.get("/watchlists/:id", requireAuth, async (req, res) => {
 </body>
 </html>`);
 });
+
 // ── Watchlist API routes ───────────────────────────────────────────────────────
-app.post("/watchlists", requireAuth, async (req, res) => {
-    const { name, description } = req.body;
-    if (!name) {
-        res.status(400).json({ error: "name required" });
-        return;
-    }
-    const id = await (0, db_1.createWatchlist)(name, description || "", req.session.userId);
-    res.json({ id });
+app.post("/watchlists", requireAuth, async (req: Request, res: Response) => {
+  const { name, description } = req.body;
+  if (!name) { res.status(400).json({ error: "name required" }); return; }
+  const id = await createWatchlist(name, description || "", req.session.userId);
+  res.json({ id });
 });
-app.post("/watchlists/:id/add", async (req, res) => {
-    const { symbol, notes } = req.body;
-    if (!symbol) {
-        res.status(400).json({ error: "symbol required" });
-        return;
-    }
-    await (0, db_1.addToWatchlist)(parseInt(req.params.id, 10), symbol, notes || "");
-    res.json({ ok: true });
+
+app.post("/watchlists/:id/add", async (req: Request, res: Response) => {
+  const { symbol, notes } = req.body;
+  if (!symbol) { res.status(400).json({ error: "symbol required" }); return; }
+  await addToWatchlist(parseInt(req.params.id, 10), symbol, notes || "");
+  res.json({ ok: true });
 });
-app.post("/watchlists/:id/remove", async (req, res) => {
-    const { symbol } = req.body;
-    if (!symbol) {
-        res.status(400).json({ error: "symbol required" });
-        return;
-    }
-    await (0, db_1.removeFromWatchlist)(parseInt(req.params.id, 10), symbol);
-    res.json({ ok: true });
+
+app.post("/watchlists/:id/remove", async (req: Request, res: Response) => {
+  const { symbol } = req.body;
+  if (!symbol) { res.status(400).json({ error: "symbol required" }); return; }
+  await removeFromWatchlist(parseInt(req.params.id, 10), symbol);
+  res.json({ ok: true });
 });
-app.delete("/watchlists/:id", async (req, res) => {
-    await (0, db_1.deleteWatchlist)(parseInt(req.params.id, 10));
-    res.json({ ok: true });
+
+app.delete("/watchlists/:id", async (req: Request, res: Response) => {
+  await deleteWatchlist(parseInt(req.params.id, 10));
+  res.json({ ok: true });
 });
+
 // ── Admin routes ───────────────────────────────────────────────────────────────
+
 // ── GET /admin ─────────────────────────────────────────────────────────────────
-app.get("/admin", requireAdmin, async (req, res) => {
-    res.setHeader("Cache-Control", "no-store");
-    const users = await (0, db_1.getAllUsers)();
-    const today = new Date().toISOString().slice(0, 10);
-    const todaySignups = users.filter(u => u.created_at?.slice(0, 10) === today).length;
-    const activePicks = await (0, db_1.getActivePicks)();
-    const [pvToday, pvTotal, uvToday] = await Promise.all([
-        (0, db_1.dbAll)("SELECT COUNT(*) as c FROM page_views WHERE date(created_at) = date('now','localtime')"),
-        (0, db_1.dbAll)("SELECT COUNT(*) as c FROM page_views"),
-        (0, db_1.dbAll)("SELECT COUNT(DISTINCT ip_hash) as c FROM page_views WHERE date(created_at) = date('now','localtime')"),
-    ]);
-    const botStatus = (() => {
-        try {
-            return JSON.parse(require("fs").readFileSync(`${BOT_DIR}/trade-state.json`, "utf-8"));
-        }
-        catch {
-            return {};
-        }
-    })();
-    const botActive = !!(botStatus.position && botStatus.position !== "FLAT");
-    res.send(`<!DOCTYPE html>
+app.get("/admin", requireAdmin, async (req: Request, res: Response) => {
+  res.setHeader("Cache-Control", "no-store");
+  const users = await getAllUsers();
+  const today = new Date().toISOString().slice(0, 10);
+  const todaySignups = users.filter(u => u.created_at?.slice(0, 10) === today).length;
+  const activePicks  = await getActivePicks();
+
+  const [pvToday, pvTotal, uvToday] = await Promise.all([
+    dbAll<{ c: number }>("SELECT COUNT(*) as c FROM page_views WHERE date(created_at) = date('now','localtime')"),
+    dbAll<{ c: number }>("SELECT COUNT(*) as c FROM page_views"),
+    dbAll<{ c: number }>("SELECT COUNT(DISTINCT ip_hash) as c FROM page_views WHERE date(created_at) = date('now','localtime')"),
+  ]);
+
+  const botStatus = (() => {
+    try { return JSON.parse(require("fs").readFileSync(`${BOT_DIR}/trade-state.json`, "utf-8")); } catch { return {}; }
+  })();
+  const botActive = !!(botStatus.position && botStatus.position !== "FLAT");
+
+  res.send(`<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
@@ -3162,13 +3133,15 @@ app.get("/admin", requireAdmin, async (req, res) => {
 </body>
 </html>`);
 });
-app.get("/admin/users", requireAdmin, async (req, res) => {
-    const users = await (0, db_1.getAllUsers)();
-    const total = users.length;
-    const admins = users.filter(u => u.role === "admin").length;
-    const today = new Date().toISOString().slice(0, 10);
-    const todayCount = users.filter(u => u.created_at?.slice(0, 10) === today).length;
-    const rows = users.map((u, i) => `
+
+app.get("/admin/users", requireAdmin, async (req: Request, res: Response) => {
+  const users = await getAllUsers();
+  const total = users.length;
+  const admins = users.filter(u => u.role === "admin").length;
+  const today = new Date().toISOString().slice(0, 10);
+  const todayCount = users.filter(u => u.created_at?.slice(0, 10) === today).length;
+
+  const rows = users.map((u, i) => `
     <tr>
       <td class="admin-num">${i + 1}</td>
       <td>
@@ -3182,13 +3155,14 @@ app.get("/admin/users", requireAdmin, async (req, res) => {
       <td>${new Date(u.created_at).toLocaleString("en-IN", { day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" })}</td>
       <td>
         ${u.role !== "admin"
-        ? `<form method="POST" action="/admin/users/${u.id}/make-admin" style="display:inline">
+          ? `<form method="POST" action="/admin/users/${u.id}/make-admin" style="display:inline">
                <button class="btn-admin-action" onclick="return confirm('Make ${u.name} an admin?')">Make Admin</button>
              </form>`
-        : `<span class="text-dim">—</span>`}
+          : `<span class="text-dim">—</span>`}
       </td>
     </tr>`).join("");
-    res.send(`<!DOCTYPE html>
+
+  res.send(`<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
@@ -3251,21 +3225,20 @@ app.get("/admin/users", requireAdmin, async (req, res) => {
 </body>
 </html>`);
 });
-app.post("/admin/users/:id/make-admin", requireAdmin, async (req, res) => {
-    const id = parseInt(req.params.id, 10);
-    if (!Number.isInteger(id) || id <= 0) {
-        res.status(400).send("Invalid id");
-        return;
-    }
-    await (0, db_1.dbRun)("UPDATE users SET role = 'admin' WHERE id = ?", [id]);
-    res.redirect("/admin/users");
+
+app.post("/admin/users/:id/make-admin", requireAdmin, async (req: Request, res: Response) => {
+  const id = parseInt(req.params.id, 10);
+  if (!Number.isInteger(id) || id <= 0) { res.status(400).send("Invalid id"); return; }
+  await dbRun("UPDATE users SET role = 'admin' WHERE id = ?", [id]);
+  res.redirect("/admin/users");
 });
+
 // ── GET /admin/data ────────────────────────────────────────────────────────────
-app.get("/admin/data", requireAdmin, async (req, res) => {
-    const stats = await (0, db_1.getDbStats)();
-    const msg = req.query.msg;
-    const err = req.query.err;
-    res.send(`<!DOCTYPE html>
+app.get("/admin/data", requireAdmin, async (req: Request, res: Response) => {
+  const stats = await getDbStats();
+  const msg = req.query.msg as string | undefined;
+  const err = req.query.err as string | undefined;
+  res.send(`<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
@@ -3301,7 +3274,7 @@ app.get("/admin/data", requireAdmin, async (req, res) => {
       </div>
     </div>
     ${msg ? `<div class="auth-success" style="margin-bottom:18px">✅ ${esc(msg)}</div>` : ""}
-    ${err ? `<div class="auth-error"   style="margin-bottom:18px">⚠️ ${esc(err)}</div>` : ""}
+    ${err ? `<div class="auth-error"   style="margin-bottom:18px">⚠️ ${esc(err)}</div>`  : ""}
 
     <div class="admin-data-grid">
       <div class="admin-data-card">
@@ -3357,42 +3330,45 @@ app.get("/admin/data", requireAdmin, async (req, res) => {
 </body>
 </html>`);
 });
+
 // ── POST /admin/settings/toggle ───────────────────────────────────────────────
-app.post("/admin/settings/toggle", requireAdmin, async (req, res) => {
-    const allowed = [
-        "otp_required", "razorpay_enabled",
-        "registration_open",
-        "feature_signals", "feature_dashboard", "feature_strategies",
-        "feature_paper_trade_bot", "feature_my_paper_trade",
-        "feature_watchlists", "feature_alerts", "feature_compare",
-        "feature_strategy_builder", "feature_contact",
-        "watchlists_premium_only", "alerts_premium_only", "paper_trade_premium_only",
-    ];
-    const { key, value } = req.body;
-    if (!allowed.includes(key) || !["true", "false"].includes(value)) {
-        res.status(400).json({ error: "Invalid setting" });
-        return;
-    }
-    await (0, db_1.setSetting)(key, value);
-    res.json({ ok: true });
+app.post("/admin/settings/toggle", requireAdmin, async (req: Request, res: Response) => {
+  const allowed = [
+    "otp_required", "razorpay_enabled",
+    "registration_open",
+    "feature_signals", "feature_dashboard", "feature_strategies",
+    "feature_paper_trade_bot", "feature_my_paper_trade",
+    "feature_watchlists", "feature_alerts", "feature_compare",
+    "feature_strategy_builder", "feature_contact",
+    "watchlists_premium_only", "alerts_premium_only", "paper_trade_premium_only",
+  ];
+  const { key, value } = req.body as { key: string; value: string };
+  if (!allowed.includes(key) || !["true", "false"].includes(value)) {
+    res.status(400).json({ error: "Invalid setting" }); return;
+  }
+  await setSetting(key, value);
+  res.json({ ok: true });
 });
+
 // ── GET /admin/settings ────────────────────────────────────────────────────────
-app.get("/admin/settings", requireAdmin, async (req, res) => {
-    const s = {};
-    const keys = [
-        "otp_required", "registration_open",
-        "feature_signals", "feature_dashboard", "feature_strategies",
-        "feature_paper_trade_bot", "feature_my_paper_trade",
-        "feature_watchlists", "feature_alerts", "feature_compare",
-        "feature_strategy_builder", "feature_contact",
-        "watchlists_premium_only", "alerts_premium_only", "paper_trade_premium_only",
-    ];
-    await Promise.all(keys.map(async (k) => { s[k] = await (0, db_1.getSetting)(k); }));
-    const isOn = (k) => s[k] !== "false";
-    const isOff = (k) => s[k] === "false";
-    function toggle(key, label, desc, extra = "") {
-        const on = isOn(key);
-        return `
+app.get("/admin/settings", requireAdmin, async (req: Request, res: Response) => {
+  const s: Record<string, string> = {};
+  const keys = [
+    "otp_required", "registration_open",
+    "feature_signals", "feature_dashboard", "feature_strategies",
+    "feature_paper_trade_bot", "feature_my_paper_trade",
+    "feature_watchlists", "feature_alerts", "feature_compare",
+    "feature_strategy_builder", "feature_contact",
+    "watchlists_premium_only", "alerts_premium_only", "paper_trade_premium_only",
+  ];
+  await Promise.all(keys.map(async k => { s[k] = await getSetting(k); }));
+
+  const isOn  = (k: string) => s[k] !== "false";
+  const isOff = (k: string) => s[k] === "false";
+
+  function toggle(key: string, label: string, desc: string, extra = "") {
+    const on = isOn(key);
+    return `
     <div class="setting-row">
       <div class="setting-info">
         <div class="setting-title">${label}</div>
@@ -3406,8 +3382,9 @@ app.get("/admin/settings", requireAdmin, async (req, res) => {
         </label>
       </div>
     </div>`;
-    }
-    res.send(`<!DOCTYPE html>
+  }
+
+  res.send(`<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
@@ -3509,59 +3486,62 @@ app.get("/admin/settings", requireAdmin, async (req, res) => {
 </body>
 </html>`);
 });
+
 // ── GET /api/screen/csv ────────────────────────────────────────────────────────
-app.get("/api/screen/csv", requireAuth, async (req, res) => {
-    const f = {
-        minRoce: req.query.minRoce ? parseFloat(req.query.minRoce) : undefined,
-        maxRoce: req.query.maxRoce ? parseFloat(req.query.maxRoce) : undefined,
-        maxDe: req.query.maxDe ? parseFloat(req.query.maxDe) : undefined,
-        minPromoter: req.query.minPromoter ? parseFloat(req.query.minPromoter) : undefined,
-        maxPe: req.query.maxPe ? parseFloat(req.query.maxPe) : undefined,
-        minPe: req.query.minPe ? parseFloat(req.query.minPe) : undefined,
-        minPrice: req.query.minPrice ? parseFloat(req.query.minPrice) : undefined,
-        maxPrice: req.query.maxPrice ? parseFloat(req.query.maxPrice) : undefined,
-        minVolume: req.query.minVolume ? parseInt(req.query.minVolume, 10) : undefined,
-        minMarketCap: req.query.minMc ? parseFloat(req.query.minMc) : undefined,
-        maxMarketCap: req.query.maxMc ? parseFloat(req.query.maxMc) : undefined,
-        minDividendYield: req.query.minDivYield ? parseFloat(req.query.minDivYield) : undefined,
-        allProfitable: req.query.allProfit === "1",
-        profitUptrend: req.query.uptrend === "1",
-        sector: req.query.sector ? req.query.sector : undefined,
-        sortBy: req.query.sortBy || "roce",
-        sortDir: req.query.sortDir || "desc",
-        limit: 500,
-    };
-    const stocks = await (0, db_1.screenStocks)(f);
-    const header = "Symbol,Company,Sector,Price,Change%,Volume,ROCE%,ROE%,D/E,Promoter%,PE,MarketCap_Cr,AllProfitable,ProfitUptrend";
-    const csvRows = stocks.map(s => [
-        s.symbol,
-        `"${(s.company_name || "").replace(/"/g, '""')}"`,
-        `"${(s.sector || "").replace(/"/g, '""')}"`,
-        s.price?.toFixed(2) || "",
-        s.change_pct?.toFixed(2) || "",
-        s.volume || "",
-        s.roce?.toFixed(2) || "",
-        s.roe?.toFixed(2) || "",
-        s.de_ratio?.toFixed(2) || "",
-        s.promoter_pct?.toFixed(2) || "",
-        s.pe_ratio?.toFixed(1) || "",
-        s.market_cap?.toFixed(0) || "",
-        s.all_profitable ? "Yes" : "No",
-        s.profit_uptrend ? "Yes" : "No",
-    ].join(","));
-    const csv = [header, ...csvRows].join("\n");
-    const date = new Date().toISOString().slice(0, 10);
-    res.setHeader("Content-Type", "text/csv; charset=utf-8");
-    res.setHeader("Content-Disposition", `attachment; filename="zeroscreen-${date}.csv"`);
-    res.send("\uFEFF" + csv); // BOM for Excel UTF-8 support
+app.get("/api/screen/csv", requireAuth, async (req: Request, res: Response) => {
+  const f: ScreenerFilter = {
+    minRoce:          req.query.minRoce     ? parseFloat(req.query.minRoce as string)     : undefined,
+    maxRoce:          req.query.maxRoce     ? parseFloat(req.query.maxRoce as string)     : undefined,
+    maxDe:            req.query.maxDe       ? parseFloat(req.query.maxDe as string)       : undefined,
+    minPromoter:      req.query.minPromoter ? parseFloat(req.query.minPromoter as string) : undefined,
+    maxPe:            req.query.maxPe       ? parseFloat(req.query.maxPe as string)       : undefined,
+    minPe:            req.query.minPe       ? parseFloat(req.query.minPe as string)       : undefined,
+    minPrice:         req.query.minPrice    ? parseFloat(req.query.minPrice as string)    : undefined,
+    maxPrice:         req.query.maxPrice    ? parseFloat(req.query.maxPrice as string)    : undefined,
+    minVolume:        req.query.minVolume   ? parseInt(req.query.minVolume as string, 10) : undefined,
+    minMarketCap:     req.query.minMc       ? parseFloat(req.query.minMc as string)       : undefined,
+    maxMarketCap:     req.query.maxMc       ? parseFloat(req.query.maxMc as string)       : undefined,
+    minDividendYield: req.query.minDivYield ? parseFloat(req.query.minDivYield as string) : undefined,
+    allProfitable:    req.query.allProfit === "1",
+    profitUptrend:    req.query.uptrend  === "1",
+    sector:           req.query.sector ? req.query.sector as string : undefined,
+    sortBy:           (req.query.sortBy as string) || "roce",
+    sortDir:          (req.query.sortDir as "asc" | "desc") || "desc",
+    limit:            500,
+  };
+  const stocks = await screenStocks(f);
+  const header = "Symbol,Company,Sector,Price,Change%,Volume,ROCE%,ROE%,D/E,Promoter%,PE,MarketCap_Cr,AllProfitable,ProfitUptrend";
+  const csvRows = stocks.map(s => [
+    s.symbol,
+    `"${(s.company_name || "").replace(/"/g, '""')}"`,
+    `"${(s.sector || "").replace(/"/g, '""')}"`,
+    s.price?.toFixed(2) || "",
+    s.change_pct?.toFixed(2) || "",
+    s.volume || "",
+    s.roce?.toFixed(2) || "",
+    s.roe?.toFixed(2) || "",
+    s.de_ratio?.toFixed(2) || "",
+    s.promoter_pct?.toFixed(2) || "",
+    s.pe_ratio?.toFixed(1) || "",
+    s.market_cap?.toFixed(0) || "",
+    s.all_profitable ? "Yes" : "No",
+    s.profit_uptrend ? "Yes" : "No",
+  ].join(","));
+  const csv = [header, ...csvRows].join("\n");
+  const date = new Date().toISOString().slice(0, 10);
+  res.setHeader("Content-Type", "text/csv; charset=utf-8");
+  res.setHeader("Content-Disposition", `attachment; filename="zeroscreen-${date}.csv"`);
+  res.send("\uFEFF" + csv); // BOM for Excel UTF-8 support
 });
+
 // ── GET /compare ──────────────────────────────────────────────────────────────
-app.get("/compare", featureGate("feature_compare", "Compare"), async (req, res) => {
-    const symbolsParam = (req.query.symbols || "").toUpperCase();
-    const symbols = symbolsParam.split(",").map(s => s.trim()).filter(Boolean).slice(0, 5);
-    // No symbols — show search/pick form
-    if (symbols.length < 2) {
-        res.send(`<!DOCTYPE html>
+app.get("/compare", featureGate("feature_compare", "Compare"), async (req: Request, res: Response) => {
+  const symbolsParam = (req.query.symbols as string || "").toUpperCase();
+  const symbols = symbolsParam.split(",").map(s => s.trim()).filter(Boolean).slice(0, 5);
+
+  // No symbols — show search/pick form
+  if (symbols.length < 2) {
+    res.send(`<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
@@ -3644,43 +3624,48 @@ app.get("/compare", featureGate("feature_compare", "Compare"), async (req, res) 
   <script src="/public/js/app.js"></script>
 </body>
 </html>`);
-        return;
-    }
-    const stocks = (await Promise.all(symbols.map(sym => (0, db_1.getStock)(sym)))).filter(Boolean);
-    if (stocks.length < 2) {
-        res.redirect("/?error=stocks_not_found");
-        return;
-    }
-    const metrics = [
-        ["Price", "₹", s => s.price != null ? `₹${fmt(s.price, 2)}` : "—"],
-        ["Change %", "%", s => s.change_pct != null ? `<span style="color:${changeColor(s.change_pct)}">${s.change_pct >= 0 ? "+" : ""}${fmt(s.change_pct, 2)}%</span>` : "—"],
-        ["ROCE %", "%", s => `<span style="color:${roceColor(s.roce)}">${fmt(s.roce)}%</span>`],
-        ["ROE %", "%", s => `${fmt(s.roe)}%`],
-        ["D/E Ratio", "", s => `<span style="color:${deColor(s.de_ratio)}">${s.de_ratio === 0 ? "Debt-free 💎" : fmt(s.de_ratio)}</span>`],
-        ["Promoter %", "%", s => `${fmt(s.promoter_pct)}%`],
-        ["P/E Ratio", "", s => fmt(s.pe_ratio, 1)],
-        ["EPS", "₹", s => `₹${fmt(s.eps, 1)}`],
-        ["Book Value", "₹", s => `₹${fmt(s.book_value, 1)}`],
-        ["Dividend Yld", "%", s => `${fmt(s.dividend_yield)}%`],
-        ["Current Ratio", "", s => fmt(s.current_ratio, 2)],
-        ["Market Cap", "", s => fmtCr(s.market_cap)],
-        ["Volume", "", s => fmtVol(s.volume)],
-        ["All Profitable", "", s => s.all_profitable ? "✅ Yes" : "❌ No"],
-        ["Profit Uptrend", "", s => s.profit_uptrend ? "↑ Yes" : "↓ No"],
-        ["Sector", "", s => s.sector || "—"],
-    ];
-    const headerCols = stocks.map(s => `
+    return;
+  }
+
+  const stocks = (await Promise.all(symbols.map(sym => getStock(sym)))).filter(Boolean) as any[];
+  if (stocks.length < 2) {
+    res.redirect("/?error=stocks_not_found"); return;
+  }
+
+  const metrics: [string, string, (s: any) => string][] = [
+    ["Price",        "₹",  s => s.price != null ? `₹${fmt(s.price, 2)}` : "—"],
+    ["Change %",     "%",  s => s.change_pct != null ? `<span style="color:${changeColor(s.change_pct)}">${s.change_pct >= 0 ? "+" : ""}${fmt(s.change_pct, 2)}%</span>` : "—"],
+    ["ROCE %",       "%",  s => `<span style="color:${roceColor(s.roce)}">${fmt(s.roce)}%</span>`],
+    ["ROE %",        "%",  s => `${fmt(s.roe)}%`],
+    ["D/E Ratio",    "",   s => `<span style="color:${deColor(s.de_ratio)}">${s.de_ratio === 0 ? "Debt-free 💎" : fmt(s.de_ratio)}</span>`],
+    ["Promoter %",   "%",  s => `${fmt(s.promoter_pct)}%`],
+    ["P/E Ratio",    "",   s => fmt(s.pe_ratio, 1)],
+    ["EPS",          "₹",  s => `₹${fmt(s.eps, 1)}`],
+    ["Book Value",   "₹",  s => `₹${fmt(s.book_value, 1)}`],
+    ["Dividend Yld", "%",  s => `${fmt(s.dividend_yield)}%`],
+    ["Current Ratio","",   s => fmt(s.current_ratio, 2)],
+    ["Market Cap",   "",   s => fmtCr(s.market_cap)],
+    ["Volume",       "",   s => fmtVol(s.volume)],
+    ["All Profitable","",  s => s.all_profitable ? "✅ Yes" : "❌ No"],
+    ["Profit Uptrend","",  s => s.profit_uptrend ? "↑ Yes" : "↓ No"],
+    ["Sector",       "",   s => s.sector || "—"],
+  ];
+
+  const headerCols = stocks.map(s => `
     <th class="cmp-stock-col">
       <a href="/stock/${s.symbol}" class="sym-link">${s.symbol}</a>
       <div class="cmp-co-name">${s.company_name || ""}</div>
     </th>`).join("");
-    const bodyRows = metrics.map(([label, , fn]) => `
+
+  const bodyRows = metrics.map(([label, , fn]) => `
     <tr>
       <td class="cmp-label">${label}</td>
       ${stocks.map(s => `<td class="cmp-val">${fn(s)}</td>`).join("")}
     </tr>`).join("");
-    const symbolList = stocks.map(s => s.symbol).join(",");
-    res.send(`<!DOCTYPE html>
+
+  const symbolList = stocks.map(s => s.symbol).join(",");
+
+  res.send(`<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
@@ -3733,21 +3718,20 @@ app.get("/compare", featureGate("feature_compare", "Compare"), async (req, res) 
 </body>
 </html>`);
 });
+
 // ── GET /alerts ───────────────────────────────────────────────────────────────
-app.get("/alerts", requireAuth, featureGate("feature_alerts", "Alerts"), premiumGate("alerts_premium_only", "Alerts"), async (req, res) => {
-    const alerts = await (0, db_1.getAlerts)(req.session.userId);
-    const cards = alerts.map(a => {
-        let filters = {};
-        try {
-            filters = JSON.parse(a.filters_json);
-        }
-        catch (_) { }
-        const qs = new URLSearchParams(filters).toString();
-        const filterPills = Object.entries(filters)
-            .filter(([, v]) => v && v !== "roce" && v !== "desc")
-            .map(([k, v]) => `<span class="filter-pill">${k}: ${v}</span>`)
-            .join("");
-        return `
+app.get("/alerts", requireAuth, featureGate("feature_alerts", "Alerts"), premiumGate("alerts_premium_only", "Alerts"), async (req: Request, res: Response) => {
+  const alerts = await getAlerts(req.session.userId!);
+
+  const cards = alerts.map(a => {
+    let filters: Record<string, string> = {};
+    try { filters = JSON.parse(a.filters_json); } catch (_) {}
+    const qs = new URLSearchParams(filters).toString();
+    const filterPills = Object.entries(filters)
+      .filter(([, v]) => v && v !== "roce" && v !== "desc")
+      .map(([k, v]) => `<span class="filter-pill">${k}: ${v}</span>`)
+      .join("");
+    return `
       <div class="alert-card">
         <div class="alert-card-header">
           <span class="alert-name">🔔 ${a.name}</span>
@@ -3760,8 +3744,9 @@ app.get("/alerts", requireAuth, featureGate("feature_alerts", "Alerts"), premium
           <button class="btn-danger" onclick="deleteAlert(${a.id})">Delete</button>
         </div>
       </div>`;
-    }).join("");
-    res.send(`<!DOCTYPE html>
+  }).join("");
+
+  res.send(`<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
@@ -3799,284 +3784,258 @@ app.get("/alerts", requireAuth, featureGate("feature_alerts", "Alerts"), premium
 </body>
 </html>`);
 });
+
 // POST /alerts
-app.post("/alerts", requireAuth, async (req, res) => {
-    const { name, filtersJson } = req.body;
-    if (!name || !filtersJson) {
-        res.status(400).json({ error: "name and filtersJson required" });
-        return;
-    }
-    try {
-        JSON.parse(filtersJson);
-    }
-    catch (_) {
-        res.status(400).json({ error: "invalid filtersJson" });
-        return;
-    }
-    const id = await (0, db_1.createAlert)(req.session.userId, name.trim().substring(0, 60), filtersJson);
-    res.json({ id, ok: true });
+app.post("/alerts", requireAuth, async (req: Request, res: Response) => {
+  const { name, filtersJson } = req.body;
+  if (!name || !filtersJson) { res.status(400).json({ error: "name and filtersJson required" }); return; }
+  try { JSON.parse(filtersJson); } catch (_) { res.status(400).json({ error: "invalid filtersJson" }); return; }
+  const id = await createAlert(req.session.userId!, name.trim().substring(0, 60), filtersJson);
+  res.json({ id, ok: true });
 });
+
 // DELETE /alerts/:id
-app.delete("/alerts/:id", requireAuth, async (req, res) => {
-    const id = parseInt(req.params.id, 10);
-    if (!Number.isInteger(id) || id <= 0) {
-        res.status(400).json({ error: "Invalid id" });
-        return;
-    }
-    await (0, db_1.deleteAlert)(id, req.session.userId);
-    res.json({ ok: true });
+app.delete("/alerts/:id", requireAuth, async (req: Request, res: Response) => {
+  const id = parseInt(req.params.id, 10);
+  if (!Number.isInteger(id) || id <= 0) { res.status(400).json({ error: "Invalid id" }); return; }
+  await deleteAlert(id, req.session.userId!);
+  res.json({ ok: true });
 });
+
 // ── JSON API ───────────────────────────────────────────────────────────────────
-app.get("/api/screen", async (req, res) => {
-    const f = {
-        minRoce: req.query.minRoce ? parseFloat(req.query.minRoce) : undefined,
-        maxDe: req.query.maxDe ? parseFloat(req.query.maxDe) : undefined,
-        minPromoter: req.query.minPromoter ? parseFloat(req.query.minPromoter) : undefined,
-        maxPe: req.query.maxPe ? parseFloat(req.query.maxPe) : undefined,
-        minPrice: req.query.minPrice ? parseFloat(req.query.minPrice) : undefined,
-        maxPrice: req.query.maxPrice ? parseFloat(req.query.maxPrice) : undefined,
-        minVolume: req.query.minVolume ? parseInt(req.query.minVolume, 10) : undefined,
-        allProfitable: req.query.allProfit === "1",
-        profitUptrend: req.query.uptrend === "1",
-        sortBy: req.query.sortBy || "roce",
-        sortDir: req.query.sortDir || "desc",
-        limit: Math.min(parseInt(req.query.limit || "100", 10), 500),
-    };
-    res.json(await (0, db_1.screenStocks)(f));
+app.get("/api/screen", async (req: Request, res: Response) => {
+  const f: ScreenerFilter = {
+    minRoce:     req.query.minRoce     ? parseFloat(req.query.minRoce as string) : undefined,
+    maxDe:       req.query.maxDe       ? parseFloat(req.query.maxDe as string)   : undefined,
+    minPromoter: req.query.minPromoter ? parseFloat(req.query.minPromoter as string) : undefined,
+    maxPe:       req.query.maxPe       ? parseFloat(req.query.maxPe as string)   : undefined,
+    minPrice:    req.query.minPrice    ? parseFloat(req.query.minPrice as string) : undefined,
+    maxPrice:    req.query.maxPrice    ? parseFloat(req.query.maxPrice as string) : undefined,
+    minVolume:   req.query.minVolume   ? parseInt(req.query.minVolume as string, 10) : undefined,
+    allProfitable: req.query.allProfit === "1",
+    profitUptrend: req.query.uptrend  === "1",
+    sortBy:      (req.query.sortBy as string) || "roce",
+    sortDir:     (req.query.sortDir as "asc" | "desc") || "desc",
+    limit:       Math.min(parseInt((req.query.limit as string) || "100", 10), 500),
+  };
+  res.json(await screenStocks(f));
 });
-app.get("/api/stock/:symbol", async (req, res) => {
-    const s = await (0, db_1.getStock)(req.params.symbol.toUpperCase());
-    if (!s) {
-        res.status(404).json({ error: "Not found" });
-        return;
-    }
-    res.json(s);
+
+app.get("/api/stock/:symbol", async (req: Request, res: Response) => {
+  const s = await getStock(req.params.symbol.toUpperCase());
+  if (!s) { res.status(404).json({ error: "Not found" }); return; }
+  res.json(s);
 });
-app.get("/api/stats", async (_req, res) => {
-    res.json(await (0, db_1.getDbStats)());
+
+app.get("/api/stats", async (_req: Request, res: Response) => {
+  res.json(await getDbStats());
 });
-app.get("/api/search", async (req, res) => {
-    const q = (req.query.q || "").trim();
-    if (q.length < 1) {
-        res.json([]);
-        return;
-    }
-    const results = await (0, db_1.searchStocks)(q, 8);
-    res.json(results);
+
+app.get("/api/search", async (req: Request, res: Response) => {
+  const q = ((req.query.q as string) || "").trim();
+  if (q.length < 1) { res.json([]); return; }
+  const results = await searchStocks(q, 8);
+  res.json(results);
 });
-app.get("/api/news", async (_req, res) => {
-    res.json(await fetchMarketNews());
+
+app.get("/api/news", async (_req: Request, res: Response) => {
+  res.json(await fetchMarketNews());
 });
+
 // ── GET /api/markets ─ live index prices from NSE India ──────────────────────
-let _mktCache = [];
+let _mktCache: any[] = [];
 let _mktCacheAt = 0;
 const NSE_HEADERS = {
-    "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-    "Accept": "application/json, text/plain, */*",
-    "Accept-Language": "en-IN,en;q=0.9",
-    "Referer": "https://www.nseindia.com/",
+  "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+  "Accept": "application/json, text/plain, */*",
+  "Accept-Language": "en-IN,en;q=0.9",
+  "Referer": "https://www.nseindia.com/",
 };
-async function fetchNseMarkets() {
-    if (Date.now() - _mktCacheAt < 60000 && _mktCache.length)
-        return _mktCache;
-    try {
-        const idxRes = await fetch("https://www.nseindia.com/api/allIndices", {
-            headers: NSE_HEADERS,
-            signal: AbortSignal.timeout(9000)
-        });
-        if (!idxRes.ok)
-            throw new Error(`NSE HTTP ${idxRes.status}`);
-        const data = await idxRes.json();
-        const indices = data?.data || [];
-        const pick = (name, label) => {
-            const i = indices.find((x) => x.indexSymbol === name || x.index === name);
-            if (!i)
-                return null;
-            return { symbol: name, label, price: i.last, change: i.variation, changePct: i.percentChange, region: "india" };
-        };
-        const results = [
-            pick("NIFTY 50", "NIFTY 50"),
-            pick("NIFTY BANK", "BANK NIFTY"),
-            pick("NIFTY IT", "NIFTY IT"),
-            pick("NIFTY MIDCAP 100", "MIDCAP 100"),
-            pick("INDIA VIX", "INDIA VIX"),
-        ].filter(Boolean);
-        const fin = pick("NIFTY FINANCIAL SERVICES", "FIN NIFTY");
-        if (fin)
-            results.splice(1, 0, fin);
-        if (results.length >= 3) {
-            _mktCache = results;
-            _mktCacheAt = Date.now();
-        }
-        return results;
-    }
-    catch (e) {
-        console.warn("[Markets]", e?.message);
-        return _mktCache;
-    }
+
+async function fetchNseMarkets(): Promise<any[]> {
+  if (Date.now() - _mktCacheAt < 60_000 && _mktCache.length) return _mktCache;
+  try {
+    const idxRes = await fetch("https://www.nseindia.com/api/allIndices", {
+      headers: NSE_HEADERS,
+      signal: AbortSignal.timeout(9000)
+    });
+    if (!idxRes.ok) throw new Error(`NSE HTTP ${idxRes.status}`);
+    const data = await idxRes.json() as any;
+    const indices: any[] = data?.data || [];
+
+    const pick = (name: string, label: string) => {
+      const i = indices.find((x: any) => x.indexSymbol === name || x.index === name);
+      if (!i) return null;
+      return { symbol: name, label, price: i.last, change: i.variation, changePct: i.percentChange, region: "india" };
+    };
+
+    const results: any[] = [
+      pick("NIFTY 50",         "NIFTY 50"),
+      pick("NIFTY BANK",       "BANK NIFTY"),
+      pick("NIFTY IT",         "NIFTY IT"),
+      pick("NIFTY MIDCAP 100", "MIDCAP 100"),
+      pick("INDIA VIX",        "INDIA VIX"),
+    ].filter(Boolean) as any[];
+
+    const fin = pick("NIFTY FINANCIAL SERVICES", "FIN NIFTY");
+    if (fin) results.splice(1, 0, fin);
+
+    if (results.length >= 3) { _mktCache = results; _mktCacheAt = Date.now(); }
+    return results;
+  } catch (e: any) {
+    console.warn("[Markets]", e?.message);
+    return _mktCache;
+  }
 }
-let _globalCache = [];
+
+let _globalCache: any[] = [];
 let _globalCacheAt = 0;
-const GLOBAL_SYMBOLS = [
-    ["^DJI", "Dow Jones"],
-    ["^IXIC", "NASDAQ"],
-    ["^GSPC", "S&P 500"],
-    ["^N225", "Nikkei 225"],
-    ["^HSI", "Hang Seng"],
+const GLOBAL_SYMBOLS: [string, string][] = [
+  ["^DJI",   "Dow Jones"],
+  ["^IXIC",  "NASDAQ"],
+  ["^GSPC",  "S&P 500"],
+  ["^N225",  "Nikkei 225"],
+  ["^HSI",   "Hang Seng"],
 ];
-async function fetchGlobalMarkets() {
-    if (Date.now() - _globalCacheAt < 120000 && _globalCache.length)
-        return _globalCache;
-    try {
-        const results = await Promise.all(GLOBAL_SYMBOLS.map(async ([sym, label]) => {
-            try {
-                const r = await fetch(`https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(sym)}?interval=1d&range=1d`, { headers: { "User-Agent": "Mozilla/5.0" }, signal: AbortSignal.timeout(8000) });
-                const d = await r.json();
-                const meta = d?.chart?.result?.[0]?.meta;
-                const price = meta?.regularMarketPrice;
-                const prev = meta?.chartPreviousClose ?? meta?.previousClose;
-                const change = (price && prev) ? +(price - prev).toFixed(2) : 0;
-                const changePct = (price && prev) ? +((price - prev) / prev * 100).toFixed(2) : 0;
-                if (!price)
-                    return null;
-                return { symbol: sym, label, price, change, changePct, region: "global" };
-            }
-            catch {
-                return null;
-            }
-        }));
-        const valid = results.filter(Boolean);
-        if (valid.length >= 2) {
-            _globalCache = valid;
-            _globalCacheAt = Date.now();
-        }
-        return valid.length ? valid : _globalCache;
-    }
-    catch (e) {
-        console.warn("[GlobalMarkets]", e?.message);
-        return _globalCache;
-    }
+
+async function fetchGlobalMarkets(): Promise<any[]> {
+  if (Date.now() - _globalCacheAt < 120_000 && _globalCache.length) return _globalCache;
+  try {
+    const results = await Promise.all(GLOBAL_SYMBOLS.map(async ([sym, label]) => {
+      try {
+        const r = await fetch(
+          `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(sym)}?interval=1d&range=1d`,
+          { headers: { "User-Agent": "Mozilla/5.0" }, signal: AbortSignal.timeout(8000) }
+        );
+        const d = await r.json() as any;
+        const meta = d?.chart?.result?.[0]?.meta;
+        const price: number = meta?.regularMarketPrice;
+        const prev: number = meta?.chartPreviousClose ?? meta?.previousClose;
+        const change = (price && prev) ? +(price - prev).toFixed(2) : 0;
+        const changePct = (price && prev) ? +((price - prev) / prev * 100).toFixed(2) : 0;
+        if (!price) return null;
+        return { symbol: sym, label, price, change, changePct, region: "global" };
+      } catch { return null; }
+    }));
+    const valid = results.filter(Boolean) as any[];
+    if (valid.length >= 2) { _globalCache = valid; _globalCacheAt = Date.now(); }
+    return valid.length ? valid : _globalCache;
+  } catch (e: any) {
+    console.warn("[GlobalMarkets]", e?.message);
+    return _globalCache;
+  }
 }
-app.get("/api/markets", async (_req, res) => {
-    const [india, global] = await Promise.all([fetchNseMarkets(), fetchGlobalMarkets()]);
-    res.json([...india, ...global]);
+
+app.get("/api/markets", async (_req: Request, res: Response) => {
+  const [india, global] = await Promise.all([fetchNseMarkets(), fetchGlobalMarkets()]);
+  res.json([...india, ...global]);
 });
+
 // ── GET /api/news/:symbol ─ stock-specific news from Google News RSS ──────────
-app.get("/api/news/:symbol", async (req, res) => {
-    const symbol = req.params.symbol.toUpperCase().replace(/[^A-Z0-9]/g, "");
-    const s = await (0, db_1.getStock)(symbol);
-    // Build search query using company name + NSE to get relevant results
-    const co = s?.company_name ? s.company_name.replace(/[^a-zA-Z0-9 ]/g, " ").trim() : symbol;
-    const query = encodeURIComponent(`${co} NSE India stock`);
-    const feedUrl = `https://news.google.com/rss/search?q=${query}&hl=en-IN&gl=IN&ceid=IN:en`;
-    try {
-        const xml = await new Promise((resolve, reject) => {
-            const reqH = https_1.default.get(feedUrl, {
-                timeout: 8000,
-                headers: { "User-Agent": "ZeroScreen/1.0 RSS Reader", "Accept": "application/rss+xml,application/xml,*/*" },
-            }, (r) => {
-                if (r.statusCode && r.statusCode >= 300 && r.statusCode < 400 && r.headers.location) {
-                    https_1.default.get(r.headers.location, { timeout: 8000, headers: { "User-Agent": "ZeroScreen/1.0" } }, (r2) => {
-                        let d = "";
-                        r2.on("data", c => d += c);
-                        r2.on("end", () => resolve(d));
-                    }).on("error", reject);
-                    return;
-                }
-                let d = "";
-                r.on("data", c => d += c);
-                r.on("end", () => resolve(d));
-            });
-            reqH.on("error", reject);
-            reqH.on("timeout", () => { reqH.destroy(); reject(new Error("timeout")); });
-        });
-        const items = xml.match(/<item>([\s\S]*?)<\/item>/g) || [];
-        const now = Date.now();
-        const news = items.slice(0, 20).map(item => {
-            const title = (item.match(/<title><!\[CDATA\[(.+?)\]\]><\/title>/) || item.match(/<title>([^<]+)<\/title>/) || [])[1]?.trim() || "";
-            const link = (item.match(/<link>([^<]+)<\/link>/) || [])[1]?.trim() || "";
-            const pubDate = (item.match(/<pubDate>([^<]+)<\/pubDate>/) || [])[1]?.trim() || "";
-            const source = (item.match(/<source[^>]*>([^<]+)<\/source>/) || item.match(/\.com\/([^/]+)/g) || [])[1]?.trim() || "";
-            const ts = pubDate ? new Date(pubDate).getTime() : 0;
-            const diffMs = now - ts;
-            const diffH = diffMs / 3600000;
-            let period;
-            if (diffH < 24)
-                period = "Today";
-            else if (diffH < 48)
-                period = "Yesterday";
-            else if (diffH < 168)
-                period = "Last 7 Days";
-            else
-                period = "Older";
-            return { title, link, pubDate, source, period, ts };
-        }).filter(n => n.title && n.link);
-        res.json(news);
-    }
-    catch {
-        res.json([]);
-    }
-});
-app.post("/api/refresh/prices", async (_req, res) => {
-    try {
-        const count = await (0, scheduler_1.refreshPrices)();
-        res.json({ ok: true, count });
-    }
-    catch (e) {
-        res.status(500).json({ error: e.message });
-    }
-});
-app.post("/api/refresh/fundamentals", requireAdmin, async (_req, res) => {
-    try {
-        // Fire and forget — runs in background
-        (0, scheduler_1.refreshFundamentals)().catch(e => console.error("[API] fundamentals error:", e.message));
-        const stats = await (0, db_1.getDbStats)();
-        res.json({ ok: true, message: `Running in background. Currently ${stats.fetched}/${stats.total} stocks fetched.` });
-    }
-    catch (e) {
-        res.status(500).json({ error: e.message });
-    }
-});
-app.post("/api/refresh/stock/:symbol", async (req, res) => {
-    const symbol = req.params.symbol.toUpperCase();
-    try {
-        const f = await (0, scraper_1.fetchFundamentals)(symbol);
-        if (f.error) {
-            res.status(400).json({ error: f.error });
-            return;
+app.get("/api/news/:symbol", async (req: Request, res: Response) => {
+  const symbol = req.params.symbol.toUpperCase().replace(/[^A-Z0-9]/g, "");
+  const s = await getStock(symbol);
+  // Build search query using company name + NSE to get relevant results
+  const co = s?.company_name ? s.company_name.replace(/[^a-zA-Z0-9 ]/g, " ").trim() : symbol;
+  const query = encodeURIComponent(`${co} NSE India stock`);
+  const feedUrl = `https://news.google.com/rss/search?q=${query}&hl=en-IN&gl=IN&ceid=IN:en`;
+  try {
+    const xml = await new Promise<string>((resolve, reject) => {
+      const reqH = https.get(feedUrl, {
+        timeout: 8000,
+        headers: { "User-Agent": "ZeroScreen/1.0 RSS Reader", "Accept": "application/rss+xml,application/xml,*/*" },
+      }, (r) => {
+        if (r.statusCode && r.statusCode >= 300 && r.statusCode < 400 && r.headers.location) {
+          https.get(r.headers.location, { timeout: 8000, headers: { "User-Agent": "ZeroScreen/1.0" } }, (r2) => {
+            let d = ""; r2.on("data", c => d += c); r2.on("end", () => resolve(d));
+          }).on("error", reject);
+          return;
         }
-        (0, db_1.upsertStock)({
-            symbol,
-            company_name: f.companyName, sector: f.sector, market_cap: f.marketCap,
-            pe_ratio: f.peRatio, roce: f.roce, roe: f.roe, de_ratio: f.deRatio,
-            promoter_pct: f.promoterPct, eps: f.eps, book_value: f.bookValue,
-            dividend_yield: f.dividendYield, current_ratio: f.currentRatio,
-            net_profit_1: f.netProfits[f.netProfits.length - 3] ?? null,
-            net_profit_2: f.netProfits[f.netProfits.length - 2] ?? null,
-            net_profit_3: f.netProfits[f.netProfits.length - 1] ?? null,
-            revenue_1: f.revenues[f.revenues.length - 3] ?? null,
-            revenue_2: f.revenues[f.revenues.length - 2] ?? null,
-            revenue_3: f.revenues[f.revenues.length - 1] ?? null,
-            all_profitable: f.allProfitable ? 1 : 0,
-            profit_uptrend: f.profitUptrend ? 1 : 0,
-            week52_high: f.week52High,
-            week52_low: f.week52Low,
-            about: f.about,
-            incorporated: f.incorporated,
-            screener_data: JSON.stringify({ netProfits: f.netProfits, revenues: f.revenues }),
-            fetch_error: null, fetched_at: new Date().toISOString(),
-        });
-        res.json({ ok: true });
-    }
-    catch (e) {
-        res.status(500).json({ error: e.message });
-    }
+        let d = ""; r.on("data", c => d += c); r.on("end", () => resolve(d));
+      });
+      reqH.on("error", reject);
+      reqH.on("timeout", () => { reqH.destroy(); reject(new Error("timeout")); });
+    });
+    const items = xml.match(/<item>([\s\S]*?)<\/item>/g) || [];
+    const now = Date.now();
+    const news = items.slice(0, 20).map(item => {
+      const title   = (item.match(/<title><!\[CDATA\[(.+?)\]\]><\/title>/) || item.match(/<title>([^<]+)<\/title>/) || [])[1]?.trim() || "";
+      const link    = (item.match(/<link>([^<]+)<\/link>/) || [])[1]?.trim() || "";
+      const pubDate = (item.match(/<pubDate>([^<]+)<\/pubDate>/) || [])[1]?.trim() || "";
+      const source  = (item.match(/<source[^>]*>([^<]+)<\/source>/) || item.match(/\.com\/([^/]+)/g) || [])[1]?.trim() || "";
+      const ts = pubDate ? new Date(pubDate).getTime() : 0;
+      const diffMs = now - ts;
+      const diffH  = diffMs / 3600000;
+      let period: string;
+      if (diffH < 24)        period = "Today";
+      else if (diffH < 48)   period = "Yesterday";
+      else if (diffH < 168)  period = "Last 7 Days";
+      else                   period = "Older";
+      return { title, link, pubDate, source, period, ts };
+    }).filter(n => n.title && n.link);
+    res.json(news);
+  } catch {
+    res.json([]);
+  }
 });
+
+app.post("/api/refresh/prices", async (_req: Request, res: Response) => {
+  try {
+    const count = await refreshPrices();
+    res.json({ ok: true, count });
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.post("/api/refresh/fundamentals", requireAdmin, async (_req: Request, res: Response) => {
+  try {
+    // Fire and forget — runs in background
+    refreshFundamentals().catch(e => console.error("[API] fundamentals error:", e.message));
+    const stats = await getDbStats();
+    res.json({ ok: true, message: `Running in background. Currently ${stats.fetched}/${stats.total} stocks fetched.` });
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.post("/api/refresh/stock/:symbol", async (req: Request, res: Response) => {
+  const symbol = req.params.symbol.toUpperCase();
+  try {
+    const f = await fetchFundamentals(symbol);
+    if (f.error) { res.status(400).json({ error: f.error }); return; }
+    upsertStock({
+      symbol,
+      company_name: f.companyName, sector: f.sector, market_cap: f.marketCap,
+      pe_ratio: f.peRatio, roce: f.roce, roe: f.roe, de_ratio: f.deRatio,
+      promoter_pct: f.promoterPct, eps: f.eps, book_value: f.bookValue,
+      dividend_yield: f.dividendYield, current_ratio: f.currentRatio,
+      net_profit_1: f.netProfits[f.netProfits.length - 3] ?? null,
+      net_profit_2: f.netProfits[f.netProfits.length - 2] ?? null,
+      net_profit_3: f.netProfits[f.netProfits.length - 1] ?? null,
+      revenue_1: f.revenues[f.revenues.length - 3] ?? null,
+      revenue_2: f.revenues[f.revenues.length - 2] ?? null,
+      revenue_3: f.revenues[f.revenues.length - 1] ?? null,
+      all_profitable: f.allProfitable ? 1 : 0,
+      profit_uptrend: f.profitUptrend ? 1 : 0,
+      week52_high: f.week52High,
+      week52_low:  f.week52Low,
+      about:       f.about,
+      incorporated: f.incorporated,
+      screener_data: JSON.stringify({ netProfits: f.netProfits, revenues: f.revenues }),
+      fetch_error: null, fetched_at: new Date().toISOString(),
+    });
+    res.json({ ok: true });
+  } catch (e: any) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // ── GET /contact ──────────────────────────────────────────────────────────────
-app.get("/contact", featureGate("feature_contact", "Contact"), (req, res) => {
-    const success = req.query.sent === "1";
-    const error = req.query.error;
-    res.send(`<!DOCTYPE html>
+app.get("/contact", featureGate("feature_contact", "Contact"), (req: Request, res: Response) => {
+  const success = req.query.sent === "1";
+  const error   = req.query.error as string | undefined;
+  res.send(`<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
@@ -4127,7 +4086,7 @@ app.get("/contact", featureGate("feature_contact", "Contact"), (req, res) => {
         <div class="contact-form-card">
           <h2>Send us a message</h2>
           ${success ? '<div class="auth-success">✅ Message sent! We\'ll reply within 24 hours.</div>' : ''}
-          ${error ? `<div class="auth-error">${esc(error)}</div>` : ''}
+          ${error   ? `<div class="auth-error">${esc(error)}</div>` : ''}
           <form class="auth-form" method="POST" action="/contact">
             <div class="form-group">
               <label>Your Name</label>
@@ -4161,19 +4120,20 @@ app.get("/contact", featureGate("feature_contact", "Contact"), (req, res) => {
 </body>
 </html>`);
 });
+
 // POST /contact
-app.post("/contact", async (req, res) => {
-    const { name, email, subject, message } = req.body;
-    if (!name || !email || !message) {
-        res.redirect("/contact?error=Name%2C+email+and+message+are+required");
-        return;
-    }
-    (0, mailer_1.sendContactNotification)(name, email, subject || "General Enquiry", message).catch(() => { });
-    res.redirect("/contact?sent=1");
+app.post("/contact", async (req: Request, res: Response) => {
+  const { name, email, subject, message } = req.body;
+  if (!name || !email || !message) {
+    res.redirect("/contact?error=Name%2C+email+and+message+are+required"); return;
+  }
+  sendContactNotification(name, email, subject || "General Enquiry", message).catch(() => {});
+  res.redirect("/contact?sent=1");
 });
+
 // ── GET /about ─────────────────────────────────────────────────────────────────
-app.get("/about", (req, res) => {
-    res.send(`<!DOCTYPE html>
+app.get("/about", (req: Request, res: Response) => {
+  res.send(`<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
@@ -4293,510 +4253,470 @@ app.get("/about", (req, res) => {
 </body>
 </html>`);
 });
+
 // ── Start ──────────────────────────────────────────────────────────────────────
 const ADMIN_EMAIL = (process.env.ADMIN_EMAIL || "").toLowerCase().trim();
+
 // ── Bot data helpers ────────────────────────────────────────────────────────────
 const BOT_DIR = "/home/ubuntu/trading-bot";
-function readBotJSON(file, fallback = null) {
-    try {
-        const p = `${BOT_DIR}/${file}`;
-        if (!fs_1.default.existsSync(p))
-            return fallback;
-        return JSON.parse(fs_1.default.readFileSync(p, "utf-8"));
-    }
-    catch {
-        return fallback;
-    }
+
+function readBotJSON(file: string, fallback: any = null) {
+  try {
+    const p = `${BOT_DIR}/${file}`;
+    if (!fs.existsSync(p)) return fallback;
+    return JSON.parse(fs.readFileSync(p, "utf-8"));
+  } catch { return fallback; }
 }
-function getTodayIST() {
-    return new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" });
+
+function getTodayIST(): string {
+  return new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" });
 }
-function computeAnalytics(trades) {
-    // Build premiumEntry lookup from open records (exitPrice = 0), then enrich close records
-    const premiumMap = {};
-    for (const t of trades) {
-        if ((t.exitPrice ?? 0) === 0 && t.premiumEntry > 0) {
-            premiumMap[`${t.direction}|${(t.entryPrice ?? 0).toFixed(1)}`] = t.premiumEntry;
-        }
+
+function computeAnalytics(trades: any[]) {
+  // Build premiumEntry lookup from open records (exitPrice = 0), then enrich close records
+  const premiumMap: Record<string, number> = {};
+  for (const t of trades) {
+    if ((t.exitPrice ?? 0) === 0 && (t as any).premiumEntry > 0) {
+      premiumMap[`${t.direction}|${(t.entryPrice ?? 0).toFixed(1)}`] = (t as any).premiumEntry;
     }
-    // Only include completed trades, with premiumEntry filled in
-    trades = trades.filter((t) => t.exitPrice && t.exitPrice > 0).map((t) => {
-        if (!(t.premiumEntry > 0)) {
-            const key = `${t.direction}|${(t.entryPrice ?? 0).toFixed(1)}`;
-            if (premiumMap[key])
-                return { ...t, premiumEntry: premiumMap[key] };
-        }
-        return t;
-    });
-    const today = getTodayIST();
-    const todayTrades = trades.filter((t) => (t.date || "").startsWith(today));
-    const allWins = trades.filter((t) => t.pnl > 0).length;
-    const allTotal = trades.length;
-    let equity = 0, peak = 0, maxDD = 0;
-    const equityCurve = [];
-    for (const t of trades) {
-        equity += t.pnl ?? 0;
-        if (equity > peak)
-            peak = equity;
-        const dd = peak - equity;
-        if (dd > maxDD)
-            maxDD = dd;
-        equityCurve.push(parseFloat(equity.toFixed(1)));
+  }
+  // Only include completed trades, with premiumEntry filled in
+  trades = trades.filter((t: any) => t.exitPrice && t.exitPrice > 0).map((t: any) => {
+    if (!((t as any).premiumEntry > 0)) {
+      const key = `${t.direction}|${(t.entryPrice ?? 0).toFixed(1)}`;
+      if (premiumMap[key]) return { ...t, premiumEntry: premiumMap[key] };
     }
-    let todayEq = 0, todayPeak = 0, todayMaxDD = 0;
-    for (const t of todayTrades) {
-        todayEq += t.pnl ?? 0;
-        if (todayEq > todayPeak)
-            todayPeak = todayEq;
-        const dd = todayPeak - todayEq;
-        if (dd > todayMaxDD)
-            todayMaxDD = dd;
-    }
-    // Weekly P&L (last 7 days)
-    const nowIST = new Date(new Date().toLocaleString("en-US", { timeZone: "Asia/Kolkata" }));
-    const wkAgo = new Date(nowIST);
-    wkAgo.setDate(nowIST.getDate() - 7);
-    const wkTrades = trades.filter((t) => t.date && new Date(t.date) >= wkAgo);
-    const wkWins = wkTrades.filter((t) => t.pnl > 0).length;
-    const wkPnl = parseFloat(wkTrades.reduce((s, t) => s + (t.pnl ?? 0), 0).toFixed(1));
-    // Monthly breakdown
-    const monthMap = {};
-    for (const t of trades) {
-        if (!t.date)
-            continue;
-        const mk = t.date.slice(0, 7);
-        if (!monthMap[mk])
-            monthMap[mk] = { trades: 0, wins: 0, losses: 0, pnl: 0 };
-        monthMap[mk].trades++;
-        monthMap[mk].pnl = parseFloat((monthMap[mk].pnl + (t.pnl ?? 0)).toFixed(1));
-        if ((t.pnl ?? 0) > 0)
-            monthMap[mk].wins++;
-        else
-            monthMap[mk].losses++;
-    }
-    const monthly = Object.keys(monthMap).sort().map(month => ({
-        month,
-        ...monthMap[month],
-        winRate: monthMap[month].trades > 0 ? parseFloat(((monthMap[month].wins / monthMap[month].trades) * 100).toFixed(1)) : 0,
-    }));
-    return {
-        today: {
-            trades: todayTrades.length,
-            wins: todayTrades.filter((t) => t.pnl > 0).length,
-            losses: todayTrades.filter((t) => t.pnl <= 0).length,
-            pnl: parseFloat(todayEq.toFixed(1)),
-            maxDD: parseFloat(todayMaxDD.toFixed(1)),
-        },
-        weekly: {
-            trades: wkTrades.length,
-            wins: wkWins,
-            losses: wkTrades.length - wkWins,
-            pnl: wkPnl,
-        },
-        monthly,
-        allTime: {
-            trades: allTotal,
-            wins: allWins,
-            losses: allTotal - allWins,
-            winRate: allTotal > 0 ? parseFloat(((allWins / allTotal) * 100).toFixed(1)) : 0,
-            pnl: parseFloat(equity.toFixed(1)),
-            maxDD: parseFloat(maxDD.toFixed(1)),
-        },
-        equityCurve,
-        recentTrades: trades.slice(-20).reverse(),
-    };
+    return t;
+  });
+  const today = getTodayIST();
+  const todayTrades = trades.filter((t: any) => (t.date || "").startsWith(today));
+  const allWins  = trades.filter((t: any) => t.pnl > 0).length;
+  const allTotal = trades.length;
+
+  let equity = 0, peak = 0, maxDD = 0;
+  const equityCurve: number[] = [];
+  for (const t of trades) {
+    equity += t.pnl ?? 0;
+    if (equity > peak) peak = equity;
+    const dd = peak - equity;
+    if (dd > maxDD) maxDD = dd;
+    equityCurve.push(parseFloat(equity.toFixed(1)));
+  }
+
+  let todayEq = 0, todayPeak = 0, todayMaxDD = 0;
+  for (const t of todayTrades) {
+    todayEq += t.pnl ?? 0;
+    if (todayEq > todayPeak) todayPeak = todayEq;
+    const dd = todayPeak - todayEq;
+    if (dd > todayMaxDD) todayMaxDD = dd;
+  }
+
+  // Weekly P&L (last 7 days)
+  const nowIST = new Date(new Date().toLocaleString("en-US", { timeZone: "Asia/Kolkata" }));
+  const wkAgo = new Date(nowIST); wkAgo.setDate(nowIST.getDate() - 7);
+  const wkTrades = trades.filter((t: any) => t.date && new Date(t.date) >= wkAgo);
+  const wkWins = wkTrades.filter((t: any) => t.pnl > 0).length;
+  const wkPnl = parseFloat(wkTrades.reduce((s: number, t: any) => s + (t.pnl ?? 0), 0).toFixed(1));
+
+  // Monthly breakdown
+  const monthMap: Record<string, { trades: number; wins: number; losses: number; pnl: number }> = {};
+  for (const t of trades) {
+    if (!t.date) continue;
+    const mk = t.date.slice(0, 7);
+    if (!monthMap[mk]) monthMap[mk] = { trades: 0, wins: 0, losses: 0, pnl: 0 };
+    monthMap[mk].trades++;
+    monthMap[mk].pnl = parseFloat((monthMap[mk].pnl + (t.pnl ?? 0)).toFixed(1));
+    if ((t.pnl ?? 0) > 0) monthMap[mk].wins++; else monthMap[mk].losses++;
+  }
+  const monthly = Object.keys(monthMap).sort().map(month => ({
+    month,
+    ...monthMap[month],
+    winRate: monthMap[month].trades > 0 ? parseFloat(((monthMap[month].wins / monthMap[month].trades) * 100).toFixed(1)) : 0,
+  }));
+
+  return {
+    today: {
+      trades: todayTrades.length,
+      wins: todayTrades.filter((t: any) => t.pnl > 0).length,
+      losses: todayTrades.filter((t: any) => t.pnl <= 0).length,
+      pnl: parseFloat(todayEq.toFixed(1)),
+      maxDD: parseFloat(todayMaxDD.toFixed(1)),
+    },
+    weekly: {
+      trades: wkTrades.length,
+      wins: wkWins,
+      losses: wkTrades.length - wkWins,
+      pnl: wkPnl,
+    },
+    monthly,
+    allTime: {
+      trades: allTotal,
+      wins: allWins,
+      losses: allTotal - allWins,
+      winRate: allTotal > 0 ? parseFloat(((allWins / allTotal) * 100).toFixed(1)) : 0,
+      pnl: parseFloat(equity.toFixed(1)),
+      maxDD: parseFloat(maxDD.toFixed(1)),
+    },
+    equityCurve,
+    recentTrades: trades.slice(-20).reverse(),
+  };
 }
+
 // ── Technical Indicator Engine ─────────────────────────────────────────────────
+
 // Compute EMA from closes
-function computeEMA(closes, period) {
-    const k = 2 / (period + 1);
-    const ema = [];
-    let prev = closes.slice(0, period).reduce((a, b) => a + b, 0) / period;
+function computeEMA(closes: number[], period: number): number[] {
+  const k = 2 / (period + 1);
+  const ema: number[] = [];
+  let prev = closes.slice(0, period).reduce((a, b) => a + b, 0) / period;
+  ema.push(prev);
+  for (let i = period; i < closes.length; i++) {
+    prev = closes[i] * k + prev * (1 - k);
     ema.push(prev);
-    for (let i = period; i < closes.length; i++) {
-        prev = closes[i] * k + prev * (1 - k);
-        ema.push(prev);
-    }
-    return ema;
+  }
+  return ema;
 }
-function computeSMA(closes, period) {
-    const sma = [];
-    for (let i = period - 1; i < closes.length; i++) {
-        const sum = closes.slice(i - period + 1, i + 1).reduce((a, b) => a + b, 0);
-        sma.push(sum / period);
-    }
-    return sma;
+
+function computeSMA(closes: number[], period: number): number[] {
+  const sma: number[] = [];
+  for (let i = period - 1; i < closes.length; i++) {
+    const sum = closes.slice(i - period + 1, i + 1).reduce((a, b) => a + b, 0);
+    sma.push(sum / period);
+  }
+  return sma;
 }
-function computeRSI(closes, period = 14) {
-    if (closes.length < period + 1)
-        return { value: 50, signal: "NEUTRAL" };
-    let gains = 0, losses = 0;
-    for (let i = 1; i <= period; i++) {
-        const diff = closes[i] - closes[i - 1];
-        if (diff > 0)
-            gains += diff;
-        else
-            losses -= diff;
-    }
-    let avgGain = gains / period;
-    let avgLoss = losses / period;
-    for (let i = period + 1; i < closes.length; i++) {
-        const diff = closes[i] - closes[i - 1];
-        avgGain = (avgGain * (period - 1) + Math.max(diff, 0)) / period;
-        avgLoss = (avgLoss * (period - 1) + Math.max(-diff, 0)) / period;
-    }
-    const rs = avgLoss === 0 ? 100 : avgGain / avgLoss;
-    const rsi = parseFloat((100 - 100 / (1 + rs)).toFixed(2));
-    return {
-        value: rsi,
-        signal: rsi < 30 ? "BUY" : rsi > 70 ? "SELL" : "NEUTRAL",
-    };
+
+function computeRSI(closes: number[], period = 14): { value: number; signal: string } {
+  if (closes.length < period + 1) return { value: 50, signal: "NEUTRAL" };
+  let gains = 0, losses = 0;
+  for (let i = 1; i <= period; i++) {
+    const diff = closes[i] - closes[i - 1];
+    if (diff > 0) gains += diff; else losses -= diff;
+  }
+  let avgGain = gains / period;
+  let avgLoss = losses / period;
+  for (let i = period + 1; i < closes.length; i++) {
+    const diff = closes[i] - closes[i - 1];
+    avgGain = (avgGain * (period - 1) + Math.max(diff, 0)) / period;
+    avgLoss = (avgLoss * (period - 1) + Math.max(-diff, 0)) / period;
+  }
+  const rs = avgLoss === 0 ? 100 : avgGain / avgLoss;
+  const rsi = parseFloat((100 - 100 / (1 + rs)).toFixed(2));
+  return {
+    value: rsi,
+    signal: rsi < 30 ? "BUY" : rsi > 70 ? "SELL" : "NEUTRAL",
+  };
 }
-function computeMACD(closes) {
-    if (closes.length < 35)
-        return { macd: 0, signal: 0, hist: 0, trend: "NEUTRAL" };
-    const ema12 = computeEMA(closes, 12);
-    const ema26 = computeEMA(closes, 26);
-    const macdLine = [];
-    const startIdx = closes.length - ema26.length;
-    for (let i = 0; i < ema26.length; i++) {
-        macdLine.push(ema12[startIdx + i] - ema26[i]);
-    }
-    const signalLine = computeEMA(macdLine, 9);
-    const lastMacd = macdLine[macdLine.length - 1];
-    const lastSignal = signalLine[signalLine.length - 1];
-    const hist = lastMacd - lastSignal;
-    // Crossover: check if previous histogram was negative and current is positive (or vice versa)
-    const prevHist = macdLine[macdLine.length - 2] - signalLine[signalLine.length - 2];
-    let trend = "NEUTRAL";
-    if (prevHist < 0 && hist > 0)
-        trend = "BUY";
-    else if (prevHist > 0 && hist < 0)
-        trend = "SELL";
-    else if (hist > 0)
-        trend = "BULLISH";
-    else if (hist < 0)
-        trend = "BEARISH";
-    return { macd: parseFloat(lastMacd.toFixed(3)), signal: parseFloat(lastSignal.toFixed(3)), hist: parseFloat(hist.toFixed(3)), trend };
+
+function computeMACD(closes: number[]): { macd: number; signal: number; hist: number; trend: string } {
+  if (closes.length < 35) return { macd: 0, signal: 0, hist: 0, trend: "NEUTRAL" };
+  const ema12 = computeEMA(closes, 12);
+  const ema26 = computeEMA(closes, 26);
+  const macdLine: number[] = [];
+  const startIdx = closes.length - ema26.length;
+  for (let i = 0; i < ema26.length; i++) {
+    macdLine.push(ema12[startIdx + i] - ema26[i]);
+  }
+  const signalLine = computeEMA(macdLine, 9);
+  const lastMacd = macdLine[macdLine.length - 1];
+  const lastSignal = signalLine[signalLine.length - 1];
+  const hist = lastMacd - lastSignal;
+  // Crossover: check if previous histogram was negative and current is positive (or vice versa)
+  const prevHist = macdLine[macdLine.length - 2] - signalLine[signalLine.length - 2];
+  let trend = "NEUTRAL";
+  if (prevHist < 0 && hist > 0) trend = "BUY";
+  else if (prevHist > 0 && hist < 0) trend = "SELL";
+  else if (hist > 0) trend = "BULLISH";
+  else if (hist < 0) trend = "BEARISH";
+  return { macd: parseFloat(lastMacd.toFixed(3)), signal: parseFloat(lastSignal.toFixed(3)), hist: parseFloat(hist.toFixed(3)), trend };
 }
-function computeBollinger(closes, period = 20, mult = 2) {
-    if (closes.length < period)
-        return { upper: 0, lower: 0, mid: 0, signal: "NEUTRAL", pct: 50 };
-    const slice = closes.slice(-period);
-    const mid = slice.reduce((a, b) => a + b, 0) / period;
-    const variance = slice.reduce((a, b) => a + (b - mid) ** 2, 0) / period;
-    const std = Math.sqrt(variance);
-    const upper = mid + mult * std;
-    const lower = mid - mult * std;
-    const last = closes[closes.length - 1];
-    const pct = parseFloat(((last - lower) / (upper - lower) * 100).toFixed(1));
-    const signal = last < lower ? "BUY" : last > upper ? "SELL" : "NEUTRAL";
-    return { upper: parseFloat(upper.toFixed(2)), lower: parseFloat(lower.toFixed(2)), mid: parseFloat(mid.toFixed(2)), signal, pct };
+
+function computeBollinger(closes: number[], period = 20, mult = 2): { upper: number; lower: number; mid: number; signal: string; pct: number } {
+  if (closes.length < period) return { upper: 0, lower: 0, mid: 0, signal: "NEUTRAL", pct: 50 };
+  const slice = closes.slice(-period);
+  const mid = slice.reduce((a, b) => a + b, 0) / period;
+  const variance = slice.reduce((a, b) => a + (b - mid) ** 2, 0) / period;
+  const std = Math.sqrt(variance);
+  const upper = mid + mult * std;
+  const lower = mid - mult * std;
+  const last = closes[closes.length - 1];
+  const pct = parseFloat(((last - lower) / (upper - lower) * 100).toFixed(1));
+  const signal = last < lower ? "BUY" : last > upper ? "SELL" : "NEUTRAL";
+  return { upper: parseFloat(upper.toFixed(2)), lower: parseFloat(lower.toFixed(2)), mid: parseFloat(mid.toFixed(2)), signal, pct };
 }
-function computeEMACross(closes, fast = 20, slow = 50) {
-    if (closes.length < slow + 1)
-        return { fastEMA: 0, slowEMA: 0, signal: "NEUTRAL" };
-    const emaFast = computeEMA(closes, fast);
-    const emaSlow = computeEMA(closes, slow);
-    const lastFast = emaFast[emaFast.length - 1];
-    const lastSlow = emaSlow[emaSlow.length - 1];
-    const prevFast = emaFast[emaFast.length - 2];
-    const prevSlow = emaSlow[emaSlow.length - 2];
-    let signal = "NEUTRAL";
-    if (prevFast <= prevSlow && lastFast > lastSlow)
-        signal = "BUY";
-    else if (prevFast >= prevSlow && lastFast < lastSlow)
-        signal = "SELL";
-    else if (lastFast > lastSlow)
-        signal = "BULLISH";
-    else
-        signal = "BEARISH";
-    return { fastEMA: parseFloat(lastFast.toFixed(2)), slowEMA: parseFloat(lastSlow.toFixed(2)), signal };
+
+function computeEMACross(closes: number[], fast = 20, slow = 50): { fastEMA: number; slowEMA: number; signal: string } {
+  if (closes.length < slow + 1) return { fastEMA: 0, slowEMA: 0, signal: "NEUTRAL" };
+  const emaFast = computeEMA(closes, fast);
+  const emaSlow = computeEMA(closes, slow);
+  const lastFast = emaFast[emaFast.length - 1];
+  const lastSlow = emaSlow[emaSlow.length - 1];
+  const prevFast = emaFast[emaFast.length - 2];
+  const prevSlow = emaSlow[emaSlow.length - 2];
+  let signal = "NEUTRAL";
+  if (prevFast <= prevSlow && lastFast > lastSlow) signal = "BUY";
+  else if (prevFast >= prevSlow && lastFast < lastSlow) signal = "SELL";
+  else if (lastFast > lastSlow) signal = "BULLISH";
+  else signal = "BEARISH";
+  return { fastEMA: parseFloat(lastFast.toFixed(2)), slowEMA: parseFloat(lastSlow.toFixed(2)), signal };
 }
-function computeSMACross(closes, fast = 20, slow = 50) {
-    const smaFast = computeSMA(closes, fast);
-    const smaSlow = computeSMA(closes, slow);
-    if (smaFast.length < 2 || smaSlow.length < 2)
-        return { fastSMA: 0, slowSMA: 0, signal: "NEUTRAL" };
-    const lastFast = smaFast[smaFast.length - 1];
-    const lastSlow = smaSlow[smaSlow.length - 1];
-    const prevFast = smaFast[smaFast.length - 2];
-    const prevSlow = smaSlow[smaSlow.length - 2];
-    let signal = "NEUTRAL";
-    if (prevFast <= prevSlow && lastFast > lastSlow)
-        signal = "BUY";
-    else if (prevFast >= prevSlow && lastFast < lastSlow)
-        signal = "SELL";
-    else if (lastFast > lastSlow)
-        signal = "BULLISH";
-    else
-        signal = "BEARISH";
-    return { fastSMA: parseFloat(lastFast.toFixed(2)), slowSMA: parseFloat(lastSlow.toFixed(2)), signal };
+
+function computeSMACross(closes: number[], fast = 20, slow = 50): { fastSMA: number; slowSMA: number; signal: string } {
+  const smaFast = computeSMA(closes, fast);
+  const smaSlow = computeSMA(closes, slow);
+  if (smaFast.length < 2 || smaSlow.length < 2) return { fastSMA: 0, slowSMA: 0, signal: "NEUTRAL" };
+  const lastFast = smaFast[smaFast.length - 1];
+  const lastSlow = smaSlow[smaSlow.length - 1];
+  const prevFast = smaFast[smaFast.length - 2];
+  const prevSlow = smaSlow[smaSlow.length - 2];
+  let signal = "NEUTRAL";
+  if (prevFast <= prevSlow && lastFast > lastSlow) signal = "BUY";
+  else if (prevFast >= prevSlow && lastFast < lastSlow) signal = "SELL";
+  else if (lastFast > lastSlow) signal = "BULLISH";
+  else signal = "BEARISH";
+  return { fastSMA: parseFloat(lastFast.toFixed(2)), slowSMA: parseFloat(lastSlow.toFixed(2)), signal };
 }
-function computeVWAP(highs, lows, closes, volumes) {
-    const len = Math.min(highs.length, lows.length, closes.length, volumes.length);
-    if (len < 1)
-        return { vwap: 0, signal: "NEUTRAL" };
-    let cumVP = 0, cumVol = 0;
-    for (let i = 0; i < len; i++) {
-        const tp = (highs[i] + lows[i] + closes[i]) / 3;
-        cumVP += tp * volumes[i];
-        cumVol += volumes[i];
-    }
-    const vwap = parseFloat((cumVol > 0 ? cumVP / cumVol : 0).toFixed(2));
-    const last = closes[closes.length - 1];
-    return { vwap, signal: last > vwap * 1.002 ? "BULLISH" : last < vwap * 0.998 ? "BEARISH" : "NEUTRAL" };
+
+function computeVWAP(highs: number[], lows: number[], closes: number[], volumes: number[]): { vwap: number; signal: string } {
+  const len = Math.min(highs.length, lows.length, closes.length, volumes.length);
+  if (len < 1) return { vwap: 0, signal: "NEUTRAL" };
+  let cumVP = 0, cumVol = 0;
+  for (let i = 0; i < len; i++) {
+    const tp = (highs[i] + lows[i] + closes[i]) / 3;
+    cumVP += tp * volumes[i];
+    cumVol += volumes[i];
+  }
+  const vwap = parseFloat((cumVol > 0 ? cumVP / cumVol : 0).toFixed(2));
+  const last = closes[closes.length - 1];
+  return { vwap, signal: last > vwap * 1.002 ? "BULLISH" : last < vwap * 0.998 ? "BEARISH" : "NEUTRAL" };
 }
-function computeSupertrend(highs, lows, closes, period = 7, mult = 3) {
-    if (closes.length < period + 1)
-        return { signal: "NEUTRAL", value: 0 };
-    // ATR
-    const atr = [];
-    for (let i = 1; i < closes.length; i++) {
-        const hl = highs[i] - lows[i];
-        const hc = Math.abs(highs[i] - closes[i - 1]);
-        const lc = Math.abs(lows[i] - closes[i - 1]);
-        atr.push(Math.max(hl, hc, lc));
-    }
-    const atrEMA = computeEMA(atr.slice(-period * 3), period);
-    const lastATR = atrEMA[atrEMA.length - 1];
-    const lastClose = closes[closes.length - 1];
-    const lastHigh = highs[highs.length - 1];
-    const lastLow = lows[lows.length - 1];
-    const mid = (lastHigh + lastLow) / 2;
-    const upper = mid + mult * lastATR;
-    const lower = mid - mult * lastATR;
-    const prevClose = closes[closes.length - 2];
-    // Simplified: if close > upper band area → bullish, < lower → bearish
-    const signal = lastClose > upper ? "BULLISH" : lastClose < lower ? "BEARISH" :
-        lastClose > mid && prevClose <= mid ? "BUY" :
-            lastClose < mid && prevClose >= mid ? "SELL" : "NEUTRAL";
-    return { signal, value: parseFloat(mid.toFixed(2)) };
+
+function computeSupertrend(highs: number[], lows: number[], closes: number[], period = 7, mult = 3): { signal: string; value: number } {
+  if (closes.length < period + 1) return { signal: "NEUTRAL", value: 0 };
+  // ATR
+  const atr: number[] = [];
+  for (let i = 1; i < closes.length; i++) {
+    const hl = highs[i] - lows[i];
+    const hc = Math.abs(highs[i] - closes[i - 1]);
+    const lc = Math.abs(lows[i] - closes[i - 1]);
+    atr.push(Math.max(hl, hc, lc));
+  }
+  const atrEMA = computeEMA(atr.slice(-period * 3), period);
+  const lastATR = atrEMA[atrEMA.length - 1];
+  const lastClose = closes[closes.length - 1];
+  const lastHigh = highs[highs.length - 1];
+  const lastLow = lows[lows.length - 1];
+  const mid = (lastHigh + lastLow) / 2;
+  const upper = mid + mult * lastATR;
+  const lower = mid - mult * lastATR;
+  const prevClose = closes[closes.length - 2];
+  // Simplified: if close > upper band area → bullish, < lower → bearish
+  const signal = lastClose > upper ? "BULLISH" : lastClose < lower ? "BEARISH" :
+    lastClose > mid && prevClose <= mid ? "BUY" :
+    lastClose < mid && prevClose >= mid ? "SELL" : "NEUTRAL";
+  return { signal, value: parseFloat(mid.toFixed(2)) };
 }
-function computeStochastic(highs, lows, closes, kPeriod = 14, dPeriod = 3) {
-    if (closes.length < kPeriod + dPeriod)
-        return { k: 50, d: 50, signal: "NEUTRAL" };
-    const kValues = [];
-    for (let i = kPeriod - 1; i < closes.length; i++) {
-        const highSlice = highs.slice(i - kPeriod + 1, i + 1);
-        const lowSlice = lows.slice(i - kPeriod + 1, i + 1);
-        const highest = Math.max(...highSlice);
-        const lowest = Math.min(...lowSlice);
-        kValues.push(highest === lowest ? 50 : ((closes[i] - lowest) / (highest - lowest)) * 100);
-    }
-    const dValues = computeSMA(kValues, dPeriod);
-    const k = parseFloat(kValues[kValues.length - 1].toFixed(2));
-    const d = parseFloat(dValues[dValues.length - 1].toFixed(2));
-    const signal = k < 20 && d < 20 ? "BUY" : k > 80 && d > 80 ? "SELL" : k > d ? "BULLISH" : "BEARISH";
-    return { k, d, signal };
+
+function computeStochastic(highs: number[], lows: number[], closes: number[], kPeriod = 14, dPeriod = 3): { k: number; d: number; signal: string } {
+  if (closes.length < kPeriod + dPeriod) return { k: 50, d: 50, signal: "NEUTRAL" };
+  const kValues: number[] = [];
+  for (let i = kPeriod - 1; i < closes.length; i++) {
+    const highSlice = highs.slice(i - kPeriod + 1, i + 1);
+    const lowSlice = lows.slice(i - kPeriod + 1, i + 1);
+    const highest = Math.max(...highSlice);
+    const lowest = Math.min(...lowSlice);
+    kValues.push(highest === lowest ? 50 : ((closes[i] - lowest) / (highest - lowest)) * 100);
+  }
+  const dValues = computeSMA(kValues, dPeriod);
+  const k = parseFloat(kValues[kValues.length - 1].toFixed(2));
+  const d = parseFloat(dValues[dValues.length - 1].toFixed(2));
+  const signal = k < 20 && d < 20 ? "BUY" : k > 80 && d > 80 ? "SELL" : k > d ? "BULLISH" : "BEARISH";
+  return { k, d, signal };
 }
-function computeWilliamsR(highs, lows, closes, period = 14) {
-    if (closes.length < period)
-        return { value: -50, signal: "NEUTRAL" };
-    const highest = Math.max(...highs.slice(-period));
-    const lowest = Math.min(...lows.slice(-period));
-    const wr = highest === lowest ? -50 : ((highest - closes[closes.length - 1]) / (highest - lowest)) * -100;
-    const value = parseFloat(wr.toFixed(2));
-    return { value, signal: value < -80 ? "BUY" : value > -20 ? "SELL" : "NEUTRAL" };
+
+function computeWilliamsR(highs: number[], lows: number[], closes: number[], period = 14): { value: number; signal: string } {
+  if (closes.length < period) return { value: -50, signal: "NEUTRAL" };
+  const highest = Math.max(...highs.slice(-period));
+  const lowest = Math.min(...lows.slice(-period));
+  const wr = highest === lowest ? -50 : ((highest - closes[closes.length - 1]) / (highest - lowest)) * -100;
+  const value = parseFloat(wr.toFixed(2));
+  return { value, signal: value < -80 ? "BUY" : value > -20 ? "SELL" : "NEUTRAL" };
 }
-function computeADX(highs, lows, closes, period = 14) {
-    if (closes.length < period * 2)
-        return { adx: 0, signal: "NEUTRAL" };
-    const trArr = [];
-    const dmPArr = [];
-    const dmNArr = [];
-    for (let i = 1; i < closes.length; i++) {
-        trArr.push(Math.max(highs[i] - lows[i], Math.abs(highs[i] - closes[i - 1]), Math.abs(lows[i] - closes[i - 1])));
-        const upMove = highs[i] - highs[i - 1];
-        const dnMove = lows[i - 1] - lows[i];
-        dmPArr.push(upMove > dnMove && upMove > 0 ? upMove : 0);
-        dmNArr.push(dnMove > upMove && dnMove > 0 ? dnMove : 0);
-    }
-    const atr14 = computeEMA(trArr, period);
-    const diP14 = computeEMA(dmPArr, period).map((v, i) => atr14[i] > 0 ? (v / atr14[i]) * 100 : 0);
-    const diN14 = computeEMA(dmNArr, period).map((v, i) => atr14[i] > 0 ? (v / atr14[i]) * 100 : 0);
-    const dx = diP14.map((v, i) => (v + diN14[i]) > 0 ? Math.abs(v - diN14[i]) / (v + diN14[i]) * 100 : 0);
-    const adxArr = computeEMA(dx, period);
-    const adx = parseFloat(adxArr[adxArr.length - 1].toFixed(2));
-    const lastDiP = diP14[diP14.length - 1];
-    const lastDiN = diN14[diN14.length - 1];
-    const signal = adx > 25 ? (lastDiP > lastDiN ? "BULLISH" : "BEARISH") : "NEUTRAL";
-    return { adx, signal };
+
+function computeADX(highs: number[], lows: number[], closes: number[], period = 14): { adx: number; signal: string } {
+  if (closes.length < period * 2) return { adx: 0, signal: "NEUTRAL" };
+  const trArr: number[] = [];
+  const dmPArr: number[] = [];
+  const dmNArr: number[] = [];
+  for (let i = 1; i < closes.length; i++) {
+    trArr.push(Math.max(highs[i] - lows[i], Math.abs(highs[i] - closes[i-1]), Math.abs(lows[i] - closes[i-1])));
+    const upMove = highs[i] - highs[i-1];
+    const dnMove = lows[i-1] - lows[i];
+    dmPArr.push(upMove > dnMove && upMove > 0 ? upMove : 0);
+    dmNArr.push(dnMove > upMove && dnMove > 0 ? dnMove : 0);
+  }
+  const atr14  = computeEMA(trArr, period);
+  const diP14  = computeEMA(dmPArr, period).map((v, i) => atr14[i] > 0 ? (v / atr14[i]) * 100 : 0);
+  const diN14  = computeEMA(dmNArr, period).map((v, i) => atr14[i] > 0 ? (v / atr14[i]) * 100 : 0);
+  const dx     = diP14.map((v, i) => (v + diN14[i]) > 0 ? Math.abs(v - diN14[i]) / (v + diN14[i]) * 100 : 0);
+  const adxArr = computeEMA(dx, period);
+  const adx = parseFloat(adxArr[adxArr.length - 1].toFixed(2));
+  const lastDiP = diP14[diP14.length - 1];
+  const lastDiN = diN14[diN14.length - 1];
+  const signal = adx > 25 ? (lastDiP > lastDiN ? "BULLISH" : "BEARISH") : "NEUTRAL";
+  return { adx, signal };
 }
+
 // Yahoo Finance price history fetch with caching
-const _yhCache = new Map();
+const _yhCache: Map<string, { ts: number; closes: number[]; highs: number[]; lows: number[]; volumes: number[] }> = new Map();
 const YH_CACHE_TTL = 20 * 60 * 1000; // 20 min
 let _yhHostIdx = 0; // rotate between query1 and query2
 const YH_HOSTS = ["query1.finance.yahoo.com", "query2.finance.yahoo.com"];
 const YH_HEADERS = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-    "Accept": "application/json,text/plain,*/*",
-    "Accept-Language": "en-US,en;q=0.9",
-    "Origin": "https://finance.yahoo.com",
-    "Referer": "https://finance.yahoo.com/",
+  "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+  "Accept": "application/json,text/plain,*/*",
+  "Accept-Language": "en-US,en;q=0.9",
+  "Origin": "https://finance.yahoo.com",
+  "Referer": "https://finance.yahoo.com/",
 };
-async function fetchYahooHistory(symbol) {
-    const nseSym = symbol.replace(/\.NS$/, "") + ".NS";
-    const cached = _yhCache.get(nseSym);
-    if (cached && Date.now() - cached.ts < YH_CACHE_TTL)
-        return cached;
-    const parseResult = (d) => {
-        const result = d?.chart?.result?.[0];
-        if (!result)
-            return null;
-        const q0 = result.indicators?.quote?.[0] || {};
-        const closes = (q0.close || []).filter((v) => v != null);
-        const highs = (q0.high || []).filter((v) => v != null);
-        const lows = (q0.low || []).filter((v) => v != null);
-        const volumes = (q0.volume || []).filter((v) => v != null);
-        if (closes.length < 15)
-            return null;
-        return { closes, highs, lows, volumes };
-    };
-    // Try both hosts, rotating to spread load
-    for (let attempt = 0; attempt < 2; attempt++) {
-        const host = YH_HOSTS[(_yhHostIdx + attempt) % YH_HOSTS.length];
-        try {
-            const url = `https://${host}/v8/finance/chart/${encodeURIComponent(nseSym)}?interval=1d&range=6mo&events=none`;
-            const r = await fetch(url, { headers: YH_HEADERS, signal: AbortSignal.timeout(10000) });
-            if (r.status === 429)
-                continue; // try other host
-            if (!r.ok)
-                continue;
-            const d = await r.json();
-            const parsed = parseResult(d);
-            if (!parsed)
-                continue;
-            _yhHostIdx = (_yhHostIdx + 1) % YH_HOSTS.length; // advance rotation
-            const data = { ts: Date.now(), ...parsed };
-            _yhCache.set(nseSym, data);
-            return data;
-        }
-        catch {
-            continue;
-        }
-    }
-    return null;
+
+async function fetchYahooHistory(symbol: string): Promise<{ closes: number[]; highs: number[]; lows: number[]; volumes: number[] } | null> {
+  const nseSym = symbol.replace(/\.NS$/, "") + ".NS";
+  const cached = _yhCache.get(nseSym);
+  if (cached && Date.now() - cached.ts < YH_CACHE_TTL) return cached;
+
+  const parseResult = (d: any) => {
+    const result = d?.chart?.result?.[0];
+    if (!result) return null;
+    const q0 = result.indicators?.quote?.[0] || {};
+    const closes  = (q0.close  || []).filter((v: any) => v != null);
+    const highs   = (q0.high   || []).filter((v: any) => v != null);
+    const lows    = (q0.low    || []).filter((v: any) => v != null);
+    const volumes = (q0.volume || []).filter((v: any) => v != null);
+    if (closes.length < 15) return null;
+    return { closes, highs, lows, volumes };
+  };
+
+  // Try both hosts, rotating to spread load
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const host = YH_HOSTS[(_yhHostIdx + attempt) % YH_HOSTS.length];
+    try {
+      const url = `https://${host}/v8/finance/chart/${encodeURIComponent(nseSym)}?interval=1d&range=6mo&events=none`;
+      const r = await fetch(url, { headers: YH_HEADERS, signal: AbortSignal.timeout(10000) });
+      if (r.status === 429) continue; // try other host
+      if (!r.ok) continue;
+      const d: any = await r.json();
+      const parsed = parseResult(d);
+      if (!parsed) continue;
+      _yhHostIdx = (_yhHostIdx + 1) % YH_HOSTS.length; // advance rotation
+      const data = { ts: Date.now(), ...parsed };
+      _yhCache.set(nseSym, data);
+      return data;
+    } catch { continue; }
+  }
+  return null;
 }
+
 // ── GET /api/indicator-scan ────────────────────────────────────────────────────
-const _scanCache = new Map();
-app.get("/api/indicator-scan", async (req, res) => {
-    const indicator = (req.query.indicator || "RSI").toUpperCase();
-    const signal = (req.query.signal || "BUY").toUpperCase();
-    const universe = parseInt(req.query.universe || "100");
-    const sector = (req.query.sector || "").trim();
-    const cacheKey = `${indicator}|${signal}|${universe}|${sector}`;
-    const cached = _scanCache.get(cacheKey);
-    if (cached && Date.now() - cached.ts < 60 * 60 * 1000) {
-        return res.json({ results: cached.results, cached: true, indicator, signal, scanned: universe });
-    }
-    // Get top N stocks from DB by market cap (optionally filtered by sector)
-    let sectorClause = "";
-    const sectorArgs = [];
-    if (sector) {
-        sectorClause = "AND (s.sector LIKE ? OR s.sector LIKE ?)";
-        sectorArgs.push(`%${sector}%`, `${sector}%`);
-    }
-    const stocks = await (0, db_1.dbAll)(`SELECT s.symbol, s.company_name, s.market_cap, s.sector, p.price, p.change_pct
+const _scanCache: Map<string, { ts: number; results: any[] }> = new Map();
+
+app.get("/api/indicator-scan", async (req: Request, res: Response) => {
+  const indicator = (req.query.indicator as string || "RSI").toUpperCase();
+  const signal    = (req.query.signal    as string || "BUY").toUpperCase();
+  const universe  = parseInt(req.query.universe as string || "100");
+  const sector    = (req.query.sector as string || "").trim();
+
+  const cacheKey = `${indicator}|${signal}|${universe}|${sector}`;
+  const cached = _scanCache.get(cacheKey);
+  if (cached && Date.now() - cached.ts < 60 * 60 * 1000) {
+    return res.json({ results: cached.results, cached: true, indicator, signal, scanned: universe });
+  }
+
+  // Get top N stocks from DB by market cap (optionally filtered by sector)
+  let sectorClause = "";
+  const sectorArgs: any[] = [];
+  if (sector) { sectorClause = "AND (s.sector LIKE ? OR s.sector LIKE ?)"; sectorArgs.push(`%${sector}%`, `${sector}%`); }
+  const stocks = await dbAll<{ symbol: string; company_name: string; market_cap: number; sector: string; price: number; change_pct: number }>(
+    `SELECT s.symbol, s.company_name, s.market_cap, s.sector, p.price, p.change_pct
      FROM stocks s LEFT JOIN prices p ON p.symbol = s.symbol
      WHERE s.market_cap IS NOT NULL AND s.market_cap > 0 ${sectorClause}
-     ORDER BY s.market_cap DESC LIMIT ?`, [...sectorArgs, universe]);
-    // Fetch historical data in parallel (batch of 3 with delay to avoid Yahoo rate limits)
-    const results = [];
-    const BATCH = 3;
-    for (let i = 0; i < stocks.length; i += BATCH) {
-        if (i > 0)
-            await new Promise(r => setTimeout(r, 350)); // 350ms between batches
-        const batch = stocks.slice(i, i + BATCH);
-        const settled = await Promise.allSettled(batch.map(async (s) => {
-            const hist = await fetchYahooHistory(s.symbol);
-            if (!hist)
-                return null;
-            const { closes, highs, lows, volumes } = hist;
-            let sig = "NEUTRAL", detail = "", value = null;
-            if (indicator === "RSI") {
-                const r = computeRSI(closes);
-                sig = r.signal;
-                value = r.value;
-                detail = `RSI ${r.value}`;
-            }
-            else if (indicator === "MACD") {
-                const r = computeMACD(closes);
-                sig = r.trend;
-                detail = `MACD ${r.macd} / Sig ${r.signal} / Hist ${r.hist}`;
-            }
-            else if (indicator === "BOLLINGER") {
-                const r = computeBollinger(closes);
-                sig = r.signal;
-                value = r.pct;
-                detail = `B% ${r.pct}% | Upper ₹${r.upper} Mid ₹${r.mid} Lower ₹${r.lower}`;
-            }
-            else if (indicator === "EMA_CROSS") {
-                const r = computeEMACross(closes);
-                sig = r.signal;
-                detail = `EMA20 ₹${r.fastEMA} vs EMA50 ₹${r.slowEMA}`;
-            }
-            else if (indicator === "SMA_CROSS") {
-                const r = computeSMACross(closes);
-                sig = r.signal;
-                detail = `SMA20 ₹${r.fastSMA} vs SMA50 ₹${r.slowSMA}`;
-            }
-            else if (indicator === "SUPERTREND") {
-                const r = computeSupertrend(highs, lows, closes);
-                sig = r.signal;
-                detail = `Supertrend Mid ₹${r.value}`;
-            }
-            else if (indicator === "STOCHASTIC") {
-                const r = computeStochastic(highs, lows, closes);
-                sig = r.signal;
-                value = r.k;
-                detail = `%K ${r.k} / %D ${r.d}`;
-            }
-            else if (indicator === "WILLIAMS_R") {
-                const r = computeWilliamsR(highs, lows, closes);
-                sig = r.signal;
-                value = r.value;
-                detail = `W%R ${r.value}`;
-            }
-            else if (indicator === "ADX") {
-                const r = computeADX(highs, lows, closes);
-                sig = r.signal;
-                value = r.adx;
-                detail = `ADX ${r.adx}`;
-            }
-            else if (indicator === "VWAP") {
-                const r = computeVWAP(highs, lows, closes, volumes);
-                sig = r.signal;
-                value = r.vwap;
-                detail = `VWAP ₹${r.vwap}`;
-            }
-            const wantedSignals = signal === "ALL"
-                ? ["BUY", "SELL", "BULLISH", "BEARISH", "NEUTRAL"]
-                : signal === "BUY" ? ["BUY", "BULLISH"]
-                    : signal === "SELL" ? ["SELL", "BEARISH"]
-                        : [signal];
-            if (!wantedSignals.includes(sig))
-                return null;
-            return {
-                symbol: s.symbol,
-                company: s.company_name,
-                sector: s.sector,
-                price: s.price,
-                change_pct: s.change_pct,
-                signal: sig,
-                detail,
-                value,
-            };
-        }));
-        settled.forEach(r => { if (r.status === "fulfilled" && r.value)
-            results.push(r.value); });
-    }
-    _scanCache.set(cacheKey, { ts: Date.now(), results });
-    res.json({ results, cached: false, indicator, signal, scanned: stocks.length });
+     ORDER BY s.market_cap DESC LIMIT ?`,
+    [...sectorArgs, universe]
+  );
+
+  // Fetch historical data in parallel (batch of 3 with delay to avoid Yahoo rate limits)
+  const results: any[] = [];
+  const BATCH = 3;
+  for (let i = 0; i < stocks.length; i += BATCH) {
+    if (i > 0) await new Promise(r => setTimeout(r, 350)); // 350ms between batches
+    const batch = stocks.slice(i, i + BATCH);
+    const settled = await Promise.allSettled(batch.map(async (s) => {
+      const hist = await fetchYahooHistory(s.symbol);
+      if (!hist) return null;
+      const { closes, highs, lows, volumes } = hist;
+
+      let sig = "NEUTRAL", detail = "", value: number | null = null;
+
+      if (indicator === "RSI") {
+        const r = computeRSI(closes);
+        sig = r.signal; value = r.value; detail = `RSI ${r.value}`;
+      } else if (indicator === "MACD") {
+        const r = computeMACD(closes);
+        sig = r.trend; detail = `MACD ${r.macd} / Sig ${r.signal} / Hist ${r.hist}`;
+      } else if (indicator === "BOLLINGER") {
+        const r = computeBollinger(closes);
+        sig = r.signal; value = r.pct; detail = `B% ${r.pct}% | Upper ₹${r.upper} Mid ₹${r.mid} Lower ₹${r.lower}`;
+      } else if (indicator === "EMA_CROSS") {
+        const r = computeEMACross(closes);
+        sig = r.signal; detail = `EMA20 ₹${r.fastEMA} vs EMA50 ₹${r.slowEMA}`;
+      } else if (indicator === "SMA_CROSS") {
+        const r = computeSMACross(closes);
+        sig = r.signal; detail = `SMA20 ₹${r.fastSMA} vs SMA50 ₹${r.slowSMA}`;
+      } else if (indicator === "SUPERTREND") {
+        const r = computeSupertrend(highs, lows, closes);
+        sig = r.signal; detail = `Supertrend Mid ₹${r.value}`;
+      } else if (indicator === "STOCHASTIC") {
+        const r = computeStochastic(highs, lows, closes);
+        sig = r.signal; value = r.k; detail = `%K ${r.k} / %D ${r.d}`;
+      } else if (indicator === "WILLIAMS_R") {
+        const r = computeWilliamsR(highs, lows, closes);
+        sig = r.signal; value = r.value; detail = `W%R ${r.value}`;
+      } else if (indicator === "ADX") {
+        const r = computeADX(highs, lows, closes);
+        sig = r.signal; value = r.adx; detail = `ADX ${r.adx}`;
+      } else if (indicator === "VWAP") {
+        const r = computeVWAP(highs, lows, closes, volumes);
+        sig = r.signal; value = r.vwap; detail = `VWAP ₹${r.vwap}`;
+      }
+
+      const wantedSignals = signal === "ALL"
+        ? ["BUY", "SELL", "BULLISH", "BEARISH", "NEUTRAL"]
+        : signal === "BUY"   ? ["BUY", "BULLISH"]
+        : signal === "SELL"  ? ["SELL", "BEARISH"]
+        : [signal];
+      if (!wantedSignals.includes(sig)) return null;
+
+      return {
+        symbol: s.symbol,
+        company: s.company_name,
+        sector: s.sector,
+        price: s.price,
+        change_pct: s.change_pct,
+        signal: sig,
+        detail,
+        value,
+      };
+    }));
+    settled.forEach(r => { if (r.status === "fulfilled" && r.value) results.push(r.value); });
+  }
+
+  _scanCache.set(cacheKey, { ts: Date.now(), results });
+  res.json({ results, cached: false, indicator, signal, scanned: stocks.length });
 });
+
 // ── GET /strategy-builder ──────────────────────────────────────────────────────
-app.get("/strategy-builder", featureGate("feature_strategy_builder", "Strategy Builder"), (req, res) => {
-    res.send(`<!DOCTYPE html>
+app.get("/strategy-builder", featureGate("feature_strategy_builder", "Strategy Builder"), (req: Request, res: Response) => {
+  res.send(`<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
@@ -5265,30 +5185,42 @@ app.get("/strategy-builder", featureGate("feature_strategy_builder", "Strategy B
 </body>
 </html>`);
 });
+
 // ── GET /admin/analytics ───────────────────────────────────────────────────────
-app.get("/admin/analytics", requireAdmin, async (req, res) => {
-    // Daily views (last 14 days)
-    const daily = await (0, db_1.dbAll)(`SELECT date(created_at) as day,
+app.get("/admin/analytics", requireAdmin, async (req: Request, res: Response) => {
+  // Daily views (last 14 days)
+  const daily = await dbAll<{day:string;views:number;unique:number}>(
+    `SELECT date(created_at) as day,
             COUNT(*) as views,
             COUNT(DISTINCT ip_hash) as unique_visitors
      FROM page_views
      WHERE created_at >= date('now','localtime','-14 days')
-     GROUP BY date(created_at) ORDER BY day DESC`);
-    // Top pages (last 30 days)
-    const topPages = await (0, db_1.dbAll)(`SELECT path, COUNT(*) as views FROM page_views
+     GROUP BY date(created_at) ORDER BY day DESC`
+  );
+  // Top pages (last 30 days)
+  const topPages = await dbAll<{path:string;views:number}>(
+    `SELECT path, COUNT(*) as views FROM page_views
      WHERE created_at >= date('now','localtime','-30 days')
-     GROUP BY path ORDER BY views DESC LIMIT 15`);
-    // Total views today
-    const todayRow = await (0, db_1.dbAll)(`SELECT COUNT(*) as c FROM page_views WHERE date(created_at) = date('now','localtime')`);
-    const todayViews = todayRow[0]?.c || 0;
-    const todayUnique = await (0, db_1.dbAll)(`SELECT COUNT(DISTINCT ip_hash) as c FROM page_views WHERE date(created_at) = date('now','localtime')`);
-    const todayUniqueV = todayUnique[0]?.c || 0;
-    // Recent visits
-    const recent = await (0, db_1.dbAll)(`SELECT path, ip_hash, substr(user_agent,1,60) as user_agent, created_at
-     FROM page_views ORDER BY id DESC LIMIT 30`);
-    const totalAllTime = await (0, db_1.dbAll)(`SELECT COUNT(*) as c FROM page_views`);
-    const totalV = totalAllTime[0]?.c || 0;
-    res.send(`<!DOCTYPE html>
+     GROUP BY path ORDER BY views DESC LIMIT 15`
+  );
+  // Total views today
+  const todayRow = await dbAll<{c:number}>(
+    `SELECT COUNT(*) as c FROM page_views WHERE date(created_at) = date('now','localtime')`
+  );
+  const todayViews  = todayRow[0]?.c || 0;
+  const todayUnique = await dbAll<{c:number}>(
+    `SELECT COUNT(DISTINCT ip_hash) as c FROM page_views WHERE date(created_at) = date('now','localtime')`
+  );
+  const todayUniqueV = todayUnique[0]?.c || 0;
+  // Recent visits
+  const recent = await dbAll<{path:string;ip_hash:string;user_agent:string;created_at:string}>(
+    `SELECT path, ip_hash, substr(user_agent,1,60) as user_agent, created_at
+     FROM page_views ORDER BY id DESC LIMIT 30`
+  );
+  const totalAllTime = await dbAll<{c:number}>(`SELECT COUNT(*) as c FROM page_views`);
+  const totalV = totalAllTime[0]?.c || 0;
+
+  res.send(`<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
@@ -5308,7 +5240,7 @@ app.get("/admin/analytics", requireAdmin, async (req, res) => {
         ["Today Unique", todayUniqueV],
         ["All-Time Views", totalV],
         ["Pages Tracked", topPages.length],
-    ].map(([k, v]) => `
+      ].map(([k,v]) => `
         <div style="background:var(--bg-card);border:1px solid var(--border);border-radius:var(--radius-lg);padding:20px 18px">
           <div style="font-size:11px;color:var(--text-muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">${k}</div>
           <div style="font-size:28px;font-weight:800;color:var(--accent)">${v}</div>
@@ -5336,7 +5268,7 @@ app.get("/admin/analytics", requireAdmin, async (req, res) => {
           ${daily.map(d => `<tr style="border-bottom:1px solid var(--border)">
             <td style="padding:6px 0">${esc(d.day)}</td>
             <td style="padding:6px 0;text-align:right;font-weight:600">${d.views}</td>
-            <td style="padding:6px 0;text-align:right;color:var(--accent)">${d.unique_visitors}</td>
+            <td style="padding:6px 0;text-align:right;color:var(--accent)">${(d as any).unique_visitors}</td>
           </tr>`).join("")}
         </table>
       </div>
@@ -5367,17 +5299,20 @@ app.get("/admin/analytics", requireAdmin, async (req, res) => {
 </body>
 </html>`);
 });
+
 // ── Admin Picks CRUD ──────────────────────────────────────────────────────────
-app.get("/admin/picks", requireAdmin, async (req, res) => {
-    const picks = await (0, db_1.getAllPicks)();
-    const msg = req.query.msg;
-    const err = req.query.err;
-    const riskColors = { Low: "#10b981", Medium: "#f59e0b", High: "#ef4444" };
-    const typeLabel = { intraday: "⚡ Intraday", swing: "🌊 Swing", longterm: "📈 Long Term" };
-    const rows = picks.map(p => `
+app.get("/admin/picks", requireAdmin, async (req: Request, res: Response) => {
+  const picks = await getAllPicks();
+  const msg = req.query.msg as string | undefined;
+  const err = req.query.err as string | undefined;
+
+  const riskColors: Record<string, string> = { Low: "#10b981", Medium: "#f59e0b", High: "#ef4444" };
+
+  const typeLabel: Record<string, string> = { intraday: "⚡ Intraday", swing: "🌊 Swing", longterm: "📈 Long Term" };
+  const rows = picks.map(p => `
     <tr>
       <td><strong>${esc(p.stock_symbol)}</strong>${p.company_name ? `<br><small class="text-dim">${esc(p.company_name)}</small>` : ""}</td>
-      <td><span class="pick-type-badge pick-type-${(p.pick_type || 'intraday').replace(' ', '-')}">${typeLabel[p.pick_type ?? 'intraday'] ?? p.pick_type}</span></td>
+      <td><span class="pick-type-badge pick-type-${(p.pick_type||'intraday').replace(' ','-')}">${typeLabel[p.pick_type ?? 'intraday'] ?? p.pick_type}</span></td>
       <td><span class="pick-badge-${p.direction.toLowerCase()}">${p.direction}</span></td>
       <td>₹${p.entry_low}–${p.entry_high}</td>
       <td>${p.target ? "₹" + p.target : "—"}</td>
@@ -5396,7 +5331,8 @@ app.get("/admin/picks", requireAdmin, async (req, res) => {
         </form>
       </td>
     </tr>`).join("");
-    res.send(`<!DOCTYPE html>
+
+  res.send(`<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
@@ -5416,7 +5352,7 @@ app.get("/admin/picks", requireAdmin, async (req, res) => {
     </div>
 
     ${msg ? `<div class="auth-success" style="margin-bottom:18px">✅ ${esc(msg)}</div>` : ""}
-    ${err ? `<div class="auth-error"   style="margin-bottom:18px">⚠️ ${esc(err)}</div>` : ""}
+    ${err ? `<div class="auth-error"   style="margin-bottom:18px">⚠️ ${esc(err)}</div>`  : ""}
 
     <!-- Add Pick Form -->
     <div class="admin-form-card">
@@ -5496,54 +5432,55 @@ app.get("/admin/picks", requireAdmin, async (req, res) => {
 </body>
 </html>`);
 });
-app.post("/admin/picks", requireAdmin, async (req, res) => {
-    const { stock_symbol, company_name, direction, pick_type, entry_low, entry_high, target, stop_loss, reason, risk_level } = req.body;
-    const sym = (stock_symbol || "").trim().toUpperCase();
-    const eLow = parseFloat(entry_low);
-    const eHigh = parseFloat(entry_high);
-    if (!sym || !reason?.trim() || isNaN(eLow) || isNaN(eHigh)) {
-        res.redirect("/admin/picks?err=Missing+required+fields");
-        return;
-    }
-    await (0, db_1.createPick)({
-        stock_symbol: sym,
-        company_name: company_name?.trim() || undefined,
-        direction: direction === "SHORT" ? "SHORT" : "LONG",
-        pick_type: ["intraday", "swing", "longterm"].includes(pick_type) ? pick_type : "intraday",
-        entry_low: eLow, entry_high: eHigh,
-        target: target ? parseFloat(target) : undefined,
-        stop_loss: stop_loss ? parseFloat(stop_loss) : undefined,
-        reason: reason.trim(),
-        risk_level: ["Low", "Medium", "High"].includes(risk_level) ? risk_level : "Medium",
-        status: "active",
-        created_by: req.session.userId,
-    });
-    res.redirect("/admin/picks?msg=Pick+added+successfully");
+
+app.post("/admin/picks", requireAdmin, async (req: Request, res: Response) => {
+  const { stock_symbol, company_name, direction, pick_type, entry_low, entry_high, target, stop_loss, reason, risk_level } = req.body;
+  const sym = (stock_symbol || "").trim().toUpperCase();
+  const eLow = parseFloat(entry_low);
+  const eHigh = parseFloat(entry_high);
+  if (!sym || !reason?.trim() || isNaN(eLow) || isNaN(eHigh)) {
+    res.redirect("/admin/picks?err=Missing+required+fields");
+    return;
+  }
+  await createPick({
+    stock_symbol: sym,
+    company_name: company_name?.trim() || undefined,
+    direction: direction === "SHORT" ? "SHORT" : "LONG",
+    pick_type: ["intraday","swing","longterm"].includes(pick_type) ? pick_type : "intraday",
+    entry_low: eLow, entry_high: eHigh,
+    target: target ? parseFloat(target) : undefined,
+    stop_loss: stop_loss ? parseFloat(stop_loss) : undefined,
+    reason: reason.trim(),
+    risk_level: ["Low", "Medium", "High"].includes(risk_level) ? risk_level : "Medium",
+    status: "active",
+    created_by: req.session.userId,
+  });
+  res.redirect("/admin/picks?msg=Pick+added+successfully");
 });
-app.post("/admin/picks/:id/status", requireAdmin, async (req, res) => {
-    const id = parseInt(req.params.id, 10);
-    const { status } = req.body;
-    if (!Number.isInteger(id) || !["active", "expired"].includes(status)) {
-        res.redirect("/admin/picks?err=Invalid+request");
-        return;
-    }
-    await (0, db_1.updatePickStatus)(id, status);
-    res.redirect("/admin/picks?msg=Status+updated");
+
+app.post("/admin/picks/:id/status", requireAdmin, async (req: Request, res: Response) => {
+  const id = parseInt(req.params.id, 10);
+  const { status } = req.body;
+  if (!Number.isInteger(id) || !["active", "expired"].includes(status)) {
+    res.redirect("/admin/picks?err=Invalid+request");
+    return;
+  }
+  await updatePickStatus(id, status);
+  res.redirect("/admin/picks?msg=Status+updated");
 });
-app.post("/admin/picks/:id/delete", requireAdmin, async (req, res) => {
-    const id = parseInt(req.params.id, 10);
-    if (!Number.isInteger(id) || id <= 0) {
-        res.redirect("/admin/picks?err=Invalid+id");
-        return;
-    }
-    await (0, db_1.deletePick)(id);
-    res.redirect("/admin/picks?msg=Pick+deleted");
+
+app.post("/admin/picks/:id/delete", requireAdmin, async (req: Request, res: Response) => {
+  const id = parseInt(req.params.id, 10);
+  if (!Number.isInteger(id) || id <= 0) { res.redirect("/admin/picks?err=Invalid+id"); return; }
+  await deletePick(id);
+  res.redirect("/admin/picks?msg=Pick+deleted");
 });
+
 // ── Admin Content ─────────────────────────────────────────────────────────────
-app.get("/admin/content", requireAdmin, async (req, res) => {
-    const settings = await (0, db_1.getAllSettings)();
-    const msg = req.query.msg;
-    res.send(`<!DOCTYPE html>
+app.get("/admin/content", requireAdmin, async (req: Request, res: Response) => {
+  const settings = await getAllSettings();
+  const msg = req.query.msg as string | undefined;
+  res.send(`<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
@@ -5582,24 +5519,26 @@ app.get("/admin/content", requireAdmin, async (req, res) => {
 </body>
 </html>`);
 });
-app.post("/admin/content", requireAdmin, async (req, res) => {
-    const { home_headline, banner_text, telegram_link } = req.body;
-    await Promise.all([
-        (0, db_1.setSetting)("home_headline", (home_headline ?? "").trim()),
-        (0, db_1.setSetting)("banner_text", (banner_text ?? "").trim()),
-        (0, db_1.setSetting)("telegram_link", (telegram_link ?? "").trim()),
-    ]);
-    res.redirect("/admin/content?msg=Content+updated+successfully");
+
+app.post("/admin/content", requireAdmin, async (req: Request, res: Response) => {
+  const { home_headline, banner_text, telegram_link } = req.body;
+  await Promise.all([
+    setSetting("home_headline", (home_headline ?? "").trim()),
+    setSetting("banner_text", (banner_text ?? "").trim()),
+    setSetting("telegram_link", (telegram_link ?? "").trim()),
+  ]);
+  res.redirect("/admin/content?msg=Content+updated+successfully");
 });
+
 // ── Admin Signal Control ───────────────────────────────────────────────────────
-app.get("/admin/signals", requireAdmin, async (req, res) => {
-    const signalsMode = await (0, db_1.getSetting)("signals_mode");
-    const kiteToken = await (0, db_1.getSetting)("kite_access_token");
-    const kiteTokenAt = await (0, db_1.getSetting)("kite_token_set_at");
-    const msg = req.query.msg;
-    const err = req.query.err;
-    const tokenMasked = kiteToken ? kiteToken.slice(0, 6) + "••••••••••••••" + kiteToken.slice(-4) : "";
-    res.send(`<!DOCTYPE html>
+app.get("/admin/signals", requireAdmin, async (req: Request, res: Response) => {
+  const signalsMode   = await getSetting("signals_mode");
+  const kiteToken     = await getSetting("kite_access_token");
+  const kiteTokenAt   = await getSetting("kite_token_set_at");
+  const msg  = req.query.msg  as string | undefined;
+  const err  = req.query.err  as string | undefined;
+  const tokenMasked = kiteToken ? kiteToken.slice(0, 6) + "••••••••••••••" + kiteToken.slice(-4) : "";
+  res.send(`<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
@@ -5674,60 +5613,65 @@ app.get("/admin/signals", requireAdmin, async (req, res) => {
 </body>
 </html>`);
 });
-app.post("/admin/signals/token", requireAdmin, async (req, res) => {
-    if (req.body.clear === "1") {
-        await (0, db_1.setSetting)("kite_access_token", "");
-        await (0, db_1.setSetting)("kite_token_set_at", "");
-        res.redirect("/admin/signals?msg=Token+cleared");
-        return;
-    }
-    const token = (req.body.token || "").trim();
-    if (!token) {
-        res.redirect("/admin/signals?err=Token+cannot+be+empty");
-        return;
-    }
-    await (0, db_1.setSetting)("kite_access_token", token);
-    await (0, db_1.setSetting)("kite_token_set_at", new Date().toLocaleString("en-IN", { timeZone: "Asia/Kolkata" }));
-    res.redirect("/admin/signals?msg=Zerodha+token+saved.+Bot+will+pick+it+up+on+next+poll.");
+
+app.post("/admin/signals/token", requireAdmin, async (req: Request, res: Response) => {
+  if (req.body.clear === "1") {
+    await setSetting("kite_access_token", "");
+    await setSetting("kite_token_set_at", "");
+    res.redirect("/admin/signals?msg=Token+cleared");
+    return;
+  }
+  const token = (req.body.token || "").trim();
+  if (!token) { res.redirect("/admin/signals?err=Token+cannot+be+empty"); return; }
+  await setSetting("kite_access_token", token);
+  await setSetting("kite_token_set_at", new Date().toLocaleString("en-IN", { timeZone: "Asia/Kolkata" }));
+  res.redirect("/admin/signals?msg=Zerodha+token+saved.+Bot+will+pick+it+up+on+next+poll.");
 });
+
 // ── GET /today ─────────────────────────────────────────────────────────────────
-app.get("/today", async (req, res) => {
-    const picks = await (0, db_1.getActivePicks)();
-    const isPremium = userIsPremium(req);
-    const isLoggedIn = !!req.session?.userId;
-    const isAdmin = req.session?.userRole === 'admin';
-    const autoPicks = isLoggedIn ? await (0, db_1.getAutoPaperPicks)(req.session.userId) : false;
-    // Last generated: use the most recent pick's published_at
-    const lastGenerated = picks.length > 0 ? picks[0].published_at?.slice(0, 10) : null;
-    // Determine "based on" close date (picks generated at 6:45 PM from same-day close)
-    const basedOnDate = lastGenerated ?? new Date().toISOString().slice(0, 10);
-    // Access tiers:
-    // Guest       → intraday direction only (prices locked), swing/longterm fully locked
-    // Free user   → intraday full + swing direction only (prices locked), longterm locked
-    // Premium/Admin → all picks, full detail
-    const riskClass = { Low: "risk-low", Medium: "risk-medium", High: "risk-high" };
-    const riskIcon = { Low: "🟢", Medium: "🟡", High: "🔴" };
-    const intradayPicks = picks.filter(p => p.pick_type === 'intraday');
-    const swingPicks = picks.filter(p => p.pick_type === 'swing');
-    const longtermPicks = picks.filter(p => p.pick_type === 'longterm');
-    const scalperPicks = picks.filter(p => p.pick_type === 'scalper');
-    function renderPickCard(p, showPrices) {
-        // Extract confidence % from reason string (e.g. "Confidence 74%")
-        const confMatch = (p.reason || "").match(/Confidence\s+(\d+)%/i);
-        const confPct = confMatch ? parseInt(confMatch[1], 10) : null;
-        const confColor = confPct !== null ? (confPct >= 70 ? "#22c55e" : confPct >= 50 ? "#f59e0b" : "#ef4444") : "#64748b";
-        const confBadge = confPct !== null
-            ? `<span class="pick-confidence-badge" style="background:${confColor}22;color:${confColor};border:1px solid ${confColor}44;border-radius:6px;font-size:11px;font-weight:700;padding:2px 8px">${confPct}% conf</span>`
-            : "";
-        // Strip confidence text from reason for display
-        const displayReason = (p.reason || "").replace(/\s*\|\s*Confidence\s+\d+%\.?/i, "").replace(/Confidence\s+\d+%\.?\s*/i, "");
-        // Result badge
-        const resultBadge = p.result === "target_hit"
-            ? `<span style="background:#22c55e22;color:#22c55e;border:1px solid #22c55e44;border-radius:6px;font-size:11px;font-weight:700;padding:2px 8px">✅ Target Hit</span>`
-            : p.result === "sl_hit"
-                ? `<span style="background:#ef444422;color:#ef4444;border:1px solid #ef444444;border-radius:6px;font-size:11px;font-weight:700;padding:2px 8px">🛑 SL Hit</span>`
-                : "";
-        return `<div class="pick-card pick-card-${p.direction.toLowerCase()}">
+app.get("/today", async (req: Request, res: Response) => {
+  const picks = await getActivePicks();
+  const isPremium = userIsPremium(req);
+  const isLoggedIn = !!req.session?.userId;
+  const isAdmin = req.session?.userRole === 'admin';
+  const autoPicks = isLoggedIn ? await getAutoPaperPicks(req.session.userId!) : false;
+
+  // Last generated: use the most recent pick's published_at
+  const lastGenerated = picks.length > 0 ? picks[0].published_at?.slice(0, 10) : null;
+  // Determine "based on" close date (picks generated at 6:45 PM from same-day close)
+  const basedOnDate = lastGenerated ?? new Date().toISOString().slice(0, 10);
+
+  // Access tiers:
+  // Guest       → intraday direction only (prices locked), swing/longterm fully locked
+  // Free user   → intraday full + swing direction only (prices locked), longterm locked
+  // Premium/Admin → all picks, full detail
+
+  const riskClass: Record<string, string> = { Low: "risk-low", Medium: "risk-medium", High: "risk-high" };
+  const riskIcon:  Record<string, string> = { Low: "🟢", Medium: "🟡", High: "🔴" };
+
+  const intradayPicks  = picks.filter(p => p.pick_type === 'intraday');
+  const swingPicks     = picks.filter(p => p.pick_type === 'swing');
+  const longtermPicks  = picks.filter(p => p.pick_type === 'longterm');
+  const scalperPicks   = picks.filter(p => p.pick_type === 'scalper');
+
+  function renderPickCard(p: any, showPrices: boolean): string {
+    // Extract confidence % from reason string (e.g. "Confidence 74%")
+    const confMatch = (p.reason || "").match(/Confidence\s+(\d+)%/i);
+    const confPct   = confMatch ? parseInt(confMatch[1], 10) : null;
+    const confColor = confPct !== null ? (confPct >= 70 ? "#22c55e" : confPct >= 50 ? "#f59e0b" : "#ef4444") : "#64748b";
+    const confBadge = confPct !== null
+      ? `<span class="pick-confidence-badge" style="background:${confColor}22;color:${confColor};border:1px solid ${confColor}44;border-radius:6px;font-size:11px;font-weight:700;padding:2px 8px">${confPct}% conf</span>`
+      : "";
+    // Strip confidence text from reason for display
+    const displayReason = (p.reason || "").replace(/\s*\|\s*Confidence\s+\d+%\.?/i, "").replace(/Confidence\s+\d+%\.?\s*/i, "");
+    // Result badge
+    const resultBadge = p.result === "target_hit"
+      ? `<span style="background:#22c55e22;color:#22c55e;border:1px solid #22c55e44;border-radius:6px;font-size:11px;font-weight:700;padding:2px 8px">✅ Target Hit</span>`
+      : p.result === "sl_hit"
+      ? `<span style="background:#ef444422;color:#ef4444;border:1px solid #ef444444;border-radius:6px;font-size:11px;font-weight:700;padding:2px 8px">🛑 SL Hit</span>`
+      : "";
+
+    return `<div class="pick-card pick-card-${p.direction.toLowerCase()}">
       <div class="pick-card-top">
         <div>
           <span class="pick-symbol">${esc(p.stock_symbol)}</span>
@@ -5744,8 +5688,8 @@ app.get("/today", async (req, res) => {
         <span class="pick-entry-label">Entry Zone</span>
         <span class="pick-entry-val">₹${p.entry_low} – ₹${p.entry_high}</span>
       </div>
-      ${p.target ? `<div class="pick-tp"><span class="pick-tp-label">🎯 Target</span><span class="pick-tp-val">₹${p.target}</span></div>` : ""}
-      ${p.stop_loss ? `<div class="pick-sl"><span class="pick-sl-label">🛡️ Stop Loss</span><span class="pick-sl-val">₹${p.stop_loss}</span></div>` : ""}
+      ${p.target   ? `<div class="pick-tp"><span class="pick-tp-label">🎯 Target</span><span class="pick-tp-val">₹${p.target}</span></div>` : ""}
+      ${p.stop_loss? `<div class="pick-sl"><span class="pick-sl-label">🛡️ Stop Loss</span><span class="pick-sl-val">₹${p.stop_loss}</span></div>` : ""}
       <div class="pick-reason">${esc(displayReason)}</div>
       <div class="pick-footer">
         <span class="pick-risk-badge ${riskClass[p.risk_level] ?? "risk-medium"}">${riskIcon[p.risk_level] ?? "🟡"} ${p.risk_level} Risk</span>
@@ -5761,13 +5705,17 @@ app.get("/today", async (req, res) => {
         <span class="pick-date">${p.published_at?.slice(0, 10) ?? ""}</span>
       </div>`}
     </div>`;
-    }
-    function renderSection(icon, title, subtitle, sectionPicks, visible, showPrices, requiredTier) {
-        if (!visible || sectionPicks.length === 0) {
-            if (sectionPicks.length === 0 && visible)
-                return "";
-            // Fully locked section teaser
-            return `<div class="picks-section">
+  }
+
+  function renderSection(
+    icon: string, title: string, subtitle: string,
+    sectionPicks: any[], visible: boolean, showPrices: boolean,
+    requiredTier: string
+  ): string {
+    if (!visible || sectionPicks.length === 0) {
+      if (sectionPicks.length === 0 && visible) return "";
+      // Fully locked section teaser
+      return `<div class="picks-section">
         <div class="picks-section-header picks-section-locked-header">
           <div>
             <span class="picks-section-icon">${icon}</span>
@@ -5787,8 +5735,8 @@ app.get("/today", async (req, res) => {
           </div>
         </div>
       </div>`;
-        }
-        return `<div class="picks-section">
+    }
+    return `<div class="picks-section">
       <div class="picks-section-header">
         <div>
           <span class="picks-section-icon">${icon}</span>
@@ -5800,27 +5748,31 @@ app.get("/today", async (req, res) => {
       ${!showPrices ? `<div class="picks-prices-locked-bar">${!isLoggedIn ? `🔒 <a href="/login?next=/today" style="color:inherit;font-weight:700;text-decoration:underline">Sign in free</a> to unlock entry zones, targets &amp; stop losses` : `🔒 Entry, target &amp; stop loss prices require <a href="/premium">Premium →</a>`}</div>` : ""}
       <div class="picks-grid">${sectionPicks.map(p => renderPickCard(p, showPrices)).join("")}</div>
     </div>`;
-    }
-    // Determine visibility + price access per tier
-    // Guest:   intraday visible (prices locked), swing+longterm locked
-    // Free:    intraday visible (prices shown), swing visible (prices locked), longterm locked
-    // Premium/Admin: all visible, all prices shown
-    const intradayVisible = true;
-    const intradayPrices = isLoggedIn || isPremium;
-    const swingVisible = true;
-    const swingPrices = isPremium;
-    const longtermVisible = true;
-    const longtermPrices = isPremium;
-    const scalperVisible = true;
-    const scalperPrices = isLoggedIn || isPremium;
-    const intradaySection = renderSection("⚡", "Intraday Picks", "Same-day entry & exit", intradayPicks, intradayVisible, intradayPrices, "Free");
-    const swingSection = renderSection("🌊", "Swing Picks", "2–10 day holding period", swingPicks, swingVisible, swingPrices, "Premium");
-    const scalperSection = renderSection("⚡⚡", "Scalper Picks", "15–60 min · Tight SL · Quick exit", scalperPicks, scalperVisible, scalperPrices, "Free");
-    // For locked sections when not logged in or not premium, show teaser cards
-    const swingTeaser = !swingVisible ? renderSection("🌊", "Swing Picks", "2–10 day holding period", swingPicks.length > 0 ? swingPicks : [{ id: 0, stock_symbol: "?", company_name: null, direction: "LONG", pick_type: "swing", entry_low: 0, entry_high: 0, target: null, stop_loss: null, reason: "", risk_level: "Medium", status: "active", published_at: "", expires_at: null, created_by: null }], false, false, "Free") : "";
-    const tierLabel = isAdmin ? "👑 Admin" : isPremium ? "⚡ Premium" : isLoggedIn ? "🔓 Free User" : "👤 Guest";
-    const tierClass = isAdmin ? "sig-tier-admin" : isPremium ? "sig-tier-premium" : isLoggedIn ? "sig-tier-free" : "sig-tier-guest";
-    res.send(`<!DOCTYPE html>
+  }
+
+  // Determine visibility + price access per tier
+  // Guest:   intraday visible (prices locked), swing+longterm locked
+  // Free:    intraday visible (prices shown), swing visible (prices locked), longterm locked
+  // Premium/Admin: all visible, all prices shown
+  const intradayVisible  = true;
+  const intradayPrices   = isLoggedIn || isPremium;
+  const swingVisible     = true;
+  const swingPrices      = isPremium;
+  const longtermVisible  = true;
+  const longtermPrices   = isPremium;
+  const scalperVisible   = true;
+  const scalperPrices    = isLoggedIn || isPremium;
+
+  const intradaySection  = renderSection("⚡", "Intraday Picks", "Same-day entry & exit", intradayPicks, intradayVisible, intradayPrices, "Free");
+  const swingSection     = renderSection("🌊", "Swing Picks", "2–10 day holding period", swingPicks, swingVisible, swingPrices, "Premium");
+  const scalperSection   = renderSection("⚡⚡", "Scalper Picks", "15–60 min · Tight SL · Quick exit", scalperPicks, scalperVisible, scalperPrices, "Free");
+  // For locked sections when not logged in or not premium, show teaser cards
+  const swingTeaser = !swingVisible ? renderSection("🌊", "Swing Picks", "2–10 day holding period", swingPicks.length > 0 ? swingPicks : [{id:0,stock_symbol:"?",company_name:null,direction:"LONG",pick_type:"swing",entry_low:0,entry_high:0,target:null,stop_loss:null,reason:"",risk_level:"Medium",status:"active",published_at:"",expires_at:null,created_by:null}], false, false, "Free") : "";
+
+  const tierLabel = isAdmin ? "👑 Admin" : isPremium ? "⚡ Premium" : isLoggedIn ? "🔓 Free User" : "👤 Guest";
+  const tierClass = isAdmin ? "sig-tier-admin" : isPremium ? "sig-tier-premium" : isLoggedIn ? "sig-tier-free" : "sig-tier-guest";
+
+  res.send(`<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
@@ -5858,20 +5810,21 @@ app.get("/today", async (req, res) => {
         <div class="picks-disclaimer-banner">📋 Picks are generated every weekday at <strong>6:45 PM IST</strong> from the day's closing data — fundamentals, price action &amp; signals. Entry zones are reference prices only. <strong>Not SEBI registered. Not investment advice. Do your own research.</strong></div>
       </div>
       <div class="picks-hero-meta">
-        <span class="picks-hero-updated">🕐 ${new Date().toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" })}</span>
+        <span class="picks-hero-updated">🕐 ${new Date().toLocaleDateString("en-IN",{day:"2-digit",month:"short",year:"numeric"})}</span>
         <span class="sig-tier-badge ${tierClass}">${tierLabel}</span>
       </div>
     </div>
 
-    ${ /* ── Auto Paper Trade panel (logged-in users) ── */""}
+    ${/* ── Auto Paper Trade panel (logged-in users) ── */ ""}
     ${isLoggedIn ? `
     <div class="auto-paper-panel">
       <div class="auto-paper-icon">🤖</div>
       <div class="auto-paper-body">
         <div class="auto-paper-title">Auto Paper Trade Today's Picks ${!isPremium ? '<span style="font-size:.7rem;background:#f59e0b22;color:#f59e0b;border:1px solid #f59e0b44;border-radius:6px;padding:1px 7px;margin-left:6px">💎 Premium</span>' : ''}</div>
         <div class="auto-paper-desc">${isPremium
-        ? `At <strong>9:15 AM IST</strong> after market opens, all today's picks are automatically paper-traded in your portfolio at the entry zone midpoint price with SL &amp; target set.`
-        : `Upgrade to Premium — picks will be auto-bought in your paper portfolio at 9:15 AM IST every trading day.`}</div>
+          ? `At <strong>9:15 AM IST</strong> after market opens, all today's picks are automatically paper-traded in your portfolio at the entry zone midpoint price with SL &amp; target set.`
+          : `Upgrade to Premium — picks will be auto-bought in your paper portfolio at 9:15 AM IST every trading day.`
+        }</div>
       </div>
       <div class="auto-paper-toggle">
         ${isPremium ? `
@@ -5916,21 +5869,22 @@ app.get("/today", async (req, res) => {
 </body>
 </html>`);
 });
+
 // ── Admin Subscriptions ────────────────────────────────────────────────────────
-app.get("/admin/subs", requireAdmin, async (req, res) => {
-    const subs = await (0, db_1.getAllSubscriptions)();
-    const active = subs.filter(s => s.status === "active").length;
-    const revenue = subs.filter(s => s.status === "active").reduce((sum) => sum + 499, 0);
-    const rows = subs.map(s => `
+app.get("/admin/subs", requireAdmin, async (req: Request, res: Response) => {
+  const subs = await getAllSubscriptions();
+  const active  = subs.filter(s => s.status === "active").length;
+  const revenue = subs.filter(s => s.status === "active").reduce((sum) => sum + 499, 0);
+  const rows = subs.map(s => `
     <tr>
       <td>${esc(s.user_name)}<br><small class="text-dim">${esc(s.user_email)}</small></td>
       <td><span class="pick-status-badge pick-status-${s.status}">${s.status}</span></td>
       <td>₹${(s.amount / 100).toFixed(0)}</td>
-      <td style="font-size:12px;color:var(--text-muted)">${s.starts_at?.slice(0, 10) ?? "—"}</td>
-      <td style="font-size:12px;color:var(--text-muted)">${s.expires_at?.slice(0, 10) ?? "—"}</td>
+      <td style="font-size:12px;color:var(--text-muted)">${s.starts_at?.slice(0,10) ?? "—"}</td>
+      <td style="font-size:12px;color:var(--text-muted)">${s.expires_at?.slice(0,10) ?? "—"}</td>
       <td style="font-family:monospace;font-size:11px;color:var(--text-muted)">${s.razorpay_payment_id ?? "—"}</td>
     </tr>`).join("");
-    res.send(`<!DOCTYPE html>
+  res.send(`<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
@@ -5960,15 +5914,16 @@ app.get("/admin/subs", requireAdmin, async (req, res) => {
 </body>
 </html>`);
 });
+
 // ── GET /premium ────────────────────────────────────────────────────────────────
-app.get("/premium", async (req, res) => {
-    const isPremium = userIsPremium(req);
-    const isLoggedIn = !!req.session?.userId;
-    let activeSub = null;
-    if (isLoggedIn)
-        activeSub = await (0, db_1.getActiveSubscription)(req.session.userId);
-    const razorpayEnabled = RAZORPAY_KEY_ID && RAZORPAY_KEY_SECRET;
-    res.send(`<!DOCTYPE html>
+app.get("/premium", async (req: Request, res: Response) => {
+  const isPremium = userIsPremium(req);
+  const isLoggedIn = !!req.session?.userId;
+  let activeSub = null;
+  if (isLoggedIn) activeSub = await getActiveSubscription(req.session.userId!);
+  const razorpayEnabled = RAZORPAY_KEY_ID && RAZORPAY_KEY_SECRET;
+
+  res.send(`<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
@@ -5985,7 +5940,7 @@ app.get("/premium", async (req, res) => {
     <div class="premium-hero">
       <div class="premium-badge-large">💎</div>
       <h1>You're a Premium Member</h1>
-      <p>Your premium access is active${activeSub?.expires_at ? ` until <strong>${activeSub.expires_at.slice(0, 10)}</strong>` : ""}.</p>
+      <p>Your premium access is active${activeSub?.expires_at ? ` until <strong>${activeSub.expires_at.slice(0,10)}</strong>` : ""}.</p>
       <div class="premium-active-features">
         <div class="paf-item">✅ Live position — exact entry price &amp; stop loss in real time</div>
         <div class="paf-item">✅ Telegram instant alerts when bot enters or exits</div>
@@ -6033,8 +5988,8 @@ app.get("/premium", async (req, res) => {
       </ul>
       ${isLoggedIn
         ? razorpayEnabled
-            ? `<button id="pay-btn" class="btn-premium-cta" onclick="startPayment()">⚡ Upgrade Now — ₹499/month</button>`
-            : `<div class="premium-coming-soon">💳 Payment system coming soon<br><small>Contact us to get early access</small></div>`
+          ? `<button id="pay-btn" class="btn-premium-cta" onclick="startPayment()">⚡ Upgrade Now — ₹499/month</button>`
+          : `<div class="premium-coming-soon">💳 Payment system coming soon<br><small>Contact us to get early access</small></div>`
         : `<a href="/login?next=/premium" class="btn-premium-cta">Sign In to Upgrade</a>`}
     </div>
 
@@ -6112,260 +6067,268 @@ app.get("/premium", async (req, res) => {
 </body>
 </html>`);
 });
+
 // ── POST /api/razorpay/create-order ──────────────────────────────────────────
-app.post("/api/razorpay/create-order", requireAuth, async (req, res) => {
-    if (!RAZORPAY_KEY_ID || !RAZORPAY_KEY_SECRET) {
-        res.status(503).json({ error: "Payment not configured" });
-        return;
-    }
-    // Check if already premium
-    const existing = await (0, db_1.getActiveSubscription)(req.session.userId);
-    if (existing) {
-        res.status(400).json({ error: "Already a Premium member" });
-        return;
-    }
-    const amount = PREMIUM_PRICE_PAISE;
-    const payload = { amount, currency: "INR", receipt: `zs_${req.session.userId}_${Date.now()}` };
-    const auth = Buffer.from(`${RAZORPAY_KEY_ID}:${RAZORPAY_KEY_SECRET}`).toString("base64");
-    const r = await fetch("https://api.razorpay.com/v1/orders", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "Authorization": `Basic ${auth}` },
-        body: JSON.stringify(payload),
-    });
-    if (!r.ok) {
-        res.status(502).json({ error: "Razorpay API error" });
-        return;
-    }
-    const order = await r.json();
-    await (0, db_1.createOrder)(req.session.userId, order.id, amount);
-    res.json({ id: order.id, amount: order.amount, currency: order.currency });
+app.post("/api/razorpay/create-order", requireAuth, async (req: Request, res: Response) => {
+  if (!RAZORPAY_KEY_ID || !RAZORPAY_KEY_SECRET) {
+    res.status(503).json({ error: "Payment not configured" });
+    return;
+  }
+  // Check if already premium
+  const existing = await getActiveSubscription(req.session.userId!);
+  if (existing) { res.status(400).json({ error: "Already a Premium member" }); return; }
+
+  const amount = PREMIUM_PRICE_PAISE;
+  const payload = { amount, currency: "INR", receipt: `zs_${req.session.userId}_${Date.now()}` };
+  const auth = Buffer.from(`${RAZORPAY_KEY_ID}:${RAZORPAY_KEY_SECRET}`).toString("base64");
+
+  const r = await fetch("https://api.razorpay.com/v1/orders", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "Authorization": `Basic ${auth}` },
+    body: JSON.stringify(payload),
+  });
+  if (!r.ok) { res.status(502).json({ error: "Razorpay API error" }); return; }
+  const order: any = await r.json();
+  await createOrder(req.session.userId!, order.id, amount);
+  res.json({ id: order.id, amount: order.amount, currency: order.currency });
 });
+
 // ── POST /api/razorpay/verify ─────────────────────────────────────────────────
-app.post("/api/razorpay/verify", requireAuth, async (req, res) => {
-    if (!RAZORPAY_KEY_SECRET) {
-        res.status(503).json({ ok: false });
-        return;
-    }
-    const { razorpay_order_id, razorpay_payment_id, razorpay_signature } = req.body;
-    if (!razorpay_order_id || !razorpay_payment_id || !razorpay_signature) {
-        res.status(400).json({ ok: false });
-        return;
-    }
-    // HMAC-SHA256 signature check
-    const crypto = await Promise.resolve().then(() => __importStar(require("crypto")));
-    const body = razorpay_order_id + "|" + razorpay_payment_id;
-    const expected = crypto.createHmac("sha256", RAZORPAY_KEY_SECRET).update(body).digest("hex");
-    if (expected !== razorpay_signature) {
-        res.status(400).json({ ok: false, error: "Invalid signature" });
-        return;
-    }
-    const userId = await (0, db_1.activateSubscription)(razorpay_order_id, razorpay_payment_id);
-    if (!userId) {
-        res.json({ ok: false, error: "Order not found" });
-        return;
-    }
-    // Update session role
-    req.session.userRole = "premium";
-    res.json({ ok: true });
+app.post("/api/razorpay/verify", requireAuth, async (req: Request, res: Response) => {
+  if (!RAZORPAY_KEY_SECRET) { res.status(503).json({ ok: false }); return; }
+  const { razorpay_order_id, razorpay_payment_id, razorpay_signature } = req.body;
+  if (!razorpay_order_id || !razorpay_payment_id || !razorpay_signature) {
+    res.status(400).json({ ok: false }); return;
+  }
+  // HMAC-SHA256 signature check
+  const crypto = await import("crypto");
+  const body = razorpay_order_id + "|" + razorpay_payment_id;
+  const expected = crypto.createHmac("sha256", RAZORPAY_KEY_SECRET).update(body).digest("hex");
+  if (expected !== razorpay_signature) {
+    res.status(400).json({ ok: false, error: "Invalid signature" }); return;
+  }
+  const userId = await activateSubscription(razorpay_order_id, razorpay_payment_id);
+  if (!userId) { res.json({ ok: false, error: "Order not found" }); return; }
+  // Update session role
+  req.session.userRole = "premium";
+  res.json({ ok: true });
 });
+
 // ── GET /api/bot/status ─────────────────────────────────────────────────────────
-app.get("/api/bot/status", async (_req, res) => {
-    // Primary: DB (pushed by bot via webhook)
-    const dbState = await (0, db_1.getBotState)().catch(() => null);
-    const dbTrades = await (0, db_1.getBotTrades)(50).catch(() => []);
-    // Fallback: JSON files on disk (existing behaviour — never breaks)
-    const fileState = readBotJSON("trade-state.json", {});
-    const hb = readBotJSON("bot-heartbeat.json", null);
-    const fileTrades = readBotJSON("trades.json", []);
-    // Prefer DB state if it was updated in the last 10 min, else fall back to files
-    const dbUpdatedAt = dbState?._db_updated_at ? new Date(dbState._db_updated_at).getTime() : 0;
-    const useDb = dbUpdatedAt > 0 && (Date.now() - dbUpdatedAt) < 10 * 60 * 1000;
-    const state = useDb ? dbState : fileState;
-    const trades = useDb && dbTrades.length > 0
-        ? dbTrades.map((t) => ({ ...JSON.parse(t.raw_json || "{}"), pnl: t.pnl }))
-        : fileTrades;
-    const analytics = computeAnalytics(trades);
-    let tokenOK = false;
-    try {
-        const botEnv = fs_1.default.readFileSync('/home/ubuntu/trading-bot/.env', 'utf-8');
-        const akMatch = botEnv.match(/^API_KEY=(.+)$/m);
-        const atMatch = botEnv.match(/^ACCESS_TOKEN=(.+)$/m);
-        const apiKey = akMatch?.[1]?.trim() ?? "";
-        const accTok = atMatch?.[1]?.trim() ?? "";
-        if (apiKey && accTok) {
-            // Validate via Zerodha REST — profile endpoint returns 200 only for valid tokens
-            const resp = await fetch("https://api.kite.trade/user/profile", { headers: { "X-Kite-Version": "3", "Authorization": `token ${apiKey}:${accTok}` }, signal: AbortSignal.timeout(4000) });
-            tokenOK = resp.status === 200;
-        }
+app.get("/api/bot/status", async (_req: Request, res: Response) => {
+  // Primary: DB (pushed by bot via webhook)
+  const dbState: any = await getBotState().catch(() => null);
+  const dbTrades = await getBotTrades(50).catch(() => []);
+
+  // Fallback: JSON files on disk (existing behaviour — never breaks)
+  const fileState  = readBotJSON("trade-state.json", {});
+  const hb         = readBotJSON("bot-heartbeat.json", null);
+  const fileTrades: any[] = readBotJSON("trades.json", []);
+
+  // Prefer DB state if it was updated in the last 10 min, else fall back to files
+  const dbUpdatedAt = dbState?._db_updated_at ? new Date(dbState._db_updated_at).getTime() : 0;
+  const useDb = dbUpdatedAt > 0 && (Date.now() - dbUpdatedAt) < 10 * 60 * 1000;
+
+  const state    = useDb ? dbState    : fileState;
+  const trades   = useDb && dbTrades.length > 0
+    ? dbTrades.map((t: BotTrade) => ({ ...JSON.parse(t.raw_json || "{}"), pnl: t.pnl }))
+    : fileTrades;
+
+  const analytics = computeAnalytics(trades);
+
+  let tokenOK = false;
+  try {
+    const botEnv  = fs.readFileSync('/home/ubuntu/trading-bot/.env', 'utf-8');
+    const akMatch = botEnv.match(/^API_KEY=(.+)$/m);
+    const atMatch = botEnv.match(/^ACCESS_TOKEN=(.+)$/m);
+    const apiKey  = akMatch?.[1]?.trim() ?? "";
+    const accTok  = atMatch?.[1]?.trim() ?? "";
+    if (apiKey && accTok) {
+      // Validate via Zerodha REST — profile endpoint returns 200 only for valid tokens
+      const resp = await fetch(
+        "https://api.kite.trade/user/profile",
+        { headers: { "X-Kite-Version": "3", "Authorization": `token ${apiKey}:${accTok}` }, signal: AbortSignal.timeout(4000) }
+      );
+      tokenOK = resp.status === 200;
     }
-    catch (_) { }
-    const isAlive = hb?.at ? (Date.now() - new Date(hb.at).getTime()) < 3 * 60 * 1000
-        : (useDb && (Date.now() - dbUpdatedAt) < 3 * 60 * 1000);
-    const botStatus = isAlive ? (hb?.status ?? "RUNNING") : (hb ? "STOPPED" : "UNKNOWN");
-    const botColor = isAlive ? (hb?.inTrade ? (hb.direction === "CE" ? "blue" : "red") : "green") : "red";
-    res.json({
-        timestamp: new Date().toLocaleString("en-IN", { timeZone: "Asia/Kolkata" }),
-        activeState: state,
-        heartbeat: hb,
-        botStatus,
-        botColor,
-        isAlive,
-        tokenOK,
-        source: useDb ? "db" : "files",
-        ...analytics,
-    });
+  } catch (_) {}
+
+  const isAlive = hb?.at ? (Date.now() - new Date(hb.at).getTime()) < 3 * 60 * 1000
+                         : (useDb && (Date.now() - dbUpdatedAt) < 3 * 60 * 1000);
+  const botStatus = isAlive ? (hb?.status ?? "RUNNING") : (hb ? "STOPPED" : "UNKNOWN");
+  const botColor  = isAlive ? (hb?.inTrade ? (hb.direction === "CE" ? "blue" : "red") : "green") : "red";
+
+  res.json({
+    timestamp: new Date().toLocaleString("en-IN", { timeZone: "Asia/Kolkata" }),
+    activeState: state,
+    heartbeat: hb,
+    botStatus,
+    botColor,
+    isAlive,
+    tokenOK,
+    source: useDb ? "db" : "files",
+    ...analytics,
+  });
 });
+
 // ── POST /api/bot/action — admin restart / stop the trading bot ─────────────────
-app.post("/api/bot/action", requireAdmin, (req, res) => {
-    const { action } = req.body;
-    try {
-        if (action === "restart") {
-            (0, child_process_1.execSync)("pm2 restart trading-bot", { stdio: "ignore" });
-            res.json({ ok: true, msg: "Bot restarted" });
-        }
-        else if (action === "stop") {
-            (0, child_process_1.execSync)("pm2 stop trading-bot", { stdio: "ignore" });
-            res.json({ ok: true, msg: "Bot stopped" });
-        }
-        else if (action === "start") {
-            (0, child_process_1.execSync)("pm2 start trading-bot", { stdio: "ignore" });
-            res.json({ ok: true, msg: "Bot started" });
-        }
-        else {
-            res.status(400).json({ ok: false, msg: "Unknown action" });
-        }
+app.post("/api/bot/action", requireAdmin, (req: Request, res: Response) => {
+  const { action } = req.body as { action?: string };
+  try {
+    if (action === "restart") {
+      execSync("pm2 restart trading-bot", { stdio: "ignore" });
+      res.json({ ok: true, msg: "Bot restarted" });
+    } else if (action === "stop") {
+      execSync("pm2 stop trading-bot", { stdio: "ignore" });
+      res.json({ ok: true, msg: "Bot stopped" });
+    } else if (action === "start") {
+      execSync("pm2 start trading-bot", { stdio: "ignore" });
+      res.json({ ok: true, msg: "Bot started" });
+    } else {
+      res.status(400).json({ ok: false, msg: "Unknown action" });
     }
-    catch (e) {
-        res.status(500).json({ ok: false, msg: e.message });
-    }
+  } catch (e: any) {
+    res.status(500).json({ ok: false, msg: e.message });
+  }
 });
+
 // ── POST /internal/bot-update ── bot pushes state + completed trades here ──────
-app.post("/internal/bot-update", async (req, res) => {
-    const secret = req.headers["x-bot-secret"];
-    const expected = process.env.INTERNAL_BOT_SECRET || "";
-    if (!expected || secret !== expected) {
-        res.status(401).json({ ok: false, error: "Unauthorized" });
-        return;
-    }
-    const { state, trade } = req.body;
-    if (state && typeof state === "object") {
-        await (0, db_1.saveBotState)(state).catch(() => { });
-    }
-    if (trade && typeof trade === "object") {
-        await (0, db_1.saveBotTrade)({
-            symbol: trade.symbol ?? null,
-            direction: trade.direction ?? null,
-            entry_price: trade.entry_price ?? trade.entry ?? null,
-            exit_price: trade.exit_price ?? trade.exit ?? null,
-            qty: trade.qty ?? null,
-            pnl: trade.pnl ?? null,
-            exit_reason: trade.exit_reason ?? trade.reason ?? null,
-            trade_date: trade.date ?? new Date().toISOString().slice(0, 10),
-            duration: trade.duration ?? null,
-            raw_json: JSON.stringify(trade),
-        }).catch(() => { });
-    }
-    res.json({ ok: true });
+app.post("/internal/bot-update", async (req: Request, res: Response) => {
+  const secret = req.headers["x-bot-secret"];
+  const expected = process.env.INTERNAL_BOT_SECRET || "";
+  if (!expected || secret !== expected) {
+    res.status(401).json({ ok: false, error: "Unauthorized" });
+    return;
+  }
+
+  const { state, trade } = req.body;
+
+  if (state && typeof state === "object") {
+    await saveBotState(state).catch(() => {});
+  }
+
+  if (trade && typeof trade === "object") {
+    await saveBotTrade({
+      symbol:      trade.symbol      ?? null,
+      direction:   trade.direction   ?? null,
+      entry_price: trade.entry_price ?? trade.entry ?? null,
+      exit_price:  trade.exit_price  ?? trade.exit  ?? null,
+      qty:         trade.qty         ?? null,
+      pnl:         trade.pnl         ?? null,
+      exit_reason: trade.exit_reason ?? trade.reason ?? null,
+      trade_date:  trade.date        ?? new Date().toISOString().slice(0, 10),
+      duration:    trade.duration    ?? null,
+      raw_json:    JSON.stringify(trade),
+    }).catch(() => {});
+  }
+
+  res.json({ ok: true });
 });
+
 // ── GET /internal/kite-token ── bot polls here to get the Zerodha access token ─
-app.get("/internal/kite-token", async (req, res) => {
-    const secret = req.headers["x-bot-secret"] || req.query.secret;
-    const expected = process.env.INTERNAL_BOT_SECRET || "";
-    if (!expected || secret !== expected) {
-        res.status(401).json({ ok: false, error: "Unauthorized" });
-        return;
-    }
-    const token = await (0, db_1.getSetting)("kite_access_token").catch(() => "");
-    const setAt = await (0, db_1.getSetting)("kite_token_set_at").catch(() => "");
-    if (!token) {
-        res.json({ ok: false, token: null, message: "No token set. Paste it in Admin → Signal Control." });
-        return;
-    }
-    res.json({ ok: true, token, set_at: setAt });
+app.get("/internal/kite-token", async (req: Request, res: Response) => {
+  const secret = req.headers["x-bot-secret"] || req.query.secret;
+  const expected = process.env.INTERNAL_BOT_SECRET || "";
+  if (!expected || secret !== expected) {
+    res.status(401).json({ ok: false, error: "Unauthorized" });
+    return;
+  }
+
+  const token = await getSetting("kite_access_token").catch(() => "");
+  const setAt  = await getSetting("kite_token_set_at").catch(() => "");
+
+  if (!token) {
+    res.json({ ok: false, token: null, message: "No token set. Paste it in Admin → Signal Control." });
+    return;
+  }
+
+  res.json({ ok: true, token, set_at: setAt });
 });
+
+
 // ── GET /paper-trade ───────────────────────────────────────────────────────────
-app.get("/paper-trade", featureGate("feature_paper_trade_bot", "Paper Trade"), async (req, res) => {
-    const PAPER_DIR = "/home/ubuntu/trading-bot";
-    function readPaperJSON(file, fallback = null) {
-        try {
-            const p = `${PAPER_DIR}/${file}`;
-            if (!fs_1.default.existsSync(p))
-                return fallback;
-            return JSON.parse(fs_1.default.readFileSync(p, "utf-8"));
-        }
-        catch {
-            return fallback;
-        }
-    }
-    // ── Bot performance stats (always shown for social proof) ──────────────────
-    const botTrades = readPaperJSON("paper-trades.json", []);
-    const closed = botTrades.filter((t) => t.status !== "OPEN");
-    const wins = closed.filter((t) => (t.pnl ?? 0) > 0).length;
-    const totalPnl = closed.reduce((s, t) => s + (t.pnl ?? 0), 0);
-    const winRate = closed.length > 0 ? ((wins / closed.length) * 100).toFixed(1) : "—";
-    const avgPnl = closed.length > 0 ? (totalPnl / closed.length).toFixed(1) : "—";
-    const openCount = botTrades.filter((t) => t.status === "OPEN").length;
-    // ── User-specific data (only when logged in) ───────────────────────────────
-    const userId = req.session?.userId;
-    const isLoggedIn = !!userId;
-    let port = { balance: 100000 }, tradeCount = 0, ptConfig = { trade_type: "INTRADAY", default_qty: 1 };
-    let isPremiumUser = false, creditsOut = false, tradesLeft = null, freeLimit = 10;
-    let userPositions = [];
-    if (isLoggedIn) {
-        const [activeSub, portData, count, config, fl] = await Promise.all([
-            (0, db_1.getActiveSubscription)(userId),
-            (0, db_1.getPaperPortfolio)(userId),
-            (0, db_1.countPaperTrades)(userId),
-            (0, db_1.getPaperTradeConfig)(userId),
-            (0, db_1.getSetting)("paper_free_limit"),
-        ]);
-        port = portData;
-        tradeCount = count;
-        ptConfig = config;
-        freeLimit = parseInt(fl || "10", 10);
-        isPremiumUser = !!activeSub || req.session.userRole === "premium" || req.session.userRole === "admin";
-        tradesLeft = isPremiumUser ? null : Math.max(0, freeLimit - tradeCount);
-        creditsOut = !isPremiumUser && tradeCount >= freeLimit;
-        // Load open positions for quick reference
-        userPositions = await (0, db_1.getPaperPositions)(userId);
-        const dbPrices = userPositions.length
-            ? await (0, db_1.dbAll)(`SELECT symbol, price FROM prices WHERE symbol IN (${userPositions.map(() => "?").join(",")})`, userPositions.map((p) => p.symbol))
-            : [];
-        const priceMap = {};
-        for (const r of dbPrices)
-            if (r.price != null)
-                priceMap[r.symbol] = r.price;
-        userPositions = userPositions.map(p => {
-            const livePrice = priceMap[p.symbol] ?? p.avg_price;
-            const pnl = parseFloat(((livePrice - p.avg_price) * p.qty).toFixed(2));
-            return { ...p, livePrice, pnl };
-        });
-    }
-    const marketOpen = isMarketHours();
-    const isAdmin = req.session?.userRole === 'admin';
-    const BOT_DIR = "/home/ubuntu/trading-bot";
-    const botSettings = (() => { try {
-        return JSON.parse(fs_1.default.readFileSync(`${BOT_DIR}/user-settings.json`, "utf-8"));
-    }
-    catch {
-        return {};
-    } })();
-    const bs = {
-        mode: botSettings.mode ?? "PAPER",
-        quantity: botSettings.quantity ?? 30,
-        maxDailyLossPoints: botSettings.risk?.maxDailyLossPoints ?? 100,
-        maxTradesPerDay: botSettings.risk?.maxTradesPerDay ?? 5,
-        dailyLossCap: botSettings.risk?.dailyLossCap ?? 200,
-        stopLossPoints: botSettings.tradeManagement?.stopLossPoints ?? 100,
-        targetPoints: botSettings.tradeManagement?.targetPoints ?? 0,
-        minPremium: botSettings.optionSelection?.minPremium ?? 450,
-        maxPremium: botSettings.optionSelection?.maxPremium ?? 600,
-    };
-    // Active picks for Daily Pick trigger
-    const activePicks = await (0, db_1.dbAll)(`SELECT id, stock_symbol, direction, entry_low, entry_high, target, stop_loss, pick_type FROM picks WHERE status IN ('active','entry_triggered') ORDER BY id DESC LIMIT 50`);
-    const msgParam = req.query.msg ? `<div class="mpt-msg mpt-msg-ok" style="margin-bottom:16px">✅ ${esc(req.query.msg)}</div>` : "";
-    const errParam = req.query.err ? `<div class="mpt-msg mpt-msg-err" style="margin-bottom:16px">❌ ${esc(req.query.err)}</div>` : "";
-    res.send(`<!DOCTYPE html>
+app.get("/paper-trade", featureGate("feature_paper_trade_bot", "Paper Trade"), async (req: Request, res: Response) => {
+  const PAPER_DIR = "/home/ubuntu/trading-bot";
+  function readPaperJSON(file: string, fallback: any = null) {
+    try {
+      const p = `${PAPER_DIR}/${file}`;
+      if (!fs.existsSync(p)) return fallback;
+      return JSON.parse(fs.readFileSync(p, "utf-8"));
+    } catch { return fallback; }
+  }
+
+  // ── Bot performance stats (always shown for social proof) ──────────────────
+  const botTrades: any[] = readPaperJSON("paper-trades.json", []);
+  const closed   = botTrades.filter((t: any) => t.status !== "OPEN");
+  const wins     = closed.filter((t: any) => (t.pnl ?? 0) > 0).length;
+  const totalPnl = closed.reduce((s: number, t: any) => s + (t.pnl ?? 0), 0);
+  const winRate  = closed.length > 0 ? ((wins / closed.length) * 100).toFixed(1) : "—";
+  const avgPnl   = closed.length > 0 ? (totalPnl / closed.length).toFixed(1) : "—";
+  const openCount = botTrades.filter((t: any) => t.status === "OPEN").length;
+
+  // ── User-specific data (only when logged in) ───────────────────────────────
+  const userId = req.session?.userId;
+  const isLoggedIn = !!userId;
+  let port: any = { balance: 100000 }, tradeCount = 0, ptConfig: any = { trade_type: "INTRADAY", default_qty: 1 };
+  let isPremiumUser = false, creditsOut = false, tradesLeft: number | null = null, freeLimit = 10;
+  let userPositions: any[] = [];
+
+  if (isLoggedIn) {
+    const [activeSub, portData, count, config, fl] = await Promise.all([
+      getActiveSubscription(userId!),
+      getPaperPortfolio(userId!),
+      countPaperTrades(userId!),
+      getPaperTradeConfig(userId!),
+      getSetting("paper_free_limit"),
+    ]);
+    port = portData;
+    tradeCount = count;
+    ptConfig = config;
+    freeLimit = parseInt(fl || "10", 10);
+    isPremiumUser = !!activeSub || req.session!.userRole === "premium" || req.session!.userRole === "admin";
+    tradesLeft = isPremiumUser ? null : Math.max(0, freeLimit - tradeCount);
+    creditsOut = !isPremiumUser && tradeCount >= freeLimit;
+
+    // Load open positions for quick reference
+    userPositions = await getPaperPositions(userId!);
+    const dbPrices = userPositions.length
+      ? await dbAll<{ symbol: string; price: number | null }>(
+          `SELECT symbol, price FROM prices WHERE symbol IN (${userPositions.map(() => "?").join(",")})`,
+          userPositions.map((p: any) => p.symbol)
+        )
+      : [];
+    const priceMap: Record<string, number> = {};
+    for (const r of dbPrices) if (r.price != null) priceMap[r.symbol] = r.price;
+    userPositions = userPositions.map(p => {
+      const livePrice = priceMap[p.symbol] ?? p.avg_price;
+      const pnl = parseFloat(((livePrice - p.avg_price) * p.qty).toFixed(2));
+      return { ...p, livePrice, pnl };
+    });
+  }
+
+  const marketOpen = isMarketHours();
+  const isAdmin = req.session?.userRole === 'admin';
+  const BOT_DIR = "/home/ubuntu/trading-bot";
+  const botSettings = (() => { try { return JSON.parse(fs.readFileSync(`${BOT_DIR}/user-settings.json`, "utf-8")); } catch { return {}; } })();
+  const bs = {
+    mode: botSettings.mode ?? "PAPER",
+    quantity: botSettings.quantity ?? 30,
+    maxDailyLossPoints: botSettings.risk?.maxDailyLossPoints ?? 100,
+    maxTradesPerDay: botSettings.risk?.maxTradesPerDay ?? 5,
+    dailyLossCap: botSettings.risk?.dailyLossCap ?? 200,
+    stopLossPoints: botSettings.tradeManagement?.stopLossPoints ?? 100,
+    targetPoints: botSettings.tradeManagement?.targetPoints ?? 0,
+    minPremium: botSettings.optionSelection?.minPremium ?? 450,
+    maxPremium: botSettings.optionSelection?.maxPremium ?? 600,
+  };
+  // Active picks for Daily Pick trigger
+  const activePicks: any[] = await dbAll<any>(
+    `SELECT id, stock_symbol, direction, entry_low, entry_high, target, stop_loss, pick_type FROM picks WHERE status IN ('active','entry_triggered') ORDER BY id DESC LIMIT 50`
+  );
+  const msgParam = req.query.msg ? `<div class="mpt-msg mpt-msg-ok" style="margin-bottom:16px">✅ ${esc(req.query.msg as string)}</div>` : "";
+  const errParam = req.query.err ? `<div class="mpt-msg mpt-msg-err" style="margin-bottom:16px">❌ ${esc(req.query.err as string)}</div>` : "";
+
+  res.send(`<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
@@ -6637,10 +6600,11 @@ app.get("/paper-trade", featureGate("feature_paper_trade_bot", "Paper Trade"), a
     <div class="pt2-credits">
       <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
         ${isPremiumUser
-        ? `<span style="color:#10b981;font-weight:700">👑 Premium — Unlimited trades</span>`
-        : creditsOut
+          ? `<span style="color:#10b981;font-weight:700">👑 Premium — Unlimited trades</span>`
+          : creditsOut
             ? `<span style="color:#ef4444;font-weight:700">⚠️ Free limit reached (${tradeCount}/${freeLimit}) — <a href="/my-paper-trade/upgrade" style="color:#ef4444">Upgrade →</a></span>`
-            : `<span style="color:#f59e0b;font-weight:700">🎫 ${tradesLeft} of ${freeLimit} free trades left</span>`}
+            : `<span style="color:#f59e0b;font-weight:700">🎫 ${tradesLeft} of ${freeLimit} free trades left</span>`
+        }
         <span style="font-size:0.8rem;color:var(--text-muted)">Cash: <strong>₹${port.balance.toLocaleString("en-IN", { maximumFractionDigits: 0 })}</strong></span>
       </div>
       <span class="${marketOpen ? "pt2-mh-open" : "pt2-mh-closed"}">${marketOpen ? "🟢 Market Open" : "🔴 Market Closed"}</span>
@@ -6779,7 +6743,7 @@ app.get("/paper-trade", featureGate("feature_paper_trade_bot", "Paper Trade"), a
         ${userPositions.length > 0 ? `
         <div class="pt2-pos-section">
           <div style="font-size:0.72rem;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--text-muted);margin-bottom:10px">Open Positions (${userPositions.length})</div>
-          ${userPositions.map((p) => `
+          ${userPositions.map((p: any) => `
           <div class="pt2-pos-row">
             <span class="pt2-pos-sym"><a href="/stock/${p.symbol}" style="color:var(--accent);text-decoration:none">${p.symbol}</a></span>
             <span style="font-size:0.8rem;color:var(--text-muted)">${p.trade_type === 'HOLDING' ? 'HOLD' : 'INTRA'} · ${p.qty} qty · ₹${p.avg_price.toFixed(2)}</span>
@@ -6829,8 +6793,8 @@ app.get("/paper-trade", featureGate("feature_paper_trade_bot", "Paper Trade"), a
               <div style="display:flex;flex-direction:column;gap:8px">
                 <label style="font-size:0.75rem;font-weight:700;color:var(--text-muted)">Mode</label>
                 <select name="mode" style="padding:7px 10px;border-radius:7px;border:1px solid var(--border);background:var(--input-bg,#fff);color:var(--text);font-size:0.88rem;font-weight:600">
-                  <option value="PAPER" ${bs.mode === 'PAPER' ? 'selected' : ''}>PAPER (Virtual)</option>
-                  <option value="LIVE" ${bs.mode === 'LIVE' ? 'selected' : ''}>LIVE (Real Money)</option>
+                  <option value="PAPER" ${bs.mode==='PAPER'?'selected':''}>PAPER (Virtual)</option>
+                  <option value="LIVE" ${bs.mode==='LIVE'?'selected':''}>LIVE (Real Money)</option>
                 </select>
                 <label style="font-size:0.75rem;font-weight:700;color:var(--text-muted)">Quantity (lots)</label>
                 <input type="number" name="quantity" min="1" max="500" value="${bs.quantity}" style="padding:7px 10px;border-radius:7px;border:1px solid var(--border);background:var(--input-bg,#fff);color:var(--text);font-size:0.88rem;font-weight:600">
@@ -6960,12 +6924,12 @@ app.get("/paper-trade", featureGate("feature_paper_trade_bot", "Paper Trade"), a
             <div style="font-size:0.8rem;color:var(--text-muted);margin-bottom:12px">Select one of today's active picks — SL &amp; target auto-filled from pick data. Bot trades the equity when entry range is hit.</div>
             ${activePicks.length === 0 ? `<div style="padding:20px;text-align:center;color:var(--text-muted);background:var(--bg2);border-radius:8px">No active picks right now</div>` : `
             <div style="display:flex;flex-direction:column;gap:8px;margin-bottom:14px">
-              ${activePicks.map((p) => `
+              ${activePicks.map((p: any) => `
               <label style="display:flex;align-items:center;justify-content:space-between;background:var(--bg2);border-radius:9px;padding:10px 14px;gap:12px;cursor:pointer;flex-wrap:wrap" onclick="schPickSelect(${p.id}, '${p.stock_symbol}', '${p.direction}', ${p.entry_low}, ${p.entry_high}, ${p.stop_loss ?? 0}, ${p.target ?? 0})">
                 <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
                   <input type="radio" name="pickId" value="${p.id}" style="accent-color:#7c3aed">
                   <span style="font-weight:800;font-size:0.88rem">${p.stock_symbol}</span>
-                  <span style="font-size:0.72rem;padding:2px 7px;border-radius:4px;font-weight:700;background:${p.direction === 'LONG' ? 'rgba(16,185,129,.15)' : 'rgba(239,68,68,.15)'};color:${p.direction === 'LONG' ? '#34d399' : '#f87171'}">${p.direction}</span>
+                  <span style="font-size:0.72rem;padding:2px 7px;border-radius:4px;font-weight:700;background:${p.direction==='LONG'?'rgba(16,185,129,.15)':'rgba(239,68,68,.15)'};color:${p.direction==='LONG'?'#34d399':'#f87171'}">${p.direction}</span>
                   <span style="font-size:0.75rem;color:var(--text-muted)">Entry ${p.entry_low}–${p.entry_high}</span>
                   ${p.stop_loss ? `<span style="font-size:0.72rem;color:#f87171">SL ₹${p.stop_loss}</span>` : ""}
                   ${p.target ? `<span style="font-size:0.72rem;color:#34d399">TGT ₹${p.target}</span>` : ""}
@@ -7017,7 +6981,7 @@ app.get("/paper-trade", featureGate("feature_paper_trade_bot", "Paper Trade"), a
                   <option value="FINNIFTY">FINNIFTY</option>
                   <option value="SENSEX">SENSEX</option>
                   <option value="MIDCPNIFTY">MIDCPNIFTY</option>
-                  ${activePicks.slice(0, 20).map((p) => `<option value="${p.stock_symbol}">${p.stock_symbol}</option>`).join("")}
+                  ${activePicks.slice(0,20).map((p: any) => `<option value="${p.stock_symbol}">${p.stock_symbol}</option>`).join("")}
                   <option value="__custom__">Other…</option>
                 </select>
               </div>
@@ -7103,33 +7067,30 @@ app.get("/paper-trade", featureGate("feature_paper_trade_bot", "Paper Trade"), a
 
           <div style="display:flex;justify-content:flex-end">
             ${isLoggedIn
-        ? `<button type="submit" style="background:linear-gradient(135deg,#f59e0b,#ef4444);color:#fff;border:none;border-radius:9px;padding:10px 28px;font-weight:700;font-size:0.92rem;cursor:pointer">+ Add Schedule</button>`
-        : `<a href="/login?next=/paper-trade?tab=autobot" style="background:linear-gradient(135deg,#7c3aed,#6366f1);color:#fff;border-radius:9px;padding:10px 28px;font-weight:700;font-size:0.92rem;text-decoration:none;display:inline-block">🔑 Sign in to Schedule</a>`}
+              ? `<button type="submit" style="background:linear-gradient(135deg,#f59e0b,#ef4444);color:#fff;border:none;border-radius:9px;padding:10px 28px;font-weight:700;font-size:0.92rem;cursor:pointer">+ Add Schedule</button>`
+              : `<a href="/login?next=/paper-trade?tab=autobot" style="background:linear-gradient(135deg,#7c3aed,#6366f1);color:#fff;border-radius:9px;padding:10px 28px;font-weight:700;font-size:0.92rem;text-decoration:none;display:inline-block">🔑 Sign in to Schedule</a>`
+            }
           </div>
         </form>
 
         <!-- Pending list — only for logged-in users -->
         ${isLoggedIn ? (() => {
-        const schPath = `${BOT_DIR}/scheduled-trades.json`;
-        let schList = [];
-        try {
-            schList = JSON.parse(fs_1.default.readFileSync(schPath, "utf-8"));
-        }
-        catch { }
-        const active = schList.filter((s) => s.status === "pending");
-        if (active.length === 0)
-            return `<div style="margin-top:16px;padding:12px 16px;background:var(--bg2);border-radius:8px;font-size:0.82rem;color:var(--text-muted);text-align:center">No scheduled trades pending</div>`;
-        return `
+          const schPath = `${BOT_DIR}/scheduled-trades.json`;
+          let schList: any[] = [];
+          try { schList = JSON.parse(fs.readFileSync(schPath, "utf-8")); } catch {}
+          const active = schList.filter((s: any) => s.status === "pending");
+          if (active.length === 0) return `<div style="margin-top:16px;padding:12px 16px;background:var(--bg2);border-radius:8px;font-size:0.82rem;color:var(--text-muted);text-align:center">No scheduled trades pending</div>`;
+          return `
           <div style="margin-top:18px">
             <div style="font-size:0.72rem;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--text-muted);margin-bottom:8px">Pending Schedules (${active.length})</div>
             <div style="display:flex;flex-direction:column;gap:8px">
-              ${active.map((s) => `
+              ${active.map((s: any) => `
               <div style="display:flex;align-items:center;justify-content:space-between;background:var(--bg2);border-radius:9px;padding:10px 14px;gap:12px;flex-wrap:wrap">
                 <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
                   <span style="font-weight:800;font-size:0.88rem">${s.symbol}</span>
-                  <span style="font-size:0.75rem;padding:2px 7px;border-radius:4px;font-weight:700;background:${s.direction === 'CE' || s.direction === 'BUY' ? 'rgba(59,130,246,.15)' : 'rgba(239,68,68,.15)'};color:${s.direction === 'CE' || s.direction === 'BUY' ? '#60a5fa' : '#f87171'}">${s.direction}</span>
+                  <span style="font-size:0.75rem;padding:2px 7px;border-radius:4px;font-weight:700;background:${s.direction==='CE'||s.direction==='BUY'?'rgba(59,130,246,.15)':'rgba(239,68,68,.15)'};color:${s.direction==='CE'||s.direction==='BUY'?'#60a5fa':'#f87171'}">${s.direction}</span>
                   <span style="font-size:0.78rem;color:var(--text-muted)">Trigger ${s.triggerCondition} <strong style="color:var(--text)">${s.triggerPrice}</strong></span>
-                  ${s.triggerMode === 'indicator' ? `<span style="font-size:0.7rem;background:rgba(99,102,241,.15);color:#818cf8;padding:1px 6px;border-radius:4px;font-weight:700">${s.indicator || ''} ${s.indCondition || ''}</span>` : ''}
+                  ${s.triggerMode === 'indicator' ? `<span style="font-size:0.7rem;background:rgba(99,102,241,.15);color:#818cf8;padding:1px 6px;border-radius:4px;font-weight:700">${s.indicator||''} ${s.indCondition||''}</span>` : ''}
                   ${s.triggerMode === 'pick' ? `<span style="font-size:0.7rem;background:rgba(16,185,129,.15);color:#34d399;padding:1px 6px;border-radius:4px;font-weight:700">Daily Pick</span>` : ''}
                   ${s.triggerPrice ? `<span style="font-size:0.78rem;color:var(--text-muted)">@ <strong style="color:var(--text)">${s.triggerPrice}</strong></span>` : ''}
                   ${s.stopLossPoints ? `<span style="font-size:0.75rem;color:#f87171">SL ${s.stopLossPoints}pts</span>` : ""}
@@ -7143,7 +7104,7 @@ app.get("/paper-trade", featureGate("feature_paper_trade_bot", "Paper Trade"), a
               </div>`).join("")}
             </div>
           </div>`;
-    })() : ""}
+        })() : ""}
       </div>
 
 
@@ -7160,13 +7121,13 @@ app.get("/paper-trade", featureGate("feature_paper_trade_bot", "Paper Trade"), a
             <th style="padding:6px 10px;text-align:left;font-weight:700">Status</th>
           </tr></thead>
           <tbody>
-            ${[...botTrades].reverse().slice(0, 20).map((t) => `
+            ${[...botTrades].reverse().slice(0, 20).map((t: any) => `
             <tr style="border-top:1px solid var(--border)">
-              <td style="padding:7px 10px;color:var(--text-muted);font-size:0.78rem">${t.entryTime ? new Date(t.entryTime).toLocaleDateString("en-IN", { timeZone: "Asia/Kolkata", day: "2-digit", month: "short" }) : "—"}</td>
+              <td style="padding:7px 10px;color:var(--text-muted);font-size:0.78rem">${t.entryTime ? new Date(t.entryTime).toLocaleDateString("en-IN", {timeZone:"Asia/Kolkata",day:"2-digit",month:"short"}) : "—"}</td>
               <td style="padding:7px 10px;font-weight:700;font-size:0.78rem">${t.symbol || "—"}</td>
-              <td style="padding:7px 10px"><span style="font-size:.72rem;font-weight:700;padding:2px 7px;border-radius:4px;background:${(t.direction || '') === 'CE' ? 'rgba(59,130,246,.15)' : 'rgba(239,68,68,.15)'};color:${(t.direction || '') === 'CE' ? '#60a5fa' : '#f87171'}">${t.direction || "—"}</span></td>
-              <td style="padding:7px 10px;text-align:right;font-weight:700" class="${(t.pnl ?? 0) >= 0 ? 'mpt-green' : 'mpt-red'}">${(t.pnl ?? 0) >= 0 ? "+" : ""}₹${(t.pnl ?? 0).toFixed(0)}</td>
-              <td style="padding:7px 10px;font-size:0.76rem;color:var(--text-muted)">${t.status || "CLOSED"}</td>
+              <td style="padding:7px 10px"><span style="font-size:.72rem;font-weight:700;padding:2px 7px;border-radius:4px;background:${(t.direction||'')==='CE'?'rgba(59,130,246,.15)':'rgba(239,68,68,.15)'};color:${(t.direction||'')==='CE'?'#60a5fa':'#f87171'}">${t.direction || "—"}</span></td>
+              <td style="padding:7px 10px;text-align:right;font-weight:700" class="${(t.pnl??0)>=0?'mpt-green':'mpt-red'}">${(t.pnl??0)>=0?"+":""}₹${(t.pnl??0).toFixed(0)}</td>
+              <td style="padding:7px 10px;font-size:0.76rem;color:var(--text-muted)">${t.status||"CLOSED"}</td>
             </tr>`).join("")}
           </tbody>
         </table>
@@ -7523,189 +7484,195 @@ app.get("/paper-trade", featureGate("feature_paper_trade_bot", "Paper Trade"), a
 </body>
 </html>`);
 });
+
 // ── GET /my-paper-trade + /my-portfolio — Paper trading portfolio dashboard ───
-async function paperPortfolioPage(req, res) {
-    const userId = req.session.userId;
-    const userName = req.session.userName || "Trader";
-    // ── Mobile verification gate ────────────────────────────────────────────────
-    const otpRequired = (await (0, db_1.getSetting)("otp_required")) !== "false";
-    if (otpRequired) {
-        const uInfo = await (0, db_1.dbAll)("SELECT mobile_verified FROM users WHERE id=?", [userId]);
-        if (!uInfo[0]?.mobile_verified) {
-            res.redirect("/verify-mobile?next=/my-paper-trade");
-            return;
-        }
+async function paperPortfolioPage(req: Request, res: Response) {
+  const userId   = req.session.userId!;
+  const userName = req.session.userName || "Trader";
+
+  // ── Mobile verification gate ────────────────────────────────────────────────
+  const otpRequired = (await getSetting("otp_required")) !== "false";
+  if (otpRequired) {
+    const uInfo = await dbAll<{ mobile_verified: number }>(
+      "SELECT mobile_verified FROM users WHERE id=?", [userId]
+    );
+    if (!uInfo[0]?.mobile_verified) {
+      res.redirect("/verify-mobile?next=/my-paper-trade"); return;
     }
-    const isAdmin = req.session.userRole === "admin";
-    const BOT_DIR = "/home/ubuntu/trading-bot";
-    const [port, positions, trades, tradeCount, ptConfig, activeSub, allPicksForTrade] = await Promise.all([
-        (0, db_1.getPaperPortfolio)(userId),
-        (0, db_1.getPaperPositions)(userId),
-        (0, db_1.getPaperTrades)(userId, 60),
-        (0, db_1.countPaperTrades)(userId),
-        (0, db_1.getPaperTradeConfig)(userId),
-        (0, db_1.getActiveSubscription)(userId),
-        (0, db_1.getAllPicks)(),
-    ]);
-    // Admin-only: bot trades + scheduled trades
-    const adminBotTrades = isAdmin ? (() => { try {
-        return JSON.parse(fs_1.default.readFileSync(`${BOT_DIR}/trades.json`, "utf-8"));
-    }
-    catch {
-        return [];
-    } })() : [];
-    const adminBotClosed = adminBotTrades.filter((t) => (t.exitPrice ?? 0) > 0);
-    const adminScheduled = isAdmin ? (() => { try {
-        return JSON.parse(fs_1.default.readFileSync(`${BOT_DIR}/scheduled-trades.json`, "utf-8"));
-    }
-    catch {
-        return [];
-    } })() : [];
-    const adminSchPending = adminScheduled.filter((s) => s.status === "pending");
-    const adminSchTriggered = adminScheduled.filter((s) => s.status === "triggered");
-    const adminBotPnl = parseFloat(adminBotClosed.reduce((s, t) => s + (t.pnl ?? 0), 0).toFixed(2));
-    const adminBotWins = adminBotClosed.filter((t) => (t.pnl ?? 0) > 0).length;
-    // ── Credits ─────────────────────────────────────────────────────────────────
-    const freeLimit = parseInt(await (0, db_1.getSetting)("paper_free_limit") || "10", 10);
-    const isPremium = !!activeSub || req.session.userRole === "premium" || req.session.userRole === "admin";
-    const tradesLeft = isPremium ? null : Math.max(0, freeLimit - tradeCount);
-    const creditsOut = !isPremium && tradeCount >= freeLimit;
-    // Portfolio value: balance + current market value of positions
-    // (use avg_price as proxy since live prices may not all be in DB)
-    const dbPrices = positions.length
-        ? await (0, db_1.dbAll)(`SELECT symbol, price FROM prices WHERE symbol IN (${positions.map(() => "?").join(",")})`, positions.map(p => p.symbol))
-        : [];
-    const priceMap = {};
-    for (const r of dbPrices)
-        if (r.price != null)
-            priceMap[r.symbol] = r.price;
-    // ── Picks tracker — extend priceMap with picks symbols ─────────────────────
-    const pickSymbols = [...new Set([
-            ...allPicksForTrade.filter(p => !p.result || p.result === 'entry_triggered').map(p => p.stock_symbol),
-        ])].filter(s => !priceMap[s]);
-    if (pickSymbols.length > 0) {
-        const pickPrices = await (0, db_1.dbAll)(`SELECT symbol, price FROM prices WHERE symbol IN (${pickSymbols.map(() => "?").join(",")})`, pickSymbols);
-        for (const r of pickPrices)
-            if (r.price != null)
-                priceMap[r.symbol] = r.price;
-    }
-    // ── Picks tracker data ──────────────────────────────────────────────────────
-    const inPositionSymbols = new Set([
-        ...allPicksForTrade.filter(p => p.result === 'entry_triggered').map(p => p.stock_symbol.toUpperCase()),
-        ...positions.map(p => p.symbol.toUpperCase()),
-    ]);
-    const inPosition = allPicksForTrade.filter(p => p.result === 'entry_triggered');
-    const latestPendingDate = allPicksForTrade
-        .filter(p => !p.result)
-        .sort((a, b) => (b.published_at || '').localeCompare(a.published_at || ''))[0]
-        ?.published_at?.slice(0, 10);
-    const pendingOrders = latestPendingDate
-        ? allPicksForTrade.filter(p => !p.result && (p.published_at || '').slice(0, 10) === latestPendingDate)
-        : [];
-    const pendingNonDupe = pendingOrders.filter(p => !inPositionSymbols.has(p.stock_symbol.toUpperCase()));
-    const resolved = allPicksForTrade.filter(p => p.result === 'target_hit' || p.result === 'sl_hit');
-    const posRows = positions.map(p => {
-        const livePrice = priceMap[p.symbol] ?? p.avg_price;
-        const curVal = parseFloat((livePrice * p.qty).toFixed(2));
-        const pnl = parseFloat((curVal - p.invested).toFixed(2));
-        const pnlPct = parseFloat(((pnl / p.invested) * 100).toFixed(2));
-        return { ...p, livePrice, curVal, pnl, pnlPct };
-    });
-    const investedTotal = posRows.reduce((s, p) => s + p.invested, 0);
-    const curValTotal = posRows.reduce((s, p) => s + p.curVal, 0);
-    const portfolioValue = parseFloat((port.balance + curValTotal).toFixed(2));
-    const totalPnl = parseFloat((portfolioValue - 100000).toFixed(2));
-    const totalPnlPct = parseFloat(((totalPnl / 100000) * 100).toFixed(2));
-    const sellTrades = trades.filter(t => t.action === "SELL");
-    const realizedPnl = parseFloat(sellTrades.reduce((s, t) => s + (t.pnl ?? 0), 0).toFixed(2));
-    const wins = sellTrades.filter(t => (t.pnl ?? 0) > 0).length;
-    const losses = sellTrades.filter(t => (t.pnl ?? 0) <= 0).length;
-    const winRate = sellTrades.length > 0 ? ((wins / sellTrades.length) * 100).toFixed(1) : "—";
-    // Monthly P&L rollup (last 6 months)
-    const monthPnlMap = {};
-    for (const t of sellTrades) {
-        const mo = t.traded_at.slice(0, 7);
-        monthPnlMap[mo] = (monthPnlMap[mo] || 0) + (t.pnl ?? 0);
-    }
-    const monthKeys = Object.keys(monthPnlMap).sort().slice(-6);
-    const monthValues = monthKeys.map(k => parseFloat(monthPnlMap[k].toFixed(2)));
-    const monthLabels = monthKeys.map(k => {
-        const [y, m] = k.split("-");
-        return new Date(parseInt(y), parseInt(m) - 1, 1).toLocaleString("en-IN", { month: "short", year: "2-digit" });
-    });
-    // Equity curve from sell trades
-    let eq = 0;
-    const eqData = sellTrades.slice().reverse().map(t => { eq += t.pnl ?? 0; return parseFloat(eq.toFixed(2)); });
-    const eqLabels = sellTrades.slice().reverse().map(t => t.traded_at.slice(5, 10));
-    const pageTitle = req.session.userRole === "admin" ? "My Paper Trade" : "My Portfolio";
-    // ── Admin-only: pre-build HTML for scheduled + bot trade sections ──────────
-    let adminScheduledHtml = "";
-    let adminBotHtml = "";
-    if (isAdmin) {
-        // Scheduled trades
-        if (adminScheduled.length === 0) {
-            adminScheduledHtml = `<div class="mpt-empty">No scheduled trades yet. <a href="/paper-trade?tab=autobot" style="color:var(--accent)">Schedule one →</a></div>`;
-        }
-        else {
-            const rows = [...adminScheduled].reverse().map((s) => {
-                const statusColor = s.status === "triggered" ? "#10b981" : s.status === "cancelled" ? "#ef4444" : "#f59e0b";
-                const statusBg = s.status === "triggered" ? "#10b98122" : s.status === "cancelled" ? "#ef444422" : "#f59e0b22";
-                const statusLabel = s.status === "triggered" ? "✅ Triggered" : s.status === "cancelled" ? "❌ Cancelled" : "⏳ Pending";
-                let details = "";
-                if (s.triggerMode === "price")
-                    details = `${s.triggerCondition || ""} ₹${s.triggerPrice || "—"} · SL:${s.stopLossPoints || 0}pt · T:${s.targetPoints || 0}pt`;
-                else if (s.triggerMode === "pick")
-                    details = `Pick #${s.pickId || "—"} · SL:₹${s.stopLossPrice || 0} · T:₹${s.targetPrice || 0}`;
-                else if (s.triggerMode === "indicator")
-                    details = `${s.indicator || "—"} ${s.indCondition || ""} ${s.indTimeframe || ""}`;
-                const dirGreen = s.direction === "CE" || s.direction === "BUY" || s.direction === "LONG";
-                const cancelBtn = s.status === "pending"
-                    ? `<form method="POST" action="/paper-trade/cancel-schedule" style="display:inline"><input type="hidden" name="id" value="${s.id}"><button type="submit" style="background:#ef444415;color:#ef4444;border:1px solid #ef444455;border-radius:5px;padding:2px 10px;font-size:.76rem;cursor:pointer">Cancel</button></form>`
-                    : "";
-                return `<tr>
-          <td style="font-size:.72rem;text-transform:uppercase;font-weight:700;color:#a78bfa">${esc(s.triggerMode || "—")}</td>
-          <td style="font-weight:700">${esc(s.symbol || "—")}</td>
-          <td><span style="background:${dirGreen ? "#10b98122" : "#ef444422"};color:${dirGreen ? "#10b981" : "#ef4444"};border:1px solid ${dirGreen ? "#10b98155" : "#ef444455"};border-radius:4px;padding:2px 8px;font-size:.73rem;font-weight:700">${esc(s.direction || "—")}</span></td>
+  }
+
+  const isAdmin  = req.session.userRole === "admin";
+  const BOT_DIR  = "/home/ubuntu/trading-bot";
+
+  const [port, positions, trades, tradeCount, ptConfig, activeSub, allPicksForTrade] = await Promise.all([
+    getPaperPortfolio(userId),
+    getPaperPositions(userId),
+    getPaperTrades(userId, 60),
+    countPaperTrades(userId),
+    getPaperTradeConfig(userId),
+    getActiveSubscription(userId),
+    getAllPicks(),
+  ]);
+
+  // Admin-only: bot trades + scheduled trades
+  const adminBotTrades: any[] = isAdmin ? (() => { try { return JSON.parse(fs.readFileSync(`${BOT_DIR}/trades.json`, "utf-8")); } catch { return []; } })() : [];
+  const adminBotClosed = adminBotTrades.filter((t: any) => (t.exitPrice ?? 0) > 0);
+  const adminScheduled: any[] = isAdmin ? (() => { try { return JSON.parse(fs.readFileSync(`${BOT_DIR}/scheduled-trades.json`, "utf-8")); } catch { return []; } })() : [];
+  const adminSchPending   = adminScheduled.filter((s: any) => s.status === "pending");
+  const adminSchTriggered = adminScheduled.filter((s: any) => s.status === "triggered");
+  const adminBotPnl       = parseFloat(adminBotClosed.reduce((s: number, t: any) => s + (t.pnl ?? 0), 0).toFixed(2));
+  const adminBotWins      = adminBotClosed.filter((t: any) => (t.pnl ?? 0) > 0).length;
+
+  // ── Credits ─────────────────────────────────────────────────────────────────
+  const freeLimit  = parseInt(await getSetting("paper_free_limit") || "10", 10);
+  const isPremium  = !!activeSub || req.session.userRole === "premium" || req.session.userRole === "admin";
+  const tradesLeft = isPremium ? null : Math.max(0, freeLimit - tradeCount);
+  const creditsOut = !isPremium && tradeCount >= freeLimit;
+
+  // Portfolio value: balance + current market value of positions
+  // (use avg_price as proxy since live prices may not all be in DB)
+  const dbPrices = positions.length
+    ? await dbAll<{ symbol: string; price: number | null }>(
+        `SELECT symbol, price FROM prices WHERE symbol IN (${positions.map(() => "?").join(",")})`,
+        positions.map(p => p.symbol)
+      )
+    : [];
+  const priceMap: Record<string, number> = {};
+  for (const r of dbPrices) if (r.price != null) priceMap[r.symbol] = r.price;
+
+  // ── Picks tracker — extend priceMap with picks symbols ─────────────────────
+  const pickSymbols = [...new Set([
+    ...allPicksForTrade.filter(p => !p.result || p.result === 'entry_triggered').map(p => p.stock_symbol),
+  ])].filter(s => !priceMap[s]);
+  if (pickSymbols.length > 0) {
+    const pickPrices = await dbAll<{ symbol: string; price: number | null }>(
+      `SELECT symbol, price FROM prices WHERE symbol IN (${pickSymbols.map(() => "?").join(",")})`,
+      pickSymbols
+    );
+    for (const r of pickPrices) if (r.price != null) priceMap[r.symbol] = r.price;
+  }
+
+  // ── Picks tracker data ──────────────────────────────────────────────────────
+  const inPositionSymbols = new Set([
+    ...allPicksForTrade.filter(p => p.result === 'entry_triggered').map(p => p.stock_symbol.toUpperCase()),
+    ...positions.map(p => p.symbol.toUpperCase()),
+  ]);
+  const inPosition = allPicksForTrade.filter(p => p.result === 'entry_triggered');
+  const latestPendingDate = allPicksForTrade
+    .filter(p => !p.result)
+    .sort((a, b) => (b.published_at || '').localeCompare(a.published_at || ''))[0]
+    ?.published_at?.slice(0, 10);
+  const pendingOrders = latestPendingDate
+    ? allPicksForTrade.filter(p => !p.result && (p.published_at || '').slice(0, 10) === latestPendingDate)
+    : [];
+  const pendingNonDupe = pendingOrders.filter(p => !inPositionSymbols.has(p.stock_symbol.toUpperCase()));
+  const resolved = allPicksForTrade.filter(p => p.result === 'target_hit' || p.result === 'sl_hit');
+
+  const posRows = positions.map(p => {
+    const livePrice = priceMap[p.symbol] ?? p.avg_price;
+    const curVal    = parseFloat((livePrice * p.qty).toFixed(2));
+    const pnl       = parseFloat((curVal - p.invested).toFixed(2));
+    const pnlPct    = parseFloat(((pnl / p.invested) * 100).toFixed(2));
+    return { ...p, livePrice, curVal, pnl, pnlPct };
+  });
+
+  const investedTotal  = posRows.reduce((s, p) => s + p.invested, 0);
+  const curValTotal    = posRows.reduce((s, p) => s + p.curVal,   0);
+  const portfolioValue = parseFloat((port.balance + curValTotal).toFixed(2));
+  const totalPnl       = parseFloat((portfolioValue - 100000).toFixed(2));
+  const totalPnlPct    = parseFloat(((totalPnl / 100000) * 100).toFixed(2));
+
+  const sellTrades     = trades.filter(t => t.action === "SELL");
+  const realizedPnl    = parseFloat(sellTrades.reduce((s, t) => s + (t.pnl ?? 0), 0).toFixed(2));
+  const wins           = sellTrades.filter(t => (t.pnl ?? 0) > 0).length;
+  const losses         = sellTrades.filter(t => (t.pnl ?? 0) <= 0).length;
+  const winRate        = sellTrades.length > 0 ? ((wins / sellTrades.length) * 100).toFixed(1) : "—";
+
+  // Monthly P&L rollup (last 6 months)
+  const monthPnlMap: Record<string, number> = {};
+  for (const t of sellTrades) {
+    const mo = t.traded_at.slice(0, 7);
+    monthPnlMap[mo] = (monthPnlMap[mo] || 0) + (t.pnl ?? 0);
+  }
+  const monthKeys   = Object.keys(monthPnlMap).sort().slice(-6);
+  const monthValues = monthKeys.map(k => parseFloat(monthPnlMap[k].toFixed(2)));
+  const monthLabels = monthKeys.map(k => {
+    const [y, m] = k.split("-");
+    return new Date(parseInt(y), parseInt(m) - 1, 1).toLocaleString("en-IN", { month: "short", year: "2-digit" });
+  });
+
+  // Equity curve from sell trades
+  let eq = 0;
+  const eqData   = sellTrades.slice().reverse().map(t => { eq += t.pnl ?? 0; return parseFloat(eq.toFixed(2)); });
+  const eqLabels = sellTrades.slice().reverse().map(t => t.traded_at.slice(5, 10));
+
+  const pageTitle = req.session.userRole === "admin" ? "My Paper Trade" : "My Portfolio";
+
+  // ── Admin-only: pre-build HTML for scheduled + bot trade sections ──────────
+  let adminScheduledHtml = "";
+  let adminBotHtml = "";
+  if (isAdmin) {
+    // Scheduled trades
+    if (adminScheduled.length === 0) {
+      adminScheduledHtml = `<div class="mpt-empty">No scheduled trades yet. <a href="/paper-trade?tab=autobot" style="color:var(--accent)">Schedule one →</a></div>`;
+    } else {
+      const rows = [...adminScheduled].reverse().map((s: any) => {
+        const statusColor = s.status === "triggered" ? "#10b981" : s.status === "cancelled" ? "#ef4444" : "#f59e0b";
+        const statusBg    = s.status === "triggered" ? "#10b98122" : s.status === "cancelled" ? "#ef444422" : "#f59e0b22";
+        const statusLabel = s.status === "triggered" ? "✅ Triggered" : s.status === "cancelled" ? "❌ Cancelled" : "⏳ Pending";
+        let details = "";
+        if (s.triggerMode === "price")     details = `${s.triggerCondition || ""} ₹${s.triggerPrice || "—"} · SL:${s.stopLossPoints||0}pt · T:${s.targetPoints||0}pt`;
+        else if (s.triggerMode === "pick") details = `Pick #${s.pickId||"—"} · SL:₹${s.stopLossPrice||0} · T:₹${s.targetPrice||0}`;
+        else if (s.triggerMode === "indicator") details = `${s.indicator||"—"} ${s.indCondition||""} ${s.indTimeframe||""}`;
+        const dirGreen = s.direction === "CE" || s.direction === "BUY" || s.direction === "LONG";
+        const cancelBtn = s.status === "pending"
+          ? `<form method="POST" action="/paper-trade/cancel-schedule" style="display:inline"><input type="hidden" name="id" value="${s.id}"><button type="submit" style="background:#ef444415;color:#ef4444;border:1px solid #ef444455;border-radius:5px;padding:2px 10px;font-size:.76rem;cursor:pointer">Cancel</button></form>`
+          : "";
+        return `<tr>
+          <td style="font-size:.72rem;text-transform:uppercase;font-weight:700;color:#a78bfa">${esc(s.triggerMode||"—")}</td>
+          <td style="font-weight:700">${esc(s.symbol||"—")}</td>
+          <td><span style="background:${dirGreen?"#10b98122":"#ef444422"};color:${dirGreen?"#10b981":"#ef4444"};border:1px solid ${dirGreen?"#10b98155":"#ef444455"};border-radius:4px;padding:2px 8px;font-size:.73rem;font-weight:700">${esc(s.direction||"—")}</span></td>
           <td style="font-size:.78rem;color:var(--text-muted)">${esc(details)}</td>
           <td><span style="background:${statusBg};color:${statusColor};border:1px solid ${statusColor}55;border-radius:4px;padding:2px 8px;font-size:.73rem;font-weight:700">${statusLabel}</span></td>
-          <td style="font-size:.76rem;color:var(--text-muted)">${s.createdAt ? new Date(s.createdAt).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "2-digit" }) : "—"}</td>
-          <td style="font-size:.76rem;color:var(--text-muted);max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(s.note || "")}</td>
+          <td style="font-size:.76rem;color:var(--text-muted)">${s.createdAt ? new Date(s.createdAt).toLocaleDateString("en-IN",{day:"2-digit",month:"short",year:"2-digit"}) : "—"}</td>
+          <td style="font-size:.76rem;color:var(--text-muted);max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(s.note||"")}</td>
           <td>${cancelBtn}</td>
         </tr>`;
-            }).join("");
-            adminScheduledHtml = `<div class="mpt-tbl-wrap"><table class="mpt-history-table">
+      }).join("");
+      adminScheduledHtml = `<div class="mpt-tbl-wrap"><table class="mpt-history-table">
         <thead><tr><th>Mode</th><th>Symbol</th><th>Direction</th><th>Details</th><th>Status</th><th>Created</th><th>Note</th><th></th></tr></thead>
         <tbody>${rows}</tbody></table></div>`;
-        }
-        // Bot trades
-        if (adminBotClosed.length === 0) {
-            adminBotHtml = `<div class="mpt-empty">No bot trades yet · <a href="/signals" style="color:var(--accent)">View signals →</a></div>`;
-        }
-        else {
-            const rows = [...adminBotClosed].reverse().slice(0, 150).map((t) => {
-                const dStr = t.exitTime ? new Date(t.exitTime).toLocaleDateString("en-IN", { timeZone: "Asia/Kolkata", day: "2-digit", month: "short", year: "2-digit" }) : "—";
-                const durMs = t.exitTime && t.entryTime ? new Date(t.exitTime).getTime() - new Date(t.entryTime).getTime() : 0;
-                const durStr = durMs > 0 ? (durMs < 3600000 ? Math.round(durMs / 60000) + "m" : (durMs / 3600000).toFixed(1) + "h") : "—";
-                const isPos = (t.pnl ?? 0) >= 0;
-                const dirCE = t.direction === "CE";
-                return `<tr>
+    }
+
+    // Bot trades
+    if (adminBotClosed.length === 0) {
+      adminBotHtml = `<div class="mpt-empty">No bot trades yet · <a href="/signals" style="color:var(--accent)">View signals →</a></div>`;
+    } else {
+      const rows = [...adminBotClosed].reverse().slice(0, 150).map((t: any) => {
+        const dStr  = t.exitTime ? new Date(t.exitTime).toLocaleDateString("en-IN",{timeZone:"Asia/Kolkata",day:"2-digit",month:"short",year:"2-digit"}) : "—";
+        const durMs = t.exitTime && t.entryTime ? new Date(t.exitTime).getTime() - new Date(t.entryTime).getTime() : 0;
+        const durStr = durMs > 0 ? (durMs < 3600000 ? Math.round(durMs/60000)+"m" : (durMs/3600000).toFixed(1)+"h") : "—";
+        const isPos = (t.pnl ?? 0) >= 0;
+        const dirCE = t.direction === "CE";
+        return `<tr>
           <td style="font-size:.8rem;color:var(--text-muted)">${dStr}</td>
-          <td style="font-weight:700">${esc(t.symbol || "—")}</td>
-          <td><span style="background:${dirCE ? "#3b82f622" : "#ef444422"};color:${dirCE ? "#3b82f6" : "#ef4444"};border:1px solid ${dirCE ? "#3b82f655" : "#ef444455"};border-radius:4px;padding:2px 8px;font-size:.73rem;font-weight:700">${esc(t.direction || "—")}</span></td>
-          <td>${(t.entryPrice ?? 0) > 0 ? "₹" + (t.entryPrice ?? 0).toFixed(1) : "—"}</td>
-          <td>${(t.exitPrice ?? 0) > 0 ? "₹" + (t.exitPrice ?? 0).toFixed(1) : "—"}</td>
-          <td>${t.qty || "—"}</td>
-          <td class="${isPos ? "mpt-green" : "mpt-red"}" style="font-weight:700">${isPos ? "+" : ""}₹${(t.pnl ?? 0).toLocaleString("en-IN", { maximumFractionDigits: 0 })}</td>
+          <td style="font-weight:700">${esc(t.symbol||"—")}</td>
+          <td><span style="background:${dirCE?"#3b82f622":"#ef444422"};color:${dirCE?"#3b82f6":"#ef4444"};border:1px solid ${dirCE?"#3b82f655":"#ef444455"};border-radius:4px;padding:2px 8px;font-size:.73rem;font-weight:700">${esc(t.direction||"—")}</span></td>
+          <td>${(t.entryPrice??0)>0?"₹"+(t.entryPrice??0).toFixed(1):"—"}</td>
+          <td>${(t.exitPrice??0)>0?"₹"+(t.exitPrice??0).toFixed(1):"—"}</td>
+          <td>${t.qty||"—"}</td>
+          <td class="${isPos?"mpt-green":"mpt-red"}" style="font-weight:700">${isPos?"+":""}₹${(t.pnl??0).toLocaleString("en-IN",{maximumFractionDigits:0})}</td>
           <td style="font-size:.78rem;color:var(--text-muted)">${durStr}</td>
-          <td style="font-size:.76rem;color:var(--text-muted)">${esc(t.exitReason || "—")}</td>
+          <td style="font-size:.76rem;color:var(--text-muted)">${esc(t.exitReason||"—")}</td>
         </tr>`;
-            }).join("");
-            adminBotHtml = `<div class="mpt-tbl-wrap"><table class="mpt-history-table">
+      }).join("");
+      adminBotHtml = `<div class="mpt-tbl-wrap"><table class="mpt-history-table">
         <thead><tr><th>Date</th><th>Symbol</th><th>Direction</th><th>Entry ₹</th><th>Exit ₹</th><th>Qty</th><th>P&L</th><th>Duration</th><th>Exit Reason</th></tr></thead>
         <tbody>${rows}</tbody></table></div>`;
-        }
     }
-    res.send(`<!DOCTYPE html>
+  }
+
+  res.send(`<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
@@ -7815,18 +7782,19 @@ async function paperPortfolioPage(req, res) {
     </div>
 
     <!-- FLASH MESSAGE -->
-    ${req.query.msg ? `<div class="mpt-msg mpt-msg-ok">✅ ${esc(req.query.msg)}</div>` : ""}
-    ${req.query.err ? `<div class="mpt-msg mpt-msg-err">❌ ${esc(req.query.err)}</div>` : ""}
+    ${req.query.msg ? `<div class="mpt-msg mpt-msg-ok">✅ ${esc(req.query.msg as string)}</div>` : ""}
+    ${req.query.err ? `<div class="mpt-msg mpt-msg-err">❌ ${esc(req.query.err as string)}</div>` : ""}
 
     <!-- CREDITS & MARKET HOURS BAR -->
     <div class="mpt-credits-bar ${creditsOut ? 'mpt-credits-out' : ''}">
       <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap">
         ${isPremium
-        ? `<span class="mpt-credits-prem">👑 Premium — Unlimited trades</span>`
-        : creditsOut
+          ? `<span class="mpt-credits-prem">👑 Premium — Unlimited trades</span>`
+          : creditsOut
             ? `<span style="color:#ef4444;font-weight:700">⚠️ Free trades used up (${tradeCount}/${freeLimit}) — <a href="/my-paper-trade/upgrade" style="color:#ef4444">Upgrade to Premium →</a></span>`
             : `<span class="mpt-credits-free">🎫 Free: ${tradesLeft} of ${freeLimit} trades left</span>
-               <a href="/my-paper-trade/upgrade" style="font-size:0.8rem;color:var(--text-muted)">Upgrade for unlimited →</a>`}
+               <a href="/my-paper-trade/upgrade" style="font-size:0.8rem;color:var(--text-muted)">Upgrade for unlimited →</a>`
+        }
       </div>
       <div style="display:flex;align-items:center;gap:10px">
         <span class="mpt-mh-badge ${isMarketHours() ? 'mpt-mh-open' : 'mpt-mh-closed'}">${isMarketHours() ? '🟢 Market Open' : '🔴 Market Closed'}</span>
@@ -7874,12 +7842,12 @@ async function paperPortfolioPage(req, res) {
           <thead><tr><th>Symbol</th><th>Direction</th><th>Qty</th><th>Entry Price</th><th>Target</th><th>SL</th><th>CMP</th><th>P&amp;L</th><th>Entry At</th></tr></thead>
           <tbody id="mpt-inpos-body">
             ${inPosition.map(p => {
-            const lp = priceMap[p.stock_symbol];
-            const ep = p.entry_price ?? ((p.entry_low + p.entry_high) / 2);
-            const mult = (p.direction === 'BULLISH' || p.direction === 'LONG') ? 1 : -1;
-            const pnlAmt = lp && ep ? parseFloat(((lp - ep) * mult).toFixed(2)) : null;
-            const pnlPct = lp && ep ? parseFloat((((lp - ep) / ep) * 100 * mult).toFixed(2)) : null;
-            return `<tr>
+              const lp = priceMap[p.stock_symbol];
+              const ep = p.entry_price ?? ((p.entry_low + p.entry_high) / 2);
+              const mult = (p.direction === 'BULLISH' || p.direction === 'LONG') ? 1 : -1;
+              const pnlAmt = lp && ep ? parseFloat(((lp - ep) * mult).toFixed(2)) : null;
+              const pnlPct = lp && ep ? parseFloat((((lp - ep) / ep) * 100 * mult).toFixed(2)) : null;
+              return `<tr>
                 <td><strong style="color:var(--accent)">${esc(p.stock_symbol)}</strong>${p.company_name ? `<br><span class="dim" style="font-size:.64rem">${esc(p.company_name)}</span>` : ''}</td>
                 <td><span class="${p.direction === 'BULLISH' ? 'pb-bullish' : 'pb-bearish'}">${p.direction}</span></td>
                 <td style="font-weight:600;color:var(--text-muted)">1</td>
@@ -7888,11 +7856,12 @@ async function paperPortfolioPage(req, res) {
                 <td style="color:#ef4444;font-size:.74rem">${p.stop_loss ? '₹' + p.stop_loss : '—'}</td>
                 <td style="font-weight:700;color:${lp ? '#3b82f6' : 'var(--text-muted)'}">${lp ? '₹' + lp.toFixed(2) : '—'}</td>
                 <td class="${pnlAmt === null ? '' : pnlAmt >= 0 ? 'mpt-green' : 'mpt-red'}" style="font-weight:700">${pnlAmt === null ? '—' : `<span style="display:block">${pnlAmt >= 0 ? '+' : ''}₹${Math.abs(pnlAmt).toFixed(2)}</span><span style="font-size:.72rem;opacity:.85">${pnlPct !== null ? (pnlPct >= 0 ? '+' : '') + pnlPct + '%' : ''}</span>`}</td>
-                <td class="dim" style="font-size:.72rem">${p.entry_at ? p.entry_at.slice(0, 16).replace('T', ' ') : '—'}</td>
+                <td class="dim" style="font-size:.72rem">${p.entry_at ? p.entry_at.slice(0,16).replace('T',' ') : '—'}</td>
               </tr>`;
-        }).join('')}
+            }).join('')}
           </tbody>
-        </table></div>`}
+        </table></div>`
+      }
     </div>
 
     <!-- Pending panel -->
@@ -7903,10 +7872,10 @@ async function paperPortfolioPage(req, res) {
           <thead><tr><th>Symbol</th><th>Type</th><th>Direction</th><th>Qty</th><th>Entry Zone</th><th>Target</th><th>SL</th><th>CMP</th></tr></thead>
           <tbody id="mpt-picks-body">
             ${pendingNonDupe.map(p => {
-            const lp = priceMap[p.stock_symbol];
-            const inZone = lp && lp >= p.entry_low && lp <= p.entry_high;
-            const aboveZone = lp && lp > p.entry_high;
-            return `<tr>
+              const lp = priceMap[p.stock_symbol];
+              const inZone = lp && lp >= p.entry_low && lp <= p.entry_high;
+              const aboveZone = lp && lp > p.entry_high;
+              return `<tr>
                 <td><strong>${esc(p.stock_symbol)}</strong>${p.company_name ? `<br><span class="dim" style="font-size:.64rem">${esc(p.company_name)}</span>` : ''}</td>
                 <td style="font-size:.72rem">${(p.pick_type || 'intraday').toUpperCase()}</td>
                 <td><span class="${p.direction === 'BULLISH' ? 'pb-bullish' : 'pb-bearish'}">${p.direction}</span></td>
@@ -7918,9 +7887,10 @@ async function paperPortfolioPage(req, res) {
                   ${lp ? '₹' + lp.toFixed(2) + (inZone ? ' 🔔' : '') : '—'}
                 </td>
               </tr>`;
-        }).join('')}
+            }).join('')}
           </tbody>
-        </table></div>`}
+        </table></div>`
+      }
     </div>
 
     <!-- Executed panel -->
@@ -7931,13 +7901,13 @@ async function paperPortfolioPage(req, res) {
           <thead><tr><th>Symbol</th><th>Direction</th><th>Qty</th><th>Result</th><th>Entry</th><th>Result Price</th><th>P&amp;L</th><th>Date</th></tr></thead>
           <tbody>
             ${resolved.slice(0, 30).map(p => {
-            const isWin = p.result === 'target_hit';
-            const ep = p.entry_price;
-            const rp = p.result_price;
-            const mult = (p.direction === 'BULLISH' || p.direction === 'LONG') ? 1 : -1;
-            const pnlAmt = ep && rp ? parseFloat(((rp - ep) * mult).toFixed(2)) : null;
-            const pnlPct = ep && rp ? parseFloat((((rp - ep) / ep) * 100 * mult).toFixed(2)) : null;
-            return `<tr>
+              const isWin = p.result === 'target_hit';
+              const ep = p.entry_price;
+              const rp = p.result_price;
+              const mult = (p.direction === 'BULLISH' || p.direction === 'LONG') ? 1 : -1;
+              const pnlAmt = ep && rp ? parseFloat(((rp - ep) * mult).toFixed(2)) : null;
+              const pnlPct = ep && rp ? parseFloat((((rp - ep) / ep) * 100 * mult).toFixed(2)) : null;
+              return `<tr>
                 <td><strong style="color:var(--accent)">${esc(p.stock_symbol)}</strong>${p.company_name ? `<br><span class="dim" style="font-size:.64rem">${esc(p.company_name)}</span>` : ''}</td>
                 <td><span class="${p.direction === 'BULLISH' ? 'pb-bullish' : 'pb-bearish'}">${p.direction}</span></td>
                 <td style="font-weight:600;color:var(--text-muted)">1</td>
@@ -7945,11 +7915,12 @@ async function paperPortfolioPage(req, res) {
                 <td class="dim" style="font-size:.74rem">${ep ? '₹' + ep : '—'}</td>
                 <td style="font-weight:700">${rp ? '₹' + rp : '—'}</td>
                 <td class="${pnlAmt === null ? '' : pnlAmt >= 0 ? 'mpt-green' : 'mpt-red'}" style="font-weight:700">${pnlAmt === null ? '—' : `<span style="display:block">${pnlAmt >= 0 ? '+' : ''}₹${Math.abs(pnlAmt).toFixed(2)}</span><span style="font-size:.72rem;opacity:.85">${pnlPct !== null ? (pnlPct >= 0 ? '+' : '') + pnlPct + '%' : ''}</span>`}</td>
-                <td class="dim" style="font-size:.72rem">${p.result_at ? p.result_at.slice(0, 10) : '—'}</td>
+                <td class="dim" style="font-size:.72rem">${p.result_at ? p.result_at.slice(0,10) : '—'}</td>
               </tr>`;
-        }).join('')}
+            }).join('')}
           </tbody>
-        </table></div>`}
+        </table></div>`
+      }
     </div>
 
     <!-- Monthly P&L chart -->
@@ -7991,8 +7962,8 @@ async function paperPortfolioPage(req, res) {
     <!-- OPEN POSITIONS -->
     <div class="mpt-section">Open Positions (${posRows.length})</div>
     ${posRows.length === 0
-        ? `<div class="mpt-empty">No open positions yet. <a href="/paper-trade" style="color:var(--accent)">Place your first trade →</a></div>`
-        : `<div class="mpt-tbl-wrap"><table class="mpt-pos-table">
+      ? `<div class="mpt-empty">No open positions yet. <a href="/paper-trade" style="color:var(--accent)">Place your first trade →</a></div>`
+      : `<div class="mpt-tbl-wrap"><table class="mpt-pos-table">
           <thead><tr>
             <th>Symbol</th><th>Company</th><th>Type</th><th>Qty</th>
             <th>Avg Price</th><th>Invested</th><th>Live Price</th>
@@ -8033,19 +8004,19 @@ async function paperPortfolioPage(req, res) {
     <!-- TRADE HISTORY -->
     <div class="mpt-section">Trade History (${trades.length})</div>
     ${trades.length === 0
-        ? `<div class="mpt-empty">No trades yet. <a href="/paper-trade" style="color:var(--accent)">Place your first trade →</a></div>`
-        : `<div class="mpt-tbl-wrap"><table class="mpt-history-table">
+      ? `<div class="mpt-empty">No trades yet. <a href="/paper-trade" style="color:var(--accent)">Place your first trade →</a></div>`
+      : `<div class="mpt-tbl-wrap"><table class="mpt-history-table">
           <thead><tr>
             <th>Date/Time</th><th>Symbol</th><th>Type</th><th>Action</th><th>Qty</th>
             <th>Price</th><th>Total</th><th>P&L</th><th>P&L%</th><th>Balance After</th>
           </tr></thead>
           <tbody>
             ${trades.map(t => {
-            const isPos = (t.pnl ?? 0) >= 0;
-            return `<tr>
+              const isPos = (t.pnl ?? 0) >= 0;
+              return `<tr>
                 <td style="font-size:0.82rem;color:var(--text-muted)">${t.traded_at.slice(0, 16).replace("T", " ")}</td>
                 <td><a href="/stock/${t.symbol}" class="mpt-sym">${t.symbol}</a></td>
-                <td><span class="${(t.trade_type || 'INTRADAY') === 'HOLDING' ? 'mpt-type-hold' : 'mpt-type-intra'}">${(t.trade_type || 'INTRADAY') === 'HOLDING' ? 'HOLD' : 'INTRA'}</span></td>
+                <td><span class="${(t.trade_type||'INTRADAY') === 'HOLDING' ? 'mpt-type-hold' : 'mpt-type-intra'}">${(t.trade_type||'INTRADAY') === 'HOLDING' ? 'HOLD' : 'INTRA'}</span></td>
                 <td><span class="mpt-action-${t.action.toLowerCase()}">${t.action}</span></td>
                 <td>${t.qty}</td>
                 <td>₹${t.price.toFixed(2)}</td>
@@ -8054,7 +8025,7 @@ async function paperPortfolioPage(req, res) {
                 <td class="${t.pnl_pct != null ? ((t.pnl_pct ?? 0) >= 0 ? "mpt-green" : "mpt-red") : ""}">${t.pnl_pct != null ? ((t.pnl_pct ?? 0) >= 0 ? "+" : "") + t.pnl_pct + "%" : "—"}</td>
                 <td>₹${t.balance_after.toLocaleString("en-IN", { maximumFractionDigits: 0 })}</td>
               </tr>`;
-        }).join("")}
+            }).join("")}
           </tbody>
         </table>
       </div>`}
@@ -8077,7 +8048,7 @@ async function paperPortfolioPage(req, res) {
 
     <!-- ── ADMIN: BOT TRADE HISTORY ──────────────────────────────────────── -->
     <div class="mpt-section" style="margin-top:32px">🤖 Auto Bot Trade History (${adminBotClosed.length})
-      <span style="font-size:.72rem;font-weight:400;margin-left:10px;color:${adminBotPnl >= 0 ? "#10b981" : "#ef4444"}">${adminBotPnl >= 0 ? "+" : ""}₹${Math.abs(adminBotPnl).toLocaleString("en-IN", { maximumFractionDigits: 0 })} total · ${adminBotWins}W / ${adminBotClosed.length - adminBotWins}L</span>
+      <span style="font-size:.72rem;font-weight:400;margin-left:10px;color:${adminBotPnl >= 0 ? "#10b981" : "#ef4444"}">${adminBotPnl >= 0 ? "+" : ""}₹${Math.abs(adminBotPnl).toLocaleString("en-IN",{maximumFractionDigits:0})} total · ${adminBotWins}W / ${adminBotClosed.length - adminBotWins}L</span>
     </div>
     ${adminBotHtml}
     ` : ""}
@@ -8150,399 +8121,364 @@ async function paperPortfolioPage(req, res) {
 </body>
 </html>`);
 }
+
 // ── POST /paper-trade/bot-config — admin saves bot user-settings.json ──────────
-app.post("/paper-trade/bot-config", requireAdmin, async (req, res) => {
-    try {
-        const BOT_DIR = "/home/ubuntu/trading-bot";
-        const settingsPath = `${BOT_DIR}/user-settings.json`;
-        let existing = {};
-        try {
-            existing = JSON.parse(fs_1.default.readFileSync(settingsPath, "utf-8"));
-        }
-        catch { }
-        const q = req.body;
-        existing.mode = q.mode === "LIVE" ? "LIVE" : "PAPER";
-        existing.quantity = Math.max(1, parseInt(q.quantity) || 30);
-        existing.risk = {
-            ...existing.risk,
-            maxDailyLossPoints: Math.max(1, parseInt(q.maxDailyLossPoints) || 100),
-            maxTradesPerDay: Math.max(1, parseInt(q.maxTradesPerDay) || 5),
-            dailyLossCap: Math.max(1, parseInt(q.dailyLossCap) || 200),
-        };
-        existing.tradeManagement = {
-            ...existing.tradeManagement,
-            stopLossPoints: Math.max(1, parseInt(q.stopLossPoints) || 100),
-            targetPoints: Math.max(0, parseInt(q.targetPoints) || 0),
-        };
-        existing.optionSelection = {
-            ...existing.optionSelection,
-            minPremium: Math.max(1, parseInt(q.minPremium) || 450),
-            maxPremium: Math.max(1, parseInt(q.maxPremium) || 600),
-        };
-        fs_1.default.writeFileSync(settingsPath, JSON.stringify(existing, null, 2));
-        res.redirect("/paper-trade?tab=autobot&msg=Bot+config+saved+successfully");
-    }
-    catch (e) {
-        res.redirect("/paper-trade?tab=autobot&err=Failed+to+save+config:+" + encodeURIComponent(e.message));
-    }
+app.post("/paper-trade/bot-config", requireAdmin, async (req: Request, res: Response) => {
+  try {
+    const BOT_DIR = "/home/ubuntu/trading-bot";
+    const settingsPath = `${BOT_DIR}/user-settings.json`;
+    let existing: any = {};
+    try { existing = JSON.parse(fs.readFileSync(settingsPath, "utf-8")); } catch {}
+    const q = req.body;
+    existing.mode     = q.mode === "LIVE" ? "LIVE" : "PAPER";
+    existing.quantity = Math.max(1, parseInt(q.quantity) || 30);
+    existing.risk = {
+      ...existing.risk,
+      maxDailyLossPoints: Math.max(1, parseInt(q.maxDailyLossPoints) || 100),
+      maxTradesPerDay:    Math.max(1, parseInt(q.maxTradesPerDay) || 5),
+      dailyLossCap:       Math.max(1, parseInt(q.dailyLossCap) || 200),
+    };
+    existing.tradeManagement = {
+      ...existing.tradeManagement,
+      stopLossPoints: Math.max(1, parseInt(q.stopLossPoints) || 100),
+      targetPoints:   Math.max(0, parseInt(q.targetPoints) || 0),
+    };
+    existing.optionSelection = {
+      ...existing.optionSelection,
+      minPremium: Math.max(1, parseInt(q.minPremium) || 450),
+      maxPremium: Math.max(1, parseInt(q.maxPremium) || 600),
+    };
+    fs.writeFileSync(settingsPath, JSON.stringify(existing, null, 2));
+    res.redirect("/paper-trade?tab=autobot&msg=Bot+config+saved+successfully");
+  } catch (e: any) {
+    res.redirect("/paper-trade?tab=autobot&err=Failed+to+save+config:+" + encodeURIComponent(e.message));
+  }
 });
+
 // ── POST /paper-trade/schedule-trade — admin adds a scheduled/conditional trade ─
-app.post("/paper-trade/schedule-trade", requireAuth, async (req, res) => {
-    try {
-        const BOT_DIR = "/home/ubuntu/trading-bot";
-        const schPath = `${BOT_DIR}/scheduled-trades.json`;
-        let list = [];
-        try {
-            list = JSON.parse(fs_1.default.readFileSync(schPath, "utf-8"));
-        }
-        catch { }
-        const q = req.body;
-        const mode = q.triggerMode || "price";
-        const id = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
-        let entry = { id, triggerMode: mode, status: "pending", createdAt: new Date().toISOString() };
-        if (mode === "price") {
-            const symbol = q.symbol === "__custom__" ? (q.symbolCustom || "").toUpperCase().trim() : q.symbol;
-            if (!symbol)
-                return res.redirect("/paper-trade?tab=autobot&err=Symbol+is+required");
-            const triggerPrice = parseFloat(q.triggerPrice);
-            if (!triggerPrice || triggerPrice <= 0)
-                return res.redirect("/paper-trade?tab=autobot&err=Invalid+trigger+price");
-            Object.assign(entry, {
-                symbol, tradeType: q.tradeType === "EQUITY" ? "EQUITY" : "OPTIONS",
-                direction: q.direction,
-                triggerPrice, triggerCondition: ["above", "below", "touch"].includes(q.triggerCondition) ? q.triggerCondition : "above",
-                stopLossPoints: Math.max(1, parseInt(q.stopLossPoints) || 50),
-                targetPoints: Math.max(0, parseInt(q.targetPoints) || 0),
-                quantity: Math.max(0, parseInt(q.quantity) || 0),
-            });
-            if (q.expiryDate)
-                entry.expiryDate = q.expiryDate;
-            if (q.note?.trim())
-                entry.note = q.note.trim().slice(0, 80);
-        }
-        else if (mode === "pick") {
-            const pickId = parseInt(q.pickId);
-            if (!pickId)
-                return res.redirect("/paper-trade?tab=autobot&err=Select+a+pick");
-            const sym = (q.pickSymbol || "").toUpperCase().trim();
-            if (!sym)
-                return res.redirect("/paper-trade?tab=autobot&err=Pick+symbol+missing");
-            Object.assign(entry, {
-                symbol: sym, tradeType: "EQUITY",
-                direction: q.pickDirection || "LONG",
-                pickId,
-                stopLossPrice: parseFloat(q.pickStopLoss) || 0,
-                targetPrice: parseFloat(q.pickTarget) || 0,
-                quantity: Math.max(0, parseInt(q.pickQty) || 0),
-            });
-            if (q.pickNote?.trim())
-                entry.note = q.pickNote.trim().slice(0, 80);
-        }
-        else if (mode === "indicator") {
-            const sym = (q.indSymbol === "__custom__" ? "" : q.indSymbol || "").toUpperCase().trim();
-            if (!sym)
-                return res.redirect("/paper-trade?tab=autobot&err=Symbol+is+required");
-            const validIndicators = ["RSI", "MACD", "EMA_CROSS", "VWAP", "BB", "SUPERTREND", "STOCH"];
-            Object.assign(entry, {
-                symbol: sym, tradeType: q.indTradeType === "EQUITY" ? "EQUITY" : "OPTIONS",
-                indicator: validIndicators.includes(q.indicator) ? q.indicator : "RSI",
-                indCondition: q.indCondition === "SELL" ? "SELL" : "BUY",
-                indTimeframe: q.indTimeframe || "5m",
-                rsiPeriod: parseInt(q.rsiPeriod) || 14,
-                rsiLevel: parseInt(q.rsiLevel) || 30,
-                emaFast: parseInt(q.emaFast) || 9,
-                emaSlow: parseInt(q.emaSlow) || 21,
-                stopLossPoints: Math.max(1, parseInt(q.indStopLoss) || 50),
-                targetPoints: Math.max(0, parseInt(q.indTarget) || 0),
-                quantity: Math.max(0, parseInt(q.indQty) || 0),
-                maxTriggers: Math.max(0, parseInt(q.indMaxTriggers) || 1),
-                triggeredCount: 0,
-            });
-            if (q.indNote?.trim())
-                entry.note = q.indNote.trim().slice(0, 80);
-        }
-        list.push(entry);
-        fs_1.default.writeFileSync(schPath, JSON.stringify(list, null, 2));
-        res.redirect("/paper-trade?tab=autobot&msg=Trade+scheduled+successfully");
+app.post("/paper-trade/schedule-trade", requireAuth, async (req: Request, res: Response) => {
+  try {
+    const BOT_DIR = "/home/ubuntu/trading-bot";
+    const schPath = `${BOT_DIR}/scheduled-trades.json`;
+    let list: any[] = [];
+    try { list = JSON.parse(fs.readFileSync(schPath, "utf-8")); } catch {}
+    const q = req.body;
+    const mode = q.triggerMode || "price";
+    const id = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+    let entry: any = { id, triggerMode: mode, status: "pending", createdAt: new Date().toISOString() };
+
+    if (mode === "price") {
+      const symbol = q.symbol === "__custom__" ? (q.symbolCustom || "").toUpperCase().trim() : q.symbol;
+      if (!symbol) return res.redirect("/paper-trade?tab=autobot&err=Symbol+is+required");
+      const triggerPrice = parseFloat(q.triggerPrice);
+      if (!triggerPrice || triggerPrice <= 0) return res.redirect("/paper-trade?tab=autobot&err=Invalid+trigger+price");
+      Object.assign(entry, {
+        symbol, tradeType: q.tradeType === "EQUITY" ? "EQUITY" : "OPTIONS",
+        direction: q.direction,
+        triggerPrice, triggerCondition: ["above","below","touch"].includes(q.triggerCondition) ? q.triggerCondition : "above",
+        stopLossPoints: Math.max(1, parseInt(q.stopLossPoints) || 50),
+        targetPoints: Math.max(0, parseInt(q.targetPoints) || 0),
+        quantity: Math.max(0, parseInt(q.quantity) || 0),
+      });
+      if (q.expiryDate) entry.expiryDate = q.expiryDate;
+      if (q.note?.trim()) entry.note = q.note.trim().slice(0, 80);
+
+    } else if (mode === "pick") {
+      const pickId = parseInt(q.pickId);
+      if (!pickId) return res.redirect("/paper-trade?tab=autobot&err=Select+a+pick");
+      const sym = (q.pickSymbol || "").toUpperCase().trim();
+      if (!sym) return res.redirect("/paper-trade?tab=autobot&err=Pick+symbol+missing");
+      Object.assign(entry, {
+        symbol: sym, tradeType: "EQUITY",
+        direction: q.pickDirection || "LONG",
+        pickId,
+        stopLossPrice: parseFloat(q.pickStopLoss) || 0,
+        targetPrice: parseFloat(q.pickTarget) || 0,
+        quantity: Math.max(0, parseInt(q.pickQty) || 0),
+      });
+      if (q.pickNote?.trim()) entry.note = q.pickNote.trim().slice(0, 80);
+
+    } else if (mode === "indicator") {
+      const sym = (q.indSymbol === "__custom__" ? "" : q.indSymbol || "").toUpperCase().trim();
+      if (!sym) return res.redirect("/paper-trade?tab=autobot&err=Symbol+is+required");
+      const validIndicators = ["RSI","MACD","EMA_CROSS","VWAP","BB","SUPERTREND","STOCH"];
+      Object.assign(entry, {
+        symbol: sym, tradeType: q.indTradeType === "EQUITY" ? "EQUITY" : "OPTIONS",
+        indicator: validIndicators.includes(q.indicator) ? q.indicator : "RSI",
+        indCondition: q.indCondition === "SELL" ? "SELL" : "BUY",
+        indTimeframe: q.indTimeframe || "5m",
+        rsiPeriod: parseInt(q.rsiPeriod) || 14,
+        rsiLevel: parseInt(q.rsiLevel) || 30,
+        emaFast: parseInt(q.emaFast) || 9,
+        emaSlow: parseInt(q.emaSlow) || 21,
+        stopLossPoints: Math.max(1, parseInt(q.indStopLoss) || 50),
+        targetPoints: Math.max(0, parseInt(q.indTarget) || 0),
+        quantity: Math.max(0, parseInt(q.indQty) || 0),
+        maxTriggers: Math.max(0, parseInt(q.indMaxTriggers) || 1),
+        triggeredCount: 0,
+      });
+      if (q.indNote?.trim()) entry.note = q.indNote.trim().slice(0, 80);
     }
-    catch (e) {
-        res.redirect("/paper-trade?tab=autobot&err=Failed+to+schedule:+" + encodeURIComponent(e.message));
-    }
+
+    list.push(entry);
+    fs.writeFileSync(schPath, JSON.stringify(list, null, 2));
+    res.redirect("/paper-trade?tab=autobot&msg=Trade+scheduled+successfully");
+  } catch (e: any) {
+    res.redirect("/paper-trade?tab=autobot&err=Failed+to+schedule:+" + encodeURIComponent(e.message));
+  }
 });
+
 // ── POST /paper-trade/cancel-schedule — admin cancels a pending scheduled trade ─
-app.post("/paper-trade/cancel-schedule", requireAuth, async (req, res) => {
-    try {
-        const BOT_DIR = "/home/ubuntu/trading-bot";
-        const schPath = `${BOT_DIR}/scheduled-trades.json`;
-        let list = [];
-        try {
-            list = JSON.parse(fs_1.default.readFileSync(schPath, "utf-8"));
-        }
-        catch { }
-        const id = (req.body.id || "").toString().trim();
-        list = list.map((s) => s.id === id ? { ...s, status: "cancelled", cancelledAt: new Date().toISOString() } : s);
-        fs_1.default.writeFileSync(schPath, JSON.stringify(list, null, 2));
-        res.redirect("/paper-trade?tab=autobot&msg=Schedule+cancelled");
-    }
-    catch (e) {
-        res.redirect("/paper-trade?tab=autobot&err=Failed+to+cancel:+" + encodeURIComponent(e.message));
-    }
+app.post("/paper-trade/cancel-schedule", requireAuth, async (req: Request, res: Response) => {
+  try {
+    const BOT_DIR = "/home/ubuntu/trading-bot";
+    const schPath = `${BOT_DIR}/scheduled-trades.json`;
+    let list: any[] = [];
+    try { list = JSON.parse(fs.readFileSync(schPath, "utf-8")); } catch {}
+    const id = (req.body.id || "").toString().trim();
+    list = list.map((s: any) => s.id === id ? { ...s, status: "cancelled", cancelledAt: new Date().toISOString() } : s);
+    fs.writeFileSync(schPath, JSON.stringify(list, null, 2));
+    res.redirect("/paper-trade?tab=autobot&msg=Schedule+cancelled");
+  } catch (e: any) {
+    res.redirect("/paper-trade?tab=autobot&err=Failed+to+cancel:+" + encodeURIComponent(e.message));
+  }
 });
+
+
 // ── Route registrations for portfolio page ─────────────────────────────────────
 app.get("/my-paper-trade", requireAdmin, paperPortfolioPage);
-app.get("/my-portfolio", requireAuth, (_req, res) => res.redirect("/dashboard"));
+app.get("/my-portfolio",   requireAuth, (_req, res) => res.redirect("/dashboard"));
+
 // ── GET /dashboard — unified trading dashboard (manual + bot trades) ───────────
-app.get("/dashboard", requireAuth, async (req, res) => {
-    try {
-        const userId = req.session.userId;
-        const userName = req.session.userName || "Trader";
-        const isAdmin = req.session.userRole === "admin";
-        // Manual paper trade data
-        const [port, positions, trades, activeSub, allPicks] = await Promise.all([
-            (0, db_1.getPaperPortfolio)(userId),
-            (0, db_1.getPaperPositions)(userId),
-            (0, db_1.getPaperTrades)(userId, 200),
-            (0, db_1.getActiveSubscription)(userId),
-            (0, db_1.getAllPicks)(),
-        ]);
-        const isPremium = !!activeSub || req.session.userRole === "premium" || isAdmin;
-        // Live prices for open positions
-        const dbPrices = positions.length
-            ? await (0, db_1.dbAll)(`SELECT symbol, price FROM prices WHERE symbol IN (${positions.map(() => "?").join(",")})`, positions.map((p) => p.symbol))
-            : [];
-        const priceMap = {};
-        for (const r of dbPrices)
-            if (r.price != null)
-                priceMap[r.symbol] = r.price;
-        // Extend priceMap with picks symbols
-        const pickSymbolsNeeded = [...new Set(allPicks.map((p) => p.stock_symbol))].filter((s) => !priceMap[s]);
-        if (pickSymbolsNeeded.length > 0) {
-            const pp = await (0, db_1.dbAll)(`SELECT symbol, price FROM prices WHERE symbol IN (${pickSymbolsNeeded.map(() => "?").join(",")})`, pickSymbolsNeeded);
-            for (const r of pp)
-                if (r.price != null)
-                    priceMap[r.symbol] = r.price;
-        }
-        // Picks data
-        const inPositionSymbols = new Set([
-            ...allPicks.filter((p) => p.result === "entry_triggered").map((p) => p.stock_symbol.toUpperCase()),
-            ...positions.map((p) => p.symbol.toUpperCase()),
-        ]);
-        const picksInPosition = allPicks.filter((p) => p.result === "entry_triggered");
-        const latestPendingDate = allPicks
-            .filter((p) => !p.result)
-            .sort((a, b) => (b.published_at || "").localeCompare(a.published_at || ""))[0]
-            ?.published_at?.slice(0, 10);
-        const pendingOrders = latestPendingDate
-            ? allPicks.filter((p) => !p.result && (p.published_at || "").slice(0, 10) === latestPendingDate)
-            : [];
-        const pendingNonDupe = pendingOrders.filter((p) => !inPositionSymbols.has(p.stock_symbol.toUpperCase()));
-        const resolvedPicks = allPicks.filter((p) => p.result === "target_hit" || p.result === "sl_hit");
-        const posRows = positions.map((p) => {
-            const livePrice = priceMap[p.symbol] ?? p.avg_price;
-            const pnl = parseFloat(((livePrice - p.avg_price) * p.qty).toFixed(2));
-            const pnlPct = parseFloat(((pnl / p.invested) * 100).toFixed(2));
-            return { ...p, livePrice, pnl, pnlPct };
-        });
-        const sellTrades = trades.filter((t) => t.action === "SELL");
-        const realizedPnl = parseFloat(sellTrades.reduce((s, t) => s + (t.pnl ?? 0), 0).toFixed(2));
-        const wins = sellTrades.filter((t) => (t.pnl ?? 0) > 0).length;
-        const losses = sellTrades.filter((t) => (t.pnl ?? 0) <= 0).length;
-        const winRate = sellTrades.length > 0 ? ((wins / sellTrades.length) * 100).toFixed(1) : "—";
-        const investedTotal = posRows.reduce((s, p) => s + p.invested, 0);
-        const curValTotal = posRows.reduce((s, p) => s + (p.livePrice * p.qty), 0);
-        const portfolioValue = parseFloat((port.balance + curValTotal).toFixed(2));
-        const totalPnl = parseFloat((portfolioValue - 100000).toFixed(2));
-        // Weekly P&L (last 7 days)
-        const _7dAgo = new Date(Date.now() - 7 * 86400000).toISOString().slice(0, 10);
-        const weekTrades = sellTrades.filter((t) => t.traded_at >= _7dAgo);
-        const weekPnl = parseFloat(weekTrades.reduce((s, t) => s + (t.pnl ?? 0), 0).toFixed(2));
-        // Monthly P&L grouping (last 6 months)
-        const monthMap = {};
-        for (const t of sellTrades) {
-            const mo = t.traded_at.slice(0, 7);
-            if (!monthMap[mo])
-                monthMap[mo] = { pnl: 0, trades: 0, wins: 0 };
-            monthMap[mo].pnl += t.pnl ?? 0;
-            monthMap[mo].trades += 1;
-            if ((t.pnl ?? 0) > 0)
-                monthMap[mo].wins += 1;
-        }
-        const monthKeys = Object.keys(monthMap).sort().slice(-6);
-        // Weekly grouping (last 8 weeks)
-        function weekKey(dateStr) {
-            if (!dateStr)
-                return "";
-            const d = new Date(dateStr);
-            if (isNaN(d.getTime()))
-                return "";
-            const day = d.getDay();
-            const mon = new Date(d);
-            mon.setDate(d.getDate() - (day === 0 ? 6 : day - 1));
-            if (isNaN(mon.getTime()))
-                return "";
-            try {
-                return mon.toISOString().slice(0, 10);
-            }
-            catch {
-                return "";
-            }
-        }
-        const weekMap = {};
-        for (const t of sellTrades) {
-            const wk = weekKey(t.traded_at);
-            if (!wk)
-                continue;
-            if (!weekMap[wk])
-                weekMap[wk] = { pnl: 0, trades: 0, wins: 0 };
-            weekMap[wk].pnl += t.pnl ?? 0;
-            weekMap[wk].trades += 1;
-            if ((t.pnl ?? 0) > 0)
-                weekMap[wk].wins += 1;
-        }
-        const weekKeys = Object.keys(weekMap).sort().slice(-8);
-        // Bot trades data — admin only
-        const BOT_DIR = "/home/ubuntu/trading-bot";
-        const botClosed = isAdmin ? (() => {
-            try {
-                return JSON.parse(fs_1.default.readFileSync(`${BOT_DIR}/trades.json`, "utf-8")).filter((t) => (t.exitPrice ?? 0) > 0);
-            }
-            catch {
-                return [];
-            }
-        })() : [];
-        const botWins = botClosed.filter((t) => (t.pnl ?? 0) > 0).length;
-        const botTotalPnl = parseFloat(botClosed.reduce((s, t) => s + (t.pnl ?? 0), 0).toFixed(2));
-        const botWinRate = botClosed.length > 0 ? ((botWins / botClosed.length) * 100).toFixed(1) : "—";
-        const botWeekTrades = botClosed.filter((t) => {
-            const d = t.exitTime ? new Date(t.exitTime) : null;
-            return d && !isNaN(d.getTime()) && d.toISOString().slice(0, 10) >= _7dAgo;
-        });
-        const botWeekPnl = parseFloat(botWeekTrades.reduce((s, t) => s + (t.pnl ?? 0), 0).toFixed(2));
-        // Bot monthly grouping
-        const botMonthMap = {};
-        for (const t of botClosed) {
-            const _dmo = t.exitTime ? new Date(t.exitTime) : null;
-            const mo = _dmo && !isNaN(_dmo.getTime()) ? _dmo.toISOString().slice(0, 7) : "";
-            if (!mo)
-                continue;
-            if (!botMonthMap[mo])
-                botMonthMap[mo] = { pnl: 0, trades: 0, wins: 0 };
-            botMonthMap[mo].pnl += t.pnl ?? 0;
-            botMonthMap[mo].trades += 1;
-            if ((t.pnl ?? 0) > 0)
-                botMonthMap[mo].wins += 1;
-        }
-        const botMonthKeys = Object.keys(botMonthMap).sort().slice(-6);
-        const marketOpen = isMarketHours();
-        // ── AI INSIGHTS COMPUTATIONS ───────────────────────────────────────────────
-        // 1. P&L Pattern Detector
-        const dayNames = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
-        const dayMap = {};
-        for (const t of sellTrades) {
-            if (!t.traded_at)
-                continue;
-            const day = dayNames[new Date(t.traded_at).getDay()];
-            if (!dayMap[day])
-                dayMap[day] = { pnl: 0, trades: 0, wins: 0 };
-            dayMap[day].pnl += t.pnl ?? 0;
-            dayMap[day].trades += 1;
-            if ((t.pnl ?? 0) > 0)
-                dayMap[day].wins += 1;
-        }
-        const tradingDays = ["Mon", "Tue", "Wed", "Thu", "Fri"].filter(d => dayMap[d]);
-        let bestDay = "", worstDay = "", bestDayPnl = -Infinity, worstDayPnl = Infinity;
-        for (const d of tradingDays) {
-            if (dayMap[d].pnl > bestDayPnl) {
-                bestDayPnl = dayMap[d].pnl;
-                bestDay = d;
-            }
-            if (dayMap[d].pnl < worstDayPnl) {
-                worstDayPnl = dayMap[d].pnl;
-                worstDay = d;
-            }
-        }
-        // 2. Pick Confidence Score — score each pending/active pick 0–100
-        const resolvedBySymbol = {};
-        for (const p of allPicks) {
-            if (p.result === "target_hit" || p.result === "sl_hit") {
-                const sym = p.stock_symbol.toUpperCase();
-                if (!resolvedBySymbol[sym])
-                    resolvedBySymbol[sym] = { wins: 0, total: 0 };
-                resolvedBySymbol[sym].total += 1;
-                if (p.result === "target_hit")
-                    resolvedBySymbol[sym].wins += 1;
-            }
-        }
-        function pickConfidence(p) {
-            let score = 30; // base
-            if (p.stop_loss)
-                score += 20;
-            if (p.target)
-                score += 15;
-            if (p.risk_level === "Low")
-                score += 20;
-            else if (p.risk_level === "Medium")
-                score += 10;
-            const hist = resolvedBySymbol[p.stock_symbol?.toUpperCase()];
-            if (hist && hist.total >= 2)
-                score += Math.round((hist.wins / hist.total) * 15);
-            return Math.min(score, 100);
-        }
-        const scoredPending = pendingNonDupe.map((p) => ({ ...p, confidence: pickConfidence(p) }));
-        const scoredInPosition = picksInPosition.map((p) => ({ ...p, confidence: pickConfidence(p) }));
-        // 3. Over-trading Detector
-        const tradesByDay = {};
-        for (const t of sellTrades) {
-            const d = t.traded_at?.slice(0, 10);
-            if (d)
-                tradesByDay[d] = (tradesByDay[d] || 0) + 1;
-        }
-        const dayCountList = Object.values(tradesByDay);
-        const avgTradesPerDay = dayCountList.length > 0 ? dayCountList.reduce((a, b) => a + b, 0) / dayCountList.length : 0;
-        const todayStr = new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" });
-        const todayTradeCount = tradesByDay[todayStr] || 0;
-        const overtradingAlert = avgTradesPerDay > 0 && todayTradeCount > avgTradesPerDay * 1.5
-            ? { warn: true, todayCount: todayTradeCount, avg: parseFloat(avgTradesPerDay.toFixed(1)) }
-            : { warn: false, todayCount: todayTradeCount, avg: parseFloat(avgTradesPerDay.toFixed(1)) };
-        // 4. Drawdown Predictor
-        const drawdownRows = posRows.map((p) => {
-            const slPrice = p.sl_price ?? null;
-            const maxLoss = slPrice && slPrice < p.avg_price
-                ? parseFloat(((p.avg_price - slPrice) * p.qty).toFixed(2))
-                : parseFloat((p.avg_price * 0.05 * p.qty).toFixed(2));
-            const hasSl = !!(slPrice && slPrice < p.avg_price);
-            return { ...p, maxLoss, hasSl };
-        });
-        const totalDrawdownRisk = parseFloat(drawdownRows.reduce((s, r) => s + r.maxLoss, 0).toFixed(2));
-        const unprotectedPositions = drawdownRows.filter((r) => !r.hasSl).length;
-        // 5. VIX-aware Mode (fetch from cached NSE markets)
-        let vixValue = null;
-        try {
-            const mktData = await fetchNseMarkets();
-            const vixEntry = mktData.find((m) => m.symbol === "INDIA VIX" || m.label === "INDIA VIX");
-            if (vixEntry?.price)
-                vixValue = parseFloat(vixEntry.price);
-        }
-        catch (_) { }
-        const vixAlert = vixValue !== null
-            ? vixValue > 25 ? "extreme" : vixValue > 20 ? "high" : vixValue > 15 ? "moderate" : "low"
-            : "unknown";
-        // 6. Anomaly Alert — flag unusual pending picks
-        const pickAnomalies = pendingNonDupe.map((p) => {
-            const flags = [];
-            if (!p.stop_loss)
-                flags.push("No stop loss set");
-            if (!p.target)
-                flags.push("No target set");
-            if (p.risk_level === "High")
-                flags.push("High risk pick");
-            const rangeWidth = p.entry_high > 0 && p.entry_low > 0
-                ? (p.entry_high - p.entry_low) / p.entry_low : 0;
-            if (rangeWidth > 0.08)
-                flags.push(`Wide entry range (${(rangeWidth * 100).toFixed(1)}%)`);
-            return { ...p, flags };
-        }).filter((p) => p.flags.length > 0);
-        res.send(`<!DOCTYPE html>
+app.get("/dashboard", requireAuth, async (req: Request, res: Response) => {
+  try {
+  const userId   = req.session.userId!;
+  const userName = req.session.userName || "Trader";
+  const isAdmin  = req.session.userRole === "admin";
+
+  // Manual paper trade data
+  const [port, positions, trades, activeSub, allPicks] = await Promise.all([
+    getPaperPortfolio(userId),
+    getPaperPositions(userId),
+    getPaperTrades(userId, 200),
+    getActiveSubscription(userId),
+    getAllPicks(),
+  ]);
+  const isPremium = !!activeSub || req.session.userRole === "premium" || isAdmin;
+
+  // Live prices for open positions
+  const dbPrices = positions.length
+    ? await dbAll<{ symbol: string; price: number | null }>(
+        `SELECT symbol, price FROM prices WHERE symbol IN (${positions.map(() => "?").join(",")})`,
+        positions.map((p: any) => p.symbol)
+      )
+    : [];
+  const priceMap: Record<string, number> = {};
+  for (const r of dbPrices) if (r.price != null) priceMap[r.symbol] = r.price;
+
+  // Extend priceMap with picks symbols
+  const pickSymbolsNeeded = [...new Set(allPicks.map((p: any) => p.stock_symbol))].filter((s: string) => !priceMap[s]);
+  if (pickSymbolsNeeded.length > 0) {
+    const pp = await dbAll<{ symbol: string; price: number | null }>(
+      `SELECT symbol, price FROM prices WHERE symbol IN (${pickSymbolsNeeded.map(() => "?").join(",")})`,
+      pickSymbolsNeeded
+    );
+    for (const r of pp) if (r.price != null) priceMap[r.symbol] = r.price;
+  }
+
+  // Picks data
+  const inPositionSymbols = new Set([
+    ...allPicks.filter((p: any) => p.result === "entry_triggered").map((p: any) => p.stock_symbol.toUpperCase()),
+    ...positions.map((p: any) => p.symbol.toUpperCase()),
+  ]);
+  const picksInPosition  = allPicks.filter((p: any) => p.result === "entry_triggered");
+  const latestPendingDate = allPicks
+    .filter((p: any) => !p.result)
+    .sort((a: any, b: any) => (b.published_at || "").localeCompare(a.published_at || ""))[0]
+    ?.published_at?.slice(0, 10);
+  const pendingOrders = latestPendingDate
+    ? allPicks.filter((p: any) => !p.result && (p.published_at || "").slice(0, 10) === latestPendingDate)
+    : [];
+  const pendingNonDupe = pendingOrders.filter((p: any) => !inPositionSymbols.has(p.stock_symbol.toUpperCase()));
+  const resolvedPicks   = allPicks.filter((p: any) => p.result === "target_hit" || p.result === "sl_hit");
+
+  const posRows = positions.map((p: any) => {
+    const livePrice = priceMap[p.symbol] ?? p.avg_price;
+    const pnl = parseFloat(((livePrice - p.avg_price) * p.qty).toFixed(2));
+    const pnlPct = parseFloat(((pnl / p.invested) * 100).toFixed(2));
+    return { ...p, livePrice, pnl, pnlPct };
+  });
+
+  const sellTrades = trades.filter((t: any) => t.action === "SELL");
+  const realizedPnl = parseFloat(sellTrades.reduce((s: number, t: any) => s + (t.pnl ?? 0), 0).toFixed(2));
+  const wins    = sellTrades.filter((t: any) => (t.pnl ?? 0) > 0).length;
+  const losses  = sellTrades.filter((t: any) => (t.pnl ?? 0) <= 0).length;
+  const winRate = sellTrades.length > 0 ? ((wins / sellTrades.length) * 100).toFixed(1) : "—";
+  const investedTotal = posRows.reduce((s: number, p: any) => s + p.invested, 0);
+  const curValTotal   = posRows.reduce((s: number, p: any) => s + (p.livePrice * p.qty), 0);
+  const portfolioValue = parseFloat((port.balance + curValTotal).toFixed(2));
+  const totalPnl = parseFloat((portfolioValue - 100000).toFixed(2));
+
+  // Weekly P&L (last 7 days)
+  const _7dAgo = new Date(Date.now() - 7 * 86400000).toISOString().slice(0, 10);
+  const weekTrades = sellTrades.filter((t: any) => t.traded_at >= _7dAgo);
+  const weekPnl    = parseFloat(weekTrades.reduce((s: number, t: any) => s + (t.pnl ?? 0), 0).toFixed(2));
+
+  // Monthly P&L grouping (last 6 months)
+  const monthMap: Record<string, { pnl: number; trades: number; wins: number }> = {};
+  for (const t of sellTrades) {
+    const mo = t.traded_at.slice(0, 7);
+    if (!monthMap[mo]) monthMap[mo] = { pnl: 0, trades: 0, wins: 0 };
+    monthMap[mo].pnl    += t.pnl ?? 0;
+    monthMap[mo].trades += 1;
+    if ((t.pnl ?? 0) > 0) monthMap[mo].wins += 1;
+  }
+  const monthKeys = Object.keys(monthMap).sort().slice(-6);
+
+  // Weekly grouping (last 8 weeks)
+  function weekKey(dateStr: string): string {
+    if (!dateStr) return "";
+    const d = new Date(dateStr);
+    if (isNaN(d.getTime())) return "";
+    const day = d.getDay();
+    const mon = new Date(d); mon.setDate(d.getDate() - (day === 0 ? 6 : day - 1));
+    if (isNaN(mon.getTime())) return "";
+    try { return mon.toISOString().slice(0, 10); } catch { return ""; }
+  }
+  const weekMap: Record<string, { pnl: number; trades: number; wins: number }> = {};
+  for (const t of sellTrades) {
+    const wk = weekKey(t.traded_at);
+    if (!wk) continue;
+    if (!weekMap[wk]) weekMap[wk] = { pnl: 0, trades: 0, wins: 0 };
+    weekMap[wk].pnl    += t.pnl ?? 0;
+    weekMap[wk].trades += 1;
+    if ((t.pnl ?? 0) > 0) weekMap[wk].wins += 1;
+  }
+  const weekKeys = Object.keys(weekMap).sort().slice(-8);
+
+  // Bot trades data — admin only
+  const BOT_DIR = "/home/ubuntu/trading-bot";
+  const botClosed: any[] = isAdmin ? (() => {
+    try { return (JSON.parse(fs.readFileSync(`${BOT_DIR}/trades.json`, "utf-8")) as any[]).filter((t: any) => (t.exitPrice ?? 0) > 0); }
+    catch { return []; }
+  })() : [];
+  const botWins      = botClosed.filter((t: any) => (t.pnl ?? 0) > 0).length;
+  const botTotalPnl  = parseFloat(botClosed.reduce((s: number, t: any) => s + (t.pnl ?? 0), 0).toFixed(2));
+  const botWinRate   = botClosed.length > 0 ? ((botWins / botClosed.length) * 100).toFixed(1) : "—";
+  const botWeekTrades = botClosed.filter((t: any) => {
+    const d = t.exitTime ? new Date(t.exitTime) : null;
+    return d && !isNaN(d.getTime()) && d.toISOString().slice(0,10) >= _7dAgo;
+  });
+  const botWeekPnl = parseFloat(botWeekTrades.reduce((s: number, t: any) => s + (t.pnl ?? 0), 0).toFixed(2));
+
+  // Bot monthly grouping
+  const botMonthMap: Record<string, { pnl: number; trades: number; wins: number }> = {};
+  for (const t of botClosed) {
+    const _dmo = t.exitTime ? new Date(t.exitTime) : null;
+    const mo = _dmo && !isNaN(_dmo.getTime()) ? _dmo.toISOString().slice(0, 7) : "";
+    if (!mo) continue;
+    if (!botMonthMap[mo]) botMonthMap[mo] = { pnl: 0, trades: 0, wins: 0 };
+    botMonthMap[mo].pnl    += t.pnl ?? 0;
+    botMonthMap[mo].trades += 1;
+    if ((t.pnl ?? 0) > 0) botMonthMap[mo].wins += 1;
+  }
+  const botMonthKeys = Object.keys(botMonthMap).sort().slice(-6);
+
+  const marketOpen = isMarketHours();
+
+  // ── AI INSIGHTS COMPUTATIONS ───────────────────────────────────────────────
+
+  // 1. P&L Pattern Detector
+  const dayNames = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
+  const dayMap: Record<string, { pnl: number; trades: number; wins: number }> = {};
+  for (const t of sellTrades) {
+    if (!t.traded_at) continue;
+    const day = dayNames[new Date(t.traded_at).getDay()];
+    if (!dayMap[day]) dayMap[day] = { pnl: 0, trades: 0, wins: 0 };
+    dayMap[day].pnl += t.pnl ?? 0;
+    dayMap[day].trades += 1;
+    if ((t.pnl ?? 0) > 0) dayMap[day].wins += 1;
+  }
+  const tradingDays = ["Mon","Tue","Wed","Thu","Fri"].filter(d => dayMap[d]);
+  let bestDay = "", worstDay = "", bestDayPnl = -Infinity, worstDayPnl = Infinity;
+  for (const d of tradingDays) {
+    if (dayMap[d].pnl > bestDayPnl) { bestDayPnl = dayMap[d].pnl; bestDay = d; }
+    if (dayMap[d].pnl < worstDayPnl) { worstDayPnl = dayMap[d].pnl; worstDay = d; }
+  }
+
+  // 2. Pick Confidence Score — score each pending/active pick 0–100
+  const resolvedBySymbol: Record<string, { wins: number; total: number }> = {};
+  for (const p of allPicks) {
+    if (p.result === "target_hit" || p.result === "sl_hit") {
+      const sym = p.stock_symbol.toUpperCase();
+      if (!resolvedBySymbol[sym]) resolvedBySymbol[sym] = { wins: 0, total: 0 };
+      resolvedBySymbol[sym].total += 1;
+      if (p.result === "target_hit") resolvedBySymbol[sym].wins += 1;
+    }
+  }
+  function pickConfidence(p: any): number {
+    let score = 30; // base
+    if (p.stop_loss) score += 20;
+    if (p.target)    score += 15;
+    if (p.risk_level === "Low")    score += 20;
+    else if (p.risk_level === "Medium") score += 10;
+    const hist = resolvedBySymbol[p.stock_symbol?.toUpperCase()];
+    if (hist && hist.total >= 2) score += Math.round((hist.wins / hist.total) * 15);
+    return Math.min(score, 100);
+  }
+  const scoredPending = pendingNonDupe.map((p: any) => ({ ...p, confidence: pickConfidence(p) }));
+  const scoredInPosition = picksInPosition.map((p: any) => ({ ...p, confidence: pickConfidence(p) }));
+
+  // 3. Over-trading Detector
+  const tradesByDay: Record<string, number> = {};
+  for (const t of sellTrades) {
+    const d = t.traded_at?.slice(0, 10);
+    if (d) tradesByDay[d] = (tradesByDay[d] || 0) + 1;
+  }
+  const dayCountList = Object.values(tradesByDay);
+  const avgTradesPerDay = dayCountList.length > 0 ? dayCountList.reduce((a, b) => a + b, 0) / dayCountList.length : 0;
+  const todayStr = new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" });
+  const todayTradeCount = tradesByDay[todayStr] || 0;
+  const overtradingAlert = avgTradesPerDay > 0 && todayTradeCount > avgTradesPerDay * 1.5
+    ? { warn: true, todayCount: todayTradeCount, avg: parseFloat(avgTradesPerDay.toFixed(1)) }
+    : { warn: false, todayCount: todayTradeCount, avg: parseFloat(avgTradesPerDay.toFixed(1)) };
+
+  // 4. Drawdown Predictor
+  const drawdownRows = posRows.map((p: any) => {
+    const slPrice = p.sl_price ?? null;
+    const maxLoss = slPrice && slPrice < p.avg_price
+      ? parseFloat(((p.avg_price - slPrice) * p.qty).toFixed(2))
+      : parseFloat((p.avg_price * 0.05 * p.qty).toFixed(2));
+    const hasSl = !!(slPrice && slPrice < p.avg_price);
+    return { ...p, maxLoss, hasSl };
+  });
+  const totalDrawdownRisk = parseFloat(drawdownRows.reduce((s: number, r: any) => s + r.maxLoss, 0).toFixed(2));
+  const unprotectedPositions = drawdownRows.filter((r: any) => !r.hasSl).length;
+
+  // 5. VIX-aware Mode (fetch from cached NSE markets)
+  let vixValue: number | null = null;
+  try {
+    const mktData = await fetchNseMarkets();
+    const vixEntry = mktData.find((m: any) => m.symbol === "INDIA VIX" || m.label === "INDIA VIX");
+    if (vixEntry?.price) vixValue = parseFloat(vixEntry.price);
+  } catch (_) {}
+  const vixAlert = vixValue !== null
+    ? vixValue > 25 ? "extreme" : vixValue > 20 ? "high" : vixValue > 15 ? "moderate" : "low"
+    : "unknown";
+
+  // 6. Anomaly Alert — flag unusual pending picks
+  const pickAnomalies = pendingNonDupe.map((p: any) => {
+    const flags: string[] = [];
+    if (!p.stop_loss) flags.push("No stop loss set");
+    if (!p.target) flags.push("No target set");
+    if (p.risk_level === "High") flags.push("High risk pick");
+    const rangeWidth = p.entry_high > 0 && p.entry_low > 0
+      ? (p.entry_high - p.entry_low) / p.entry_low : 0;
+    if (rangeWidth > 0.08) flags.push(`Wide entry range (${(rangeWidth * 100).toFixed(1)}%)`);
+    return { ...p, flags };
+  }).filter((p: any) => p.flags.length > 0);
+
+  res.send(`<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
@@ -8603,8 +8539,8 @@ app.get("/dashboard", requireAuth, async (req, res) => {
     </div>
 
     <!-- Flash messages -->
-    ${req.query.msg ? `<div class="mpt-msg mpt-msg-ok" style="padding:12px 16px;border-radius:8px;margin-bottom:14px;background:#10b98122;color:#10b981;border:1px solid #10b98155;font-weight:600">✅ ${esc(req.query.msg)}</div>` : ""}
-    ${req.query.err ? `<div class="mpt-msg mpt-msg-err" style="padding:12px 16px;border-radius:8px;margin-bottom:14px;background:#ef444422;color:#ef4444;border:1px solid #ef444455;font-weight:600">❌ ${esc(req.query.err)}</div>` : ""}
+    ${req.query.msg ? `<div class="mpt-msg mpt-msg-ok" style="padding:12px 16px;border-radius:8px;margin-bottom:14px;background:#10b98122;color:#10b981;border:1px solid #10b98155;font-weight:600">✅ ${esc(req.query.msg as string)}</div>` : ""}
+    ${req.query.err ? `<div class="mpt-msg mpt-msg-err" style="padding:12px 16px;border-radius:8px;margin-bottom:14px;background:#ef444422;color:#ef4444;border:1px solid #ef444455;font-weight:600">❌ ${esc(req.query.err as string)}</div>` : ""}
 
     <!-- KPI row (collapsible) -->
     <div style="margin-bottom:10px">
@@ -8614,15 +8550,15 @@ app.get("/dashboard", requireAuth, async (req, res) => {
       </button>
       <div class="db-kpi-collapsible" style="overflow:hidden;max-height:0;transition:max-height .3s ease">
         <div class="db-kpi-grid" style="margin-top:10px">
-          <div class="db-kpi"><div class="db-kpi-lbl">Portfolio Value</div><div class="db-kpi-val ${portfolioValue >= 100000 ? 'db-green' : 'db-red'}">₹${portfolioValue.toLocaleString("en-IN", { maximumFractionDigits: 0 })}</div></div>
-          <div class="db-kpi"><div class="db-kpi-lbl">Cash Balance</div><div class="db-kpi-val">₹${port.balance.toLocaleString("en-IN", { maximumFractionDigits: 0 })}</div></div>
-          <div class="db-kpi"><div class="db-kpi-lbl">Total P&L</div><div class="db-kpi-val ${totalPnl >= 0 ? 'db-green' : 'db-red'}">${totalPnl >= 0 ? "+" : ""}₹${Math.abs(totalPnl).toLocaleString("en-IN", { maximumFractionDigits: 0 })}</div></div>
-          <div class="db-kpi"><div class="db-kpi-lbl">This Week (Manual)</div><div class="db-kpi-val ${weekPnl >= 0 ? 'db-green' : 'db-red'}">${weekPnl >= 0 ? "+" : ""}₹${Math.abs(weekPnl).toLocaleString("en-IN", { maximumFractionDigits: 0 })}</div></div>
-          <div class="db-kpi"><div class="db-kpi-lbl">Win Rate</div><div class="db-kpi-val ${wins > losses ? 'db-green' : 'db-red'}">${winRate}${winRate !== "—" ? "%" : ""}</div></div>
+          <div class="db-kpi"><div class="db-kpi-lbl">Portfolio Value</div><div class="db-kpi-val ${portfolioValue >= 100000 ? 'db-green' : 'db-red'}">₹${portfolioValue.toLocaleString("en-IN",{maximumFractionDigits:0})}</div></div>
+          <div class="db-kpi"><div class="db-kpi-lbl">Cash Balance</div><div class="db-kpi-val">₹${port.balance.toLocaleString("en-IN",{maximumFractionDigits:0})}</div></div>
+          <div class="db-kpi"><div class="db-kpi-lbl">Total P&L</div><div class="db-kpi-val ${totalPnl>=0?'db-green':'db-red'}">${totalPnl>=0?"+":""}₹${Math.abs(totalPnl).toLocaleString("en-IN",{maximumFractionDigits:0})}</div></div>
+          <div class="db-kpi"><div class="db-kpi-lbl">This Week (Manual)</div><div class="db-kpi-val ${weekPnl>=0?'db-green':'db-red'}">${weekPnl>=0?"+":""}₹${Math.abs(weekPnl).toLocaleString("en-IN",{maximumFractionDigits:0})}</div></div>
+          <div class="db-kpi"><div class="db-kpi-lbl">Win Rate</div><div class="db-kpi-val ${wins>losses?'db-green':'db-red'}">${winRate}${winRate!=="—"?"%":""}</div></div>
           <div class="db-kpi"><div class="db-kpi-lbl">Open Positions</div><div class="db-kpi-val" style="color:#f59e0b">${posRows.length}</div></div>
           ${isAdmin ? `
-          <div class="db-kpi"><div class="db-kpi-lbl">Bot P&L (All Time)</div><div class="db-kpi-val ${botTotalPnl >= 0 ? 'db-green' : 'db-red'}">${botTotalPnl >= 0 ? "+" : ""}₹${Math.abs(botTotalPnl).toLocaleString("en-IN", { maximumFractionDigits: 0 })}</div></div>
-          <div class="db-kpi"><div class="db-kpi-lbl">Bot This Week</div><div class="db-kpi-val ${botWeekPnl >= 0 ? 'db-green' : 'db-red'}">${botWeekPnl >= 0 ? "+" : ""}₹${Math.abs(botWeekPnl).toLocaleString("en-IN", { maximumFractionDigits: 0 })}</div></div>
+          <div class="db-kpi"><div class="db-kpi-lbl">Bot P&L (All Time)</div><div class="db-kpi-val ${botTotalPnl>=0?'db-green':'db-red'}">${botTotalPnl>=0?"+":""}₹${Math.abs(botTotalPnl).toLocaleString("en-IN",{maximumFractionDigits:0})}</div></div>
+          <div class="db-kpi"><div class="db-kpi-lbl">Bot This Week</div><div class="db-kpi-val ${botWeekPnl>=0?'db-green':'db-red'}">${botWeekPnl>=0?"+":""}₹${Math.abs(botWeekPnl).toLocaleString("en-IN",{maximumFractionDigits:0})}</div></div>
           ` : ""}
         </div>
       </div>
@@ -8645,18 +8581,18 @@ app.get("/dashboard", requireAuth, async (req, res) => {
     <!-- ── PANEL: POSITIONS ── -->
     <div class="db-panel" id="dbp-positions">
       ${posRows.length === 0
-            ? `<div class="db-empty">No open positions. <a href="/paper-trade" style="color:var(--accent)">Place a trade →</a></div>`
-            : `<div class="db-tbl-wrap"><table class="db-tbl">
+        ? `<div class="db-empty">No open positions. <a href="/paper-trade" style="color:var(--accent)">Place a trade →</a></div>`
+        : `<div class="db-tbl-wrap"><table class="db-tbl">
             <thead><tr><th>Symbol</th><th>Type</th><th>Qty</th><th>Avg ₹</th><th>Live ₹</th><th>P&L</th><th>P&L%</th><th>Action</th></tr></thead>
-            <tbody>${posRows.map((p) => `
+            <tbody>${posRows.map((p: any) => `
             <tr>
               <td><a href="/stock/${p.symbol}" style="font-weight:700;color:var(--accent);text-decoration:none">${p.symbol}</a></td>
-              <td><span class="${p.trade_type === 'HOLDING' ? 'mpt-type-hold' : 'mpt-type-intra'}" style="background:${p.trade_type === 'HOLDING' ? '#a855f722' : '#3b82f622'};color:${p.trade_type === 'HOLDING' ? '#a855f7' : '#3b82f6'};border:1px solid ${p.trade_type === 'HOLDING' ? '#a855f755' : '#3b82f655'};border-radius:4px;padding:2px 7px;font-size:.7rem;font-weight:700">${p.trade_type === 'HOLDING' ? 'HOLD' : 'INTRA'}</span></td>
+              <td><span class="${p.trade_type==='HOLDING'?'mpt-type-hold':'mpt-type-intra'}" style="background:${p.trade_type==='HOLDING'?'#a855f722':'#3b82f622'};color:${p.trade_type==='HOLDING'?'#a855f7':'#3b82f6'};border:1px solid ${p.trade_type==='HOLDING'?'#a855f755':'#3b82f655'};border-radius:4px;padding:2px 7px;font-size:.7rem;font-weight:700">${p.trade_type==='HOLDING'?'HOLD':'INTRA'}</span></td>
               <td>${p.qty}</td>
               <td>₹${p.avg_price.toFixed(2)}</td>
               <td>₹${p.livePrice.toFixed(2)}</td>
-              <td class="${p.pnl >= 0 ? 'db-green' : 'db-red'}">${p.pnl >= 0 ? "+" : ""}₹${p.pnl.toLocaleString("en-IN", { maximumFractionDigits: 0 })}</td>
-              <td class="${p.pnlPct >= 0 ? 'db-green' : 'db-red'}">${p.pnlPct >= 0 ? "+" : ""}${p.pnlPct}%</td>
+              <td class="${p.pnl>=0?'db-green':'db-red'}">${p.pnl>=0?"+":""}₹${p.pnl.toLocaleString("en-IN",{maximumFractionDigits:0})}</td>
+              <td class="${p.pnlPct>=0?'db-green':'db-red'}">${p.pnlPct>=0?"+":""}${p.pnlPct}%</td>
               <td>
                 <form method="POST" action="/my-paper-trade/sell" class="db-sell-form">
                   <input type="hidden" name="symbol" value="${p.symbol}">
@@ -8672,24 +8608,23 @@ app.get("/dashboard", requireAuth, async (req, res) => {
     <!-- ── PANEL: MANUAL TRADES ── -->
     <div class="db-panel" id="dbp-manual">
       ${sellTrades.length === 0
-            ? `<div class="db-empty">No closed trades yet. <a href="/paper-trade" style="color:var(--accent)">Start trading →</a></div>`
-            : `<div class="db-tbl-wrap"><table class="db-tbl">
+        ? `<div class="db-empty">No closed trades yet. <a href="/paper-trade" style="color:var(--accent)">Start trading →</a></div>`
+        : `<div class="db-tbl-wrap"><table class="db-tbl">
             <thead><tr><th>Date</th><th>Symbol</th><th>Type</th><th>Qty</th><th>Buy ₹</th><th>Sell ₹</th><th>P&L</th><th>P&L%</th></tr></thead>
-            <tbody>${sellTrades.slice(0, 100).map((t) => {
-                const buyTrade = trades.find((b) => b.action === 'BUY' && b.symbol === t.symbol && b.traded_at <= t.traded_at);
-                const buyPrice = buyTrade?.price ?? 0;
-                const pnlPct = buyPrice > 0 ? (((t.price - buyPrice) / buyPrice) * 100).toFixed(1) : "—";
-                return `<tr>
-                <td class="db-muted" style="font-size:.78rem">${t.traded_at.slice(0, 10)}</td>
+            <tbody>${sellTrades.slice(0,100).map((t: any) => {
+              const buyTrade = trades.find((b: any) => b.action==='BUY' && b.symbol===t.symbol && b.traded_at <= t.traded_at);
+              const buyPrice = buyTrade?.price ?? 0;
+              const pnlPct = buyPrice > 0 ? (((t.price - buyPrice) / buyPrice) * 100).toFixed(1) : "—";
+              return `<tr>
+                <td class="db-muted" style="font-size:.78rem">${t.traded_at.slice(0,10)}</td>
                 <td><a href="/stock/${t.symbol}" style="font-weight:700;color:var(--accent);text-decoration:none">${t.symbol}</a></td>
-                <td><span style="background:${t.trade_type === 'HOLDING' ? '#a855f722' : '#3b82f622'};color:${t.trade_type === 'HOLDING' ? '#a855f7' : '#3b82f6'};border:1px solid ${t.trade_type === 'HOLDING' ? '#a855f755' : '#3b82f655'};border-radius:4px;padding:2px 7px;font-size:.7rem;font-weight:700">${t.trade_type === 'HOLDING' ? 'HOLD' : 'INTRA'}</span></td>
+                <td><span style="background:${t.trade_type==='HOLDING'?'#a855f722':'#3b82f622'};color:${t.trade_type==='HOLDING'?'#a855f7':'#3b82f6'};border:1px solid ${t.trade_type==='HOLDING'?'#a855f755':'#3b82f655'};border-radius:4px;padding:2px 7px;font-size:.7rem;font-weight:700">${t.trade_type==='HOLDING'?'HOLD':'INTRA'}</span></td>
                 <td>${t.qty}</td>
-                <td>${buyPrice > 0 ? "₹" + buyPrice.toFixed(2) : "—"}</td>
+                <td>${buyPrice > 0 ? "₹"+buyPrice.toFixed(2) : "—"}</td>
                 <td>₹${t.price.toFixed(2)}</td>
-                <td class="${(t.pnl ?? 0) >= 0 ? 'db-green' : 'db-red'}">${(t.pnl ?? 0) >= 0 ? "+" : ""}₹${(t.pnl ?? 0).toLocaleString("en-IN", { maximumFractionDigits: 0 })}</td>
-                <td class="${(t.pnl ?? 0) >= 0 ? 'db-green' : 'db-red'}">${pnlPct !== "—" ? (parseFloat(pnlPct) >= 0 ? "+" : "") + pnlPct + "%" : "—"}</td>
-              </tr>`;
-            }).join("")}
+                <td class="${(t.pnl??0)>=0?'db-green':'db-red'}">${(t.pnl??0)>=0?"+":""}₹${(t.pnl??0).toLocaleString("en-IN",{maximumFractionDigits:0})}</td>
+                <td class="${(t.pnl??0)>=0?'db-green':'db-red'}">${pnlPct !== "—" ? (parseFloat(pnlPct)>=0?"+":"")+pnlPct+"%" : "—"}</td>
+              </tr>`;}).join("")}
             </tbody></table></div>`}
     </div>
 
@@ -8697,30 +8632,29 @@ app.get("/dashboard", requireAuth, async (req, res) => {
     ${false ? `<div class="db-panel" id="dbp-bot">
       <div style="margin-bottom:14px">
       <div class="db-kpi-grid" style="margin-bottom:16px">
-        <div class="db-kpi"><div class="db-kpi-lbl">Bot Total P&L</div><div class="db-kpi-val ${botTotalPnl >= 0 ? 'db-green' : 'db-red'}">${botTotalPnl >= 0 ? "+" : ""}₹${Math.abs(botTotalPnl).toLocaleString("en-IN", { maximumFractionDigits: 0 })}</div></div>
+        <div class="db-kpi"><div class="db-kpi-lbl">Bot Total P&L</div><div class="db-kpi-val ${botTotalPnl>=0?'db-green':'db-red'}">${botTotalPnl>=0?"+":""}₹${Math.abs(botTotalPnl).toLocaleString("en-IN",{maximumFractionDigits:0})}</div></div>
         <div class="db-kpi"><div class="db-kpi-lbl">Closed Trades</div><div class="db-kpi-val">${botClosed.length}</div></div>
-        <div class="db-kpi"><div class="db-kpi-lbl">Win Rate</div><div class="db-kpi-val ${botWins > botClosed.length - botWins ? 'db-green' : 'db-red'}">${botWinRate}${botWinRate !== "—" ? "%" : ""}</div></div>
-        <div class="db-kpi"><div class="db-kpi-lbl">This Week</div><div class="db-kpi-val ${botWeekPnl >= 0 ? 'db-green' : 'db-red'}">${botWeekPnl >= 0 ? "+" : ""}₹${Math.abs(botWeekPnl).toLocaleString("en-IN", { maximumFractionDigits: 0 })}</div></div>
+        <div class="db-kpi"><div class="db-kpi-lbl">Win Rate</div><div class="db-kpi-val ${botWins>botClosed.length-botWins?'db-green':'db-red'}">${botWinRate}${botWinRate!=="—"?"%":""}</div></div>
+        <div class="db-kpi"><div class="db-kpi-lbl">This Week</div><div class="db-kpi-val ${botWeekPnl>=0?'db-green':'db-red'}">${botWeekPnl>=0?"+":""}₹${Math.abs(botWeekPnl).toLocaleString("en-IN",{maximumFractionDigits:0})}</div></div>
       </div>
       ${botClosed.length === 0
-            ? `<div class="db-empty">No bot trades yet · <a href="/signals" style="color:var(--accent)">View signals →</a></div>`
-            : `<div class="db-tbl-wrap"><table class="db-tbl">
+        ? `<div class="db-empty">No bot trades yet · <a href="/signals" style="color:var(--accent)">View signals →</a></div>`
+        : `<div class="db-tbl-wrap"><table class="db-tbl">
             <thead><tr><th>Date</th><th>Symbol</th><th>Dir</th><th>Entry ₹</th><th>Exit ₹</th><th>P&L</th><th>Duration</th><th>Reason</th></tr></thead>
-            <tbody>${[...botClosed].reverse().slice(0, 100).map((t) => {
-                const dStr = t.exitTime ? new Date(t.exitTime).toLocaleDateString("en-IN", { timeZone: "Asia/Kolkata", day: "2-digit", month: "short" }) : "—";
-                const durMs = t.exitTime && t.entryTime ? new Date(t.exitTime).getTime() - new Date(t.entryTime).getTime() : 0;
-                const durStr = durMs > 0 ? (durMs < 3600000 ? Math.round(durMs / 60000) + "m" : (durMs / 3600000).toFixed(1) + "h") : "—";
-                return `<tr>
+            <tbody>${[...botClosed].reverse().slice(0,100).map((t: any) => {
+              const dStr = t.exitTime ? new Date(t.exitTime).toLocaleDateString("en-IN",{timeZone:"Asia/Kolkata",day:"2-digit",month:"short"}) : "—";
+              const durMs = t.exitTime && t.entryTime ? new Date(t.exitTime).getTime() - new Date(t.entryTime).getTime() : 0;
+              const durStr = durMs > 0 ? (durMs < 3600000 ? Math.round(durMs/60000)+"m" : (durMs/3600000).toFixed(1)+"h") : "—";
+              return `<tr>
                 <td class="db-muted" style="font-size:.78rem">${dStr}</td>
-                <td style="font-weight:700">${t.symbol || "—"}</td>
-                <td><span class="${(t.direction || '') === 'CE' ? 'db-badge-ce' : 'db-badge-pe'}">${t.direction || "—"}</span></td>
-                <td>${(t.entryPrice ?? 0) > 0 ? "₹" + (t.entryPrice ?? 0).toFixed(1) : "—"}</td>
-                <td>${(t.exitPrice ?? 0) > 0 ? "₹" + (t.exitPrice ?? 0).toFixed(1) : "—"}</td>
-                <td class="${(t.pnl ?? 0) >= 0 ? 'db-green' : 'db-red'}">${(t.pnl ?? 0) >= 0 ? "+" : ""}₹${(t.pnl ?? 0).toLocaleString("en-IN", { maximumFractionDigits: 0 })}</td>
+                <td style="font-weight:700">${t.symbol||"—"}</td>
+                <td><span class="${(t.direction||'')==='CE'?'db-badge-ce':'db-badge-pe'}">${t.direction||"—"}</span></td>
+                <td>${(t.entryPrice??0)>0?"₹"+(t.entryPrice??0).toFixed(1):"—"}</td>
+                <td>${(t.exitPrice??0)>0?"₹"+(t.exitPrice??0).toFixed(1):"—"}</td>
+                <td class="${(t.pnl??0)>=0?'db-green':'db-red'}">${(t.pnl??0)>=0?"+":""}₹${(t.pnl??0).toLocaleString("en-IN",{maximumFractionDigits:0})}</td>
                 <td class="db-muted">${durStr}</td>
-                <td class="db-muted" style="font-size:.75rem">${t.exitReason || "—"}</td>
-              </tr>`;
-            }).join("")}
+                <td class="db-muted" style="font-size:.75rem">${t.exitReason||"—"}</td>
+              </tr>`;}).join("")}
             </tbody></table></div>`}
     </div>` : ""}
 
@@ -8728,94 +8662,84 @@ app.get("/dashboard", requireAuth, async (req, res) => {
     <div class="db-panel" id="dbp-weekly">
       <div class="db-section">Manual Trades — Last 8 Weeks</div>
       ${weekKeys.length === 0
-            ? `<div class="db-empty">No closed trades yet — weekly P&amp;L will appear here once you close positions. <a href="/paper-trade" style="color:var(--accent)">Start trading →</a></div>`
-            : `<div class="db-mo-row">${weekKeys.slice().reverse().map(wk => {
-                const w = weekMap[wk];
-                const label = new Date(wk).toLocaleDateString("en-IN", { day: "2-digit", month: "short" });
-                const wr = w.trades > 0 ? ((w.wins / w.trades) * 100).toFixed(0) : "0";
-                return `<div class="db-mo-card">
+        ? `<div class="db-empty">No closed trades yet — weekly P&amp;L will appear here once you close positions. <a href="/paper-trade" style="color:var(--accent)">Start trading →</a></div>`
+        : `<div class="db-mo-row">${weekKeys.slice().reverse().map(wk => {
+            const w = weekMap[wk];
+            const label = new Date(wk).toLocaleDateString("en-IN",{day:"2-digit",month:"short"});
+            const wr = w.trades > 0 ? ((w.wins/w.trades)*100).toFixed(0) : "0";
+            return `<div class="db-mo-card">
               <div class="db-mo-label">W/C ${label}</div>
-              <div class="db-mo-pnl ${w.pnl >= 0 ? 'db-green' : 'db-red'}">${w.pnl >= 0 ? "+" : ""}₹${Math.abs(w.pnl).toLocaleString("en-IN", { maximumFractionDigits: 0 })}</div>
+              <div class="db-mo-pnl ${w.pnl>=0?'db-green':'db-red'}">${w.pnl>=0?"+":""}₹${Math.abs(w.pnl).toLocaleString("en-IN",{maximumFractionDigits:0})}</div>
               <div class="db-mo-meta">${w.trades} trades · ${wr}% win</div>
-            </div>`;
-            }).join("")}</div>`}
+            </div>`;}).join("")}</div>`}
       ${isAdmin ? (() => {
-            const botWeekMap = {};
-            for (const t of botClosed) {
-                const exitD = t.exitTime ? new Date(t.exitTime) : null;
-                const wk = weekKey(exitD && !isNaN(exitD.getTime()) ? exitD.toISOString().slice(0, 10) : "");
-                if (!wk)
-                    continue;
-                if (!botWeekMap[wk])
-                    botWeekMap[wk] = { pnl: 0, trades: 0, wins: 0 };
-                botWeekMap[wk].pnl += t.pnl ?? 0;
-                botWeekMap[wk].trades += 1;
-                if ((t.pnl ?? 0) > 0)
-                    botWeekMap[wk].wins += 1;
-            }
-            const bwk = Object.keys(botWeekMap).sort().slice(-8);
-            const inner = bwk.length === 0 ? `<div class="db-empty">No bot weekly data yet</div>`
-                : `<div class="db-mo-row">${bwk.slice().reverse().map(wk => {
-                    const w = botWeekMap[wk];
-                    const label = new Date(wk).toLocaleDateString("en-IN", { day: "2-digit", month: "short" });
-                    const wr = w.trades > 0 ? ((w.wins / w.trades) * 100).toFixed(0) : "0";
-                    return `<div class="db-mo-card">
+        const botWeekMap: Record<string, { pnl: number; trades: number; wins: number }> = {};
+        for (const t of botClosed) {
+          const exitD = t.exitTime ? new Date(t.exitTime) : null;
+          const wk = weekKey(exitD && !isNaN(exitD.getTime()) ? exitD.toISOString().slice(0,10) : "");
+          if (!wk) continue;
+          if (!botWeekMap[wk]) botWeekMap[wk] = { pnl: 0, trades: 0, wins: 0 };
+          botWeekMap[wk].pnl    += t.pnl ?? 0;
+          botWeekMap[wk].trades += 1;
+          if ((t.pnl ?? 0) > 0) botWeekMap[wk].wins += 1;
+        }
+        const bwk = Object.keys(botWeekMap).sort().slice(-8);
+        const inner = bwk.length === 0 ? `<div class="db-empty">No bot weekly data yet</div>`
+          : `<div class="db-mo-row">${bwk.slice().reverse().map(wk => {
+              const w = botWeekMap[wk];
+              const label = new Date(wk).toLocaleDateString("en-IN",{day:"2-digit",month:"short"});
+              const wr = w.trades > 0 ? ((w.wins/w.trades)*100).toFixed(0) : "0";
+              return `<div class="db-mo-card">
                 <div class="db-mo-label">W/C ${label}</div>
-                <div class="db-mo-pnl ${w.pnl >= 0 ? 'db-green' : 'db-red'}">${w.pnl >= 0 ? "+" : ""}₹${Math.abs(w.pnl).toLocaleString("en-IN", { maximumFractionDigits: 0 })}</div>
+                <div class="db-mo-pnl ${w.pnl>=0?'db-green':'db-red'}">${w.pnl>=0?"+":""}₹${Math.abs(w.pnl).toLocaleString("en-IN",{maximumFractionDigits:0})}</div>
                 <div class="db-mo-meta">${w.trades} trades · ${wr}% win</div>
-              </div>`;
-                }).join("")}</div>`;
-            return `<div class="db-section">Bot Trades — Last 8 Weeks</div>${inner}`;
-        })() : ""}
+              </div>`;}).join("")}</div>`;
+        return `<div class="db-section">Bot Trades — Last 8 Weeks</div>${inner}`;
+      })() : ""}
     </div>
 
     <!-- ── PANEL: MONTHLY ── -->
     <div class="db-panel" id="dbp-monthly">
       <div class="db-section">Manual Trades — Monthly P&L</div>
       ${monthKeys.length === 0
-            ? `<div class="db-empty">No closed trades yet — monthly P&amp;L will appear here once you close positions. <a href="/paper-trade" style="color:var(--accent)">Start trading →</a></div>`
-            : `<div class="db-mo-row">${monthKeys.slice().reverse().map(mo => {
-                const m = monthMap[mo];
-                const [y, mn] = mo.split("-");
-                const label = new Date(parseInt(y), parseInt(mn) - 1, 1).toLocaleString("en-IN", { month: "long", year: "2-digit" });
-                const wr = m.trades > 0 ? ((m.wins / m.trades) * 100).toFixed(0) : "0";
-                return `<div class="db-mo-card">
+        ? `<div class="db-empty">No closed trades yet — monthly P&amp;L will appear here once you close positions. <a href="/paper-trade" style="color:var(--accent)">Start trading →</a></div>`
+        : `<div class="db-mo-row">${monthKeys.slice().reverse().map(mo => {
+            const m = monthMap[mo];
+            const [y, mn] = mo.split("-");
+            const label = new Date(parseInt(y), parseInt(mn)-1, 1).toLocaleString("en-IN",{month:"long",year:"2-digit"});
+            const wr = m.trades > 0 ? ((m.wins/m.trades)*100).toFixed(0) : "0";
+            return `<div class="db-mo-card">
               <div class="db-mo-label">${label}</div>
-              <div class="db-mo-pnl ${m.pnl >= 0 ? 'db-green' : 'db-red'}">${m.pnl >= 0 ? "+" : ""}₹${Math.abs(m.pnl).toLocaleString("en-IN", { maximumFractionDigits: 0 })}</div>
+              <div class="db-mo-pnl ${m.pnl>=0?'db-green':'db-red'}">${m.pnl>=0?"+":""}₹${Math.abs(m.pnl).toLocaleString("en-IN",{maximumFractionDigits:0})}</div>
               <div class="db-mo-meta">${m.trades} trades · ${wr}% win</div>
-            </div>`;
-            }).join("")}
+            </div>`;}).join("")}
           </div>
           <div class="db-tbl-wrap"><table class="db-tbl">
             <thead><tr><th>Month</th><th>Trades</th><th>Wins</th><th>Win Rate</th><th>P&L</th></tr></thead>
             <tbody>${monthKeys.slice().reverse().map(mo => {
-                const m = monthMap[mo];
-                const [y, mn] = mo.split("-");
-                const label = new Date(parseInt(y), parseInt(mn) - 1, 1).toLocaleString("en-IN", { month: "short", year: "numeric" });
-                const wr = m.trades > 0 ? ((m.wins / m.trades) * 100).toFixed(1) : "0";
-                return `<tr>
+              const m = monthMap[mo]; const [y, mn] = mo.split("-");
+              const label = new Date(parseInt(y), parseInt(mn)-1, 1).toLocaleString("en-IN",{month:"short",year:"numeric"});
+              const wr = m.trades > 0 ? ((m.wins/m.trades)*100).toFixed(1) : "0";
+              return `<tr>
                 <td style="font-weight:700">${label}</td>
                 <td>${m.trades}</td><td class="db-green">${m.wins}</td>
-                <td class="${parseFloat(wr) >= 50 ? 'db-green' : 'db-red'}">${wr}%</td>
-                <td class="${m.pnl >= 0 ? 'db-green' : 'db-red'}" style="font-weight:700">${m.pnl >= 0 ? "+" : ""}₹${Math.abs(m.pnl).toLocaleString("en-IN", { maximumFractionDigits: 0 })}</td>
-              </tr>`;
-            }).join("")}
+                <td class="${parseFloat(wr)>=50?'db-green':'db-red'}">${wr}%</td>
+                <td class="${m.pnl>=0?'db-green':'db-red'}" style="font-weight:700">${m.pnl>=0?"+":""}₹${Math.abs(m.pnl).toLocaleString("en-IN",{maximumFractionDigits:0})}</td>
+              </tr>`;}).join("")}
             </tbody></table></div>`}
       ${isAdmin ? (() => {
-            const inner = botMonthKeys.length === 0 ? `<div class="db-empty">No bot monthly data yet</div>`
-                : `<div class="db-mo-row">${botMonthKeys.slice().reverse().map(mo => {
-                    const m = botMonthMap[mo];
-                    const [y, mn] = mo.split("-");
-                    const label = new Date(parseInt(y), parseInt(mn) - 1, 1).toLocaleString("en-IN", { month: "long", year: "2-digit" });
-                    const wr = m.trades > 0 ? ((m.wins / m.trades) * 100).toFixed(0) : "0";
-                    return `<div class="db-mo-card">
+        const inner = botMonthKeys.length === 0 ? `<div class="db-empty">No bot monthly data yet</div>`
+          : `<div class="db-mo-row">${botMonthKeys.slice().reverse().map(mo => {
+              const m = botMonthMap[mo]; const [y, mn] = mo.split("-");
+              const label = new Date(parseInt(y), parseInt(mn)-1, 1).toLocaleString("en-IN",{month:"long",year:"2-digit"});
+              const wr = m.trades > 0 ? ((m.wins/m.trades)*100).toFixed(0) : "0";
+              return `<div class="db-mo-card">
                 <div class="db-mo-label">${label}</div>
-                <div class="db-mo-pnl ${m.pnl >= 0 ? 'db-green' : 'db-red'}">${m.pnl >= 0 ? "+" : ""}₹${Math.abs(m.pnl).toLocaleString("en-IN", { maximumFractionDigits: 0 })}</div>
+                <div class="db-mo-pnl ${m.pnl>=0?'db-green':'db-red'}">${m.pnl>=0?"+":""}₹${Math.abs(m.pnl).toLocaleString("en-IN",{maximumFractionDigits:0})}</div>
                 <div class="db-mo-meta">${m.trades} trades · ${wr}% win</div>
-              </div>`;
-                }).join("")}</div>`;
-            return `<div class="db-section">Bot Trades — Monthly P&L</div>${inner}`;
-        })() : ""}
+              </div>`;}).join("")}</div>`;
+        return `<div class="db-section">Bot Trades — Monthly P&L</div>${inner}`;
+      })() : ""}
     </div>
 
     <!-- ── PANEL: AI INSIGHTS ── -->
@@ -8858,12 +8782,12 @@ app.get("/dashboard", requireAuth, async (req, res) => {
           ${vixValue !== null ? `
           <div class="ai-vix-bar"><div class="ai-vix-ptr" style="left:${Math.min((vixValue / 35) * 100, 100).toFixed(1)}%"></div></div>
           <div style="display:flex;justify-content:space-between;font-size:.68rem;color:var(--text-muted);margin-bottom:10px"><span>Low (0)</span><span>High (35+)</span></div>
-          <div style="font-size:1.6rem;font-weight:900;margin-bottom:6px;color:${vixAlert === "extreme" ? "#ef4444" : vixAlert === "high" ? "#f59e0b" : vixAlert === "moderate" ? "#eab308" : "#10b981"}">${vixValue.toFixed(2)} <span style="font-size:.8rem;font-weight:600;color:var(--text-muted)">VIX</span></div>
-          <div class="ai-alert-box ${vixAlert === "extreme" ? "ai-alert-danger" : vixAlert === "high" ? "ai-alert-warn" : vixAlert === "moderate" ? "ai-alert-info" : "ai-alert-ok"}">
-            ${vixAlert === "extreme" ? "⚠️ Extreme volatility! Consider cutting position sizes in half and tightening stop losses."
-            : vixAlert === "high" ? "⚠️ High VIX — market is volatile. Use tighter stops and avoid averaging down."
-                : vixAlert === "moderate" ? "📊 Moderate volatility. Normal caution applies."
-                    : "✅ Low VIX — market is calm. Normal position sizing is fine."}
+          <div style="font-size:1.6rem;font-weight:900;margin-bottom:6px;color:${vixAlert==="extreme"?"#ef4444":vixAlert==="high"?"#f59e0b":vixAlert==="moderate"?"#eab308":"#10b981"}">${vixValue.toFixed(2)} <span style="font-size:.8rem;font-weight:600;color:var(--text-muted)">VIX</span></div>
+          <div class="ai-alert-box ${vixAlert==="extreme"?"ai-alert-danger":vixAlert==="high"?"ai-alert-warn":vixAlert==="moderate"?"ai-alert-info":"ai-alert-ok"}">
+            ${vixAlert==="extreme" ? "⚠️ Extreme volatility! Consider cutting position sizes in half and tightening stop losses."
+              : vixAlert==="high"  ? "⚠️ High VIX — market is volatile. Use tighter stops and avoid averaging down."
+              : vixAlert==="moderate" ? "📊 Moderate volatility. Normal caution applies."
+              : "✅ Low VIX — market is calm. Normal position sizing is fine."}
           </div>` : `<div class="ai-alert-box ai-alert-info">📡 VIX data unavailable (market may be closed)</div>`}
         </div>
 
@@ -8880,8 +8804,8 @@ app.get("/dashboard", requireAuth, async (req, res) => {
           ${overtradingAlert.warn
             ? `<div class="ai-alert-box ai-alert-danger">⚡ You've made ${overtradingAlert.todayCount} trades today vs your avg of ${overtradingAlert.avg}. Over-trading leads to emotional decisions — consider pausing.</div>`
             : overtradingAlert.todayCount === 0
-                ? `<div class="ai-alert-box ai-alert-info">📋 No trades placed today.</div>`
-                : `<div class="ai-alert-box ai-alert-ok">✅ Trade count is within normal range. You're disciplined today.</div>`}
+            ? `<div class="ai-alert-box ai-alert-info">📋 No trades placed today.</div>`
+            : `<div class="ai-alert-box ai-alert-ok">✅ Trade count is within normal range. You're disciplined today.</div>`}
           ${sellTrades.length < 5 ? `<div style="font-size:.72rem;color:var(--text-muted);margin-top:8px">Need at least 5 closed trades for meaningful analysis.</div>` : ""}
         </div>
 
@@ -8893,16 +8817,16 @@ app.get("/dashboard", requireAuth, async (req, res) => {
           </div>
           ${posRows.length === 0
             ? `<div class="ai-alert-box ai-alert-ok">✅ No open positions. Zero drawdown risk.</div>`
-            : `<div style="font-size:1.6rem;font-weight:900;color:#ef4444;margin-bottom:6px">₹${totalDrawdownRisk.toLocaleString("en-IN", { maximumFractionDigits: 0 })}</div>
-          <div style="font-size:.78rem;color:var(--text-muted);margin-bottom:10px">Estimated maximum loss across ${posRows.length} open position${posRows.length > 1 ? "s" : ""}</div>
+            : `<div style="font-size:1.6rem;font-weight:900;color:#ef4444;margin-bottom:6px">₹${totalDrawdownRisk.toLocaleString("en-IN",{maximumFractionDigits:0})}</div>
+          <div style="font-size:.78rem;color:var(--text-muted);margin-bottom:10px">Estimated maximum loss across ${posRows.length} open position${posRows.length>1?"s":""}</div>
           ${unprotectedPositions > 0
-                ? `<div class="ai-alert-box ai-alert-warn">⚠️ ${unprotectedPositions} position${unprotectedPositions > 1 ? "s have" : " has"} no stop loss. Using 5% drawdown estimate. Set SLs to protect capital.</div>`
-                : `<div class="ai-alert-box ai-alert-ok">✅ All positions have stop losses set.</div>`}
+            ? `<div class="ai-alert-box ai-alert-warn">⚠️ ${unprotectedPositions} position${unprotectedPositions>1?"s have":" has"} no stop loss. Using 5% drawdown estimate. Set SLs to protect capital.</div>`
+            : `<div class="ai-alert-box ai-alert-ok">✅ All positions have stop losses set.</div>`}
           <table class="ai-tbl" style="margin-top:10px">
             <tr style="font-size:.68rem;color:var(--text-muted)"><td>Symbol</td><td>Max Loss</td><td>Protected?</td></tr>
-            ${drawdownRows.slice(0, 5).map((r) => `<tr>
+            ${drawdownRows.slice(0,5).map((r: any) => `<tr>
               <td style="font-weight:700">${r.symbol}</td>
-              <td class="db-red">₹${r.maxLoss.toLocaleString("en-IN", { maximumFractionDigits: 0 })}</td>
+              <td class="db-red">₹${r.maxLoss.toLocaleString("en-IN",{maximumFractionDigits:0})}</td>
               <td>${r.hasSl ? '<span style="color:#10b981;font-weight:700">✓ SL set</span>' : '<span style="color:#f59e0b;font-weight:600">⚠ No SL</span>'}</td>
             </tr>`).join("")}
           </table>`}
@@ -8916,15 +8840,14 @@ app.get("/dashboard", requireAuth, async (req, res) => {
           </div>
           ${tradingDays.length < 3
             ? `<div class="ai-alert-box ai-alert-info">📊 Need trades on at least 3 different weekdays to detect patterns. Keep trading!</div>`
-            : `${bestDay ? `<div class="ai-alert-box ai-alert-ok" style="margin-bottom:8px">🏆 Best day: <strong>${bestDay}</strong> (${bestDayPnl >= 0 ? "+" : ""}₹${Math.abs(bestDayPnl).toLocaleString("en-IN", { maximumFractionDigits: 0 })})</div>` : ""}
-          ${worstDay && worstDay !== bestDay ? `<div class="ai-alert-box ai-alert-warn" style="margin-bottom:10px">⚠️ Worst day: <strong>${worstDay}</strong> (${worstDayPnl >= 0 ? "+" : ""}₹${Math.abs(worstDayPnl).toLocaleString("en-IN", { maximumFractionDigits: 0 })})</div>` : ""}
+            : `${bestDay ? `<div class="ai-alert-box ai-alert-ok" style="margin-bottom:8px">🏆 Best day: <strong>${bestDay}</strong> (${bestDayPnl >= 0 ? "+" : ""}₹${Math.abs(bestDayPnl).toLocaleString("en-IN",{maximumFractionDigits:0})})</div>` : ""}
+          ${worstDay && worstDay !== bestDay ? `<div class="ai-alert-box ai-alert-warn" style="margin-bottom:10px">⚠️ Worst day: <strong>${worstDay}</strong> (${worstDayPnl >= 0 ? "+" : ""}₹${Math.abs(worstDayPnl).toLocaleString("en-IN",{maximumFractionDigits:0})})</div>` : ""}
           <div class="ai-day-grid">
-            ${["Mon", "Tue", "Wed", "Thu", "Fri"].map(d => {
-                const m = dayMap[d];
-                if (!m)
-                    return `<div class="ai-day-card"><div class="ai-day-name">${d}</div><div class="ai-day-pnl db-muted">—</div></div>`;
-                const wr = m.trades > 0 ? Math.round(m.wins / m.trades * 100) : 0;
-                return `<div class="ai-day-card${d === bestDay ? " " : ''}"><div class="ai-day-name" style="${d === bestDay ? "color:#10b981" : d === worstDay ? "color:#ef4444" : ""}">${d}${d === bestDay ? " 🏆" : d === worstDay ? " ⚠️" : ""}</div><div class="ai-day-pnl ${m.pnl >= 0 ? "db-green" : "db-red"}">${m.pnl >= 0 ? "+" : ""}₹${Math.abs(m.pnl).toLocaleString("en-IN", { maximumFractionDigits: 0 })}</div><div class="ai-day-meta">${m.trades}T · ${wr}%W</div></div>`;
+            ${["Mon","Tue","Wed","Thu","Fri"].map(d => {
+              const m = dayMap[d];
+              if (!m) return `<div class="ai-day-card"><div class="ai-day-name">${d}</div><div class="ai-day-pnl db-muted">—</div></div>`;
+              const wr = m.trades > 0 ? Math.round(m.wins/m.trades*100) : 0;
+              return `<div class="ai-day-card${d===bestDay?" ":''}"><div class="ai-day-name" style="${d===bestDay?"color:#10b981":d===worstDay?"color:#ef4444":""}">${d}${d===bestDay?" 🏆":d===worstDay?" ⚠️":""}</div><div class="ai-day-pnl ${m.pnl>=0?"db-green":"db-red"}">${m.pnl>=0?"+":""}₹${Math.abs(m.pnl).toLocaleString("en-IN",{maximumFractionDigits:0})}</div><div class="ai-day-meta">${m.trades}T · ${wr}%W</div></div>`;
             }).join("")}
           </div>`}
         </div>
@@ -8939,15 +8862,15 @@ app.get("/dashboard", requireAuth, async (req, res) => {
             ? `<div class="ai-alert-box ai-alert-info">📌 No active picks to score right now.</div>`
             : `<table class="ai-tbl">
               <tr style="font-size:.68rem;color:var(--text-muted)"><td>Symbol</td><td>Score</td><td></td></tr>
-              ${[...scoredInPosition, ...scoredPending].slice(0, 8).map((p) => {
+              ${[...scoredInPosition, ...scoredPending].slice(0, 8).map((p: any) => {
                 const col = p.confidence >= 70 ? "#10b981" : p.confidence >= 50 ? "#f59e0b" : "#ef4444";
                 const label = p.confidence >= 70 ? "High" : p.confidence >= 50 ? "Medium" : "Low";
                 return `<tr>
-                  <td style="font-weight:700">${p.stock_symbol} <span style="font-size:.68rem;color:var(--text-muted)">${p.result === "entry_triggered" ? "🟢" : "⏳"}</span></td>
+                  <td style="font-weight:700">${p.stock_symbol} <span style="font-size:.68rem;color:var(--text-muted)">${p.result==="entry_triggered"?"🟢":"⏳"}</span></td>
                   <td><div style="font-weight:800;color:${col}">${p.confidence}</div><div class="ai-score-bar"><div class="ai-score-fill" style="width:${p.confidence}%;background:${col}"></div></div></td>
                   <td style="font-size:.72rem;color:${col}">${label}</td>
                 </tr>`;
-            }).join("")}
+              }).join("")}
             </table>
             <div style="font-size:.7rem;color:var(--text-muted);margin-top:8px">Score: 30 base + SL (+20) + Target (+15) + Low risk (+20) + historical win rate (+up to 15)</div>`}
         </div>
@@ -8960,10 +8883,10 @@ app.get("/dashboard", requireAuth, async (req, res) => {
           </div>
           ${pickAnomalies.length === 0
             ? `<div class="ai-alert-box ai-alert-ok">✅ No anomalies detected in current pending picks.</div>`
-            : pickAnomalies.slice(0, 5).map((p) => `
+            : pickAnomalies.slice(0, 5).map((p: any) => `
               <div style="margin-bottom:10px;padding:10px 12px;background:var(--bg2);border-radius:9px;border-left:3px solid #f59e0b">
                 <div style="font-weight:800;margin-bottom:5px">${p.stock_symbol} <span style="font-size:.72rem;color:var(--text-muted);font-weight:500">${p.direction}</span></div>
-                ${p.flags.map((f) => `<span class="ai-flag">${f}</span>`).join("")}
+                ${p.flags.map((f: string) => `<span class="ai-flag">${f}</span>`).join("")}
               </div>`).join("")}
           ${pendingNonDupe.length === 0 ? `<div style="font-size:.72rem;color:var(--text-muted);margin-top:8px">No pending picks to analyze.</div>` : ""}
         </div>
@@ -8990,33 +8913,30 @@ app.get("/dashboard", requireAuth, async (req, res) => {
 
       <div class="ptk-panel ptk-show" id="ptk-p-inpos">
         ${picksInPosition.length === 0
-            ? `<div class="db-empty">No picks currently in position.</div>`
-            : (() => {
-                // compute per-row P&L and totals
-                let totalPnlPct = 0, countWithCmp = 0;
-                const rows = picksInPosition.map((p) => {
-                    const lp = priceMap[p.stock_symbol];
-                    const ep = p.entry_price ?? ((p.entry_low + p.entry_high) / 2);
-                    const mult = (p.direction === "BULLISH" || p.direction === "LONG") ? 1 : -1;
-                    const pnlPct = lp && ep ? parseFloat((((lp - ep) / ep) * 100 * mult).toFixed(2)) : null;
-                    if (pnlPct !== null) {
-                        totalPnlPct += pnlPct;
-                        countWithCmp++;
-                    }
-                    return { p, lp, ep, pnlPct };
-                });
-                const avgPnlPct = countWithCmp > 0 ? (totalPnlPct / countWithCmp).toFixed(2) : null;
-                const totalPnlAmt = rows.reduce((s, r) => {
-                    const pnlAmt = r.lp && r.ep ? parseFloat(((r.lp - r.ep) * ((r.p.direction === "BULLISH" || r.p.direction === "LONG") ? 1 : -1)).toFixed(2)) : 0;
-                    return s + pnlAmt;
-                }, 0);
-                const inProfit = rows.filter((r) => r.pnlPct !== null && r.pnlPct > 0).length;
-                const inLoss = rows.filter((r) => r.pnlPct !== null && r.pnlPct < 0).length;
-                const summaryHtml = `<div style="display:grid;grid-template-columns:2fr 1fr 1fr 1fr;gap:12px;margin-bottom:18px">
-                <div style="background:linear-gradient(135deg,${totalPnlAmt >= 0 ? '#052e16,#166534' : '#450a0a,#991b1b'});border-radius:14px;padding:18px 22px;display:flex;flex-direction:column;gap:4px">
+          ? `<div class="db-empty">No picks currently in position.</div>`
+          : (() => {
+              // compute per-row P&L and totals
+              let totalPnlPct = 0, countWithCmp = 0;
+              const rows = picksInPosition.map((p: any) => {
+                const lp = priceMap[p.stock_symbol];
+                const ep = p.entry_price ?? ((p.entry_low + p.entry_high) / 2);
+                const mult = (p.direction === "BULLISH" || p.direction === "LONG") ? 1 : -1;
+                const pnlPct = lp && ep ? parseFloat((((lp - ep) / ep) * 100 * mult).toFixed(2)) : null;
+                if (pnlPct !== null) { totalPnlPct += pnlPct; countWithCmp++; }
+                return { p, lp, ep, pnlPct };
+              });
+              const avgPnlPct = countWithCmp > 0 ? (totalPnlPct / countWithCmp).toFixed(2) : null;
+              const totalPnlAmt = rows.reduce((s: number, r: any) => {
+                const pnlAmt = r.lp && r.ep ? parseFloat(((r.lp - r.ep) * ((r.p.direction === "BULLISH" || r.p.direction === "LONG") ? 1 : -1)).toFixed(2)) : 0;
+                return s + pnlAmt;
+              }, 0);
+              const inProfit = rows.filter((r: any) => r.pnlPct !== null && r.pnlPct > 0).length;
+              const inLoss = rows.filter((r: any) => r.pnlPct !== null && r.pnlPct < 0).length;
+              const summaryHtml = `<div style="display:grid;grid-template-columns:2fr 1fr 1fr 1fr;gap:12px;margin-bottom:18px">
+                <div style="background:linear-gradient(135deg,${totalPnlAmt>=0?'#052e16,#166534':'#450a0a,#991b1b'});border-radius:14px;padding:18px 22px;display:flex;flex-direction:column;gap:4px">
                   <span style="font-size:.72rem;color:rgba(255,255,255,.7);text-transform:uppercase;letter-spacing:.08em;font-weight:600">Overall Unrealized P&amp;L</span>
-                  <span style="font-size:1.9rem;font-weight:900;color:#fff;line-height:1.1">${totalPnlAmt >= 0 ? "+" : ""}₹${Math.abs(totalPnlAmt).toLocaleString("en-IN", { maximumFractionDigits: 2 })}</span>
-                  ${avgPnlPct !== null ? `<span style="font-size:.85rem;color:rgba(255,255,255,.75);font-weight:600">Avg ${parseFloat(avgPnlPct) >= 0 ? "+" : ""}${avgPnlPct}% per pick</span>` : ""}
+                  <span style="font-size:1.9rem;font-weight:900;color:#fff;line-height:1.1">${totalPnlAmt>=0?"+":""}₹${Math.abs(totalPnlAmt).toLocaleString("en-IN",{maximumFractionDigits:2})}</span>
+                  ${avgPnlPct !== null ? `<span style="font-size:.85rem;color:rgba(255,255,255,.75);font-weight:600">Avg ${parseFloat(avgPnlPct)>=0?"+":""}${avgPnlPct}% per pick</span>` : ""}
                 </div>
                 <div style="background:var(--card-bg);border:1px solid var(--border);border-radius:14px;padding:16px 18px;display:flex;flex-direction:column;gap:4px">
                   <span style="font-size:.7rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:.07em">Positions</span>
@@ -9031,34 +8951,33 @@ app.get("/dashboard", requireAuth, async (req, res) => {
                   <span style="font-size:1.6rem;font-weight:800;color:#ef4444">${inLoss}</span>
                 </div>
               </div>`;
-                const tableHtml = `<div class="db-tbl-wrap"><table class="db-tbl">
+              const tableHtml = `<div class="db-tbl-wrap"><table class="db-tbl">
                 <thead><tr><th>Symbol</th><th>Direction</th><th>Qty</th><th>Entry Price</th><th>Target</th><th>SL</th><th>CMP</th><th>P&amp;L</th><th>Entry At</th></tr></thead>
-                <tbody>${rows.map(({ p, lp, ep, pnlPct }) => {
-                    const qty = 1;
-                    const pnlAmt = lp && ep ? parseFloat(((lp - ep) * ((p.direction === "BULLISH" || p.direction === "LONG") ? 1 : -1) * qty).toFixed(2)) : null;
-                    return `<tr>
+                <tbody>${rows.map(({ p, lp, ep, pnlPct }: any) => {
+                  const qty = 1;
+                  const pnlAmt = lp && ep ? parseFloat(((lp - ep) * ((p.direction === "BULLISH" || p.direction === "LONG") ? 1 : -1) * qty).toFixed(2)) : null;
+                  return `<tr>
                   <td><strong style="color:var(--accent)">${esc(p.stock_symbol)}</strong>${p.company_name ? `<br><span style="color:var(--text-muted);font-size:.7rem">${esc(p.company_name)}</span>` : ""}</td>
                   <td><span class="${p.direction === "BULLISH" ? "pb-bullish" : "pb-bearish"}">${p.direction}</span></td>
                   <td style="font-weight:600;color:var(--text-muted)">${qty}</td>
                   <td style="font-size:.82rem">₹${ep.toFixed(2)}</td>
-                  <td style="color:#10b981;font-size:.8rem">${p.target ? "₹" + p.target : "—"}</td>
-                  <td style="color:#ef4444;font-size:.8rem">${p.stop_loss ? "₹" + p.stop_loss : "—"}</td>
-                  <td style="font-weight:700;color:${lp ? "#3b82f6" : "var(--text-muted)"}">${lp ? "₹" + lp.toFixed(2) : "—"}</td>
+                  <td style="color:#10b981;font-size:.8rem">${p.target ? "₹"+p.target : "—"}</td>
+                  <td style="color:#ef4444;font-size:.8rem">${p.stop_loss ? "₹"+p.stop_loss : "—"}</td>
+                  <td style="font-weight:700;color:${lp ? "#3b82f6" : "var(--text-muted)"}">${lp ? "₹"+lp.toFixed(2) : "—"}</td>
                   <td class="${pnlAmt === null ? "" : pnlAmt >= 0 ? "db-green" : "db-red"}" style="font-weight:700">${pnlAmt === null ? "—" : `<span style="display:block">${pnlAmt >= 0 ? "+" : ""}₹${Math.abs(pnlAmt).toFixed(2)}</span><span style="font-size:.75rem;opacity:.85">${pnlPct !== null ? (pnlPct >= 0 ? "+" : "") + pnlPct + "%" : ""}</span>`}</td>
-                  <td style="color:var(--text-muted);font-size:.78rem">${p.entry_at ? p.entry_at.slice(0, 16).replace("T", " ") : "—"}</td>
-                </tr>`;
-                }).join("")}
+                  <td style="color:var(--text-muted);font-size:.78rem">${p.entry_at ? p.entry_at.slice(0,16).replace("T"," ") : "—"}</td>
+                </tr>`;}).join("")}
                 </tbody></table></div>`;
-                return summaryHtml + tableHtml;
+              return summaryHtml + tableHtml;
             })()}
       </div>
 
       <div class="ptk-panel" id="ptk-p-pend">
         ${pendingNonDupe.length === 0
-            ? `<div class="db-empty">No pending picks for today.</div>`
-            : `<div class="db-tbl-wrap"><table class="db-tbl">
+          ? `<div class="db-empty">No pending picks for today.</div>`
+          : `<div class="db-tbl-wrap"><table class="db-tbl">
               <thead><tr><th>Symbol</th><th>Type</th><th>Direction</th><th>Qty</th><th>Entry Zone</th><th>Target</th><th>SL</th><th>CMP</th></tr></thead>
-              <tbody>${pendingNonDupe.map((p) => {
+              <tbody>${pendingNonDupe.map((p: any) => {
                 const lp = priceMap[p.stock_symbol];
                 const inZone = lp && lp >= p.entry_low && lp <= p.entry_high;
                 return `<tr>
@@ -9067,20 +8986,20 @@ app.get("/dashboard", requireAuth, async (req, res) => {
                   <td><span class="${p.direction === "BULLISH" ? "pb-bullish" : "pb-bearish"}">${p.direction}</span></td>
                   <td style="font-weight:600;color:var(--text-muted)">1</td>
                   <td style="color:var(--text-muted);font-size:.8rem;white-space:nowrap">₹${p.entry_low}–${p.entry_high}</td>
-                  <td style="color:#10b981;font-size:.8rem">${p.target ? "₹" + p.target : "—"}</td>
-                  <td style="color:#ef4444;font-size:.8rem">${p.stop_loss ? "₹" + p.stop_loss : "—"}</td>
-                  <td style="font-weight:700;color:${lp ? (inZone ? "#f59e0b" : "#3b82f6") : "var(--text-muted)"};white-space:nowrap">${lp ? "₹" + lp.toFixed(2) + (inZone ? " 🔔" : "") : "—"}</td>
+                  <td style="color:#10b981;font-size:.8rem">${p.target ? "₹"+p.target : "—"}</td>
+                  <td style="color:#ef4444;font-size:.8rem">${p.stop_loss ? "₹"+p.stop_loss : "—"}</td>
+                  <td style="font-weight:700;color:${lp ? (inZone ? "#f59e0b" : "#3b82f6") : "var(--text-muted)"};white-space:nowrap">${lp ? "₹"+lp.toFixed(2)+(inZone?" 🔔":"") : "—"}</td>
                 </tr>`;
-            }).join("")}
+              }).join("")}
               </tbody></table></div>`}
       </div>
 
       <div class="ptk-panel" id="ptk-p-exec">
         ${resolvedPicks.length === 0
-            ? `<div class="db-empty">No executed picks yet.</div>`
-            : `<div class="db-tbl-wrap"><table class="db-tbl">
+          ? `<div class="db-empty">No executed picks yet.</div>`
+          : `<div class="db-tbl-wrap"><table class="db-tbl">
               <thead><tr><th>Symbol</th><th>Direction</th><th>Qty</th><th>Result</th><th>Entry ₹</th><th>Result ₹</th><th>P&amp;L</th><th>Date</th></tr></thead>
-              <tbody>${resolvedPicks.slice(0, 50).map((p) => {
+              <tbody>${resolvedPicks.slice(0, 50).map((p: any) => {
                 const isWin = p.result === "target_hit";
                 const qty = 1;
                 const ep = p.entry_price;
@@ -9093,12 +9012,12 @@ app.get("/dashboard", requireAuth, async (req, res) => {
                   <td><span class="${p.direction === "BULLISH" ? "pb-bullish" : "pb-bearish"}">${p.direction}</span></td>
                   <td style="font-weight:600;color:var(--text-muted)">${qty}</td>
                   <td><span style="background:${isWin ? "#10b98122" : "#ef444422"};color:${isWin ? "#10b981" : "#ef4444"};border:1px solid ${isWin ? "#10b98144" : "#ef444444"};border-radius:20px;padding:3px 10px;font-size:.72rem;font-weight:700;white-space:nowrap">${isWin ? "✅ Target Hit" : "⛔ SL Hit"}</span></td>
-                  <td style="font-size:.84rem">${ep ? "₹" + ep : "—"}</td>
-                  <td style="font-weight:700">${rp ? "₹" + rp : "—"}</td>
-                  <td class="${pnlAmt === null ? "" : pnlAmt >= 0 ? "db-green" : "db-red"}" style="font-weight:700">${pnlAmt === null ? "—" : `<span style="display:block">${pnlAmt >= 0 ? "+" : ""}₹${Math.abs(pnlAmt).toFixed(2)}</span><span style="font-size:.75rem;opacity:.85">${pnlPct !== null ? (pnlPct >= 0 ? "+" : "") + pnlPct + "%" : ""}</span>`}</td>
-                  <td style="color:var(--text-muted);font-size:.78rem">${p.result_at ? p.result_at.slice(0, 10) : "—"}</td>
+                  <td style="font-size:.84rem">${ep ? "₹"+ep : "—"}</td>
+                  <td style="font-weight:700">${rp ? "₹"+rp : "—"}</td>
+                  <td class="${pnlAmt === null ? "" : pnlAmt >= 0 ? "db-green" : "db-red"}" style="font-weight:700">${pnlAmt === null ? "—" : `<span style="display:block">${pnlAmt >= 0 ? "+" : ""}₹${Math.abs(pnlAmt).toFixed(2)}</span><span style="font-size:.75rem;opacity:.85">${pnlPct !== null ? (pnlPct >= 0 ? "+" : "")+pnlPct+"%" : ""}</span>`}</td>
+                  <td style="color:var(--text-muted);font-size:.78rem">${p.result_at ? p.result_at.slice(0,10) : "—"}</td>
                 </tr>`;
-            }).join("")}
+              }).join("")}
               </tbody></table></div>`}
       </div>
     </div>` : ""}
@@ -9125,93 +9044,91 @@ app.get("/dashboard", requireAuth, async (req, res) => {
   </script>
 </body>
 </html>`);
-    }
-    catch (err) {
-        console.error("[/dashboard] Error:", err);
-        res.status(500).send(`<!DOCTYPE html><html><head><title>Error</title><link rel="stylesheet" href="/public/css/style.css"></head><body>${nav("dashboard", req)}<div class="container" style="padding:40px 0;text-align:center"><h2 style="color:#ef4444">⚠️ Dashboard Error</h2><p style="color:var(--text-muted)">${err?.message || "Unknown error"}</p><a href="/" class="btn-primary" style="margin-top:16px;display:inline-block">Back to Screener</a></div></body></html>`);
-    }
+  } catch (err: any) {
+    console.error("[/dashboard] Error:", err);
+    res.status(500).send(`<!DOCTYPE html><html><head><title>Error</title><link rel="stylesheet" href="/public/css/style.css"></head><body>${nav("dashboard", req)}<div class="container" style="padding:40px 0;text-align:center"><h2 style="color:#ef4444">⚠️ Dashboard Error</h2><p style="color:var(--text-muted)">${err?.message || "Unknown error"}</p><a href="/" class="btn-primary" style="margin-top:16px;display:inline-block">Back to Screener</a></div></body></html>`);
+  }
 });
+
 // Redirect old bot-stats and portfolio URLs to unified dashboard
 app.get("/paper-trade/bot-stats", requireAuth, (_req, res) => res.redirect("/dashboard"));
+
+
 // ── GET /api/picks/live — quick counts for JS refresh ─────────────────────────
-app.get("/api/picks/live", requireAuth, async (_req, res) => {
-    const all = await (0, db_1.getAllPicks)();
-    const inPos = all.filter(p => p.result === 'entry_triggered').length;
-    const latestDate = all.filter(p => !p.result).sort((a, b) => (b.published_at || '').localeCompare(a.published_at || ''))[0]?.published_at?.slice(0, 10);
-    const pend = latestDate ? all.filter(p => !p.result && (p.published_at || '').slice(0, 10) === latestDate).length : 0;
-    const exec = all.filter(p => p.result === 'target_hit' || p.result === 'sl_hit').length;
-    res.json({ inPosition: inPos, pending: pend, executed: exec });
+app.get("/api/picks/live", requireAuth, async (_req: Request, res: Response) => {
+  const all = await getAllPicks();
+  const inPos = all.filter(p => p.result === 'entry_triggered').length;
+  const latestDate = all.filter(p => !p.result).sort((a, b) => (b.published_at||'').localeCompare(a.published_at||''))[0]?.published_at?.slice(0,10);
+  const pend = latestDate ? all.filter(p => !p.result && (p.published_at||'').slice(0,10) === latestDate).length : 0;
+  const exec = all.filter(p => p.result === 'target_hit' || p.result === 'sl_hit').length;
+  res.json({ inPosition: inPos, pending: pend, executed: exec });
 });
+
 // ── POST /my-paper-trade/buy ──────────────────────────────────────────────────
-app.post("/my-paper-trade/buy", requireAuth, async (req, res) => {
-    const userId = req.session.userId;
-    if (!isMarketHours()) {
-        res.redirect("/paper-trade?err=" + encodeURIComponent("Paper trading only available during market hours (Mon–Fri 9:15 AM – 3:30 PM IST)"));
-        return;
-    }
-    const otpReq = (await (0, db_1.getSetting)("otp_required")) !== "false";
-    if (otpReq) {
-        const uInfo = await (0, db_1.dbAll)("SELECT mobile_verified FROM users WHERE id=?", [userId]);
-        if (!uInfo[0]?.mobile_verified) {
-            res.redirect("/verify-mobile?next=/my-paper-trade");
-            return;
-        }
-    }
-    const [tradeCount, activeSub] = await Promise.all([(0, db_1.countPaperTrades)(userId), (0, db_1.getActiveSubscription)(userId)]);
-    const freeLimit = parseInt(await (0, db_1.getSetting)("paper_free_limit") || "10", 10);
-    const isPremium = !!activeSub || req.session.userRole === "premium" || req.session.userRole === "admin";
-    if (!isPremium && tradeCount >= freeLimit) {
-        res.redirect("/my-paper-trade/upgrade?err=" + encodeURIComponent(`Free limit reached (${freeLimit} trades). Upgrade to Premium for unlimited trades.`));
-        return;
-    }
-    const symbol = (req.body.symbol || "").toUpperCase().trim();
-    const qty = parseInt(req.body.qty, 10);
-    const price = parseFloat(req.body.price);
-    const tradeType = req.body.trade_type === "HOLDING" ? "HOLDING" : "INTRADAY";
-    const orderType = req.body.order_type === "LIMIT" ? "LIMIT" : "MARKET";
-    const slPct = parseFloat(req.body.sl_pct);
-    const tgtPct = parseFloat(req.body.target_pct);
-    if (!symbol || !Number.isInteger(qty) || qty < 1 || qty > 10000 || isNaN(price) || price <= 0) {
-        res.redirect("/my-paper-trade?err=Invalid+buy+parameters");
-        return;
-    }
-    const slPrice = (!isNaN(slPct) && slPct > 0) ? parseFloat((price * (1 - slPct / 100)).toFixed(2)) : null;
-    const targetPrice = (!isNaN(tgtPct) && tgtPct > 0) ? parseFloat((price * (1 + tgtPct / 100)).toFixed(2)) : null;
-    const stock = await (0, db_1.dbAll)("SELECT company_name FROM stocks WHERE symbol=?", [symbol]);
-    const companyName = stock[0]?.company_name ?? null;
-    const result = await (0, db_1.paperBuy)(userId, symbol, companyName, qty, price, tradeType, slPrice, targetPrice, orderType);
-    res.redirect(`/my-paper-trade?${result.ok ? "msg" : "err"}=${encodeURIComponent(result.msg)}`);
+app.post("/my-paper-trade/buy", requireAuth, async (req: Request, res: Response) => {
+  const userId = req.session.userId!;
+  if (!isMarketHours()) {
+    res.redirect("/paper-trade?err=" + encodeURIComponent("Paper trading only available during market hours (Mon–Fri 9:15 AM – 3:30 PM IST)")); return;
+  }
+  const otpReq = (await getSetting("otp_required")) !== "false";
+  if (otpReq) {
+    const uInfo = await dbAll<{ mobile_verified: number }>("SELECT mobile_verified FROM users WHERE id=?", [userId]);
+    if (!uInfo[0]?.mobile_verified) { res.redirect("/verify-mobile?next=/my-paper-trade"); return; }
+  }
+  const [tradeCount, activeSub] = await Promise.all([countPaperTrades(userId), getActiveSubscription(userId)]);
+  const freeLimit = parseInt(await getSetting("paper_free_limit") || "10", 10);
+  const isPremium = !!activeSub || req.session.userRole === "premium" || req.session.userRole === "admin";
+  if (!isPremium && tradeCount >= freeLimit) {
+    res.redirect("/my-paper-trade/upgrade?err=" + encodeURIComponent(`Free limit reached (${freeLimit} trades). Upgrade to Premium for unlimited trades.`)); return;
+  }
+  const symbol    = ((req.body.symbol as string) || "").toUpperCase().trim();
+  const qty       = parseInt(req.body.qty, 10);
+  const price     = parseFloat(req.body.price);
+  const tradeType = req.body.trade_type === "HOLDING" ? "HOLDING" : "INTRADAY";
+  const orderType = req.body.order_type === "LIMIT" ? "LIMIT" : "MARKET";
+  const slPct     = parseFloat(req.body.sl_pct);
+  const tgtPct    = parseFloat(req.body.target_pct);
+  if (!symbol || !Number.isInteger(qty) || qty < 1 || qty > 10000 || isNaN(price) || price <= 0) {
+    res.redirect("/my-paper-trade?err=Invalid+buy+parameters"); return;
+  }
+  const slPrice     = (!isNaN(slPct)  && slPct  > 0) ? parseFloat((price * (1 - slPct  / 100)).toFixed(2)) : null;
+  const targetPrice = (!isNaN(tgtPct) && tgtPct > 0) ? parseFloat((price * (1 + tgtPct / 100)).toFixed(2)) : null;
+  const stock = await dbAll<{ company_name: string | null }>("SELECT company_name FROM stocks WHERE symbol=?", [symbol]);
+  const companyName = stock[0]?.company_name ?? null;
+  const result = await paperBuy(userId, symbol, companyName, qty, price, tradeType, slPrice, targetPrice, orderType);
+  res.redirect(`/my-paper-trade?${result.ok ? "msg" : "err"}=${encodeURIComponent(result.msg)}`);
 });
+
 // ── POST /my-paper-trade/sell ─────────────────────────────────────────────────
-app.post("/my-paper-trade/sell", requireAuth, async (req, res) => {
-    const userId = req.session.userId;
-    if (!isMarketHours()) {
-        res.redirect("/my-paper-trade?err=" + encodeURIComponent("Paper trading only available during market hours (Mon–Fri 9:15 AM – 3:30 PM IST)"));
-        return;
-    }
-    const symbol = (req.body.symbol || "").toUpperCase().trim();
-    const qty = parseInt(req.body.qty, 10);
-    const price = parseFloat(req.body.price);
-    if (!symbol || !Number.isInteger(qty) || qty < 1 || isNaN(price) || price <= 0) {
-        res.redirect("/my-paper-trade?err=Invalid+sell+parameters");
-        return;
-    }
-    const result = await (0, db_1.paperSell)(userId, symbol, qty, price);
-    res.redirect(`/my-paper-trade?${result.ok ? "msg" : "err"}=${encodeURIComponent(result.msg)}`);
+app.post("/my-paper-trade/sell", requireAuth, async (req: Request, res: Response) => {
+  const userId = req.session.userId!;
+  if (!isMarketHours()) {
+    res.redirect("/my-paper-trade?err=" + encodeURIComponent("Paper trading only available during market hours (Mon–Fri 9:15 AM – 3:30 PM IST)")); return;
+  }
+  const symbol  = ((req.body.symbol as string) || "").toUpperCase().trim();
+  const qty     = parseInt(req.body.qty, 10);
+  const price   = parseFloat(req.body.price);
+  if (!symbol || !Number.isInteger(qty) || qty < 1 || isNaN(price) || price <= 0) {
+    res.redirect("/my-paper-trade?err=Invalid+sell+parameters"); return;
+  }
+  const result = await paperSell(userId, symbol, qty, price);
+  res.redirect(`/my-paper-trade?${result.ok ? "msg" : "err"}=${encodeURIComponent(result.msg)}`);
 });
+
 // ── POST /my-paper-trade/reset ────────────────────────────────────────────────
-app.post("/my-paper-trade/reset", requireAuth, async (req, res) => {
-    await (0, db_1.paperReset)(req.session.userId);
-    res.redirect("/my-paper-trade?msg=Portfolio+reset+successfully.+Starting+fresh+with+%E2%82%B91%2C00%2C000");
+app.post("/my-paper-trade/reset", requireAuth, async (req: Request, res: Response) => {
+  await paperReset(req.session.userId!);
+  res.redirect("/my-paper-trade?msg=Portfolio+reset+successfully.+Starting+fresh+with+%E2%82%B91%2C00%2C000");
 });
+
 // ── GET /my-paper-trade/config ────────────────────────────────────────────────
-app.get("/my-paper-trade/config", requireAuth, async (req, res) => {
-    const cfg = await (0, db_1.getPaperTradeConfig)(req.session.userId);
-    const autoPicks = await (0, db_1.getAutoPaperPicks)(req.session.userId);
-    const saved = req.query.saved === "1";
-    const activeSub = await (0, db_1.getActiveSubscription)(req.session.userId);
-    const isPremium = !!activeSub || req.session.userRole === "premium" || req.session.userRole === "admin";
-    res.send(`<!DOCTYPE html><html lang="en"><head>
+app.get("/my-paper-trade/config", requireAuth, async (req: Request, res: Response) => {
+  const cfg   = await getPaperTradeConfig(req.session.userId!);
+  const autoPicks = await getAutoPaperPicks(req.session.userId!);
+  const saved = req.query.saved === "1";
+  const activeSub = await getActiveSubscription(req.session.userId!);
+  const isPremium = !!activeSub || req.session.userRole === "premium" || req.session.userRole === "admin";
+  res.send(`<!DOCTYPE html><html lang="en"><head>
   <meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
   <title>Paper Trade Settings — ZeroScreen</title>
   <link rel="stylesheet" href="/public/css/style.css">
@@ -9245,7 +9162,7 @@ app.get("/my-paper-trade/config", requireAuth, async (req, res) => {
         <label class="cfg-label">Default Trade Type</label>
         <select class="cfg-select" name="trade_type">
           <option value="INTRADAY" ${cfg.trade_type === "INTRADAY" ? "selected" : ""}>Intraday (square off same day)</option>
-          <option value="HOLDING"  ${cfg.trade_type === "HOLDING" ? "selected" : ""}>Holding (positional / multi-day)</option>
+          <option value="HOLDING"  ${cfg.trade_type === "HOLDING"  ? "selected" : ""}>Holding (positional / multi-day)</option>
         </select>
       </div>
       <div class="cfg-row">
@@ -9272,11 +9189,12 @@ app.get("/my-paper-trade/config", requireAuth, async (req, res) => {
           <div class="cfg-toggle-desc">${isPremium ? 'At 9:15 AM after market opens, automatically buy today\'s picks in your paper portfolio at live price with SL &amp; target set.' : 'Upgrade to Premium to enable automatic trading of Today\'s Picks.'}</div>
         </div>
         ${isPremium
-        ? `<label class="cfg-switch" style="margin-left:16px;flex-shrink:0">
+          ? `<label class="cfg-switch" style="margin-left:16px;flex-shrink:0">
           <input type="checkbox" name="auto_paper_picks" value="1" ${autoPicks ? "checked" : ""}>
           <span class="cfg-slider"></span>
         </label>`
-        : `<a href="/my-paper-trade/upgrade" style="margin-left:16px;flex-shrink:0;font-size:0.8rem;background:var(--accent);color:#fff;border-radius:8px;padding:6px 14px;text-decoration:none;font-weight:700">🔓 Upgrade</a>`}
+          : `<a href="/my-paper-trade/upgrade" style="margin-left:16px;flex-shrink:0;font-size:0.8rem;background:var(--accent);color:#fff;border-radius:8px;padding:6px 14px;text-decoration:none;font-weight:700">🔓 Upgrade</a>`
+        }
       </div>
 
       <button type="submit" class="cfg-btn">Save Settings</button>
@@ -9286,43 +9204,43 @@ app.get("/my-paper-trade/config", requireAuth, async (req, res) => {
 </div>
 <script src="/public/js/app.js"></script></body></html>`);
 });
-app.post("/my-paper-trade/config", requireAuth, async (req, res) => {
-    const userId = req.session.userId;
-    const trade_type = req.body.trade_type === "HOLDING" ? "HOLDING" : "INTRADAY";
-    const default_qty = Math.max(1, Math.min(10000, parseInt(req.body.default_qty, 10) || 1));
-    const default_sl_pct = Math.max(0.1, Math.min(50, parseFloat(req.body.default_sl_pct) || 2));
-    const default_tgt_pct = Math.max(0.1, Math.min(200, parseFloat(req.body.default_tgt_pct) || 4));
-    const max_positions = Math.max(1, Math.min(50, parseInt(req.body.max_positions, 10) || 10));
-    await (0, db_1.savePaperTradeConfig)(userId, { trade_type, default_qty, default_sl_pct, default_tgt_pct, max_positions });
-    // Only premium/admin can enable auto-trade picks
-    const activeSub = await (0, db_1.getActiveSubscription)(userId);
-    const isPremium = !!activeSub || req.session.userRole === "premium" || req.session.userRole === "admin";
-    if (isPremium) {
-        const auto_paper_picks = req.body.auto_paper_picks === "1";
-        await (0, db_1.setAutoPaperPicks)(userId, auto_paper_picks);
-    }
-    res.redirect("/my-paper-trade/config?saved=1");
+
+app.post("/my-paper-trade/config", requireAuth, async (req: Request, res: Response) => {
+  const userId = req.session.userId!;
+  const trade_type      = req.body.trade_type === "HOLDING" ? "HOLDING" : "INTRADAY";
+  const default_qty     = Math.max(1, Math.min(10000, parseInt(req.body.default_qty, 10) || 1));
+  const default_sl_pct  = Math.max(0.1, Math.min(50,  parseFloat(req.body.default_sl_pct)  || 2));
+  const default_tgt_pct = Math.max(0.1, Math.min(200, parseFloat(req.body.default_tgt_pct) || 4));
+  const max_positions   = Math.max(1, Math.min(50, parseInt(req.body.max_positions, 10) || 10));
+  await savePaperTradeConfig(userId, { trade_type, default_qty, default_sl_pct, default_tgt_pct, max_positions });
+  // Only premium/admin can enable auto-trade picks
+  const activeSub = await getActiveSubscription(userId);
+  const isPremium = !!activeSub || req.session.userRole === "premium" || req.session.userRole === "admin";
+  if (isPremium) {
+    const auto_paper_picks = req.body.auto_paper_picks === "1";
+    await setAutoPaperPicks(userId, auto_paper_picks);
+  }
+  res.redirect("/my-paper-trade/config?saved=1");
 });
+
 // ── POST /api/auto-paper-picks/toggle  (AJAX, requires login) ─────────────────
-app.post("/api/auto-paper-picks/toggle", requireAuth, async (req, res) => {
-    const userId = req.session.userId;
-    const activeSub = await (0, db_1.getActiveSubscription)(userId);
-    const isPremium = !!activeSub || req.session.userRole === "premium" || req.session.userRole === "admin";
-    if (!isPremium) {
-        res.json({ ok: false, msg: "Premium required" });
-        return;
-    }
-    const enabled = req.body.enabled === true || req.body.enabled === "true" || req.body.enabled === 1;
-    await (0, db_1.setAutoPaperPicks)(userId, enabled);
-    res.json({ ok: true, enabled });
+app.post("/api/auto-paper-picks/toggle", requireAuth, async (req: Request, res: Response) => {
+  const userId = req.session.userId!;
+  const activeSub = await getActiveSubscription(userId);
+  const isPremium = !!activeSub || req.session.userRole === "premium" || req.session.userRole === "admin";
+  if (!isPremium) { res.json({ ok: false, msg: "Premium required" }); return; }
+  const enabled = req.body.enabled === true || req.body.enabled === "true" || req.body.enabled === 1;
+  await setAutoPaperPicks(userId, enabled);
+  res.json({ ok: true, enabled });
 });
+
 // ── GET /my-paper-trade/upgrade ───────────────────────────────────────────────
-app.get("/my-paper-trade/upgrade", requireAuth, async (req, res) => {
-    const err = esc(req.query.err || "");
-    const activeSub = await (0, db_1.getActiveSubscription)(req.session.userId);
-    const isPremium = !!activeSub || req.session.userRole === "premium" || req.session.userRole === "admin";
-    const freeLimit = await (0, db_1.getSetting)("paper_free_limit") || "10";
-    res.send(`<!DOCTYPE html><html lang="en"><head>
+app.get("/my-paper-trade/upgrade", requireAuth, async (req: Request, res: Response) => {
+  const err       = esc(req.query.err as string || "");
+  const activeSub = await getActiveSubscription(req.session.userId!);
+  const isPremium = !!activeSub || req.session.userRole === "premium" || req.session.userRole === "admin";
+  const freeLimit = await getSetting("paper_free_limit") || "10";
+  res.send(`<!DOCTYPE html><html lang="en"><head>
   <meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
   <title>Upgrade — Paper Trade Premium</title>
   <link rel="stylesheet" href="/public/css/style.css">
@@ -9364,30 +9282,35 @@ app.get("/my-paper-trade/upgrade", requireAuth, async (req, res) => {
 </div>
 <script src="/public/js/app.js"></script></body></html>`);
 });
+
 // ── GET /api/price/:symbol ─ live price for paper trade buy form ──────────────
-app.get("/api/price/:symbol", async (req, res) => {
-    const symbol = req.params.symbol.toUpperCase().trim();
-    const row = await (0, db_1.dbAll)("SELECT price FROM prices WHERE symbol=?", [symbol]);
-    res.json({ price: row[0]?.price ?? null });
+app.get("/api/price/:symbol", async (req: Request, res: Response) => {
+  const symbol = req.params.symbol.toUpperCase().trim();
+  const row = await dbAll<{ price: number | null }>("SELECT price FROM prices WHERE symbol=?", [symbol]);
+  res.json({ price: row[0]?.price ?? null });
 });
+
 // ── GET /strategies ────────────────────────────────────────────────────────────
-app.get("/strategies", featureGate("feature_strategies", "Strategies"), (req, res) => {
-    const backtest = readBotJSON("5year-backtest-result.json", {});
-    const monthly = backtest.monthly || {};
-    const mKeys = Object.keys(monthly).sort();
-    // Derive key stats
-    const allBbTrades = mKeys.reduce((s, k) => s + (monthly[k].bbTrades ?? 0), 0);
-    const allBbWins = mKeys.reduce((s, k) => s + (monthly[k].bbWins ?? 0), 0);
-    const allRcTrades = mKeys.reduce((s, k) => s + (monthly[k].rcTrades ?? 0), 0);
-    const allRcWins = mKeys.reduce((s, k) => s + (monthly[k].rcWins ?? 0), 0);
-    const bbWR = allBbTrades > 0 ? ((allBbWins / allBbTrades) * 100).toFixed(1) : "—";
-    const rcWR = allRcTrades > 0 ? ((allRcWins / allRcTrades) * 100).toFixed(1) : "—";
-    const bbPnl = backtest.totals?.bodyBreakout ?? 0;
-    const rcPnl = backtest.totals?.rcConfirm ?? 0;
-    const totalPnl = bbPnl + rcPnl;
-    const profitMonths = mKeys.filter(k => (monthly[k].bbTotal + monthly[k].rcTotal) > 0).length;
-    const monthPct = mKeys.length > 0 ? ((profitMonths / mKeys.length) * 100).toFixed(0) : "—";
-    res.send(`<!DOCTYPE html>
+app.get("/strategies", featureGate("feature_strategies", "Strategies"), (req: Request, res: Response) => {
+  const backtest: any = readBotJSON("5year-backtest-result.json", {});
+  const monthly: Record<string, any> = backtest.monthly || {};
+  const mKeys = Object.keys(monthly).sort();
+
+  // Derive key stats
+  const allBbTrades = mKeys.reduce((s, k) => s + (monthly[k].bbTrades ?? 0), 0);
+  const allBbWins   = mKeys.reduce((s, k) => s + (monthly[k].bbWins   ?? 0), 0);
+  const allRcTrades = mKeys.reduce((s, k) => s + (monthly[k].rcTrades ?? 0), 0);
+  const allRcWins   = mKeys.reduce((s, k) => s + (monthly[k].rcWins   ?? 0), 0);
+  const bbWR = allBbTrades > 0 ? ((allBbWins / allBbTrades) * 100).toFixed(1) : "—";
+  const rcWR = allRcTrades > 0 ? ((allRcWins / allRcTrades) * 100).toFixed(1) : "—";
+  const bbPnl = backtest.totals?.bodyBreakout ?? 0;
+  const rcPnl = backtest.totals?.rcConfirm    ?? 0;
+  const totalPnl = bbPnl + rcPnl;
+
+  const profitMonths = mKeys.filter(k => (monthly[k].bbTotal + monthly[k].rcTotal) > 0).length;
+  const monthPct = mKeys.length > 0 ? ((profitMonths / mKeys.length) * 100).toFixed(0) : "—";
+
+  res.send(`<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
@@ -9524,47 +9447,53 @@ app.get("/strategies", featureGate("feature_strategies", "Strategies"), (req, re
 </body>
 </html>`);
 });
+
 // ── GET /dashboard ─────────────────────────────────────────────────────────────
-app.get("/dashboard", featureGate("feature_dashboard", "Dashboard"), async (req, res) => {
-    const trades = readBotJSON("trades.json", []);
-    const backtest = readBotJSON("5year-backtest-result.json", {});
-    const analytics = computeAnalytics(trades);
-    // Build equity curve labels (trade numbers)
-    const eqLabels = analytics.equityCurve.map((_, i) => `#${i + 1}`);
-    // Build monthly backtest data
-    const monthly = backtest.monthly || {};
-    const mKeys = Object.keys(monthly).sort();
-    const mLabels = mKeys.map(k => {
-        const [y, m] = k.split("-");
-        const d = new Date(parseInt(y), parseInt(m) - 1, 1);
-        return d.toLocaleString("en-IN", { month: "short", year: "2-digit" });
-    });
-    const bbData = mKeys.map(k => parseFloat((monthly[k].bbTotal ?? 0).toFixed(1)));
-    const rcData = mKeys.map(k => parseFloat((monthly[k].rcTotal ?? 0).toFixed(1)));
-    const combData = mKeys.map(k => parseFloat(((monthly[k].bbTotal ?? 0) + (monthly[k].rcTotal ?? 0)).toFixed(1)));
-    const combColors = combData.map((v) => v >= 0 ? "rgba(16,185,129,0.7)" : "rgba(239,68,68,0.7)");
-    // Backtest totals
-    const btTotal = (backtest.totals?.bodyBreakout ?? 0) + (backtest.totals?.rcConfirm ?? 0);
-    const btDays = backtest.tradingDays ?? 0;
-    const btLiveRs = backtest.liveEstimate?.totalPnlRs ?? 0;
-    const btMaxRs = backtest.totals?.totalPnlRs ?? 0;
-    const btDayWR = backtest.totals?.dayWinRate ?? backtest.totals?.winRate ?? 0;
-    const btTradeWR = backtest.totals?.tradeWinRate ?? 0;
-    const btMaxDD = backtest.totals?.maxDDRs ?? 0;
-    const btPF = backtest.totals?.profitFactor ?? 0;
-    const btFrom = backtest.period?.from ?? "";
-    const btTo = backtest.period?.to ?? "";
-    const btYearly = backtest.yearly || {};
-    // All monthly win rates
-    const allBbTrades = mKeys.reduce((s, k) => s + (monthly[k].bbTrades ?? 0), 0);
-    const allBbWins = mKeys.reduce((s, k) => s + (monthly[k].bbWins ?? 0), 0);
-    const allRcTrades = mKeys.reduce((s, k) => s + (monthly[k].rcTrades ?? 0), 0);
-    const allRcWins = mKeys.reduce((s, k) => s + (monthly[k].rcWins ?? 0), 0);
-    const bbWinRate = allBbTrades > 0 ? ((allBbWins / allBbTrades) * 100).toFixed(1) : "—";
-    const rcWinRate = allRcTrades > 0 ? ((allRcWins / allRcTrades) * 100).toFixed(1) : "—";
-    // ── DASHBOARD (full view for everyone) ─────────────────────────────────────
-    if (false) {
-        res.send(`<!DOCTYPE html>
+app.get("/dashboard", featureGate("feature_dashboard", "Dashboard"), async (req: Request, res: Response) => {
+  const trades: any[] = readBotJSON("trades.json", []);
+  const backtest: any = readBotJSON("5year-backtest-result.json", {});
+  const analytics = computeAnalytics(trades);
+
+  // Build equity curve labels (trade numbers)
+  const eqLabels = analytics.equityCurve.map((_: any, i: number) => `#${i + 1}`);
+
+  // Build monthly backtest data
+  const monthly: Record<string, any> = backtest.monthly || {};
+  const mKeys = Object.keys(monthly).sort();
+  const mLabels = mKeys.map(k => {
+    const [y, m] = k.split("-");
+    const d = new Date(parseInt(y), parseInt(m) - 1, 1);
+    return d.toLocaleString("en-IN", { month: "short", year: "2-digit" });
+  });
+  const bbData  = mKeys.map(k => parseFloat((monthly[k].bbTotal ?? 0).toFixed(1)));
+  const rcData  = mKeys.map(k => parseFloat((monthly[k].rcTotal ?? 0).toFixed(1)));
+  const combData = mKeys.map(k => parseFloat(((monthly[k].bbTotal ?? 0) + (monthly[k].rcTotal ?? 0)).toFixed(1)));
+  const combColors = combData.map((v: number) => v >= 0 ? "rgba(16,185,129,0.7)" : "rgba(239,68,68,0.7)");
+
+  // Backtest totals
+  const btTotal = (backtest.totals?.bodyBreakout ?? 0) + (backtest.totals?.rcConfirm ?? 0);
+  const btDays = backtest.tradingDays ?? 0;
+  const btLiveRs   = backtest.liveEstimate?.totalPnlRs ?? 0;
+  const btMaxRs    = backtest.totals?.totalPnlRs ?? 0;
+  const btDayWR    = backtest.totals?.dayWinRate ?? backtest.totals?.winRate ?? 0;
+  const btTradeWR  = backtest.totals?.tradeWinRate ?? 0;
+  const btMaxDD    = backtest.totals?.maxDDRs ?? 0;
+  const btPF       = backtest.totals?.profitFactor ?? 0;
+  const btFrom = backtest.period?.from ?? "";
+  const btTo   = backtest.period?.to ?? "";
+  const btYearly: Record<string, any> = backtest.yearly || {};
+
+  // All monthly win rates
+  const allBbTrades = mKeys.reduce((s, k) => s + (monthly[k].bbTrades ?? 0), 0);
+  const allBbWins   = mKeys.reduce((s, k) => s + (monthly[k].bbWins ?? 0), 0);
+  const allRcTrades = mKeys.reduce((s, k) => s + (monthly[k].rcTrades ?? 0), 0);
+  const allRcWins   = mKeys.reduce((s, k) => s + (monthly[k].rcWins ?? 0), 0);
+  const bbWinRate = allBbTrades > 0 ? ((allBbWins / allBbTrades) * 100).toFixed(1) : "—";
+  const rcWinRate = allRcTrades > 0 ? ((allRcWins / allRcTrades) * 100).toFixed(1) : "—";
+
+  // ── DASHBOARD (full view for everyone) ─────────────────────────────────────
+  if (false) {
+    res.send(`<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
@@ -9582,10 +9511,10 @@ app.get("/dashboard", featureGate("feature_dashboard", "Dashboard"), async (req,
       </div>
     </div>
     <div class="dash-kpi-row">
-      <div class="dash-kpi"><span class="dash-kpi-label">All-Time PnL</span><span class="dash-kpi-val ${analytics.allTime.pnl >= 0 ? 'sig-green' : 'sig-red'}">${analytics.allTime.pnl >= 0 ? '+' : ''}${analytics.allTime.pnl.toFixed(1)} pts</span></div>
+      <div class="dash-kpi"><span class="dash-kpi-label">All-Time PnL</span><span class="dash-kpi-val ${analytics.allTime.pnl>=0?'sig-green':'sig-red'}">${analytics.allTime.pnl>=0?'+':''}${analytics.allTime.pnl.toFixed(1)} pts</span></div>
       <div class="dash-kpi"><span class="dash-kpi-label">Total Trades</span><span class="dash-kpi-val">${analytics.allTime.trades}</span></div>
       <div class="dash-kpi"><span class="dash-kpi-label">Win Rate</span><span class="dash-kpi-val">${analytics.allTime.winRate}%</span></div>
-      <div class="dash-kpi"><span class="dash-kpi-label">Today PnL</span><span class="dash-kpi-val ${analytics.today.pnl >= 0 ? 'sig-green' : 'sig-red'}">${analytics.today.pnl >= 0 ? '+' : ''}${analytics.today.pnl} pts</span></div>
+      <div class="dash-kpi"><span class="dash-kpi-label">Today PnL</span><span class="dash-kpi-val ${analytics.today.pnl>=0?'sig-green':'sig-red'}">${analytics.today.pnl>=0?'+':''}${analytics.today.pnl} pts</span></div>
       <div class="dash-kpi"><span class="dash-kpi-label">Max Drawdown</span><span class="dash-kpi-val sig-yellow">${analytics.allTime.maxDD} pts</span></div>
     </div>
     <div class="dash-section-title">📈 Live Equity Curve</div>
@@ -9642,9 +9571,10 @@ app.get("/dashboard", featureGate("feature_dashboard", "Dashboard"), async (req,
   </script>` : ""}
 </body>
 </html>`);
-        return;
-    }
-    res.send(`<!DOCTYPE html>
+    return;
+  }
+
+  res.send(`<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
@@ -9710,7 +9640,8 @@ app.get("/dashboard", featureGate("feature_dashboard", "Dashboard"), async (req,
     <div class="dash-chart-card">
       ${analytics.equityCurve.length < 2
         ? `<div class="dash-empty">No trades yet — equity curve will appear once the bot executes trades.</div>`
-        : `<canvas id="eqChart" height="90"></canvas>`}
+        : `<canvas id="eqChart" height="90"></canvas>`
+      }
     </div>
 
     <!-- BACKTEST SECTION -->
@@ -9718,12 +9649,12 @@ app.get("/dashboard", featureGate("feature_dashboard", "Dashboard"), async (req,
     <div class="dash-kpi-grid">
       <div class="dash-kpi">
         <div class="dash-kpi-label">Max Potential P&amp;L</div>
-        <div class="dash-kpi-val dash-green">₹${(btMaxRs / 100000).toFixed(2)}L</div>
+        <div class="dash-kpi-val dash-green">₹${(btMaxRs/100000).toFixed(2)}L</div>
         <div style="font-size:11px;color:var(--text-muted);margin-top:2px">Unlimited re-entries</div>
       </div>
       <div class="dash-kpi">
         <div class="dash-kpi-label">Live Estimate P&amp;L</div>
-        <div class="dash-kpi-val dash-green">₹${(btLiveRs / 100000).toFixed(2)}L</div>
+        <div class="dash-kpi-val dash-green">₹${(btLiveRs/100000).toFixed(2)}L</div>
         <div style="font-size:11px;color:var(--text-muted);margin-top:2px">5-trade cap (live bot)</div>
       </div>
       <div class="dash-kpi">
@@ -9777,10 +9708,10 @@ app.get("/dashboard", featureGate("feature_dashboard", "Dashboard"), async (req,
         </thead>
         <tbody>
           ${mKeys.slice().reverse().map(k => {
-        const m = monthly[k];
-        const comb = (m.bbTotal ?? 0) + (m.rcTotal ?? 0);
-        const isPos = comb >= 0;
-        return `<tr class="${isPos ? "dash-row-win" : "dash-row-loss"}">
+            const m = monthly[k];
+            const comb = (m.bbTotal ?? 0) + (m.rcTotal ?? 0);
+            const isPos = comb >= 0;
+            return `<tr class="${isPos ? "dash-row-win" : "dash-row-loss"}">
               <td class="dash-td-month">${k}</td>
               <td>${m.days ?? "—"}</td>
               <td class="${(m.bbTotal ?? 0) >= 0 ? "dash-green" : "dash-red"}">${(m.bbTotal ?? 0) >= 0 ? "+" : ""}${(m.bbTotal ?? 0).toFixed(1)}</td>
@@ -9791,7 +9722,7 @@ app.get("/dashboard", featureGate("feature_dashboard", "Dashboard"), async (req,
               <td>${m.rcWins ?? 0}/${(m.rcTrades ?? 0) - (m.rcWins ?? 0)}</td>
               <td class="${isPos ? "dash-green dash-td-bold" : "dash-red dash-td-bold"}">${isPos ? "+" : ""}${comb.toFixed(1)}</td>
             </tr>`;
-    }).join("")}
+          }).join("")}
         </tbody>
       </table>
     </div>
@@ -9894,22 +9825,17 @@ app.get("/dashboard", featureGate("feature_dashboard", "Dashboard"), async (req,
 </body>
 </html>`);
 });
+
 // ── GET /signals ────────────────────────────────────────────────────────────────
 app.get("/signals", featureGate("feature_signals", "Signals"), async (req, res) => {
     res.setHeader("Cache-Control", "no-store");
     const state = readBotJSON("trade-state.json", {});
-    const _rawTrades = readBotJSON("trades.json", []);
-    const _premMap = {};
-    for (const t of _rawTrades)
-        if ((t.exitPrice ?? 0) === 0 && t.premiumEntry > 0)
-            _premMap[`${t.direction}|${(t.entryPrice ?? 0).toFixed(1)}`] = t.premiumEntry;
-    const trades = _rawTrades.map((t) => {
-        if (!(t.premiumEntry > 0)) {
-            const k = `${t.direction}|${(t.entryPrice ?? 0).toFixed(1)}`;
-            if (_premMap[k])
-                return { ...t, premiumEntry: _premMap[k] };
-        }
-        return t;
+    const _rawTrades: any[] = readBotJSON("trades.json", []);
+    const _premMap: Record<string, number> = {};
+    for (const t of _rawTrades) if ((t.exitPrice ?? 0) === 0 && t.premiumEntry > 0) _premMap[`${t.direction}|${(t.entryPrice ?? 0).toFixed(1)}`] = t.premiumEntry;
+    const trades = _rawTrades.map((t: any) => {
+      if (!(t.premiumEntry > 0)) { const k = `${t.direction}|${(t.entryPrice ?? 0).toFixed(1)}`; if (_premMap[k]) return { ...t, premiumEntry: _premMap[k] }; }
+      return t;
     });
     const hbGuest = readBotJSON("bot-heartbeat.json", null);
     const analytics = computeAnalytics(trades);
@@ -9921,40 +9847,28 @@ app.get("/signals", featureGate("feature_signals", "Signals"), async (req, res) 
     const _isMarketHours = (_istH > 9 || (_istH === 9 && _istM >= 15)) && (_istH < 15 || (_istH === 15 && _istM <= 30));
     const _botSleeping = !isAliveGuest && !_isMarketHours;
     function guestBotLabel() {
-        if (!isAliveGuest)
-            return _botSleeping ? "Bot sleeping \u2014 market closed" : "Bot offline \u2014 not responding";
-        if (hasPosition)
-            return "Bot is running a trade";
-        if (hbStatusGuest.includes("WAIT") || hbStatusGuest.includes("9:25"))
-            return "Bot alive \u2014 waiting for market to open (9:15 IST)";
-        return "Bot alive \u2014 monitoring the options market";
+      if (!isAliveGuest) return _botSleeping ? "Bot sleeping \u2014 market closed" : "Bot offline \u2014 not responding";
+      if (hasPosition) return "Bot is running a trade";
+      if (hbStatusGuest.includes("WAIT") || hbStatusGuest.includes("9:25")) return "Bot alive \u2014 waiting for market to open (9:15 IST)";
+      return "Bot alive \u2014 monitoring the options market";
     }
     function guestBotVal() {
-        if (!isAliveGuest)
-            return _botSleeping ? "Sleeping" : "Offline";
-        if (hasPosition)
-            return "\u25CF\u00A0ACTIVE";
-        if (hbStatusGuest.includes("WAIT") || hbStatusGuest.includes("9:25"))
-            return "Waiting";
-        return "Monitoring";
+      if (!isAliveGuest) return _botSleeping ? "Sleeping" : "Offline";
+      if (hasPosition) return "\u25CF\u00A0ACTIVE";
+      if (hbStatusGuest.includes("WAIT") || hbStatusGuest.includes("9:25")) return "Waiting";
+      return "Monitoring";
     }
     function guestDotCls() {
-        if (!isAliveGuest)
-            return _botSleeping ? "waiting" : "offline";
-        if (hasPosition)
-            return "active";
-        if (hbStatusGuest.includes("WAIT") || hbStatusGuest.includes("9:25"))
-            return "waiting";
-        return "scanning";
+      if (!isAliveGuest) return _botSleeping ? "waiting" : "offline";
+      if (hasPosition) return "active";
+      if (hbStatusGuest.includes("WAIT") || hbStatusGuest.includes("9:25")) return "waiting";
+      return "scanning";
     }
     function guestValCls() {
-        if (!isAliveGuest)
-            return _botSleeping ? "waiting-col" : "offline-col";
-        if (hasPosition)
-            return "active-col";
-        if (hbStatusGuest.includes("WAIT") || hbStatusGuest.includes("9:25"))
-            return "waiting-col";
-        return "scanning-col";
+      if (!isAliveGuest) return _botSleeping ? "waiting-col" : "offline-col";
+      if (hasPosition) return "active-col";
+      if (hbStatusGuest.includes("WAIT") || hbStatusGuest.includes("9:25")) return "waiting-col";
+      return "scanning-col";
     }
     const premium = userIsPremium(req);
     const loggedIn = !!req.session?.userId;
@@ -9979,9 +9893,9 @@ app.get("/signals", featureGate("feature_signals", "Signals"), async (req, res) 
     if (premium) {
         const an2 = computeAnalytics(trades);
         const hb2 = readBotJSON("bot-heartbeat.json", {});
-        const _qty2ssr = hb2?.qty ?? 30;
+        const _qty2ssr   = hb2?.qty   ?? 30;
         const _slPts2ssr = hb2?.slPts ?? 100;
-        const _slRs2ssr = Math.round(_slPts2ssr * _qty2ssr * 0.5).toLocaleString("en-IN");
+        const _slRs2ssr  = Math.round(_slPts2ssr * _qty2ssr * 0.5).toLocaleString("en-IN");
         const isAlive2 = hb2?.at ? (Date.now() - new Date(hb2.at).getTime()) < 3 * 60 * 1000 : false;
         const _nowIST2 = new Date(new Date().toLocaleString("en-US", { timeZone: "Asia/Kolkata" }));
         const _istH2 = _nowIST2.getHours(), _istM2 = _nowIST2.getMinutes();
@@ -10000,36 +9914,30 @@ app.get("/signals", featureGate("feature_signals", "Signals"), async (req, res) 
         const durStr2 = durMin2 >= 60 ? `${Math.floor(durMin2 / 60)}h ${durMin2 % 60}m` : durMin2 > 0 ? `${durMin2}m` : "";
         const entryIST2 = entryMs2 > 0 ? new Date(entryMs2).toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata", hour: "2-digit", minute: "2-digit" }) : "";
         const mode2 = hb2.mode ?? state.mode ?? "PAPER";
-        const kiteToken2 = await (0, db_1.getSetting)("kite_access_token").catch(() => "");
-        const kiteTokenAt2 = await (0, db_1.getSetting)("kite_token_set_at").catch(() => "");
+        const kiteToken2  = await getSetting("kite_access_token").catch(() => "");
+        const kiteTokenAt2 = await getSetting("kite_token_set_at").catch(() => "");
         const tokenMasked2 = kiteToken2 ? kiteToken2.slice(0, 6) + "\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022" + kiteToken2.slice(-4) : "";
         // Validate token via actual Zerodha API call (not just existence check)
         let kiteToken2Valid = false;
         try {
-            const _botEnv2 = fs_1.default.readFileSync('/home/ubuntu/trading-bot/.env', 'utf-8');
-            const _ak2 = (_botEnv2.match(/^API_KEY=(.+)$/m)?.[1] ?? "").trim();
-            const _at2 = (_botEnv2.match(/^ACCESS_TOKEN=(.+)$/m)?.[1] ?? "").trim();
-            if (_ak2 && _at2) {
-                const _vResp = await fetch("https://api.kite.trade/user/profile", { headers: { "X-Kite-Version": "3", "Authorization": `token ${_ak2}:${_at2}` }, signal: AbortSignal.timeout(4000) });
-                kiteToken2Valid = _vResp.status === 200;
-            }
-        }
-        catch (_) { }
+          const _botEnv2 = fs.readFileSync('/home/ubuntu/trading-bot/.env', 'utf-8');
+          const _ak2 = (_botEnv2.match(/^API_KEY=(.+)$/m)?.[1] ?? "").trim();
+          const _at2 = (_botEnv2.match(/^ACCESS_TOKEN=(.+)$/m)?.[1] ?? "").trim();
+          if (_ak2 && _at2) {
+            const _vResp = await fetch("https://api.kite.trade/user/profile",
+              { headers: { "X-Kite-Version": "3", "Authorization": `token ${_ak2}:${_at2}` }, signal: AbortSignal.timeout(4000) });
+            kiteToken2Valid = _vResp.status === 200;
+          }
+        } catch (_) {}
         const todayStr2 = getTodayIST();
         const todayTradesAll2 = (() => {
-            const raw = readBotJSON("trades.json", []);
-            const pMap = {};
-            for (const t of raw)
-                if ((t.exitPrice ?? 0) === 0 && t.premiumEntry > 0)
-                    pMap[`${t.direction}|${(t.entryPrice ?? 0).toFixed(1)}`] = t.premiumEntry;
-            return raw.map((t) => {
-                if (!(t.premiumEntry > 0)) {
-                    const k = `${t.direction}|${(t.entryPrice ?? 0).toFixed(1)}`;
-                    if (pMap[k])
-                        return { ...t, premiumEntry: pMap[k] };
-                }
-                return t;
-            });
+          const raw: any[] = readBotJSON("trades.json", []);
+          const pMap: Record<string, number> = {};
+          for (const t of raw) if ((t.exitPrice ?? 0) === 0 && t.premiumEntry > 0) pMap[`${t.direction}|${(t.entryPrice ?? 0).toFixed(1)}`] = t.premiumEntry;
+          return raw.map((t: any) => {
+            if (!(t.premiumEntry > 0)) { const k = `${t.direction}|${(t.entryPrice ?? 0).toFixed(1)}`; if (pMap[k]) return { ...t, premiumEntry: pMap[k] }; }
+            return t;
+          });
         })();
         const closedToday2 = todayTradesAll2.filter((t) => (t.date || "").startsWith(todayStr2) && t.exitPrice && t.exitPrice > 0);
         function fmtTime2(iso) {
@@ -10379,8 +10287,8 @@ app.get("/signals", featureGate("feature_signals", "Signals"), async (req, res) 
           ${[...closedToday2].reverse().map((t) => `<tr>
             <td class="sig3-ct">${fmtTime2(t.date)}</td>
             <td><span class="sig3-db ${(t.direction || "").toLowerCase()}">${t.direction || "&mdash;"}</span></td>
-            ${isAdmin ? `<td class="sig3-mono" style="font-size:.72rem;color:var(--text-muted)">${t.symbol || "&mdash;"}</td>
-            <td class="sig3-mono">${t.premiumEntry > 0 ? `<span style="font-size:.61rem;background:rgba(16,185,129,.15);color:#34d399;border-radius:3px;padding:1px 4px;margin-right:3px">BUY</span>${t.premiumEntry.toFixed(1)}` : ""} ${t.premiumExit > 0 ? `<span style="font-size:.61rem;background:rgba(239,68,68,.15);color:#f87171;border-radius:3px;padding:1px 4px;margin-right:3px;margin-left:4px">SELL</span>${t.premiumExit.toFixed(1)}` : ""}</td>
+            ${isAdmin ? `<td class="sig3-mono" style="font-size:.72rem;color:var(--text-muted)">${(t as any).symbol || "&mdash;"}</td>
+            <td class="sig3-mono">${(t as any).premiumEntry > 0 ? `<span style="font-size:.61rem;background:rgba(16,185,129,.15);color:#34d399;border-radius:3px;padding:1px 4px;margin-right:3px">BUY</span>${(t as any).premiumEntry.toFixed(1)}` : ""} ${(t as any).premiumExit > 0 ? `<span style="font-size:.61rem;background:rgba(239,68,68,.15);color:#f87171;border-radius:3px;padding:1px 4px;margin-right:3px;margin-left:4px">SELL</span>${(t as any).premiumExit.toFixed(1)}` : ""}</td>
             <td class="sig3-mono">${(t.entryPrice ?? 0) > 0 ? (t.entryPrice ?? 0).toFixed(1) : "&mdash;"} &#8594; ${(t.exitPrice ?? 0) > 0 ? (t.exitPrice ?? 0).toFixed(1) : "&mdash;"}</td>` : ``}
             <td>
               <span class="sig3-pnl-rs ${pnlCls2(t.pnl ?? 0)}">${fmtRs2(t.pnl ?? 0)}</span>
@@ -10415,8 +10323,8 @@ app.get("/signals", featureGate("feature_signals", "Signals"), async (req, res) 
             return _wk.map((t) => `<tr>
               <td class="sig3-ct">${fmtDate2(t.date)}</td>
               <td><span class="sig3-db ${(t.direction || "").toLowerCase()}">${t.direction || "&mdash;"}</span></td>
-              ${isAdmin ? `<td class="sig3-mono" style="font-size:.72rem;color:var(--text-muted)">${t.symbol || "&mdash;"}</td>
-              <td class="sig3-mono">${t.premiumEntry > 0 ? `<span style="font-size:.61rem;background:rgba(16,185,129,.15);color:#34d399;border-radius:3px;padding:1px 4px;margin-right:3px">BUY</span>${t.premiumEntry.toFixed(1)}` : ""} ${t.premiumExit > 0 ? `<span style="font-size:.61rem;background:rgba(239,68,68,.15);color:#f87171;border-radius:3px;padding:1px 4px;margin-right:3px;margin-left:4px">SELL</span>${t.premiumExit.toFixed(1)}` : ""}</td>
+              ${isAdmin ? `<td class="sig3-mono" style="font-size:.72rem;color:var(--text-muted)">${(t as any).symbol || "&mdash;"}</td>
+              <td class="sig3-mono">${(t as any).premiumEntry > 0 ? `<span style="font-size:.61rem;background:rgba(16,185,129,.15);color:#34d399;border-radius:3px;padding:1px 4px;margin-right:3px">BUY</span>${(t as any).premiumEntry.toFixed(1)}` : ""} ${(t as any).premiumExit > 0 ? `<span style="font-size:.61rem;background:rgba(239,68,68,.15);color:#f87171;border-radius:3px;padding:1px 4px;margin-right:3px;margin-left:4px">SELL</span>${(t as any).premiumExit.toFixed(1)}` : ""}</td>
               <td class="sig3-mono">${(t.entryPrice ?? 0) > 0 ? (t.entryPrice ?? 0).toFixed(0) : "&mdash;"} &#8594; ${(t.exitPrice ?? 0) > 0 ? (t.exitPrice ?? 0).toFixed(0) : "&mdash;"}</td>` : ``}
               <td>
                 <span class="sig3-pnl-rs ${pnlCls2(t.pnl ?? 0)}">${fmtRs2(t.pnl ?? 0)}</span>
@@ -10479,7 +10387,7 @@ app.get("/signals", featureGate("feature_signals", "Signals"), async (req, res) 
       </div>
       <div class="sig3-kpi">
         <div class="sig3-kl">Win Rate</div>
-        <div class="sig3-kv sig3-d" id="k3t-winrate">${hb2 && ((hb2.shadowWins ?? 0) + (hb2.shadowLosses ?? 0)) > 0 ? Math.round(((hb2.shadowWins ?? 0) / ((hb2.shadowWins ?? 0) + (hb2.shadowLosses ?? 0))) * 100) + '%' : '&mdash;'}</div>
+        <div class="sig3-kv sig3-d" id="k3t-winrate">${hb2 && ((hb2.shadowWins??0)+(hb2.shadowLosses??0))>0 ? Math.round(((hb2.shadowWins??0)/((hb2.shadowWins??0)+(hb2.shadowLosses??0)))*100)+'%' : '&mdash;'}</div>
         <div class="sig3-ks sig3-d">today</div>
       </div>
       <div class="sig3-kpi">
@@ -10997,28 +10905,27 @@ app.get("/signals", featureGate("feature_signals", "Signals"), async (req, res) 
         </tr></thead>
         <tbody>
           ${[...closedTodayG].reverse().map((t) => {
-        const d3 = (t.direction || "").toLowerCase();
-        const dur = t.duration ? (t.duration < 60 ? t.duration + "s" : Math.round(t.duration / 60) + "m") : "\u2014";
-        const tStr = t.date ? new Date(t.date).toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata", hour: "2-digit", minute: "2-digit" }) : "\u2014";
-        return `<tr>
+            const d3 = (t.direction || "").toLowerCase();
+            const dur = t.duration ? (t.duration < 60 ? t.duration + "s" : Math.round(t.duration / 60) + "m") : "\u2014";
+            const tStr = t.date ? new Date(t.date).toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata", hour: "2-digit", minute: "2-digit" }) : "\u2014";
+            return `<tr>
               <td class="sig3-ct">${tStr}</td>
               <td>${d3 ? `<span class="sig3-db ${d3}">${(t.direction || "").toUpperCase()}</span>` : "\u2014"}</td>
               <td><span class="sig3-pnl-rs ${(t.pnl ?? 0) >= 0 ? "sig3-g" : "sig3-r'"}"><span class="${!loggedIn ? 'sig-blur' : ''}">${fmtRsG(t.pnl ?? 0)}</span></span></td>
               <td class="sig3-mono" style="font-size:.76rem;color:var(--text-muted)"><span class="${!loggedIn ? 'sig-blur' : ''}">${fmtPtsG(t.pnl ?? 0)}</span></td>
               <td class="sig3-ct">${dur}</td>
             </tr>`;
-    }).join("") || `<tr><td colspan="5" class="sig3-te">No closed trades today${hasPosition ? " \u2014 1 live position active" : ""}</td></tr>`}
+          }).join("") || `<tr><td colspan="5" class="sig3-te">No closed trades today${hasPosition ? " \u2014 1 live position active" : ""}</td></tr>`}
         </tbody>
       </table>
     </div>
 
     <!-- THIS WEEK (last 7 days) — members only -->
     ${loggedIn ? (() => {
-        const _nowG = new Date(new Date().toLocaleString("en-US", { timeZone: "Asia/Kolkata" }));
-        const _wAgoG = new Date(_nowG);
-        _wAgoG.setDate(_nowG.getDate() - 7);
-        const _wkG = analytics.recentTrades.filter((t) => t.date && new Date(t.date) >= _wAgoG && t.exitPrice && t.exitPrice > 0);
-        return `<div class="sig3-sec">
+      const _nowG = new Date(new Date().toLocaleString("en-US", { timeZone: "Asia/Kolkata" }));
+      const _wAgoG = new Date(_nowG); _wAgoG.setDate(_nowG.getDate() - 7);
+      const _wkG = analytics.recentTrades.filter((t) => t.date && new Date(t.date) >= _wAgoG && t.exitPrice && t.exitPrice > 0);
+      return `<div class="sig3-sec">
         This Week &mdash; Last 7 Days
         <span class="sig3-sec-count">(${_wkG.length} trade${_wkG.length !== 1 ? 's' : ''}&nbsp;<span class="${analytics.weekly.pnl >= 0 ? 'sig3-g' : 'sig3-r'}">${fmtRsG(analytics.weekly.pnl)}</span>)</span>
       </div>
@@ -11027,17 +10934,17 @@ app.get("/signals", featureGate("feature_signals", "Signals"), async (req, res) 
           <thead><tr><th>Date / Time</th><th>Dir</th><th>P&amp;L (&#8377;)</th><th>P&amp;L (pts)</th><th>Duration</th></tr></thead>
           <tbody>
             ${_wkG.length === 0 ? `<tr><td colspan="5" class="sig3-te">No trades in the past 7 days</td></tr>` : _wkG.map((t) => {
-            const _d = (t.direction || '').toLowerCase();
-            const _dur = t.duration ? (t.duration < 60 ? t.duration + 's' : Math.round(t.duration / 60) + 'm') : '\u2014';
-            const _dt = t.date ? new Date(t.date).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' }) : '\u2014';
-            return `<tr>
+              const _d = (t.direction || '').toLowerCase();
+              const _dur = t.duration ? (t.duration < 60 ? t.duration + 's' : Math.round(t.duration / 60) + 'm') : '\u2014';
+              const _dt = t.date ? new Date(t.date).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' }) : '\u2014';
+              return `<tr>
                 <td class="sig3-ct">${_dt}</td>
                 <td>${_d ? `<span class="sig3-db ${_d}">${(t.direction || '').toUpperCase()}</span>` : '\u2014'}</td>
                 <td><span class="sig3-pnl-rs ${(t.pnl ?? 0) >= 0 ? 'sig3-g' : 'sig3-r'}">${fmtRsG(t.pnl ?? 0)}</span></td>
                 <td class="sig3-mono" style="font-size:.76rem;color:var(--text-muted)">${fmtPtsG(t.pnl ?? 0)}</td>
                 <td class="sig3-ct">${_dur}</td>
               </tr>`;
-        }).join('')}
+            }).join('')}
           </tbody>
         </table>
       </div>`;
@@ -11050,15 +10957,15 @@ app.get("/signals", featureGate("feature_signals", "Signals"), async (req, res) 
         <thead><tr><th>Month</th><th>P&amp;L (&#8377;)</th><th>P&amp;L (pts)</th><th>Trades</th><th>Win%</th></tr></thead>
         <tbody>
           ${analytics.monthly.slice(0, 6).map((m) => {
-        const ml = new Date(m.month + "-01").toLocaleString("en-IN", { month: "short", year: "2-digit" });
-        return `<tr>
+            const ml = new Date(m.month + "-01").toLocaleString("en-IN", { month: "short", year: "2-digit" });
+            return `<tr>
               <td style="font-weight:600">${ml}</td>
               <td><span class="sig3-pnl-rs ${m.pnl >= 0 ? "sig3-g" : "sig3-r"}" style="font-size:.95rem"><span class="${!loggedIn ? 'sig-blur' : ''}">${fmtRsG(m.pnl)}</span></span></td>
               <td class="sig3-mono" style="font-size:.76rem;color:var(--text-muted)"><span class="${!loggedIn ? 'sig-blur' : ''}">${fmtPtsG(m.pnl)}</span></td>
               <td>${m.trades}</td>
               <td class="${m.winRate >= 55 ? "sig3-g" : m.winRate >= 40 ? "" : "sig3-r"}"><span class="${!loggedIn ? 'sig-blur' : ''}">${m.trades > 0 ? m.winRate + "%" : "\u2014"}</span></td>
             </tr>`;
-    }).join("") || '<tr><td colspan="5" class="sig3-te">No historical data yet</td></tr>'}
+          }).join("") || '<tr><td colspan="5" class="sig3-te">No historical data yet</td></tr>'}
         </tbody>
       </table>
     </div>
@@ -11141,214 +11048,215 @@ app.get("/signals", featureGate("feature_signals", "Signals"), async (req, res) 
 </html>`);
 });
 async function ensureAdminEmail() {
-    if (!ADMIN_EMAIL)
-        return;
-    await (0, db_1.dbRun)("UPDATE users SET role = 'admin' WHERE email = ? AND role != 'admin'", [ADMIN_EMAIL]);
+  if (!ADMIN_EMAIL) return;
+  await dbRun(
+    "UPDATE users SET role = 'admin' WHERE email = ? AND role != 'admin'",
+    [ADMIN_EMAIL]
+  );
 }
-const HOLDINGS = [
-    // ── 🔥 HIGH PRIORITY ──────────────────────────────────────────────────────
-    { symbol: "NSE:BHEL", name: "BHEL", qty: 40, avgPrice: 253, invested: 10120, currentVal: 16342, targetAlloc: 25000, addAmountINR: 5000, priority: "🔥 HIGH",
-        dipAlerts: [{ pct: -10, label: "10% correction — start buying", urgency: "⭐⭐", buyMultiplier: 1 }, { pct: -18, label: "18% deep correction — accumulate", urgency: "⭐⭐⭐", buyMultiplier: 1.5 }],
-        absoluteAlerts: [], thesis: "Power sector capex + defense + railways — massive ₹1.2L Cr order book, PSU re-rating play" },
-    { symbol: "NSE:LT", name: "L&T", qty: 9, avgPrice: 3652, invested: 32867, currentVal: 35339, targetAlloc: 45000, addAmountINR: 5000, priority: "🔥 HIGH",
-        dipAlerts: [{ pct: -8, label: "8% dip — add to largest holding", urgency: "⭐⭐", buyMultiplier: 1 }],
-        absoluteAlerts: [{ price: 3200, label: "Below ₹3,200 — support zone", urgency: "⭐⭐", buyMultiplier: 1 }, { price: 3000, label: "Below ₹3,000 — strong accumulate", urgency: "⭐⭐⭐", buyMultiplier: 1.5 }],
-        thesis: "India #1 infra conglomerate — record ₹5L Cr order book, defense exports, IT services" },
-    { symbol: "NSE:SUZLON", name: "Suzlon Energy", qty: 230, avgPrice: 45.2, invested: 10396, currentVal: 12363, targetAlloc: 25000, addAmountINR: 5000, priority: "🔥 HIGH",
-        dipAlerts: [{ pct: -12, label: "12% dip — start adding", urgency: "⭐⭐", buyMultiplier: 1 }, { pct: -20, label: "20% deep dip — add more", urgency: "⭐⭐⭐", buyMultiplier: 1.5 }],
-        absoluteAlerts: [], thesis: "Wind energy — India 500GW target, only integrated wind turbine maker, debt-free turnaround" },
-    { symbol: "NSE:HAL", name: "HAL", qty: 1, avgPrice: 3973, invested: 3973, currentVal: 4368, targetAlloc: 15000, addAmountINR: 4500, priority: "🔥 HIGH",
-        dipAlerts: [{ pct: -8, label: "8% dip — accumulate", urgency: "⭐⭐", buyMultiplier: 1 }, { pct: -15, label: "15% dip — buy aggressively", urgency: "⭐⭐⭐", buyMultiplier: 2 }],
-        absoluteAlerts: [{ price: 4000, label: "Below ₹4,000 — strong buy", urgency: "⭐⭐⭐", buyMultiplier: 1.5 }],
-        thesis: "Defense PSU — ₹94,000Cr order book, 15yr revenue visibility, LCA Tejas + helicopters" },
-    { symbol: "NSE:HDFCBANK", name: "HDFC Bank", qty: 11, avgPrice: 912.2, invested: 10034, currentVal: 8435, targetAlloc: 20000, addAmountINR: 5000, priority: "🔥 HIGH",
-        dipAlerts: [{ pct: -5, label: "5% further dip — average down", urgency: "⭐⭐", buyMultiplier: 1 }],
-        absoluteAlerts: [{ price: 1600, label: "Below ₹1,600 — value zone", urgency: "⭐⭐", buyMultiplier: 1 }, { price: 1550, label: "Below ₹1,550 — strong accumulation", urgency: "⭐⭐⭐", buyMultiplier: 1.5 }],
-        thesis: "India largest private bank — HDFC merger overhang fading, NIM recovery in progress" },
-    // ── ⚡ MEDIUM PRIORITY ─────────────────────────────────────────────────────
-    { symbol: "NSE:NIFTYBEES", name: "Nifty BeES (ETF)", qty: 86, avgPrice: 263.85, invested: 22691, currentVal: 23143, targetAlloc: 50000, addAmountINR: 5000, priority: "⚡ MEDIUM",
-        dipAlerts: [{ pct: -5, label: "5% dip — buy more ETF", urgency: "⭐⭐", buyMultiplier: 1 }, { pct: -10, label: "10% correction — accumulate aggressively", urgency: "⭐⭐⭐", buyMultiplier: 2 }],
-        absoluteAlerts: [], thesis: "Index ETF — low cost Nifty 50 exposure. Every dip is a buying opportunity. Long term wealth builder." },
-    { symbol: "NSE:GOLDBEES", name: "Gold BeES (ETF)", qty: 75, avgPrice: 126.37, invested: 9478, currentVal: 9788, targetAlloc: 20000, addAmountINR: 3000, priority: "⚡ MEDIUM",
-        dipAlerts: [{ pct: -5, label: "5% dip — add to gold position", urgency: "⭐⭐", buyMultiplier: 1 }],
-        absoluteAlerts: [], thesis: "Gold ETF — hedge against INR depreciation + geopolitical risk. 10-15% portfolio allocation target." },
-    { symbol: "NSE:ICICIBANK", name: "ICICI Bank", qty: 5, avgPrice: 1216, invested: 6078, currentVal: 6322, targetAlloc: 15000, addAmountINR: 3000, priority: "⚡ MEDIUM",
-        dipAlerts: [{ pct: -8, label: "8% dip — add", urgency: "⭐⭐", buyMultiplier: 1 }, { pct: -15, label: "15% dip — buy aggressively", urgency: "⭐⭐⭐", buyMultiplier: 1.5 }],
-        absoluteAlerts: [{ price: 1100, label: "Below ₹1,100 — strong buy", urgency: "⭐⭐⭐", buyMultiplier: 1.5 }],
-        thesis: "Best-run private bank — tech-first, strong retail + corporate mix, consistent 15%+ RoE. Better than HDFC Bank right now." },
-    { symbol: "NSE:CDSL", name: "CDSL", qty: 4, avgPrice: 1169, invested: 4674, currentVal: 4816, targetAlloc: 10000, addAmountINR: 2000, priority: "⚡ MEDIUM",
-        dipAlerts: [{ pct: -15, label: "15% dip — demat growth story", urgency: "⭐⭐", buyMultiplier: 1 }, { pct: -25, label: "25% deep correction — buy more", urgency: "⭐⭐⭐", buyMultiplier: 1.5 }],
-        absoluteAlerts: [{ price: 1000, label: "Below ₹1,000 — excellent entry", urgency: "⭐⭐⭐", buyMultiplier: 1.5 }],
-        thesis: "Demat account monopoly — every new investor adds recurring revenue. Duopoly with NSDL. Beneficiary of India financialization." },
-    { symbol: "NSE:BSE", name: "BSE Ltd", qty: 1, avgPrice: 3563, invested: 3563, currentVal: 4194, targetAlloc: 10000, addAmountINR: 3000, priority: "⚡ MEDIUM",
-        dipAlerts: [{ pct: -10, label: "10% dip — add to position", urgency: "⭐⭐", buyMultiplier: 1 }],
-        absoluteAlerts: [{ price: 3800, label: "Below ₹3,800 — SEBI noise creates opportunity", urgency: "⭐⭐", buyMultiplier: 1 }],
-        thesis: "Exchange moat — SME IPO boom 80% YoY growth, derivatives comeback" },
-    { symbol: "NSE:M&M", name: "M&M", qty: 1, avgPrice: 3205, invested: 3205, currentVal: 3081, targetAlloc: 10000, addAmountINR: 3500, priority: "⚡ MEDIUM",
-        dipAlerts: [{ pct: -8, label: "8% dip — watch and accumulate", urgency: "⭐⭐", buyMultiplier: 1 }],
-        absoluteAlerts: [{ price: 2700, label: "Below ₹2,700 — add", urgency: "⭐⭐⭐", buyMultiplier: 1 }, { price: 2500, label: "Below ₹2,500 — deep value", urgency: "⭐⭐⭐", buyMultiplier: 1.5 }],
-        thesis: "SUV market leader + EV platform launch (BE 6e, XEV 9e) + tractor recovery upcoming" },
-    // ── 🔵 LOW PRIORITY (hold; only buy on clear signals) ─────────────────────
-    { symbol: "NSE:PIDILITIND", name: "Pidilite Industries", qty: 1, avgPrice: 1357, invested: 1357, currentVal: 1478, targetAlloc: 5000, addAmountINR: 2000, priority: "🔵 LOW",
-        dipAlerts: [{ pct: -10, label: "10% dip — quality compounder", urgency: "⭐⭐", buyMultiplier: 1 }, { pct: -18, label: "18% dip — add strongly", urgency: "⭐⭐⭐", buyMultiplier: 1.5 }],
-        absoluteAlerts: [{ price: 1200, label: "Below ₹1,200 — compelling entry", urgency: "⭐⭐⭐", buyMultiplier: 1.5 }],
-        thesis: "Fevicol monopoly — 70% market share in adhesives. Pricing power + rural distribution moat. Quality compounder." },
-    { symbol: "NSE:RELIANCE", name: "Reliance Industries", qty: 7, avgPrice: 1410, invested: 9867, currentVal: 9482, targetAlloc: 15000, addAmountINR: 3000, priority: "🔵 LOW",
-        dipAlerts: [{ pct: -8, label: "8% dip — minor add", urgency: "⭐⭐", buyMultiplier: 1 }],
-        absoluteAlerts: [{ price: 1250, label: "Below ₹1,250 — deep value zone", urgency: "⭐⭐⭐", buyMultiplier: 1 }],
-        thesis: "Wait for Jio IPO announcement — that is the real trigger. Buy major dips only." },
-    { symbol: "NSE:TITAN", name: "Titan Company", qty: 1, avgPrice: 4526, invested: 4526, currentVal: 4080, targetAlloc: 8000, addAmountINR: 3000, priority: "🔵 LOW",
-        dipAlerts: [{ pct: -15, label: "15% dip — PE normalizing", urgency: "⭐⭐", buyMultiplier: 1 }, { pct: -22, label: "22% deep correction — good PE entry", urgency: "⭐⭐⭐", buyMultiplier: 1.5 }],
-        absoluteAlerts: [{ price: 2800, label: "Below ₹2,800 — compelling entry", urgency: "⭐⭐⭐", buyMultiplier: 1 }],
-        thesis: "Jewelry + watches brand (Tanishq) — wait for wedding season recovery" },
-    { symbol: "NSE:INFY", name: "Infosys", qty: 1, avgPrice: 1315, invested: 1315, currentVal: 1175, targetAlloc: 10000, addAmountINR: 4000, priority: "🔵 LOW",
-        dipAlerts: [{ pct: -10, label: "IT sector selloff — buy bigger or exit", urgency: "⭐⭐", buyMultiplier: 1 }],
-        absoluteAlerts: [{ price: 1400, label: "Below ₹1,400 — IT value zone", urgency: "⭐⭐", buyMultiplier: 1 }],
-        thesis: "Tier-1 IT — position too small. Either commit ₹10K total or exit and redeploy." },
-    { symbol: "NSE:ONGC", name: "ONGC", qty: 1, avgPrice: 265.15, invested: 265, currentVal: 290, targetAlloc: 3000, addAmountINR: 1000, priority: "🔵 LOW",
-        dipAlerts: [{ pct: -10, label: "10% dip — dividend PSU", urgency: "⭐⭐", buyMultiplier: 1 }],
-        absoluteAlerts: [{ price: 240, label: "Below ₹240 — add for dividend", urgency: "⭐⭐", buyMultiplier: 1 }],
-        thesis: "PSU oil producer — 4%+ dividend yield. Hold for income. Add on major corrections only." },
-    { symbol: "NSE:COALINDIA", name: "Coal India", qty: 1, avgPrice: 435.7, invested: 436, currentVal: 457, targetAlloc: 3000, addAmountINR: 1000, priority: "🔵 LOW",
-        dipAlerts: [{ pct: -10, label: "10% dip — dividend play", urgency: "⭐⭐", buyMultiplier: 1 }],
-        absoluteAlerts: [{ price: 400, label: "Below ₹400 — strong dividend buy", urgency: "⭐⭐", buyMultiplier: 1 }],
-        thesis: "Coal monopoly PSU — 6%+ dividend yield, thermal power demand stays elevated. Income holding." },
-    { symbol: "NSE:DABUR", name: "Dabur India", qty: 1, avgPrice: 445.05, invested: 445, currentVal: 451, targetAlloc: 3000, addAmountINR: 1000, priority: "🔵 LOW",
-        dipAlerts: [{ pct: -10, label: "10% dip — FMCG dip buy", urgency: "⭐⭐", buyMultiplier: 1 }],
-        absoluteAlerts: [{ price: 400, label: "Below ₹400 — FMCG value zone", urgency: "⭐⭐", buyMultiplier: 1 }],
-        thesis: "Ayurvedic FMCG — rural recovery play. Consistent dividend, low volatility. Small position, hold." },
-    { symbol: "NSE:POWERGRID", name: "Power Grid", qty: 1, avgPrice: 318.7, invested: 319, currentVal: 294, targetAlloc: 3000, addAmountINR: 1000, priority: "🔵 LOW",
-        dipAlerts: [{ pct: -10, label: "10% further dip — avg down", urgency: "⭐⭐", buyMultiplier: 1 }],
-        absoluteAlerts: [{ price: 270, label: "Below ₹270 — strong dividend buy", urgency: "⭐⭐⭐", buyMultiplier: 1.5 }],
-        thesis: "Transmission monopoly — regulated 15%+ ROE, 4% dividend yield. Dip from ₹318. Add on weakness." },
+
+// ── Portfolio Holdings ─────────────────────────────────────────────────────────
+interface HoldingAlert { pct?: number; price?: number; label: string; urgency: string; buyMultiplier: number; }
+interface HoldingStock {
+  symbol: string; name: string; qty: number; avgPrice: number;
+  invested: number; currentVal: number;
+  targetAlloc: number; addAmountINR: number; priority: string;
+  dipAlerts: (HoldingAlert & { pct: number })[]; absoluteAlerts: (HoldingAlert & { price: number })[];
+  thesis: string;
+}
+const HOLDINGS: HoldingStock[] = [
+  // ── 🔥 HIGH PRIORITY ──────────────────────────────────────────────────────
+  { symbol:"NSE:BHEL",       name:"BHEL",                qty:40,  avgPrice:253,    invested:10120, currentVal:16342, targetAlloc:25000, addAmountINR:5000, priority:"🔥 HIGH",
+    dipAlerts:[{pct:-10,label:"10% correction — start buying",urgency:"⭐⭐",buyMultiplier:1},{pct:-18,label:"18% deep correction — accumulate",urgency:"⭐⭐⭐",buyMultiplier:1.5}],
+    absoluteAlerts:[], thesis:"Power sector capex + defense + railways — massive ₹1.2L Cr order book, PSU re-rating play" },
+  { symbol:"NSE:LT",         name:"L&T",                 qty:9,   avgPrice:3652,   invested:32867, currentVal:35339, targetAlloc:45000, addAmountINR:5000, priority:"🔥 HIGH",
+    dipAlerts:[{pct:-8,label:"8% dip — add to largest holding",urgency:"⭐⭐",buyMultiplier:1}],
+    absoluteAlerts:[{price:3200,label:"Below ₹3,200 — support zone",urgency:"⭐⭐",buyMultiplier:1},{price:3000,label:"Below ₹3,000 — strong accumulate",urgency:"⭐⭐⭐",buyMultiplier:1.5}],
+    thesis:"India #1 infra conglomerate — record ₹5L Cr order book, defense exports, IT services" },
+  { symbol:"NSE:SUZLON",     name:"Suzlon Energy",       qty:230, avgPrice:45.2,   invested:10396, currentVal:12363, targetAlloc:25000, addAmountINR:5000, priority:"🔥 HIGH",
+    dipAlerts:[{pct:-12,label:"12% dip — start adding",urgency:"⭐⭐",buyMultiplier:1},{pct:-20,label:"20% deep dip — add more",urgency:"⭐⭐⭐",buyMultiplier:1.5}],
+    absoluteAlerts:[], thesis:"Wind energy — India 500GW target, only integrated wind turbine maker, debt-free turnaround" },
+  { symbol:"NSE:HAL",        name:"HAL",                 qty:1,   avgPrice:3973,   invested:3973,  currentVal:4368,  targetAlloc:15000, addAmountINR:4500, priority:"🔥 HIGH",
+    dipAlerts:[{pct:-8,label:"8% dip — accumulate",urgency:"⭐⭐",buyMultiplier:1},{pct:-15,label:"15% dip — buy aggressively",urgency:"⭐⭐⭐",buyMultiplier:2}],
+    absoluteAlerts:[{price:4000,label:"Below ₹4,000 — strong buy",urgency:"⭐⭐⭐",buyMultiplier:1.5}],
+    thesis:"Defense PSU — ₹94,000Cr order book, 15yr revenue visibility, LCA Tejas + helicopters" },
+  { symbol:"NSE:HDFCBANK",   name:"HDFC Bank",           qty:11,  avgPrice:912.2,  invested:10034, currentVal:8435,  targetAlloc:20000, addAmountINR:5000, priority:"🔥 HIGH",
+    dipAlerts:[{pct:-5,label:"5% further dip — average down",urgency:"⭐⭐",buyMultiplier:1}],
+    absoluteAlerts:[{price:1600,label:"Below ₹1,600 — value zone",urgency:"⭐⭐",buyMultiplier:1},{price:1550,label:"Below ₹1,550 — strong accumulation",urgency:"⭐⭐⭐",buyMultiplier:1.5}],
+    thesis:"India largest private bank — HDFC merger overhang fading, NIM recovery in progress" },
+  // ── ⚡ MEDIUM PRIORITY ─────────────────────────────────────────────────────
+  { symbol:"NSE:NIFTYBEES",  name:"Nifty BeES (ETF)",   qty:86,  avgPrice:263.85, invested:22691, currentVal:23143, targetAlloc:50000, addAmountINR:5000, priority:"⚡ MEDIUM",
+    dipAlerts:[{pct:-5,label:"5% dip — buy more ETF",urgency:"⭐⭐",buyMultiplier:1},{pct:-10,label:"10% correction — accumulate aggressively",urgency:"⭐⭐⭐",buyMultiplier:2}],
+    absoluteAlerts:[], thesis:"Index ETF — low cost Nifty 50 exposure. Every dip is a buying opportunity. Long term wealth builder." },
+  { symbol:"NSE:GOLDBEES",   name:"Gold BeES (ETF)",    qty:75,  avgPrice:126.37, invested:9478,  currentVal:9788,  targetAlloc:20000, addAmountINR:3000, priority:"⚡ MEDIUM",
+    dipAlerts:[{pct:-5,label:"5% dip — add to gold position",urgency:"⭐⭐",buyMultiplier:1}],
+    absoluteAlerts:[], thesis:"Gold ETF — hedge against INR depreciation + geopolitical risk. 10-15% portfolio allocation target." },
+  { symbol:"NSE:ICICIBANK",  name:"ICICI Bank",          qty:5,   avgPrice:1216,   invested:6078,  currentVal:6322,  targetAlloc:15000, addAmountINR:3000, priority:"⚡ MEDIUM",
+    dipAlerts:[{pct:-8,label:"8% dip — add",urgency:"⭐⭐",buyMultiplier:1},{pct:-15,label:"15% dip — buy aggressively",urgency:"⭐⭐⭐",buyMultiplier:1.5}],
+    absoluteAlerts:[{price:1100,label:"Below ₹1,100 — strong buy",urgency:"⭐⭐⭐",buyMultiplier:1.5}],
+    thesis:"Best-run private bank — tech-first, strong retail + corporate mix, consistent 15%+ RoE. Better than HDFC Bank right now." },
+  { symbol:"NSE:CDSL",       name:"CDSL",                qty:4,   avgPrice:1169,   invested:4674,  currentVal:4816,  targetAlloc:10000, addAmountINR:2000, priority:"⚡ MEDIUM",
+    dipAlerts:[{pct:-15,label:"15% dip — demat growth story",urgency:"⭐⭐",buyMultiplier:1},{pct:-25,label:"25% deep correction — buy more",urgency:"⭐⭐⭐",buyMultiplier:1.5}],
+    absoluteAlerts:[{price:1000,label:"Below ₹1,000 — excellent entry",urgency:"⭐⭐⭐",buyMultiplier:1.5}],
+    thesis:"Demat account monopoly — every new investor adds recurring revenue. Duopoly with NSDL. Beneficiary of India financialization." },
+  { symbol:"NSE:BSE",        name:"BSE Ltd",             qty:1,   avgPrice:3563,   invested:3563,  currentVal:4194,  targetAlloc:10000, addAmountINR:3000, priority:"⚡ MEDIUM",
+    dipAlerts:[{pct:-10,label:"10% dip — add to position",urgency:"⭐⭐",buyMultiplier:1}],
+    absoluteAlerts:[{price:3800,label:"Below ₹3,800 — SEBI noise creates opportunity",urgency:"⭐⭐",buyMultiplier:1}],
+    thesis:"Exchange moat — SME IPO boom 80% YoY growth, derivatives comeback" },
+  { symbol:"NSE:M&M",        name:"M&M",                 qty:1,   avgPrice:3205,   invested:3205,  currentVal:3081,  targetAlloc:10000, addAmountINR:3500, priority:"⚡ MEDIUM",
+    dipAlerts:[{pct:-8,label:"8% dip — watch and accumulate",urgency:"⭐⭐",buyMultiplier:1}],
+    absoluteAlerts:[{price:2700,label:"Below ₹2,700 — add",urgency:"⭐⭐⭐",buyMultiplier:1},{price:2500,label:"Below ₹2,500 — deep value",urgency:"⭐⭐⭐",buyMultiplier:1.5}],
+    thesis:"SUV market leader + EV platform launch (BE 6e, XEV 9e) + tractor recovery upcoming" },
+  // ── 🔵 LOW PRIORITY (hold; only buy on clear signals) ─────────────────────
+  { symbol:"NSE:PIDILITIND", name:"Pidilite Industries", qty:1,   avgPrice:1357,   invested:1357,  currentVal:1478,  targetAlloc:5000,  addAmountINR:2000, priority:"🔵 LOW",
+    dipAlerts:[{pct:-10,label:"10% dip — quality compounder",urgency:"⭐⭐",buyMultiplier:1},{pct:-18,label:"18% dip — add strongly",urgency:"⭐⭐⭐",buyMultiplier:1.5}],
+    absoluteAlerts:[{price:1200,label:"Below ₹1,200 — compelling entry",urgency:"⭐⭐⭐",buyMultiplier:1.5}],
+    thesis:"Fevicol monopoly — 70% market share in adhesives. Pricing power + rural distribution moat. Quality compounder." },
+  { symbol:"NSE:RELIANCE",   name:"Reliance Industries", qty:7,   avgPrice:1410,   invested:9867,  currentVal:9482,  targetAlloc:15000, addAmountINR:3000, priority:"🔵 LOW",
+    dipAlerts:[{pct:-8,label:"8% dip — minor add",urgency:"⭐⭐",buyMultiplier:1}],
+    absoluteAlerts:[{price:1250,label:"Below ₹1,250 — deep value zone",urgency:"⭐⭐⭐",buyMultiplier:1}],
+    thesis:"Wait for Jio IPO announcement — that is the real trigger. Buy major dips only." },
+  { symbol:"NSE:TITAN",      name:"Titan Company",       qty:1,   avgPrice:4526,   invested:4526,  currentVal:4080,  targetAlloc:8000,  addAmountINR:3000, priority:"🔵 LOW",
+    dipAlerts:[{pct:-15,label:"15% dip — PE normalizing",urgency:"⭐⭐",buyMultiplier:1},{pct:-22,label:"22% deep correction — good PE entry",urgency:"⭐⭐⭐",buyMultiplier:1.5}],
+    absoluteAlerts:[{price:2800,label:"Below ₹2,800 — compelling entry",urgency:"⭐⭐⭐",buyMultiplier:1}],
+    thesis:"Jewelry + watches brand (Tanishq) — wait for wedding season recovery" },
+  { symbol:"NSE:INFY",       name:"Infosys",             qty:1,   avgPrice:1315,   invested:1315,  currentVal:1175,  targetAlloc:10000, addAmountINR:4000, priority:"🔵 LOW",
+    dipAlerts:[{pct:-10,label:"IT sector selloff — buy bigger or exit",urgency:"⭐⭐",buyMultiplier:1}],
+    absoluteAlerts:[{price:1400,label:"Below ₹1,400 — IT value zone",urgency:"⭐⭐",buyMultiplier:1}],
+    thesis:"Tier-1 IT — position too small. Either commit ₹10K total or exit and redeploy." },
+  { symbol:"NSE:ONGC",       name:"ONGC",                qty:1,   avgPrice:265.15, invested:265,   currentVal:290,   targetAlloc:3000,  addAmountINR:1000, priority:"🔵 LOW",
+    dipAlerts:[{pct:-10,label:"10% dip — dividend PSU",urgency:"⭐⭐",buyMultiplier:1}],
+    absoluteAlerts:[{price:240,label:"Below ₹240 — add for dividend",urgency:"⭐⭐",buyMultiplier:1}],
+    thesis:"PSU oil producer — 4%+ dividend yield. Hold for income. Add on major corrections only." },
+  { symbol:"NSE:COALINDIA",  name:"Coal India",          qty:1,   avgPrice:435.7,  invested:436,   currentVal:457,   targetAlloc:3000,  addAmountINR:1000, priority:"🔵 LOW",
+    dipAlerts:[{pct:-10,label:"10% dip — dividend play",urgency:"⭐⭐",buyMultiplier:1}],
+    absoluteAlerts:[{price:400,label:"Below ₹400 — strong dividend buy",urgency:"⭐⭐",buyMultiplier:1}],
+    thesis:"Coal monopoly PSU — 6%+ dividend yield, thermal power demand stays elevated. Income holding." },
+  { symbol:"NSE:DABUR",      name:"Dabur India",         qty:1,   avgPrice:445.05, invested:445,   currentVal:451,   targetAlloc:3000,  addAmountINR:1000, priority:"🔵 LOW",
+    dipAlerts:[{pct:-10,label:"10% dip — FMCG dip buy",urgency:"⭐⭐",buyMultiplier:1}],
+    absoluteAlerts:[{price:400,label:"Below ₹400 — FMCG value zone",urgency:"⭐⭐",buyMultiplier:1}],
+    thesis:"Ayurvedic FMCG — rural recovery play. Consistent dividend, low volatility. Small position, hold." },
+  { symbol:"NSE:POWERGRID",  name:"Power Grid",          qty:1,   avgPrice:318.7,  invested:319,   currentVal:294,   targetAlloc:3000,  addAmountINR:1000, priority:"🔵 LOW",
+    dipAlerts:[{pct:-10,label:"10% further dip — avg down",urgency:"⭐⭐",buyMultiplier:1}],
+    absoluteAlerts:[{price:270,label:"Below ₹270 — strong dividend buy",urgency:"⭐⭐⭐",buyMultiplier:1.5}],
+    thesis:"Transmission monopoly — regulated 15%+ ROE, 4% dividend yield. Dip from ₹318. Add on weakness." },
 ];
-const STOCK_ALERTS_DIR = process.env.STOCK_ALERTS_DIR || "/root/stock-alerts";
-const TRADING_BOT_ENV = process.env.TRADING_BOT_ENV_PATH || "/home/ubuntu/trading-bot/.env";
-function readKiteCredentials() {
-    try {
-        const raw = fs_1.default.readFileSync(TRADING_BOT_ENV, "utf8");
-        let apiKey = "", token = "";
-        for (const line of raw.split("\n")) {
-            const eq = line.indexOf("=");
-            if (eq < 0)
-                continue;
-            const k = line.slice(0, eq).trim();
-            const v = line.slice(eq + 1).trim();
-            if (k === "API_KEY")
-                apiKey = v;
-            if (k === "ACCESS_TOKEN")
-                token = v;
-        }
-        return { apiKey, token };
+
+const STOCK_ALERTS_DIR    = process.env.STOCK_ALERTS_DIR    || "/root/stock-alerts";
+const TRADING_BOT_ENV     = process.env.TRADING_BOT_ENV_PATH || "/home/ubuntu/trading-bot/.env";
+
+function readKiteCredentials(): { apiKey: string; token: string } {
+  try {
+    const raw = fs.readFileSync(TRADING_BOT_ENV, "utf8");
+    let apiKey = "", token = "";
+    for (const line of raw.split("\n")) {
+      const eq = line.indexOf("=");
+      if (eq < 0) continue;
+      const k = line.slice(0, eq).trim();
+      const v = line.slice(eq + 1).trim();
+      if (k === "API_KEY")      apiKey = v;
+      if (k === "ACCESS_TOKEN") token  = v;
     }
-    catch {
-        return { apiKey: "", token: "" };
-    }
+    return { apiKey, token };
+  } catch { return { apiKey: "", token: "" }; }
 }
-function fetchKitePricesForHoldings(symbols) {
-    const { apiKey, token } = readKiteCredentials();
-    if (!apiKey || !token)
-        return Promise.reject(new Error("Kite credentials not available"));
-    const query = symbols.map(s => `i=${encodeURIComponent(s)}`).join("&");
-    return new Promise((resolve, reject) => {
-        const req = https_1.default.request({ hostname: "api.kite.trade", path: `/quote?${query}`, method: "GET",
-            headers: { "X-Kite-Version": "3", "Authorization": `token ${apiKey}:${token}` } }, res => {
-            let raw = "";
-            res.on("data", c => raw += c);
-            res.on("end", () => {
-                try {
-                    const json = JSON.parse(raw);
-                    if (json.status === "error")
-                        return reject(new Error(`Kite: ${json.message}`));
-                    const result = new Map();
-                    for (const [sym, q] of Object.entries(json.data)) {
-                        const price = q.last_price;
-                        const prevClose = q.ohlc?.close || price;
-                        result.set(sym, { price, changePct: prevClose ? (price - prevClose) / prevClose * 100 : 0,
-                            dayHigh: q.ohlc?.high || price, dayLow: q.ohlc?.low || price, prevClose });
-                    }
-                    resolve(result);
-                }
-                catch (e) {
-                    reject(new Error(`Parse error: ${e.message}`));
-                }
-            });
-        });
-        req.on("error", reject);
-        req.end();
-    });
-}
-// GET /api/holdings/prices — live prices + baseline + alert state (admin only)
-app.get("/api/holdings/prices", (req, res) => {
-    if (!req.session?.userId || req.session?.userRole !== "admin") {
-        res.status(403).json({ ok: false, error: "Admin only" });
-        return;
-    }
-    const symbols = HOLDINGS.map(s => s.symbol);
-    let baseline = {};
-    let alertState = {};
-    try {
-        baseline = JSON.parse(fs_1.default.readFileSync(path_1.default.join(STOCK_ALERTS_DIR, "baseline.json"), "utf8"));
-    }
-    catch { }
-    try {
-        alertState = JSON.parse(fs_1.default.readFileSync(path_1.default.join(STOCK_ALERTS_DIR, "alert-state.json"), "utf8"));
-    }
-    catch { }
-    fetchKitePricesForHoldings(symbols)
-        .then(prices => {
-        const data = HOLDINGS.map(stock => {
-            const q = prices.get(stock.symbol);
-            const base = baseline[stock.symbol] || null;
-            // Find last fired alert for this stock
-            const fired = Object.entries(alertState)
-                .filter(([k]) => k.startsWith(stock.symbol + "_"))
-                .sort((a, b) => new Date(b[1]).getTime() - new Date(a[1]).getTime());
-            const lastDip = fired[0] ? { key: fired[0][0], time: fired[0][1] } : null;
-            // Check current opportunities
-            const opps = [];
-            if (q) {
-                for (const a of stock.absoluteAlerts) {
-                    if (q.price <= a.price)
-                        opps.push(a.label);
-                }
-                if (base) {
-                    for (const d of stock.dipAlerts) {
-                        if (q.price <= base.price * (1 + d.pct / 100))
-                            opps.push(d.label);
-                    }
-                }
+
+function fetchKitePricesForHoldings(symbols: string[]): Promise<Map<string, { price: number; changePct: number; dayHigh: number; dayLow: number; prevClose: number }>> {
+  const { apiKey, token } = readKiteCredentials();
+  if (!apiKey || !token) return Promise.reject(new Error("Kite credentials not available"));
+  const query = symbols.map(s => `i=${encodeURIComponent(s)}`).join("&");
+  return new Promise((resolve, reject) => {
+    const req = https.request(
+      { hostname: "api.kite.trade", path: `/quote?${query}`, method: "GET",
+        headers: { "X-Kite-Version": "3", "Authorization": `token ${apiKey}:${token}` } },
+      res => {
+        let raw = "";
+        res.on("data", c => raw += c);
+        res.on("end", () => {
+          try {
+            const json = JSON.parse(raw) as any;
+            if (json.status === "error") return reject(new Error(`Kite: ${json.message}`));
+            const result = new Map<string, any>();
+            for (const [sym, q] of Object.entries(json.data as Record<string, any>)) {
+              const price = q.last_price as number;
+              const prevClose = (q.ohlc?.close as number) || price;
+              result.set(sym, { price, changePct: prevClose ? (price - prevClose) / prevClose * 100 : 0,
+                dayHigh: (q.ohlc?.high as number) || price, dayLow: (q.ohlc?.low as number) || price, prevClose });
             }
-            return { ...stock, price: q?.price ?? null, changePct: q?.changePct ?? null,
-                dayHigh: q?.dayHigh ?? null, dayLow: q?.dayLow ?? null,
-                baseline: base, lastDip, opportunities: opps };
+            resolve(result);
+          } catch (e: any) { reject(new Error(`Parse error: ${e.message}`)); }
         });
-        const totInvested = HOLDINGS.reduce((s, h) => s + h.invested, 0);
-        const totTarget = HOLDINGS.reduce((s, h) => s + h.targetAlloc, 0);
-        res.json({ ok: true, data, totInvested, totTarget, fetchedAt: new Date().toISOString() });
+      }
+    );
+    req.on("error", reject);
+    req.end();
+  });
+}
+
+// GET /api/holdings/prices — live prices + baseline + alert state (admin only)
+app.get("/api/holdings/prices", (req: Request, res: Response) => {
+  if (!req.session?.userId || req.session?.userRole !== "admin") {
+    res.status(403).json({ ok: false, error: "Admin only" }); return;
+  }
+  const symbols = HOLDINGS.map(s => s.symbol);
+  let baseline:   Record<string, any>    = {};
+  let alertState: Record<string, string> = {};
+  try { baseline   = JSON.parse(fs.readFileSync(path.join(STOCK_ALERTS_DIR, "baseline.json"),    "utf8")); } catch {}
+  try { alertState = JSON.parse(fs.readFileSync(path.join(STOCK_ALERTS_DIR, "alert-state.json"), "utf8")); } catch {}
+
+  fetchKitePricesForHoldings(symbols)
+    .then(prices => {
+      const data = HOLDINGS.map(stock => {
+        const q     = prices.get(stock.symbol);
+        const base  = baseline[stock.symbol] || null;
+        // Find last fired alert for this stock
+        const fired = Object.entries(alertState)
+          .filter(([k]) => k.startsWith(stock.symbol + "_"))
+          .sort((a, b) => new Date(b[1]).getTime() - new Date(a[1]).getTime());
+        const lastDip = fired[0] ? { key: fired[0][0], time: fired[0][1] } : null;
+        // Check current opportunities
+        const opps: string[] = [];
+        if (q) {
+          for (const a of stock.absoluteAlerts) {
+            if (q.price <= a.price) opps.push(a.label);
+          }
+          if (base) {
+            for (const d of stock.dipAlerts) {
+              if (q.price <= base.price * (1 + d.pct / 100)) opps.push(d.label);
+            }
+          }
+        }
+        return { ...stock, price: q?.price ?? null, changePct: q?.changePct ?? null,
+          dayHigh: q?.dayHigh ?? null, dayLow: q?.dayLow ?? null,
+          baseline: base, lastDip, opportunities: opps };
+      });
+      const totInvested = HOLDINGS.reduce((s, h) => s + h.invested, 0);
+      const totTarget   = HOLDINGS.reduce((s, h) => s + h.targetAlloc, 0);
+      res.json({ ok: true, data, totInvested, totTarget, fetchedAt: new Date().toISOString() });
     })
-        .catch(err => res.json({ ok: false, error: err.message, data: HOLDINGS.map(stock => {
-            const base = baseline[stock.symbol] || null;
-            const fired = Object.entries(alertState)
-                .filter(([k]) => k.startsWith(stock.symbol + "_"))
-                .sort((a, b) => new Date(b[1]).getTime() - new Date(a[1]).getTime());
-            const lastDip = fired[0] ? { key: fired[0][0], time: fired[0][1] } : null;
-            return { ...stock, price: null, changePct: null, dayHigh: null, dayLow: null,
-                baseline: base, lastDip, opportunities: [] };
-        }), totInvested: HOLDINGS.reduce((s, h) => s + h.invested, 0),
-        totTarget: HOLDINGS.reduce((s, h) => s + h.targetAlloc, 0),
-        fetchedAt: new Date().toISOString() }));
+    .catch(err => res.json({ ok: false, error: err.message, data: HOLDINGS.map(stock => {
+      const base  = baseline[stock.symbol] || null;
+      const fired = Object.entries(alertState)
+        .filter(([k]) => k.startsWith(stock.symbol + "_"))
+        .sort((a, b) => new Date(b[1]).getTime() - new Date(a[1]).getTime());
+      const lastDip = fired[0] ? { key: fired[0][0], time: fired[0][1] } : null;
+      return { ...stock, price: null, changePct: null, dayHigh: null, dayLow: null,
+        baseline: base, lastDip, opportunities: [] };
+    }), totInvested: HOLDINGS.reduce((s,h)=>s+h.invested,0),
+       totTarget:   HOLDINGS.reduce((s,h)=>s+h.targetAlloc,0),
+       fetchedAt: new Date().toISOString() }));
 });
+
 // GET /holdings — portfolio dashboard page (admin only)
-app.get("/holdings", requireAdmin, (_req, res) => {
-    const totInvested = HOLDINGS.reduce((s, h) => s + h.invested, 0);
-    const totCurrentVal = HOLDINGS.reduce((s, h) => s + h.currentVal, 0);
-    const totTarget = HOLDINGS.reduce((s, h) => s + h.targetAlloc, 0);
-    const totPnl = totCurrentVal - totInvested;
-    const totPnlPct = (totPnl / totInvested * 100).toFixed(1);
-    const pnlColor = totPnl >= 0 ? "#34d399" : "#f87171";
-    const stocksJson = JSON.stringify(HOLDINGS);
-    res.send(`<!DOCTYPE html>
+app.get("/holdings", requireAdmin, (_req: Request, res: Response) => {
+  const totInvested   = HOLDINGS.reduce((s, h) => s + h.invested,   0);
+  const totCurrentVal = HOLDINGS.reduce((s, h) => s + h.currentVal, 0);
+  const totTarget     = HOLDINGS.reduce((s, h) => s + h.targetAlloc, 0);
+  const totPnl        = totCurrentVal - totInvested;
+  const totPnlPct     = (totPnl / totInvested * 100).toFixed(1);
+  const pnlColor      = totPnl >= 0 ? "#34d399" : "#f87171";
+  const stocksJson    = JSON.stringify(HOLDINGS);
+  res.send(`<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
@@ -11473,11 +11381,11 @@ app.get("/holdings", requireAdmin, (_req, res) => {
         <small id="tok-time">Loading live prices…</small>
       </div>
       <div class="hs-s">
-        <div class="hs-v">₹${Math.round(totInvested / 1000)}K</div>
+        <div class="hs-v">₹${Math.round(totInvested/1000)}K</div>
         <div class="hs-l">Invested</div>
       </div>
       <div class="hs-s">
-        <div class="hs-v" id="h-live" style="color:${pnlColor}">₹${Math.round(totCurrentVal / 1000)}K</div>
+        <div class="hs-v" id="h-live" style="color:${pnlColor}">₹${Math.round(totCurrentVal/1000)}K</div>
         <div class="hs-l">Live Value</div>
       </div>
       <div class="hs-s">
@@ -11489,7 +11397,7 @@ app.get("/holdings", requireAdmin, (_req, res) => {
         <div class="hs-l">Return</div>
       </div>
       <div class="hs-s">
-        <div class="hs-v" style="color:#f59e0b">₹${Math.round(totTarget / 1000)}K</div>
+        <div class="hs-v" style="color:#f59e0b">₹${Math.round(totTarget/1000)}K</div>
         <div class="hs-l">Target Alloc</div>
       </div>
       <div class="hs-s">
@@ -11766,15 +11674,20 @@ app.get("/holdings", requireAdmin, (_req, res) => {
 </body>
 </html>`);
 });
-(0, db_1.initDb)().then(async () => {
-    await ensureAdminEmail();
-    // Run subscription expiry check on startup
-    (0, db_1.expireOldSubscriptions)().catch(() => { });
-    app.listen(PORT, () => {
-        console.log(`\n🔍 ZeroScreen running at http://localhost:${PORT}`);
-        console.log(`   Screener  : http://localhost:${PORT}/`);
-        console.log(`   Watchlists: http://localhost:${PORT}/watchlists`);
-        console.log(`   API stats : http://localhost:${PORT}/api/stats\n`);
-        (0, scheduler_1.startScheduler)();
-    });
+
+initDb().then(async () => {
+  await ensureAdminEmail();
+  // Run subscription expiry check on startup
+  expireOldSubscriptions().catch(() => {});
+  app.listen(PORT, () => {
+    console.log(`\n🔍 ZeroScreen running at http://localhost:${PORT}`);
+    console.log(`   Screener  : http://localhost:${PORT}/`);
+    console.log(`   Watchlists: http://localhost:${PORT}/watchlists`);
+    console.log(`   API stats : http://localhost:${PORT}/api/stats\n`);
+    startScheduler();
+  });
 }).catch(err => { console.error("DB init failed:", err); process.exit(1); });
+
+
+
+

@@ -351,7 +351,7 @@ async function initDb() {
             // ── User Paper Trading ────────────────────────────────────────────────────
             db.run(`CREATE TABLE IF NOT EXISTS paper_portfolio (
         user_id    INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
-        balance    REAL    NOT NULL DEFAULT 1000000,
+        balance    REAL    NOT NULL DEFAULT 100000,
         created_at TEXT    DEFAULT (datetime('now','localtime'))
       )`);
             db.run(`CREATE TABLE IF NOT EXISTS paper_positions (
@@ -416,9 +416,6 @@ async function initDb() {
             // Auto paper mode & custom stocks (safe migration)
             db.run("ALTER TABLE paper_trade_config ADD COLUMN auto_paper_mode TEXT NOT NULL DEFAULT 'picks'", () => { });
             db.run("ALTER TABLE paper_trade_config ADD COLUMN auto_paper_stocks TEXT NOT NULL DEFAULT '[]'", () => { });
-            // Capital per pick for auto-trade sizing
-            db.run("ALTER TABLE paper_trade_config ADD COLUMN picks_capital REAL NOT NULL DEFAULT 0", () => { });
-            db.run("ALTER TABLE paper_trade_config ADD COLUMN risk_pct REAL NOT NULL DEFAULT 1.0", () => { });
             // Telegram chat ID for premium signal alerts (safe migration)
             db.run("ALTER TABLE users ADD COLUMN telegram_chat_id TEXT", () => { });
             // SL / Target / OrderType on positions (safe migrations)
@@ -426,30 +423,6 @@ async function initDb() {
             db.run("ALTER TABLE paper_positions ADD COLUMN target_price REAL", () => { });
             db.run("ALTER TABLE paper_positions ADD COLUMN order_type TEXT", () => { });
             db.run("INSERT OR IGNORE INTO app_settings (key,value) VALUES ('registration_open','true')");
-            db.run("INSERT OR IGNORE INTO app_settings (key,value) VALUES ('tg_bot_token','')");
-            db.run("INSERT OR IGNORE INTO app_settings (key,value) VALUES ('tg_chat_id','')");
-            db.run("INSERT OR IGNORE INTO app_settings (key,value) VALUES ('tg_notify_pick_entry','true')");
-            db.run("INSERT OR IGNORE INTO app_settings (key,value) VALUES ('tg_notify_pick_exit','true')");
-            db.run("INSERT OR IGNORE INTO app_settings (key,value) VALUES ('tg_notify_new_user','true')");
-            db.run("INSERT OR IGNORE INTO app_settings (key,value) VALUES ('tg_notify_daily_picks','true')");
-            db.run("INSERT OR IGNORE INTO app_settings (key,value) VALUES ('tg_notify_sl_breach','true')");
-            db.run("INSERT OR IGNORE INTO app_settings (key,value) VALUES ('tg_notify_system','false')");
-            db.run("INSERT OR IGNORE INTO app_settings (key,value) VALUES ('tg_bot_token','')");
-            db.run("INSERT OR IGNORE INTO app_settings (key,value) VALUES ('tg_chat_id','')");
-            db.run("INSERT OR IGNORE INTO app_settings (key,value) VALUES ('tg_notify_pick_entry','true')");
-            db.run("INSERT OR IGNORE INTO app_settings (key,value) VALUES ('tg_notify_pick_exit','true')");
-            db.run("INSERT OR IGNORE INTO app_settings (key,value) VALUES ('tg_notify_new_user','true')");
-            db.run("INSERT OR IGNORE INTO app_settings (key,value) VALUES ('tg_notify_daily_picks','true')");
-            db.run("INSERT OR IGNORE INTO app_settings (key,value) VALUES ('tg_notify_sl_breach','true')");
-            db.run("INSERT OR IGNORE INTO app_settings (key,value) VALUES ('tg_notify_system','false')");
-
-            db.run("INSERT OR IGNORE INTO app_settings (key,value) VALUES ('tg_notify_bot_started','true')");
-            db.run("INSERT OR IGNORE INTO app_settings (key,value) VALUES ('tg_notify_bot_stopped','true')");
-            db.run("INSERT OR IGNORE INTO app_settings (key,value) VALUES ('tg_notify_candle','true')");
-            db.run("INSERT OR IGNORE INTO app_settings (key,value) VALUES ('tg_notify_trade_entry','true')");
-            db.run("INSERT OR IGNORE INTO app_settings (key,value) VALUES ('tg_notify_trade_exit','true')");
-            db.run("INSERT OR IGNORE INTO app_settings (key,value) VALUES ('tg_notify_token_expired','true')");
-            db.run("INSERT OR IGNORE INTO app_settings (key,value) VALUES ('tg_notify_token_refresh','true')");
             db.run("INSERT OR IGNORE INTO app_settings (key,value) VALUES ('feature_signals','true')");
             db.run("INSERT OR IGNORE INTO app_settings (key,value) VALUES ('feature_dashboard','true')");
             db.run("INSERT OR IGNORE INTO app_settings (key,value) VALUES ('feature_strategies','true')");
@@ -766,7 +739,7 @@ async function createUser(name, email, hashedPassword) {
 }
 // Creates paper_portfolio row for new user (idempotent — safe to call multiple times)
 async function initPaperPortfolio(userId) {
-    await dbRun("INSERT OR IGNORE INTO paper_portfolio (user_id, balance) VALUES (?, 1000000)", [userId]);
+    await dbRun("INSERT OR IGNORE INTO paper_portfolio (user_id, balance) VALUES (?, 100000)", [userId]);
 }
 async function getUserByEmail(email) {
     return dbGet("SELECT * FROM users WHERE email = ?", [email.toLowerCase()]);
@@ -971,8 +944,8 @@ async function getAllSubscriptions() {
 async function getPaperPortfolio(userId) {
     const row = await dbGet("SELECT balance FROM paper_portfolio WHERE user_id=?", [userId]);
     if (!row) {
-        await dbRun("INSERT OR IGNORE INTO paper_portfolio (user_id,balance) VALUES (?,1000000)", [userId]);
-        return { balance: 1000000 };
+        await dbRun("INSERT OR IGNORE INTO paper_portfolio (user_id,balance) VALUES (?,100000)", [userId]);
+        return { balance: 100000 };
     }
     return row;
 }
@@ -1028,7 +1001,7 @@ async function paperSell(userId, symbol, qty, price) {
 async function paperReset(userId) {
     await dbRun("DELETE FROM paper_positions WHERE user_id=?", [userId]);
     await dbRun("DELETE FROM paper_trades WHERE user_id=?", [userId]);
-    await dbRun("INSERT OR REPLACE INTO paper_portfolio (user_id,balance) VALUES (?,1000000)", [userId]);
+    await dbRun("INSERT OR REPLACE INTO paper_portfolio (user_id,balance) VALUES (?,100000)", [userId]);
 }
 // ── Mobile OTP ─────────────────────────────────────────────────────────────────
 async function storePhoneOtp(mobile, otp) {
@@ -1074,21 +1047,19 @@ async function getPaperTradeStats(userId) {
 async function getPaperTradeConfig(userId) {
     const row = await dbGet("SELECT * FROM paper_trade_config WHERE user_id=?", [userId]);
     if (!row) {
-        const def = { user_id: userId, trade_type: 'INTRADAY', default_qty: 1, default_sl_pct: 2.0, default_tgt_pct: 4.0, max_positions: 10, auto_paper_mode: 'picks', auto_paper_stocks: '[]', picks_capital: 0, risk_pct: 1.0 };
-        await dbRun("INSERT OR IGNORE INTO paper_trade_config (user_id,trade_type,default_qty,default_sl_pct,default_tgt_pct,max_positions,auto_paper_mode,auto_paper_stocks,picks_capital,risk_pct) VALUES (?,?,?,?,?,?,?,?,?,?)", [userId, def.trade_type, def.default_qty, def.default_sl_pct, def.default_tgt_pct, def.max_positions, def.auto_paper_mode, def.auto_paper_stocks, def.picks_capital, def.risk_pct]);
+        const def = { user_id: userId, trade_type: 'INTRADAY', default_qty: 1, default_sl_pct: 2.0, default_tgt_pct: 4.0, max_positions: 10, auto_paper_mode: 'picks', auto_paper_stocks: '[]' };
+        await dbRun("INSERT OR IGNORE INTO paper_trade_config (user_id,trade_type,default_qty,default_sl_pct,default_tgt_pct,max_positions,auto_paper_mode,auto_paper_stocks) VALUES (?,?,?,?,?,?,?,?)", [userId, def.trade_type, def.default_qty, def.default_sl_pct, def.default_tgt_pct, def.max_positions, def.auto_paper_mode, def.auto_paper_stocks]);
         return def;
     }
     row.auto_paper_mode = row.auto_paper_mode || 'picks';
     row.auto_paper_stocks = row.auto_paper_stocks || '[]';
-    row.picks_capital = row.picks_capital || 0;
-    row.risk_pct = row.risk_pct || 1.0;
     return row;
 }
 async function savePaperTradeConfig(userId, config) {
     const cur = await getPaperTradeConfig(userId);
     const m = { ...cur, ...config };
-    await dbRun(`INSERT OR REPLACE INTO paper_trade_config (user_id,trade_type,default_qty,default_sl_pct,default_tgt_pct,max_positions,auto_paper_mode,auto_paper_stocks,picks_capital,risk_pct,updated_at)
-     VALUES (?,?,?,?,?,?,?,?,?,?,datetime('now','localtime'))`, [userId, m.trade_type, m.default_qty, m.default_sl_pct, m.default_tgt_pct, m.max_positions, m.auto_paper_mode ?? 'picks', m.auto_paper_stocks ?? '[]', m.picks_capital ?? 0, m.risk_pct ?? 1.0]);
+    await dbRun(`INSERT OR REPLACE INTO paper_trade_config (user_id,trade_type,default_qty,default_sl_pct,default_tgt_pct,max_positions,auto_paper_mode,auto_paper_stocks,updated_at)
+     VALUES (?,?,?,?,?,?,?,?,datetime('now','localtime'))`, [userId, m.trade_type, m.default_qty, m.default_sl_pct, m.default_tgt_pct, m.max_positions, m.auto_paper_mode ?? 'picks', m.auto_paper_stocks ?? '[]']);
 }
 async function saveBotState(data) {
     await dbRun(`UPDATE bot_state SET data_json=?, updated_at=datetime('now','localtime') WHERE id=1`, [JSON.stringify(data)]);
@@ -1245,7 +1216,7 @@ async function getPaperLeaderboard(limit = 20) {
         const first = parts[0] || "Member";
         const lastInit = parts.length > 1 ? parts[parts.length - 1].charAt(0).toUpperCase() + "." : "";
         const displayName = first + (lastInit ? " " + lastInit : "");
-        const startBal = 1000000;
+        const startBal = r.role === "premium" || r.role === "admin" ? 1000000 : 100000;
         const netPnl = r.balance - startBal;
         const netPct = (netPnl / startBal) * 100;
         return {
