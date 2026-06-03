@@ -1329,33 +1329,53 @@ function getDrishtiFuturesSymbol(): Promise<string> {
 }
 
 // Returns ATM BankNifty option symbol for the nearest weekly expiry
+const OPT_PREM_MIN = 400;  // minimum option premium (skip if LTP < 400)
+const OPT_PREM_MAX = 600;  // maximum option premium (go OTM if LTP > 600)
+
 async function getDrishtiATMOptionSymbol(dir: "CE" | "PE", indexClose: number): Promise<string> {
-  // Cache ATM symbols for the day (avoid repeated API calls per trade)
   if (optATMCache) return dir === "CE" ? optATMCache.CE : optATMCache.PE;
   const { KiteConnect: KC2 } = require("kiteconnect");
   const kite2 = new KC2({ api_key: process.env.API_KEY || "" });
   kite2.setAccessToken(process.env.ACCESS_TOKEN || "");
   const ins = await kite2.getInstruments("NFO");
-  const today = new Date();
   const atm = Math.round(indexClose / 100) * 100;
   const opts = ins
     .filter((i: any) => i.name === "BANKNIFTY" && (i.instrument_type === "CE" || i.instrument_type === "PE"))
     .sort((a: any, b: any) => new Date(a.expiry).getTime() - new Date(b.expiry).getTime());
   if (!opts.length) throw new Error("No BankNifty options found");
-  const frontExpiry = opts[0].expiry;
-  const frontOpts = opts.filter((o: any) => o.expiry === frontExpiry);
-  const findAtm = (type: string) => {
-    const filtered = frontOpts.filter((o: any) => o.instrument_type === type);
-    return filtered.reduce((best: any, o: any) => {
-      if (!best) return o;
-      return Math.abs(o.strike - atm) < Math.abs(best.strike - atm) ? o : best;
-    }, null);
+  const expiries = ([...new Set(opts.map((o: any) => o.expiry as string))] as string[]).slice(0, 3);
+  const findBestStrike = async (expiry: string): Promise<{ CE: string; PE: string; ceLTP: number; peLTP: number } | null> => {
+    const exOpts = opts.filter((o: any) => o.expiry === expiry);
+    const offsets = [0, 100, -100, 200, -200, 300, -300];
+    for (const offset of offsets) {
+      const strike = atm + offset;
+      const ceOpt = exOpts.find((o: any) => o.instrument_type === "CE" && o.strike === strike);
+      const peOpt = exOpts.find((o: any) => o.instrument_type === "PE" && o.strike === strike);
+      if (!ceOpt || !peOpt) continue;
+      const [ceLTP, peLTP] = await Promise.all([
+        getOptionLTP(ceOpt.tradingsymbol).catch(() => 0),
+        getOptionLTP(peOpt.tradingsymbol).catch(() => 0),
+      ]);
+      const avgPrem = (ceLTP + peLTP) / 2;
+      if (avgPrem >= OPT_PREM_MIN && avgPrem <= OPT_PREM_MAX) {
+        log("OPT_STRIKE_FOUND", { expiry, strike, ceLTP, peLTP, avgPrem: avgPrem.toFixed(0), offset });
+        return { CE: ceOpt.tradingsymbol, PE: peOpt.tradingsymbol, ceLTP, peLTP };
+      }
+    }
+    return null;
   };
-  const ce = findAtm("CE"), pe = findAtm("PE");
-  if (!ce || !pe) throw new Error("ATM option not found");
-  optATMCache = { CE: ce.tradingsymbol, PE: pe.tradingsymbol, expiry: frontExpiry };
-  log("OPT_ATM_CACHE", { CE: optATMCache.CE, PE: optATMCache.PE, expiry: frontExpiry, atm });
-  return dir === "CE" ? optATMCache.CE : optATMCache.PE;
+  for (const expiry of expiries) {
+    const result = await findBestStrike(expiry);
+    if (result) {
+      optATMCache = { CE: result.CE, PE: result.PE, expiry };
+      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+      const _cache = optATMCache!;
+      log("OPT_ATM_CACHE", { CE: _cache.CE, PE: _cache.PE, expiry, atm, ceLTP: result.ceLTP, peLTP: result.peLTP });
+      return dir === "CE" ? _cache.CE : _cache.PE;
+    }
+    log("OPT_EXPIRY_SKIP", { expiry, reason: "no strike in 400-600 range" });
+  }
+  throw new Error("No BankNifty option found with premium in 400-600 range");
 }
 
 async function runDrishtiBot() {
@@ -1509,10 +1529,22 @@ async function runDrishtiBot() {
       // ── Close shadow options trade ────────────────────────────────────────
       if (optInTrade && optSymbol && optEntryPrem > 0) {
         try {
-          const optExitLTP = await getOptionLTP(optSymbol).catch(() => 0);
-          if (optExitLTP > 0) {
-            const optPts = optExitLTP - optEntryPrem;  // buy option, sell at exit
+          const optRawLTP = await getOptionLTP(optSymbol).catch(() => 0);
+          if (optRawLTP > 0) {
+            const _delta     = 0.5;
+            const _theta     = optEntryPrem / (drishtiDTE * 26);
+            const _candles   = Math.max(1, drishtiTodayCandles.length - (DrishtiState.entryIdx + 1));
+            const _fairMove  = _delta * pts - _theta * _candles;
+            const _fairLTP   = optEntryPrem + _fairMove;
+            const _staleness = Math.abs(optRawLTP - _fairLTP);
+            const optExitLTP = _staleness > 50 ? Math.max(1, _fairLTP) : optRawLTP;
+            log("OPT_EXIT_PRICE", { rawLTP: optRawLTP.toFixed(1), fairLTP: _fairLTP.toFixed(1),
+              staleness: _staleness.toFixed(1), usingFair: _staleness > 50,
+              indexPts: pts.toFixed(1), delta: _delta, theta: _theta.toFixed(2), candles: _candles });
+            const optPts = optExitLTP - optEntryPrem;
             const optRs  = Math.round(optPts * config.quantity);
+            const _discrepancy = Math.abs(optPts - (_delta * pts - _theta * _candles));
+            if (_discrepancy > 30) log("OPT_DISCREPANCY", { optPts: optPts.toFixed(1), indexPts: pts.toFixed(1), discrepancy: _discrepancy.toFixed(1) });
             optDailyPts += optPts;
             optDailyRs  += optRs;
             if (optPts > 0) optWins++; else optLosses++;
@@ -1762,10 +1794,12 @@ async function runDrishtiBot() {
   try {
     const optSym = await getDrishtiATMOptionSymbol(entrySig.side, bc.close);
     const optLTP = await getOptionLTP(optSym).catch(() => 0);
-    if (optLTP > 0) {
+    if (optLTP >= OPT_PREM_MIN && optLTP <= OPT_PREM_MAX) {
       optInTrade = true; optDir = entrySig.side; optSymbol = optSym;
       optEntryPrem = optLTP; optEntryTime = Date.now();
-      log("OPT_ENTRY", { symbol: optSym, ltp: optLTP, dir: entrySig.side, indexEntry: bc.close.toFixed(0) });
+      log("OPT_ENTRY", { symbol: optSym, ltp: optLTP, dir: entrySig.side, indexEntry: bc.close.toFixed(0), range: "OK" });
+    } else {
+      log("OPT_ENTRY_SKIP", { symbol: optSym, ltp: optLTP, reason: "premium outside 400-600 range" });
     }
   } catch (e) { log("OPT_ENTRY_FAIL", { error: String(e) }); }
 
