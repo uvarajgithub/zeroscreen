@@ -1605,10 +1605,30 @@ async function runDrishtiBot() {
     return;
   }
 
-  const freshPrice = await getCurrentPrice();
+  // Compute fair futures entry price instead of using potentially stale LTP.
+  // Stale LTP after a large candle can be 150-200 pts above fair value,
+  // causing large paper losses even when the trade is correct on index terms.
+  // Fair price = index close + (BNF × risk_free × days_to_expiry / 365)
+  const rawLTP = await getCurrentPrice();
+  const _dte   = (() => {
+    try {
+      const m = sym.match(/(\d{2})([A-Z]{3})(\d{4})/);
+      if (!m) return 23;
+      const months: Record<string,string> = {JAN:'01',FEB:'02',MAR:'03',APR:'04',MAY:'05',JUN:'06',JUL:'07',AUG:'08',SEP:'09',OCT:'10',NOV:'11',DEC:'12'};
+      const d = new Date(`${m[3]}-${months[m[2]]}-${m[1]}`);
+      return Math.max(1, Math.ceil((d.getTime() - Date.now()) / 86400000));
+    } catch { return 23; }
+  })();
+  const _fairPrem    = Math.round(bc.close * 0.07 * _dte / 365);
+  const _fairFutures = bc.close + _fairPrem;
+  const _staleness   = Math.abs(rawLTP - _fairFutures);
+  // If LTP is >100 pts away from fair value → use fair value (stale data guard)
+  const freshPrice   = _staleness > 100 ? _fairFutures : rawLTP;
+  log("FUTURES_ENTRY_PRICE", { rawLTP, fairFutures: _fairFutures, fairPrem: _fairPrem, dte: _dte, staleness: Math.round(_staleness), usingFair: _staleness > 100 });
+
   tradeDirection  = entrySig.side;
   tradeSymbol     = sym;
-  entryPrice      = bc.close;     // index-level entry
+  entryPrice      = bc.close;     // index-level entry (trail uses this)
   mainQty         = config.quantity;
   mainEntryDone   = true;
   activeTrade     = true;
