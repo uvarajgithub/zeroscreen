@@ -10973,6 +10973,35 @@ app.get("/signals", featureGate("feature_signals", "Signals"), async (req, res) 
 
       <!-- RIGHT: Position / Watching card -->
       <div>
+        <!-- ── Futures / Options tab switcher ── -->
+        <div id="strat-tabs" style="display:flex;gap:6px;margin-bottom:14px">
+          <button id="tab-btn-fut" onclick="_switchTab('fut')"
+            style="flex:1;padding:8px 0;border-radius:8px;font-size:.72rem;font-weight:700;cursor:pointer;border:1.5px solid #7c3aed;background:rgba(124,58,237,.2);color:#a78bfa;transition:.2s">
+            📈 Futures
+          </button>
+          <button id="tab-btn-opt" onclick="_switchTab('opt')"
+            style="flex:1;padding:8px 0;border-radius:8px;font-size:.72rem;font-weight:700;cursor:pointer;border:1.5px solid var(--border);background:transparent;color:var(--text-muted);transition:.2s">
+            🎯 Options
+          </button>
+        </div>
+        <script>
+        function _switchTab(t){
+          var ft=document.getElementById('strat-tab-fut'),ot=document.getElementById('strat-tab-opt');
+          var fb=document.getElementById('tab-btn-fut'),ob=document.getElementById('tab-btn-opt');
+          if(t==='fut'){
+            if(ft)ft.style.display='';if(ot)ot.style.display='none';
+            if(fb){fb.style.borderColor='#7c3aed';fb.style.background='rgba(124,58,237,.2)';fb.style.color='#a78bfa';}
+            if(ob){ob.style.borderColor='var(--border)';ob.style.background='transparent';ob.style.color='var(--text-muted)';}
+          } else {
+            if(ft)ft.style.display='none';if(ot)ot.style.display='';
+            if(fb){fb.style.borderColor='var(--border)';fb.style.background='transparent';fb.style.color='var(--text-muted)';}
+            if(ob){ob.style.borderColor='#10b981';ob.style.background='rgba(16,185,129,.15)';ob.style.color='#6ee7b7';}
+          }
+        }
+        </script>
+        <!-- ── Futures tab ── -->
+        <div id="strat-tab-fut">
+
         <div style="font-size:.72rem;text-transform:uppercase;letter-spacing:1px;color:#8b949e;font-weight:700;margin-bottom:8px">&#128203; Current Position</div>
         <div id="pos-lock50-wrap">
           ${inTrade2 && ep2 > 0 ? `
@@ -11024,13 +11053,65 @@ app.get("/signals", featureGate("feature_signals", "Signals"), async (req, res) 
           </div>
         </div>
         <div id="ss-trade-breakdown" style="margin-top:6px;font-size:.65rem;color:#8b949e;line-height:1.7"></div>
+      </div><!-- /strat-tab-fut -->
+
+        <!-- ── Options tab (hidden by default) ── -->
+        <div id="strat-tab-opt" style="display:none">
+          <div style="font-size:.72rem;text-transform:uppercase;letter-spacing:1px;color:#8b949e;font-weight:700;margin-bottom:8px">&#127919; Options Position</div>
+          <div id="opt-pos-wrap">
+            <div class="watch-card" id="opt-pos-flat" style="padding:14px 16px">
+              <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
+                <span style="font-size:.65rem;text-transform:uppercase;letter-spacing:1px;color:#10b981;font-weight:700">&#9711; Waiting for Options Signal</span>
+                <span id="opt-watch-ctx-badge"></span>
+              </div>
+              <div id="opt-watch-info" style="font-size:.78rem;color:var(--muted)"><span style="opacity:.4">Mirrors futures signals — ATM CE/PE</span></div>
+            </div>
+            <div class="pos-card pos-ce" id="opt-pos-card" style="display:none">
+              <div class="pos-hdr">
+                <span class="pos-live-dot"></span>
+                <span class="pos-badge pos-b-ce" id="opt-pos-badge">CE OPTION</span>
+                <span class="pos-sym" id="opt-pos-sym">—</span>
+              </div>
+              <div class="pos-pnl-rs g" id="opt-pos-rs">—</div>
+              <div class="pos-pnl-pts g" id="opt-pos-pts">— pts (option premium)</div>
+              <div class="pos-gauge"><div class="pos-gauge-fill" id="opt-pos-gauge" style="width:50%;background:#10b981"></div></div>
+              <div class="pos-grid">
+                <div><div class="pos-lbl">Entry Premium</div><div class="pos-val mono" id="opt-entry-prem">—</div></div>
+                <div><div class="pos-lbl">Live Premium</div><div class="pos-val g mono" id="opt-live-prem">…</div></div>
+                <div><div class="pos-lbl">Index Entry</div><div class="pos-val mono" id="opt-idx-entry">—</div></div>
+                <div><div class="pos-lbl">Index Live</div><div class="pos-val mono" id="opt-idx-live">—</div></div>
+              </div>
+            </div>
+          </div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:10px">
+            <div class="kpi-m">
+              <div class="kpi-m-l">Options Day P&L</div>
+              <div class="kpi-m-v g" id="opt-day-rs">₹0</div>
+              <div class="kpi-m-s" id="opt-day-pts">0.0 pts</div>
+            </div>
+            <div class="kpi-m">
+              <div class="kpi-m-l">Options Trades</div>
+              <div class="kpi-m-v" id="opt-tc">0</div>
+              <div class="kpi-m-s"><span class="g" id="opt-wins">0W</span> / <span class="r" id="opt-losses">0L</span></div>
+            </div>
+          </div>
+          <!-- Closed Today options -->
+          <div id="opt-closed-today" style="margin-top:12px"></div>
+        </div><!-- /strat-tab-opt -->
       </div>
 
     </div><!-- /atl-top-grid -->
 
       <!-- ── Trade History (Daily / Weekly / Monthly) ── -->
-      <div style="display:flex;align-items:center;gap:8px;margin-top:1.5rem;margin-bottom:.6rem;flex-wrap:wrap">
+      <div style="display:flex;align-items:center;gap:8px;margin-top:1.5rem;margin-bottom:.3rem;flex-wrap:wrap">
         <span style="font-size:.72rem;text-transform:uppercase;letter-spacing:1px;color:#8b949e;font-weight:700">Trade History</span>
+        <!-- Futures / Options instrument toggle -->
+        <div style="display:flex;gap:3px;background:rgba(255,255,255,.04);border:1px solid var(--border);border-radius:7px;padding:2px">
+          <button id="th-inst-fut" onclick="_thInst('fut')"
+            style="padding:3px 10px;border-radius:5px;font-size:.68rem;font-weight:700;cursor:pointer;border:none;background:rgba(124,58,237,.25);color:#a78bfa">📈 Futures</button>
+          <button id="th-inst-opt" onclick="_thInst('opt')"
+            style="padding:3px 10px;border-radius:5px;font-size:.68rem;font-weight:700;cursor:pointer;border:none;background:transparent;color:var(--text-muted)">🎯 Options</button>
+        </div>
         <div style="display:flex;gap:4px;margin-left:auto">
           <button id="th-btn-d" onclick="_thFilter('d')" style="padding:3px 12px;border-radius:5px;font-size:.72rem;font-weight:700;cursor:pointer;border:1px solid #7c3aed;background:rgba(124,58,237,.2);color:#a78bfa">Daily</button>
           <button id="th-btn-w" onclick="_thFilter('w')" style="padding:3px 12px;border-radius:5px;font-size:.72rem;font-weight:700;cursor:pointer;border:1px solid var(--border);background:transparent;color:var(--text-muted)">Weekly</button>
@@ -11039,6 +11120,82 @@ app.get("/signals", featureGate("feature_signals", "Signals"), async (req, res) 
         </div>
         <span class="sec-count" id="th-count" style="margin:0"></span>
       </div>
+      <script>
+      var _thInstMode='fut';
+      function _thInst(mode){
+        _thInstMode=mode;
+        var fb=document.getElementById('th-inst-fut'),ob=document.getElementById('th-inst-opt');
+        if(fb){fb.style.background=mode==='fut'?'rgba(124,58,237,.25)':'transparent';fb.style.color=mode==='fut'?'#a78bfa':'var(--text-muted)';}
+        if(ob){ob.style.background=mode==='opt'?'rgba(16,185,129,.2)':'transparent';ob.style.color=mode==='opt'?'#6ee7b7':'var(--text-muted)';}
+        _thRefreshAll();
+      }
+      function _thRefreshAll(){
+        // Reload the currently visible panel content with new instrument filter
+        var panels=['d','w','m'];
+        for(var i=0;i<panels.length;i++){
+          var p=document.getElementById('th-panel-'+panels[i]);
+          if(p&&p.style.display!=='none'){
+            _thRefreshPanel(panels[i]);
+            break;
+          }
+        }
+      }
+      function _thRefreshPanel(panel){
+        var tbody=null;
+        if(panel==='d') tbody=document.getElementById('tt-body-lock50');
+        else if(panel==='w') tbody=document.getElementById('tt-body-weekly');
+        if(!tbody||!window._thAllTrades) return;
+        var typeKey=_thInstMode==='opt'?'DRISHTI_V1_OPT':'DRISHTI_V1';
+        var isOpt=_thInstMode==='opt';
+        var trades=window._thAllTrades.filter(function(t){
+          return (t.type||'DRISHTI_V1')===typeKey && (t.exitPrice||0)>0;
+        });
+        if(panel==='w'){
+          var d7=new Date();d7.setDate(d7.getDate()-7);
+          trades=trades.filter(function(t){return t.date&&new Date(t.date)>=d7;});
+        } else if(panel==='d'){
+          var td=new Date().toISOString().slice(0,10);
+          trades=trades.filter(function(t){return (t.date||'').startsWith(td);});
+        }
+        trades=trades.slice().reverse();
+        if(!trades.length){tbody.innerHTML='<tr><td colspan="10" class="tt-e">No '+(isOpt?'options':'futures')+' trades</td></tr>';return;}
+        var html='';
+        trades.forEach(function(t){
+          var d3=(t.direction||'').toLowerCase();
+          var pts=t.pnl||0;
+          var rs=t.pnlRs!=null?Math.round(t.pnlRs):Math.round(pts*(t.qty||30));
+          var ep=(t.entryPrice||0).toFixed(isOpt?0:1);
+          var xp=(t.exitPrice||0)>0?(t.exitPrice||0).toFixed(isOpt?0:1):'—';
+          var prem_e=isOpt?'₹'+ep:'—'; var prem_x=isOpt?'₹'+xp:'—';
+          var idx_e=isOpt?'—':ep; var idx_x=isOpt?'—':xp;
+          var reason=t.reasonExit||'—';
+          var rTag=reason.toLowerCase().includes('sl')?'rc-sl':reason.toLowerCase().includes('trail')?'rc-trail':'rc-eod';
+          var dur=t.duration?(t.duration<60?t.duration+'s':Math.round(t.duration/60)+'m'):'—';
+          var sym=t.symbol||'—';
+          var tm=t.date?new Date(t.date).toLocaleTimeString('en-IN',{hour:'2-digit',minute:'2-digit',timeZone:'Asia/Kolkata'}):'—';
+          var typeBadge=isOpt?'<span style="font-size:.55rem;background:rgba(16,185,129,.2);color:#6ee7b7;border-radius:3px;padding:1px 4px;margin-left:3px">OPT</span>':'';
+          html+='<tr style="border-bottom:none">'
+            +'<td class="tc" rowspan="2" style="vertical-align:middle">'+tm+'</td>'
+            +'<td rowspan="2" style="vertical-align:middle"><span class="db-badge '+d3+'">'+(t.direction||'—')+'</span>'+typeBadge+'</td>'
+            +'<td style="font-size:.65rem;color:#60a5fa;font-weight:700">BUY</td>'
+            +'<td class="mono">'+idx_e+'</td>'
+            +'<td class="mono" style="color:#94a3b8">'+prem_e+'</td>'
+            +'<td class="tc mono" rowspan="2" style="vertical-align:middle;font-size:.65rem">'+sym+'</td>'
+            +'<td class="'+(pts>=0?'g':'r')+'" style="font-weight:800" rowspan="2">'+(pts>=0?'+':'')+pts.toFixed(isOpt?1:0)+' pts</td>'
+            +'<td rowspan="2"><span class="pnl-rs '+(rs>=0?'g':'r')+'">'+(rs>=0?'+':'−')+'₹'+Math.abs(rs).toLocaleString('en-IN')+'</span></td>'
+            +'<td rowspan="2">'+(reason!=='—'?'<span class="rc-b '+rTag+'">'+reason+'</span>':'—')+'</td>'
+            +'<td class="tc" rowspan="2" style="vertical-align:middle">'+dur+'</td>'
+            +'</tr><tr>'
+            +'<td style="font-size:.65rem;color:#fca5a5;font-weight:700">SELL</td>'
+            +'<td class="mono">'+idx_x+'</td>'
+            +'<td class="mono" style="color:#94a3b8">'+prem_x+'</td>'
+            +'</tr>';
+        });
+        tbody.innerHTML=html;
+      }
+      // Cache all trades for client-side filtering
+      window._thAllTrades=[];
+      </script>
 
       <!-- DAILY panel (default visible) -->
       <div id="th-panel-d">
@@ -12450,7 +12607,83 @@ app.get("/signals", featureGate("feature_signals", "Signals"), async (req, res) 
     try{
       const r=await fetch('/api/bot/status');
       const d=await r.json();
-      var _pd=d.heartbeat||{};var _pdh=document.getElementById('db-pdh');var _pdl=document.getElementById('db-pdl');var _pdc=document.getElementById('db-cndl');if(_pdh&&_pd.drishtiPrevDayHigh)_pdh.textContent=_pd.drishtiPrevDayHigh;if(_pdl&&_pd.drishtiPrevDayLow)_pdl.textContent=_pd.drishtiPrevDayLow;if(_pdc&&_pd.DrishtiCandles!==undefined)_pdc.textContent=_pd.DrishtiCandles;
+      var _pd=d.heartbeat||{};
+        // ── Update Options tab ──────────────────────────────────────
+        (function(){
+          var hbo=_pd;
+          var optIn=hbo.optInTrade;
+          var optPCard=document.getElementById('opt-pos-card');
+          var optFCard=document.getElementById('opt-pos-flat');
+          if(optPCard&&optFCard){
+            if(optIn){
+              optPCard.style.display='';optFCard.style.display='none';
+              var bd=document.getElementById('opt-pos-badge');
+              if(bd){bd.textContent=(hbo.optDir||'CE')+' OPTION';bd.className='pos-badge pos-b-'+(hbo.optDir||'ce').toLowerCase();}
+              var sym=document.getElementById('opt-pos-sym');if(sym)sym.textContent=hbo.optSymbol||'—';
+              var ep=parseFloat(hbo.optEntryPrem||0);
+              var lp=parseFloat(hbo.livePremium||0);
+              var optUnr=ep>0&&lp>0?lp-ep:0;
+              var optRs=Math.round(optUnr*(hbo.qty||30));
+              var optRsE=document.getElementById('opt-pos-rs');
+              var optPtsE=document.getElementById('opt-pos-pts');
+              if(optRsE){optRsE.textContent=(optRs>=0?'+':'')+'₹'+Math.abs(optRs).toLocaleString('en-IN');optRsE.className='pos-pnl-rs '+(optRs>=0?'g':'r');}
+              if(optPtsE){optPtsE.textContent=(optUnr>=0?'+':'')+optUnr.toFixed(1)+' pts (option premium)';optPtsE.className='pos-pnl-pts '+(optUnr>=0?'g':'r');}
+              var epEl=document.getElementById('opt-entry-prem');if(epEl)epEl.textContent=ep>0?'₹'+ep.toFixed(0):'—';
+              var lpEl=document.getElementById('opt-live-prem');if(lpEl)lpEl.textContent=lp>0?'₹'+lp.toFixed(0):'…';
+              var ieEl=document.getElementById('opt-idx-entry');if(ieEl)ieEl.textContent=parseFloat(hbo.entryPrice||0)>0?parseFloat(hbo.entryPrice).toFixed(0):'—';
+              var ilEl=document.getElementById('opt-idx-live');if(ilEl)ilEl.textContent=parseFloat(hbo.livePrice||0)>0?parseFloat(hbo.livePrice).toFixed(0):'—';
+              var g=document.getElementById('opt-pos-gauge');
+              if(g){var pct=ep>0?Math.min(100,Math.max(5,50+(optUnr/ep)*50)):50;g.style.width=pct+'%';g.style.background=optUnr>=0?'#10b981':'#ef4444';}
+            } else {
+              optPCard.style.display='none';optFCard.style.display='';
+              // Show ATM symbol in watching card
+              var owi=document.getElementById('opt-watch-info');
+              if(owi&&hbo.optATMCache){var ac=hbo.optATMCache;owi.textContent='ATM: CE='+ac.CE+' | PE='+ac.PE;}
+            }
+          }
+          // Day P&L
+          var optDayRs=parseFloat(hbo.optDailyRs||0);
+          var optDayPts=parseFloat(hbo.optDailyPts||0);
+          var drEl=document.getElementById('opt-day-rs');var dpEl=document.getElementById('opt-day-pts');
+          if(drEl){drEl.textContent=(optDayRs>=0?'+':'')+'₹'+Math.abs(Math.round(optDayRs)).toLocaleString('en-IN');drEl.className='kpi-m-v '+(optDayRs>=0?'g':'r');}
+          if(dpEl){dpEl.textContent=(optDayPts>=0?'+':'')+optDayPts.toFixed(1)+' pts';dpEl.className='kpi-m-s '+(optDayPts>=0?'g':'r');}
+          // Trades
+          var otcEl=document.getElementById('opt-tc');if(otcEl)otcEl.textContent=(hbo.optWins||0)+(hbo.optLosses||0);
+          var owEl=document.getElementById('opt-wins');if(owEl)owEl.textContent=(hbo.optWins||0)+'W';
+          var olEl=document.getElementById('opt-losses');if(olEl)olEl.textContent=(hbo.optLosses||0)+'L';
+          // Closed Today
+          var ctEl=document.getElementById('opt-closed-today');
+          if(ctEl&&(hbo.optRecentTrades||[]).length>0){
+            var td3=new Date().toISOString().slice(0,10);
+            var ctds=(hbo.optRecentTrades||[]).filter(function(t){return t.exitPrice&&t.exitPrice>0&&(t.date||'').startsWith(td3);});
+            if(ctds.length>0){
+              var ch='<div style="border-top:1px solid rgba(255,255,255,.07);padding-top:8px;margin-top:8px">';
+              ch+='<div style="font-size:.58rem;text-transform:uppercase;letter-spacing:.8px;color:#475569;font-weight:700;margin-bottom:6px">Closed Today (Options)</div>';
+              ctds.slice().reverse().forEach(function(t){
+                var pts=t.pnl||0;var rs=t.pnlRs||Math.round(pts*(t.qty||30));
+                var ptc=pts>=0?'#4ade80':'#fb923c';var tc=rs>=0?'#4ade80':'#fb923c';
+                var dc=(t.direction||'CE')==='CE'?'#38bdf8':'#c084fc';
+                var tm=t.date?new Date(t.date).toLocaleTimeString('en-IN',{hour:'2-digit',minute:'2-digit',timeZone:'Asia/Kolkata'}):'';
+                var dur=t.duration?(t.duration<60?t.duration+'s':Math.round(t.duration/60)+'m'):'';
+                ch+='<div style="background:rgba(255,255,255,.03);border:1px solid rgba(255,255,255,.08);border-radius:8px;padding:8px 10px;margin-bottom:5px">';
+                ch+='<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">';
+                ch+='<span style="font-size:.6rem;color:#64748b">'+tm+'</span>';
+                if(t.direction)ch+='<span style="color:'+dc+';font-size:.65rem;font-weight:700">'+t.direction+'</span>';
+                ch+='<span style="font-size:.68rem;color:#94a3b8;font-family:monospace">&#8377;'+((t.entryPrice||0)>0?(t.entryPrice||0).toFixed(0):'—')+'→'+'&#8377;'+((t.exitPrice||0)>0?(t.exitPrice||0).toFixed(0):'—')+'</span>';
+                ch+='<b style="color:'+ptc+';font-size:.72rem">'+(pts>=0?'+':'')+pts.toFixed(1)+' pts</b>';
+                ch+='<b style="color:'+tc+';font-size:.72rem;margin-left:auto">'+(rs>=0?'+':'−')+'&#8377;'+Math.abs(rs).toLocaleString('en-IN')+'</b>';
+                ch+='</div>';
+                ch+='<div style="font-size:.58rem;color:#475569;margin-top:3px">'+t.symbol+'  '+(t.reasonExit||'')+(dur?' &middot; '+dur:'')+'</div>';
+                ch+='</div>';
+              });
+              ch+='</div>';
+              ctEl.innerHTML=ch;
+            } else {
+              ctEl.innerHTML='';
+            }
+          } else if(ctEl) { ctEl.innerHTML=''; }
+        })();
+        var _pdh=document.getElementById('db-pdh');var _pdl=document.getElementById('db-pdl');var _pdc=document.getElementById('db-cndl');if(_pdh&&_pd.drishtiPrevDayHigh)_pdh.textContent=_pd.drishtiPrevDayHigh;if(_pdl&&_pd.drishtiPrevDayLow)_pdl.textContent=_pd.drishtiPrevDayLow;if(_pdc&&_pd.DrishtiCandles!==undefined)_pdc.textContent=_pd.DrishtiCandles;
       var _pd=d.heartbeat||{};if(document.getElementById('db-pdh')&&_pd.drishtiPrevDayHigh)document.getElementById('db-pdh').textContent=_pd.drishtiPrevDayHigh;if(document.getElementById('db-pdl')&&_pd.drishtiPrevDayLow)document.getElementById('db-pdl').textContent=_pd.drishtiPrevDayLow;if(document.getElementById('db-cndl')&&_pd.DrishtiCandles!==undefined)document.getElementById('db-cndl').textContent=_pd.DrishtiCandles;
       ge('db-upd').textContent='Updated '+new Date().toLocaleTimeString('en-IN',{hour:'2-digit',minute:'2-digit',second:'2-digit'});
 
@@ -12632,6 +12865,7 @@ app.get("/signals", featureGate("feature_signals", "Signals"), async (req, res) 
       if(d.today){
         var _today2=new Date().toISOString().slice(0,10);
         var _todayTds=(d.recentTrades||[]).filter(function(t){return t.exitPrice&&t.exitPrice>0&&(t.date||'').startsWith(_today2);});
+        if(window._thAllTrades!==undefined&&d.recentTrades){window._thAllTrades=d.recentTrades;}
         var _premTot=_todayTds.reduce(function(s,t){var _f=(t.symbol||'').includes('FUT');return s+(_f?(t.pnlRs!=null?Math.round(t.pnlRs):Math.round((t.pnl||0)*(t.qty||30))):((t.premiumEntry>0&&t.premiumExit>0)?Math.round((t.premiumExit-t.premiumEntry)*(t.qty||30)):Math.round((t.pnl||0)*30)));},0);
         var _ep2h=parseFloat(hb.entryPremium||0);var _lp2h=parseFloat(hb.livePremium||0);
         var _livePremUnr2=inT?(_ep2h>0&&_lp2h>0?Math.round((_lp2h-_ep2h)*(qty||30)):Math.round(unr*15)):0;

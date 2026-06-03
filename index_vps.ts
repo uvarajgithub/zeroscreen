@@ -128,8 +128,21 @@ let lastTradeProfit   = false;
 let consecutiveLosses = 0;
 let drishtiWins    = 0;
 let drishtiLosses  = 0;
-let drishtiDTE     = 23;    // days-to-expiry at last entry, for real ₹ calc
-let dailyRealRs    = 0;     // cumulative day P&L in real futures ₹ (fair premium)
+let drishtiDTE     = 23;    // days-to-expiry at last entry, for real Rs calc
+let dailyRealRs    = 0;     // cumulative day P&L in real futures Rs (fair premium)
+
+// ── Options shadow bot (mirrors futures signals, different instrument) ────────
+let optInTrade       = false;
+let optDir: "CE" | "PE" | null = null;
+let optSymbol        = "";
+let optEntryPrem     = 0;
+let optEntryTime     = 0;
+let optDailyPts      = 0;   // option premium pts (exitPrem - entryPrem)
+let optDailyRs       = 0;   // option ₹ (pts × qty)
+let optWins          = 0;
+let optLosses        = 0;
+let optATMCache: { CE: string; PE: string; expiry: string } | null = null;
+let optRecentTrades: any[] = [];
 let entryPrice        = 0;
 let tradeSymbol       = "";
 let tradeDirection: "CE" | "PE" | null = null;
@@ -421,33 +434,20 @@ async function monitorCandleBreakouts() {
         if (DrishtiState.inTrade && tradeDirection) {
           const _bu = tradeDirection === "CE" ? price - entryPrice : entryPrice - price;
           const _bUS = _bu >= 0 ? "+" : "";
-          // Re-compute peak/trail inline so TG is accurate even if it fires before runBot
-          let _pk = DrishtiState.peakPts, _lk = DrishtiState.trailStop;
-          const _afterEntry = drishtiTodayCandles.length > (DrishtiState.entryIdx + 1);
-          if (_afterEntry && drishtiTodayCandles.length > 0) {
-            const _lc = drishtiTodayCandles[drishtiTodayCandles.length - 1];
-            const _fp = tradeDirection === "CE" ? _lc.high - entryPrice : entryPrice - _lc.low;
-            if (_fp > _pk) { _pk = _fp; _lk = _pk >= 10 ? _pk - 10 : -150; }
-          }
-          const _bSL = _lk <= 0
+          const _bSL = DrishtiState.trailStop <= 0
             ? (tradeDirection === "CE" ? entryPrice - 150 : entryPrice + 150).toFixed(0)
-            : (entryPrice + (tradeDirection === "CE" ? _lk : -_lk)).toFixed(0);
-          const _lockLine = _lk > 0
-            ? `🔒 *Trail locked: +${_lk.toFixed(0)} pts*  (exit ≥ ${_bSL})\n`
-            : `⚠️ No lock yet — Hard SL @ ${_bSL} (−150 pts)\n`;
-          const _dayTotal = dailyPnL + (_lk > 0 ? _lk : 0);
-          const _dayRsLocked = dailyRealRs + (_lk > 0 ? Math.round(_lk * config.quantity * (1 + 0.07 * drishtiDTE / 365)) : 0);
+            : (entryPrice + (tradeDirection === "CE" ? DrishtiState.trailStop : -DrishtiState.trailStop)).toFixed(0);
+          const _bSLlabel = DrishtiState.trailStop <= 0 ? "Hard SL" : "Trail lock";
           strategyCtx = `In Trade (${tradeDirection}) | ${_bCtx}\n`
-            + `Entry: ${entryPrice.toFixed(0)} | Peak: ${_pk.toFixed(0)} pts\n`
-            + _lockLine
-            + `Spot: ${_bUS}${_bu.toFixed(0)} pts (live vs entry)\n`
-            + `Day: ${_dayTotal >= 0 ? "+" : ""}${_dayTotal.toFixed(0)} pts | ₹${_dayRsLocked >= 0 ? "+" : ""}${_dayRsLocked.toLocaleString("en-IN")} | ${drishtiWins}W ${drishtiLosses}L | T:${tradeCount}/5`;
+            + `Entry: ${entryPrice.toFixed(0)} | ${_bSLlabel}: ${_bSL}\n`
+            + `P&L: ${_bUS}${_bu.toFixed(0)} pts | Peak: ${DrishtiState.peakPts.toFixed(0)} pts\n`
+            + `Day: ${_bSign}${dailyPnL.toFixed(0)} | ${drishtiWins}W ${drishtiLosses}L | T:${tradeCount}/5`;
         } else if (DrishtiState.firstDone && !DrishtiState.inTrade) {
           const _reNum = DrishtiState.reCount + 1;
           const _re = DrishtiState.reCount < 5
             ? `⏳ Watching RE #${_reNum}` : `✅ All trades done`;
           strategyCtx = `${_re}\n`
-            + `Day: ${_bSign}${dailyPnL.toFixed(0)} pts | ₹${dailyRealRs >= 0 ? "+" : ""}${dailyRealRs.toLocaleString("en-IN")} | ${drishtiWins}W ${drishtiLosses}L | T:${tradeCount}/5`;
+            + `Day: ${_bSign}${dailyPnL.toFixed(0)} pts | Rs${dailyRealRs >= 0 ? '+' : ''}${dailyRealRs.toLocaleString('en-IN')} | ${drishtiWins}W ${drishtiLosses}L | T:${tradeCount}/5`;
         } else {
           strategyCtx = `Watching | Candle #${drishtiTodayCandles.length}\n`
             + `PDH: ${_bPH} | PDL: ${_bPL} | ${_bCtx}\n`
@@ -1328,6 +1328,36 @@ function getDrishtiFuturesSymbol(): Promise<string> {
   });
 }
 
+// Returns ATM BankNifty option symbol for the nearest weekly expiry
+async function getDrishtiATMOptionSymbol(dir: "CE" | "PE", indexClose: number): Promise<string> {
+  // Cache ATM symbols for the day (avoid repeated API calls per trade)
+  if (optATMCache) return dir === "CE" ? optATMCache.CE : optATMCache.PE;
+  const { KiteConnect: KC2 } = require("kiteconnect");
+  const kite2 = new KC2({ api_key: process.env.API_KEY || "" });
+  kite2.setAccessToken(process.env.ACCESS_TOKEN || "");
+  const ins = await kite2.getInstruments("NFO");
+  const today = new Date();
+  const atm = Math.round(indexClose / 100) * 100;
+  const opts = ins
+    .filter((i: any) => i.name === "BANKNIFTY" && (i.instrument_type === "CE" || i.instrument_type === "PE"))
+    .sort((a: any, b: any) => new Date(a.expiry).getTime() - new Date(b.expiry).getTime());
+  if (!opts.length) throw new Error("No BankNifty options found");
+  const frontExpiry = opts[0].expiry;
+  const frontOpts = opts.filter((o: any) => o.expiry === frontExpiry);
+  const findAtm = (type: string) => {
+    const filtered = frontOpts.filter((o: any) => o.instrument_type === type);
+    return filtered.reduce((best: any, o: any) => {
+      if (!best) return o;
+      return Math.abs(o.strike - atm) < Math.abs(best.strike - atm) ? o : best;
+    }, null);
+  };
+  const ce = findAtm("CE"), pe = findAtm("PE");
+  if (!ce || !pe) throw new Error("ATM option not found");
+  optATMCache = { CE: ce.tradingsymbol, PE: pe.tradingsymbol, expiry: frontExpiry };
+  log("OPT_ATM_CACHE", { CE: optATMCache.CE, PE: optATMCache.PE, expiry: frontExpiry, atm });
+  return dir === "CE" ? optATMCache.CE : optATMCache.PE;
+}
+
 async function runDrishtiBot() {
   const now = new Date();
   const ist = new Date(now.toLocaleString("en-US", { timeZone: "Asia/Kolkata" }));
@@ -1357,6 +1387,10 @@ async function runDrishtiBot() {
     drishtiWins          = 0;
     drishtiLosses        = 0;
     dailyRealRs          = 0;
+    optDailyPts = 0; optDailyRs = 0;
+    optWins = 0; optLosses = 0;
+    optATMCache = null; optRecentTrades = [];
+    optInTrade = false; optDir = null; optSymbol = ""; optEntryPrem = 0;
     log("STATE_RESET", { strategy: "DRISHTI_V1" });
 
     // Load previous day candles (non-blocking)
@@ -1467,12 +1501,50 @@ async function runDrishtiBot() {
       const pts = trail.pts;
       dailyPnL += pts;
       if (pts > 0) { consecutiveLosses = 0; drishtiWins++; } else { consecutiveLosses++; drishtiLosses++; }
-
-      // Real futures ₹ = index pts × qty × (1 + 7% × DTE/365)
-      // Fair premium applies equally to entry & exit (same day) → only tiny delta vs index
-      const _futMultiplier = 1 + 0.07 * drishtiDTE / 365;
-      const _tradeRealRs   = Math.round(pts * config.quantity * _futMultiplier);
+      // Real futures Rs = index pts x qty x (1 + 7% x DTE/365) — matches corrected backtest
+      const _futMult = 1 + 0.07 * drishtiDTE / 365;
+      const _tradeRealRs = Math.round(pts * config.quantity * _futMult);
       dailyRealRs += _tradeRealRs;
+
+      // ── Close shadow options trade ────────────────────────────────────────
+      if (optInTrade && optSymbol && optEntryPrem > 0) {
+        try {
+          const optExitLTP = await getOptionLTP(optSymbol).catch(() => 0);
+          if (optExitLTP > 0) {
+            const optPts = optExitLTP - optEntryPrem;  // buy option, sell at exit
+            const optRs  = Math.round(optPts * config.quantity);
+            optDailyPts += optPts;
+            optDailyRs  += optRs;
+            if (optPts > 0) optWins++; else optLosses++;
+            const _optDur = optEntryTime > 0 ? Math.round((Date.now() - optEntryTime) / 1000) : 0;
+            const _optTradeRec = {
+              date: new Date().toISOString(),
+              direction: optDir,
+              symbol: optSymbol,
+              entryPrice: optEntryPrem,
+              exitPrice: optExitLTP,
+              pnl: parseFloat(optPts.toFixed(1)),
+              pnlRs: optRs,
+              qty: config.quantity,
+              reasonExit: trail.action.toLowerCase(),
+              duration: _optDur,
+            };
+            optRecentTrades.push(_optTradeRec);
+            if (optRecentTrades.length > 20) optRecentTrades = optRecentTrades.slice(-20);
+            // Persist to trades.json so Trade History can show options data
+            logTrade({ date: _optTradeRec.date, type: "DRISHTI_V1_OPT",
+              direction: optDir ?? "CE", symbol: optSymbol,
+              entryPrice: optEntryPrem, exitPrice: optExitLTP,
+              premiumEntry: optEntryPrem, premiumExit: optExitLTP,
+              pnl: parseFloat(optPts.toFixed(1)), pnlRs: optRs,
+              qty: config.quantity, aiScore: 1, slippage: 0,
+              reasonEntry: "drishti_opt_shadow", reasonExit: trail.action.toLowerCase(),
+              duration: _optDur });
+            log("OPT_EXIT", { symbol: optSymbol, entryPrem: optEntryPrem, exitPrem: optExitLTP, pts: optPts.toFixed(1), Rs: optRs });
+          }
+        } catch (e) { log("OPT_EXIT_FAIL", { error: String(e) }); }
+        optInTrade = false; optDir = null; optSymbol = ""; optEntryPrem = 0;
+      }
 
       // Set up re-entry tracking
       DrishtiState.inTrade      = false;
@@ -1622,7 +1694,7 @@ async function runDrishtiBot() {
   // Compute fair futures entry price instead of using potentially stale LTP.
   // Stale LTP after a large candle can be 150-200 pts above fair value,
   // causing large paper losses even when the trade is correct on index terms.
-  // Fair price = index close + (BNF × risk_free × days_to_expiry / 365)
+  // Fair price = index close + (BNF x risk_free x days_to_expiry / 365)
   const rawLTP = await getCurrentPrice();
   const _dte   = (() => {
     try {
@@ -1636,10 +1708,10 @@ async function runDrishtiBot() {
   const _fairPrem    = Math.round(bc.close * 0.07 * _dte / 365);
   const _fairFutures = bc.close + _fairPrem;
   const _staleness   = Math.abs(rawLTP - _fairFutures);
-  // If LTP is >100 pts away from fair value → use fair value (stale data guard)
+  // If LTP is >100 pts away from fair value -> use fair value (stale data guard)
   const freshPrice   = _staleness > 100 ? _fairFutures : rawLTP;
   log("FUTURES_ENTRY_PRICE", { rawLTP, fairFutures: _fairFutures, fairPrem: _fairPrem, dte: _dte, staleness: Math.round(_staleness), usingFair: _staleness > 100 });
-  drishtiDTE = _dte;  // store for futures ₹ calc at exit
+  drishtiDTE = _dte;  // store for futures Rs calc at exit
 
   tradeDirection  = entrySig.side;
   tradeSymbol     = sym;
@@ -1647,7 +1719,7 @@ async function runDrishtiBot() {
   mainQty         = config.quantity;
   mainEntryDone   = true;
   activeTrade     = true;
-  entryTime       = Date.now();
+    let actualFillPrice = bc.close;
 
   DrishtiState.inTrade   = true;
   DrishtiState.dir       = entrySig.side;
@@ -1662,13 +1734,17 @@ async function runDrishtiBot() {
     const order = await placeTrade(sym, freshPrice, config.quantity, entrySig.side === "PE" ? "SELL" : "BUY");
     tradeInProgress = false;
     if (!order || order.status !== "COMPLETE" || order.filled_quantity <= 0) {
-      stopDrishtiLTPMonitor();  // trade failed — stop LTP monitor
+      stopDrishtiLTPMonitor();  // trade failed Γö stop LTP monitor
       log("ORDER_NOT_FILLED", { order });
       mainEntryDone = false; activeTrade = false; tradeDirection = null;
       tradeSymbol = ""; entryPrice = 0; entryTime = 0;
       DrishtiState.inTrade = false;
       return;
     }
+    actualFillPrice = (order as any).average_price ?? bc.close;
+    entryPrice = bc.close;          // always index close — trail uses index candles
+    DrishtiState.entry = bc.close;  // NEVER futures fill — would break trail (index vs futures scale)
+    log("ENTRY_PRICE_UPDATE", { indexCandle: bc.close.toFixed(1), futuresFill: actualFillPrice.toFixed(1), diff: (actualFillPrice - bc.close).toFixed(1) });
   } catch (e) {
     tradeInProgress = false;
     stopDrishtiLTPMonitor();  // trade rejected — stop LTP monitor
@@ -1681,6 +1757,17 @@ async function runDrishtiBot() {
   }
 
   if (DrishtiState.firstDone) DrishtiState.reCount++;
+
+  // ── Shadow options trade (same signal, ATM option) ───────────────────────
+  try {
+    const optSym = await getDrishtiATMOptionSymbol(entrySig.side, bc.close);
+    const optLTP = await getOptionLTP(optSym).catch(() => 0);
+    if (optLTP > 0) {
+      optInTrade = true; optDir = entrySig.side; optSymbol = optSym;
+      optEntryPrem = optLTP; optEntryTime = Date.now();
+      log("OPT_ENTRY", { symbol: optSym, ltp: optLTP, dir: entrySig.side, indexEntry: bc.close.toFixed(0) });
+    }
+  } catch (e) { log("OPT_ENTRY_FAIL", { error: String(e) }); }
 
   tradeCount++;
   saveTradeState();
@@ -1705,7 +1792,7 @@ async function runDrishtiBot() {
   const premiumAtEntry = await getOptionLTP(sym).catch(() => 0);
   entryPremium  = premiumAtEntry;
   lastOptionLTP = premiumAtEntry;
-  logTrade({ date: new Date().toISOString(), type: "DRISHTI_V1", direction: entrySig.side, symbol: sym, premiumEntry: premiumAtEntry, premiumExit: 0, entryPrice: bc.close, exitPrice: 0, pnl: 0, reasonEntry: `drishti_${entrySig.ctx}_${entrySig.reason}`, reasonExit: "", aiScore: 1, slippage: Math.abs(freshPrice - bc.close), duration: 0 });
+  logTrade({ date: new Date().toISOString(), type: "DRISHTI_V1", direction: entrySig.side, symbol: sym, premiumEntry: premiumAtEntry, premiumExit: 0, entryPrice: actualFillPrice, exitPrice: 0, pnl: 0, reasonEntry: `drishti_${entrySig.ctx}_${entrySig.reason}`, reasonExit: "", aiScore: 1, slippage: Math.abs(freshPrice - actualFillPrice), duration: 0 });
 }
 
 async function runBot() {
@@ -2479,6 +2566,12 @@ async function preStartPrompt() {
           status: _inTrade ? `IN TRADE · ${tradeDirection}` : "RUNNING · FLAT",
           dailyPnL,
           dailyRealRs,
+          optInTrade, optDir, optSymbol,
+          optEntryPrem,
+          optDailyPts: parseFloat(optDailyPts.toFixed(1)),
+          optDailyRs,
+          optWins, optLosses,
+          optRecentTrades: optRecentTrades.slice(-10),
           unrealisedPnL: _unrealised,
           tradeCount,        qty: config.quantity,
         slPts: ACTIVE_STRATEGY === "DRISHTI_V1" ? 150 : (config.tradeManagement?.stopLossPoints ?? 100),
