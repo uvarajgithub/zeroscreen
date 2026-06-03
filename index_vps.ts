@@ -436,17 +436,18 @@ async function monitorCandleBreakouts() {
             ? `🔒 *Trail locked: +${_lk.toFixed(0)} pts*  (exit ≥ ${_bSL})\n`
             : `⚠️ No lock yet — Hard SL @ ${_bSL} (−150 pts)\n`;
           const _dayTotal = dailyPnL + (_lk > 0 ? _lk : 0);
+          const _dayRsLocked = dailyRealRs + (_lk > 0 ? Math.round(_lk * config.quantity * (1 + 0.07 * drishtiDTE / 365)) : 0);
           strategyCtx = `In Trade (${tradeDirection}) | ${_bCtx}\n`
             + `Entry: ${entryPrice.toFixed(0)} | Peak: ${_pk.toFixed(0)} pts\n`
             + _lockLine
             + `Spot: ${_bUS}${_bu.toFixed(0)} pts (live vs entry)\n`
-            + `Day+lock: ${_dayTotal >= 0 ? "+" : ""}${_dayTotal.toFixed(0)} | ${drishtiWins}W ${drishtiLosses}L | T:${tradeCount}/5`;
+            + `Day: ${_dayTotal >= 0 ? "+" : ""}${_dayTotal.toFixed(0)} pts | ₹${_dayRsLocked >= 0 ? "+" : ""}${_dayRsLocked.toLocaleString("en-IN")} | ${drishtiWins}W ${drishtiLosses}L | T:${tradeCount}/5`;
         } else if (DrishtiState.firstDone && !DrishtiState.inTrade) {
           const _reNum = DrishtiState.reCount + 1;
           const _re = DrishtiState.reCount < 5
             ? `⏳ Watching RE #${_reNum}` : `✅ All trades done`;
           strategyCtx = `${_re}\n`
-            + `Day: ${_bSign}${dailyPnL.toFixed(0)} | ${drishtiWins}W ${drishtiLosses}L | T:${tradeCount}/5`;
+            + `Day: ${_bSign}${dailyPnL.toFixed(0)} pts | ₹${dailyRealRs >= 0 ? "+" : ""}${dailyRealRs.toLocaleString("en-IN")} | ${drishtiWins}W ${drishtiLosses}L | T:${tradeCount}/5`;
         } else {
           strategyCtx = `Watching | Candle #${drishtiTodayCandles.length}\n`
             + `PDH: ${_bPH} | PDL: ${_bPL} | ${_bCtx}\n`
@@ -544,6 +545,8 @@ function saveTradeState() {
     tradeAIScore,
     tradeCount,
     dailyPnL,
+    dailyRealRs,
+    drishtiDTE,
     consecutiveLosses,
     lastTradeProfit,
     trendMode,
@@ -632,6 +635,8 @@ function restoreTradeState(): boolean {
     tradeAIScore     = s.tradeAIScore     ?? 0;
     tradeCount       = s.tradeCount       ?? 0;
     dailyPnL         = s.dailyPnL         ?? 0;
+    dailyRealRs      = s.dailyRealRs      ?? 0;
+    drishtiDTE       = s.drishtiDTE       ?? 23;
     consecutiveLosses = s.consecutiveLosses ?? 0;
     lastTradeProfit  = s.lastTradeProfit  ?? false;
     trendMode        = s.trendMode        ?? false;
@@ -741,7 +746,7 @@ async function runITMHoldBot() {
   if (h === 9 && m === 15) {
     stopForDay = false;
     capitalProtectionTriggered = false;
-    dailyPnL = 0;
+    dailyPnL = 0; dailyRealRs = 0;
     log("STATE_RESET", { strategy: "ITM_HOLD", openPositions: itmHoldPositions.length });
   }
 
@@ -1351,6 +1356,7 @@ async function runDrishtiBot() {
     entryTime           = 0;
     drishtiWins          = 0;
     drishtiLosses        = 0;
+    dailyRealRs          = 0;
     log("STATE_RESET", { strategy: "DRISHTI_V1" });
 
     // Load previous day candles (non-blocking)
@@ -1462,6 +1468,12 @@ async function runDrishtiBot() {
       dailyPnL += pts;
       if (pts > 0) { consecutiveLosses = 0; drishtiWins++; } else { consecutiveLosses++; drishtiLosses++; }
 
+      // Real futures ₹ = index pts × qty × (1 + 7% × DTE/365)
+      // Fair premium applies equally to entry & exit (same day) → only tiny delta vs index
+      const _futMultiplier = 1 + 0.07 * drishtiDTE / 365;
+      const _tradeRealRs   = Math.round(pts * config.quantity * _futMultiplier);
+      dailyRealRs += _tradeRealRs;
+
       // Set up re-entry tracking
       DrishtiState.inTrade      = false;
       DrishtiState.firstDone    = true;
@@ -1487,7 +1499,7 @@ async function runDrishtiBot() {
         await sendEODSummary().catch(() => {});
         generateMonthlyReport().catch(e => log("REPORT_FAIL", { error: e?.message }));
       }
-      logTrade({ date: new Date().toISOString(), type: "DRISHTI_V1", direction: capturedDir ?? "CE", symbol: capturedSymbol, premiumEntry: capturedPremiumEntry, premiumExit: capturedPremiumExit, qty: config.quantity, entryPrice: capturedEntry, exitPrice: trail.exitPrice, pnl: pts, reasonEntry: "drishti_entry", reasonExit: trail.action.toLowerCase(), aiScore: 1, slippage: 0, duration: capturedTime > 0 ? Math.round((Date.now() - capturedTime) / 1000) : 0 });
+      logTrade({ date: new Date().toISOString(), type: "DRISHTI_V1", direction: capturedDir ?? "CE", symbol: capturedSymbol, premiumEntry: capturedPremiumEntry, premiumExit: capturedPremiumExit, qty: config.quantity, entryPrice: capturedEntry, exitPrice: trail.exitPrice, pnl: pts, pnlRs: _tradeRealRs, reasonEntry: "drishti_entry", reasonExit: trail.action.toLowerCase(), aiScore: 1, slippage: 0, duration: capturedTime > 0 ? Math.round((Date.now() - capturedTime) / 1000) : 0 });
     }
     return;  // always return after trail check (don't look for new entries in same tick)
   }
@@ -1627,6 +1639,7 @@ async function runDrishtiBot() {
   // If LTP is >100 pts away from fair value → use fair value (stale data guard)
   const freshPrice   = _staleness > 100 ? _fairFutures : rawLTP;
   log("FUTURES_ENTRY_PRICE", { rawLTP, fairFutures: _fairFutures, fairPrem: _fairPrem, dte: _dte, staleness: Math.round(_staleness), usingFair: _staleness > 100 });
+  drishtiDTE = _dte;  // store for futures ₹ calc at exit
 
   tradeDirection  = entrySig.side;
   tradeSymbol     = sym;
@@ -1777,7 +1790,7 @@ async function runBot() {
     lastExitTime = null;
     stopForDay = false;
     capitalProtectionTriggered = false;
-    dailyPnL = 0;
+    dailyPnL = 0; dailyRealRs = 0;
     lastTradeProfit = false;
     consecutiveLosses = 0;
     entryTime = 0;
@@ -2465,6 +2478,7 @@ async function preStartPrompt() {
           at: new Date().toISOString(),
           status: _inTrade ? `IN TRADE · ${tradeDirection}` : "RUNNING · FLAT",
           dailyPnL,
+          dailyRealRs,
           unrealisedPnL: _unrealised,
           tradeCount,        qty: config.quantity,
         slPts: ACTIVE_STRATEGY === "DRISHTI_V1" ? 150 : (config.tradeManagement?.stopLossPoints ?? 100),

@@ -11053,7 +11053,7 @@ app.get("/signals", featureGate("feature_signals", "Signals"), async (req, res) 
                   const _bPrem=(t.premiumEntry??0)>0?(t.premiumEntry??0).toFixed(1):'—';
                   const _sPrem=(t.premiumExit??0)>0?(t.premiumExit??0).toFixed(1):'—';
                   const _tIsFut=(t.symbol||'').includes('FUT');
-                  const rs=_tIsFut?Math.round(pts*(t.qty||30)):((t.premiumEntry>0&&t.premiumExit>0)?Math.round((t.premiumExit-t.premiumEntry)*(t.qty||30)):Math.round(pts*QTY_MULT2));
+                  const rs=_tIsFut?(t.pnlRs!=null?Math.round(t.pnlRs):Math.round(pts*(t.qty||30))):((t.premiumEntry>0&&t.premiumExit>0)?Math.round((t.premiumExit-t.premiumEntry)*(t.qty||30)):Math.round(pts*QTY_MULT2));
                   const reason=t.reasonExit||'—';
                   const rTag=reason.toLowerCase().includes('sl')||reason.toLowerCase().includes('stop')?'rc-sl':reason.toLowerCase().includes('trail')||reason.toLowerCase().includes('early')?'rc-trail':'rc-eod';
                   const dur=t.duration?(t.duration<60?t.duration+'s':Math.round(t.duration/60)+'m'):'—';
@@ -12538,7 +12538,7 @@ app.get("/signals", featureGate("feature_signals", "Signals"), async (req, res) 
         _ch+='<div style="font-size:.58rem;text-transform:uppercase;letter-spacing:.8px;color:#475569;font-weight:700;margin-bottom:6px">Closed Today</div>';
         _ctds.slice().reverse().forEach(function(t,i){
           var _isFut=(t.symbol||'').includes('FUT');
-          var _ti=_isFut?Math.round((t.pnl||0)*(t.qty||30)):((t.premiumEntry>0&&t.premiumExit>0)?Math.round((t.premiumExit-t.premiumEntry)*(t.qty||30)):Math.round((t.pnl||0)*30));
+          var _ti=_isFut?(t.pnlRs!=null?Math.round(t.pnlRs):Math.round((t.pnl||0)*(t.qty||30))):((t.premiumEntry>0&&t.premiumExit>0)?Math.round((t.premiumExit-t.premiumEntry)*(t.qty||30)):Math.round((t.pnl||0)*30));
           var _pts=t.pnl||0;
           var _tc=_ti>=0?'#4ade80':'#fb923c';
           var _ptc=_pts>=0?'#4ade80':'#fb923c';
@@ -12632,7 +12632,7 @@ app.get("/signals", featureGate("feature_signals", "Signals"), async (req, res) 
       if(d.today){
         var _today2=new Date().toISOString().slice(0,10);
         var _todayTds=(d.recentTrades||[]).filter(function(t){return t.exitPrice&&t.exitPrice>0&&(t.date||'').startsWith(_today2);});
-        var _premTot=_todayTds.reduce(function(s,t){var _f=(t.symbol||'').includes('FUT');return s+(_f?Math.round((t.pnl||0)*(t.qty||30)):((t.premiumEntry>0&&t.premiumExit>0)?Math.round((t.premiumExit-t.premiumEntry)*(t.qty||30)):Math.round((t.pnl||0)*30)));},0);
+        var _premTot=_todayTds.reduce(function(s,t){var _f=(t.symbol||'').includes('FUT');return s+(_f?(t.pnlRs!=null?Math.round(t.pnlRs):Math.round((t.pnl||0)*(t.qty||30))):((t.premiumEntry>0&&t.premiumExit>0)?Math.round((t.premiumExit-t.premiumEntry)*(t.qty||30)):Math.round((t.pnl||0)*30)));},0);
         var _ep2h=parseFloat(hb.entryPremium||0);var _lp2h=parseFloat(hb.livePremium||0);
         var _livePremUnr2=inT?(_ep2h>0&&_lp2h>0?Math.round((_lp2h-_ep2h)*(qty||30)):Math.round(unr*15)):0;
         var _totInr=_premTot+_livePremUnr2;
@@ -12660,7 +12660,7 @@ app.get("/signals", featureGate("feature_signals", "Signals"), async (req, res) 
             var _bdHtml='';
             _todayTds.forEach(function(t,i){
               var _isFut2=(t.symbol||'').includes('FUT');
-              var _ti=_isFut2?Math.round((t.pnl||0)*(t.qty||30)):((t.premiumEntry>0&&t.premiumExit>0)?Math.round((t.premiumExit-t.premiumEntry)*(t.qty||30)):Math.round((t.pnl||0)*30));
+              var _ti=_isFut2?(t.pnlRs!=null?Math.round(t.pnlRs):Math.round((t.pnl||0)*(t.qty||30))):((t.premiumEntry>0&&t.premiumExit>0)?Math.round((t.premiumExit-t.premiumEntry)*(t.qty||30)):Math.round((t.pnl||0)*30));
               var _tc=_ti>=0?'#6ee7b7':'#fca5a5';
               var _td=t.direction?'<span style="color:'+(t.direction==='CE'?'#93c5fd':'#fda4af')+'">'+t.direction+'</span> ':'';
               var _tm=t.date?new Date(t.date).toLocaleTimeString('en-IN',{hour:'2-digit',minute:'2-digit',timeZone:'Asia/Kolkata'}):'';
@@ -12729,7 +12729,7 @@ app.get("/signals", featureGate("feature_signals", "Signals"), async (req, res) 
         _tds.slice().reverse().forEach(function(t){
           var _p=t.pnl||0;
           var _isFut3=(t.symbol||'').includes('FUT');
-          var _inr=_isFut3?Math.round(_p*(t.qty||30)):((t.premiumEntry>0&&t.premiumExit>0)?Math.round((t.premiumExit-t.premiumEntry)*(t.qty||30)):Math.round(_p*30));
+          var _inr=_isFut3?(t.pnlRs!=null?Math.round(t.pnlRs):Math.round(_p*(t.qty||30))):((t.premiumEntry>0&&t.premiumExit>0)?Math.round((t.premiumExit-t.premiumEntry)*(t.qty||30)):Math.round(_p*30));
           var _col=_inr>=0?'#10b981':'#ef4444';
           var _tm=t.date?new Date(t.date).toLocaleTimeString('en-IN',{hour:'2-digit',minute:'2-digit',timeZone:'Asia/Kolkata'}):'';
           var _dur=t.duration?(t.duration<60?t.duration+'s':Math.round(t.duration/60)+'m'):'';
