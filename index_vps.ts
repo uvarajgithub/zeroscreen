@@ -1344,14 +1344,20 @@ async function getDrishtiATMOptionSymbol(dir: "CE" | "PE", indexClose: number): 
     .filter((i: any) => i.name === "BANKNIFTY" && (i.instrument_type === "CE" || i.instrument_type === "PE"))
     .sort((a: any, b: any) => new Date(a.expiry).getTime() - new Date(b.expiry).getTime());
   if (!opts.length) throw new Error("No BankNifty options found");
-  const expiries = ([...new Set(opts.map((o: any) => o.expiry as string))] as string[]).slice(0, 3);
-  const findBestStrike = async (expiry: string): Promise<{ CE: string; PE: string; ceLTP: number; peLTP: number } | null> => {
-    const exOpts = opts.filter((o: any) => o.expiry === expiry);
-    const offsets = [0, 100, -100, 200, -200, 300, -300];
+
+  // Fix: use timestamp (number) for deduplication — Date objects compare by reference in Set, not value
+  const expiryTimes = [...new Set(opts.map((o: any) => new Date(o.expiry).getTime()))].sort((a, b) => a - b).slice(0, 4);
+  log("OPT_EXPIRIES_FOUND", { count: expiryTimes.length, expiries: expiryTimes.map(t => new Date(t).toISOString().slice(0,10)) });
+
+  const findBestStrike = async (expiryTime: number): Promise<{ CE: string; PE: string; ceLTP: number; peLTP: number; expiry: string } | null> => {
+    // Match options by expiry timestamp
+    const exOpts = opts.filter((o: any) => new Date(o.expiry).getTime() === expiryTime);
+    const expiryStr = new Date(expiryTime).toISOString().slice(0, 10);
+    const offsets = [0, 100, -100, 200, -200, 300, -300, 400, -400, 500, -500];
     for (const offset of offsets) {
       const strike = atm + offset;
-      const ceOpt = exOpts.find((o: any) => o.instrument_type === "CE" && o.strike === strike);
-      const peOpt = exOpts.find((o: any) => o.instrument_type === "PE" && o.strike === strike);
+      const ceOpt = exOpts.find((o: any) => o.instrument_type === "CE" && Math.round(o.strike) === strike);
+      const peOpt = exOpts.find((o: any) => o.instrument_type === "PE" && Math.round(o.strike) === strike);
       if (!ceOpt || !peOpt) continue;
       const [ceLTP, peLTP] = await Promise.all([
         getOptionLTP(ceOpt.tradingsymbol).catch(() => 0),
@@ -1359,24 +1365,23 @@ async function getDrishtiATMOptionSymbol(dir: "CE" | "PE", indexClose: number): 
       ]);
       const avgPrem = (ceLTP + peLTP) / 2;
       if (avgPrem >= OPT_PREM_MIN && avgPrem <= OPT_PREM_MAX) {
-        log("OPT_STRIKE_FOUND", { expiry, strike, ceLTP, peLTP, avgPrem: avgPrem.toFixed(0), offset });
-        return { CE: ceOpt.tradingsymbol, PE: peOpt.tradingsymbol, ceLTP, peLTP };
+        log("OPT_STRIKE_FOUND", { expiry: expiryStr, strike, ceLTP: ceLTP.toFixed(0), peLTP: peLTP.toFixed(0), avgPrem: avgPrem.toFixed(0), offset });
+        return { CE: ceOpt.tradingsymbol, PE: peOpt.tradingsymbol, ceLTP, peLTP, expiry: expiryStr };
       }
     }
+    log("OPT_EXPIRY_SKIP", { expiry: expiryStr, atmStrike: atm, reason: "no strike with avg premium in 400-600 range" });
     return null;
   };
-  for (const expiry of expiries) {
-    const result = await findBestStrike(expiry);
+
+  for (const expiryTime of expiryTimes) {
+    const result = await findBestStrike(expiryTime);
     if (result) {
-      optATMCache = { CE: result.CE, PE: result.PE, expiry };
-      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
-      const _cache = optATMCache!;
-      log("OPT_ATM_CACHE", { CE: _cache.CE, PE: _cache.PE, expiry, atm, ceLTP: result.ceLTP, peLTP: result.peLTP });
-      return dir === "CE" ? _cache.CE : _cache.PE;
+      optATMCache = { CE: result.CE, PE: result.PE, expiry: result.expiry };
+      log("OPT_ATM_CACHE", { CE: result.CE, PE: result.PE, expiry: result.expiry, atm, ceLTP: result.ceLTP.toFixed(0), peLTP: result.peLTP.toFixed(0) });
+      return dir === "CE" ? result.CE : result.PE;
     }
-    log("OPT_EXPIRY_SKIP", { expiry, reason: "no strike in 400-600 range" });
   }
-  throw new Error("No BankNifty option found with premium in 400-600 range");
+  throw new Error("No BankNifty option found with premium in 400-600 range across all expiries");
 }
 
 async function runDrishtiBot() {
