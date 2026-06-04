@@ -549,6 +549,9 @@ function saveTradeState() {
     dailyRealRs,
     drishtiDTE,
     drishtiFuturesEntry,
+    // Options shadow state — must persist across restarts or open position is lost
+    optInTrade, optDir, optSymbol, optEntryPrem, optEntryTime,
+    optDailyPts, optDailyRs, optWins, optLosses,
     consecutiveLosses,
     lastTradeProfit,
     trendMode,
@@ -640,6 +643,16 @@ function restoreTradeState(): boolean {
     dailyRealRs      = s.dailyRealRs      ?? 0;
     drishtiDTE           = s.drishtiDTE           ?? 26;
     drishtiFuturesEntry  = s.drishtiFuturesEntry  ?? 0;
+    // Restore options shadow state
+    if (s.optInTrade && s.optSymbol && (s.optEntryPrem ?? 0) > 0) {
+      optInTrade = true; optDir = s.optDir ?? null; optSymbol = s.optSymbol ?? "";
+      optEntryPrem = s.optEntryPrem ?? 0; optEntryTime = s.optEntryTime ?? 0;
+      log("OPT_STATE_RESTORE", { symbol: optSymbol, dir: optDir, entryPrem: optEntryPrem });
+    }
+    optDailyPts = s.optDailyPts ?? 0;
+    optDailyRs  = s.optDailyRs  ?? 0;
+    optWins     = s.optWins     ?? 0;
+    optLosses   = s.optLosses   ?? 0;
     consecutiveLosses = s.consecutiveLosses ?? 0;
     lastTradeProfit  = s.lastTradeProfit  ?? false;
     trendMode        = s.trendMode        ?? false;
