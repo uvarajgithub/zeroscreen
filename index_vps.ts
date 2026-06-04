@@ -548,6 +548,7 @@ function saveTradeState() {
     dailyPnL,
     dailyRealRs,
     drishtiDTE,
+    drishtiFuturesEntry,
     consecutiveLosses,
     lastTradeProfit,
     trendMode,
@@ -637,7 +638,8 @@ function restoreTradeState(): boolean {
     tradeCount       = s.tradeCount       ?? 0;
     dailyPnL         = s.dailyPnL         ?? 0;
     dailyRealRs      = s.dailyRealRs      ?? 0;
-    drishtiDTE       = s.drishtiDTE       ?? 23;
+    drishtiDTE           = s.drishtiDTE           ?? 26;
+    drishtiFuturesEntry  = s.drishtiFuturesEntry  ?? 0;
     consecutiveLosses = s.consecutiveLosses ?? 0;
     lastTradeProfit  = s.lastTradeProfit  ?? false;
     trendMode        = s.trendMode        ?? false;
@@ -1754,30 +1756,27 @@ async function runDrishtiBot() {
     return;
   }
 
-  // Compute fair futures entry price instead of using potentially stale LTP.
-  // Stale LTP after a large candle can be 150-200 pts above fair value,
-  // causing large paper losses even when the trade is correct on index terms.
-  // Fair price = index close + (BNF x risk_free x days_to_expiry / 365)
-  const rawLTP = await getCurrentPrice();
-  const _dte   = (() => {
+  // ── Get ACTUAL futures price AFTER symbol lookup ────────────────────────
+  // Critical: getCurrentPrice() returns INDEX, not FUTURES.
+  // Fetching price BEFORE getDrishtiFuturesSymbol() means the 5-10s API wait
+  // causes market to move → price is completely wrong by execution time.
+  // Fix: use getOptionLTP(sym) AFTER symbol lookup = actual live FUTURES price.
+  const _dte = (() => {
     try {
       const m = sym.match(/(\d{2})([A-Z]{3})(\d{4})/);
-      if (!m) return 23;
+      if (!m) return 26;
       const months: Record<string,string> = {JAN:'01',FEB:'02',MAR:'03',APR:'04',MAY:'05',JUN:'06',JUL:'07',AUG:'08',SEP:'09',OCT:'10',NOV:'11',DEC:'12'};
       const d = new Date(`${m[3]}-${months[m[2]]}-${m[1]}`);
       return Math.max(1, Math.ceil((d.getTime() - Date.now()) / 86400000));
-    } catch { return 23; }
+    } catch { return 26; }
   })();
-  // Use actual market LTP directly — theoretical 7% formula gave ~270 pts but
-  // actual BankNifty futures premium is only 40-80 pts (dividend offset).
-  // The old staleness guard was comparing against the wrong baseline (270 pts expected
-  // vs 50 pts actual) → wrongly treating fresh LTP as stale → using worse estimates.
-  // New: use rawLTP if > 0. Fallback to bc.close only if LTP is 0/broken.
-  const freshPrice   = rawLTP > 0 ? rawLTP : bc.close;
-  const _actualPrem  = freshPrice - bc.close;
-  log("FUTURES_ENTRY_PRICE", { rawLTP, freshPrice: freshPrice.toFixed(0), indexClose: bc.close.toFixed(0), actualPremium: _actualPrem.toFixed(0), dte: _dte });
-  drishtiDTE = _dte;          // store for futures Rs calc at exit
-  drishtiFuturesEntry = freshPrice;  // actual futures entry (fair price, used for display + real pnlRs)
+  // Get FUTURES LTP (not index) right before placing order — most accurate price
+  const futuresLTP  = await getOptionLTP(sym).catch(() => 0);
+  const freshPrice  = futuresLTP > 0 ? futuresLTP : bc.close;
+  const _actualPrem = freshPrice - bc.close;
+  log("FUTURES_ENTRY_PRICE", { futuresLTP, freshPrice: freshPrice.toFixed(0), indexClose: bc.close.toFixed(0), actualPremium: _actualPrem.toFixed(0), dte: _dte });
+  drishtiDTE = _dte;
+  drishtiFuturesEntry = freshPrice;  // real futures fill price for P&L tracking
 
   tradeDirection  = entrySig.side;
   tradeSymbol     = sym;
