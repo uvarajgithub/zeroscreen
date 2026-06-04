@@ -1555,19 +1555,16 @@ async function runDrishtiBot() {
           const optRawLTP = await getOptionLTP(optSymbol).catch(() => 0);
           if (optRawLTP > 0) {
             const _delta     = 0.5;
-            const _theta     = optEntryPrem / (drishtiDTE * 26);
-            const _candles   = Math.max(1, drishtiTodayCandles.length - (DrishtiState.entryIdx + 1));
-            const _fairMove  = _delta * pts - _theta * _candles;
-            const _fairLTP   = optEntryPrem + _fairMove;
-            const _staleness = Math.abs(optRawLTP - _fairLTP);
-            const optExitLTP = _staleness > 50 ? Math.max(1, _fairLTP) : optRawLTP;
-            log("OPT_EXIT_PRICE", { rawLTP: optRawLTP.toFixed(1), fairLTP: _fairLTP.toFixed(1),
-              staleness: _staleness.toFixed(1), usingFair: _staleness > 50,
-              indexPts: pts.toFixed(1), delta: _delta, theta: _theta.toFixed(2), candles: _candles });
+            // Use actual market LTP directly — same principle as futures fix
+            // optRawLTP IS the real premium the market offers at exit.
+            // Theoretical fair (delta×pts - theta) only used as fallback if LTP=0.
+            const _fairFallback = Math.max(1, optEntryPrem + _delta * pts);  // simple delta estimate
+            const optExitLTP = optRawLTP > 0 ? optRawLTP : _fairFallback;
             const optPts = optExitLTP - optEntryPrem;
             const optRs  = Math.round(optPts * config.quantity);
-            const _discrepancy = Math.abs(optPts - (_delta * pts - _theta * _candles));
-            if (_discrepancy > 30) log("OPT_DISCREPANCY", { optPts: optPts.toFixed(1), indexPts: pts.toFixed(1), discrepancy: _discrepancy.toFixed(1) });
+            log("OPT_EXIT_PRICE", { rawLTP: optRawLTP.toFixed(1), optExitLTP: optExitLTP.toFixed(1),
+              entryPrem: optEntryPrem.toFixed(0), optPts: optPts.toFixed(1), optRs,
+              indexPts: pts.toFixed(1), usingActual: optRawLTP > 0 });
             optDailyPts += optPts;
             optDailyRs  += optRs;
             if (optPts > 0) optWins++; else optLosses++;
