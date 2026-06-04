@@ -128,8 +128,9 @@ let lastTradeProfit   = false;
 let consecutiveLosses = 0;
 let drishtiWins    = 0;
 let drishtiLosses  = 0;
-let drishtiDTE     = 23;    // days-to-expiry at last entry, for real Rs calc
-let dailyRealRs    = 0;     // cumulative day P&L in real futures Rs (fair premium)
+let drishtiDTE          = 23;   // days-to-expiry at last entry, for real Rs calc
+let dailyRealRs         = 0;    // cumulative day P&L in real futures Rs (fair premium)
+let drishtiFuturesEntry = 0;    // actual futures entry price (freshPrice, fair value)
 
 // ── Options shadow bot (mirrors futures signals, different instrument) ────────
 let optInTrade       = false;
@@ -1407,6 +1408,7 @@ async function runDrishtiBot() {
     drishtiWins          = 0;
     drishtiLosses        = 0;
     dailyRealRs          = 0;
+    drishtiFuturesEntry  = 0;
     optDailyPts = 0; optDailyRs = 0;
     optWins = 0; optLosses = 0;
     optATMCache = null; optRecentTrades = [];
@@ -1521,10 +1523,18 @@ async function runDrishtiBot() {
       const pts = trail.pts;
       dailyPnL += pts;
       if (pts > 0) { consecutiveLosses = 0; drishtiWins++; } else { consecutiveLosses++; drishtiLosses++; }
-      // Real futures Rs = index pts x qty x (1 + 7% x DTE/365) — matches corrected backtest
-      const _futMult = 1 + 0.07 * drishtiDTE / 365;
-      const _tradeRealRs = Math.round(pts * config.quantity * _futMult);
+
+      // Real futures P&L — use actual futures prices (not index approximation)
+      // exitFutures = trail exit level (index) + fair premium → exact matching of entry/exit scale
+      const _fairPrem = (idx: number) => Math.round(idx * 0.07 * drishtiDTE / 365);
+      const _futEntryPrice = drishtiFuturesEntry > 0 ? drishtiFuturesEntry : bc.close + _fairPrem(bc.close);
+      const _futExitPrice  = trail.exitPrice + _fairPrem(trail.exitPrice);
+      // For CE: bought futures, P&L = exit - entry. For PE: sold futures, P&L = entry - exit
+      const _tradeRealRs = capturedDir === "CE"
+        ? Math.round((_futExitPrice - _futEntryPrice) * config.quantity)
+        : Math.round((_futEntryPrice - _futExitPrice) * config.quantity);
       dailyRealRs += _tradeRealRs;
+      log("FUTURES_PNL", { entryFut: _futEntryPrice.toFixed(0), exitFut: _futExitPrice.toFixed(0), indexPts: pts.toFixed(1), realRs: _tradeRealRs });
 
       // ── Close shadow options trade ────────────────────────────────────────
       if (optInTrade && optSymbol && optEntryPrem > 0) {
@@ -1603,7 +1613,18 @@ async function runDrishtiBot() {
         await sendEODSummary().catch(() => {});
         generateMonthlyReport().catch(e => log("REPORT_FAIL", { error: e?.message }));
       }
-      logTrade({ date: new Date().toISOString(), type: "DRISHTI_V1", direction: capturedDir ?? "CE", symbol: capturedSymbol, premiumEntry: capturedPremiumEntry, premiumExit: capturedPremiumExit, qty: config.quantity, entryPrice: capturedEntry, exitPrice: trail.exitPrice, pnl: pts, pnlRs: _tradeRealRs, reasonEntry: "drishti_entry", reasonExit: trail.action.toLowerCase(), aiScore: 1, slippage: 0, duration: capturedTime > 0 ? Math.round((Date.now() - capturedTime) / 1000) : 0 });
+      // entryPrice / exitPrice stored as FUTURES prices so Trade History shows consistent scale
+      logTrade({ date: new Date().toISOString(), type: "DRISHTI_V1", direction: capturedDir ?? "CE", symbol: capturedSymbol,
+        premiumEntry: _futEntryPrice,    // futures entry price (fair, not stale LTP)
+        premiumExit: _futExitPrice,      // futures exit price (fair, trail level + premium)
+        qty: config.quantity,
+        entryPrice: _futEntryPrice,      // same — displayed in Trade History BUY row
+        exitPrice: _futExitPrice,        // same — displayed in Trade History SELL row
+        pnl: pts,                        // index pts (for backtest comparison)
+        pnlRs: _tradeRealRs,             // real futures Rs = (exitFut - entryFut) × qty
+        reasonEntry: "drishti_entry", reasonExit: trail.action.toLowerCase(),
+        aiScore: 1, slippage: Math.abs(_futEntryPrice - (capturedPremiumEntry || _futEntryPrice)),
+        duration: capturedTime > 0 ? Math.round((Date.now() - capturedTime) / 1000) : 0 });
     }
     return;  // always return after trail check (don't look for new entries in same tick)
   }
@@ -1743,7 +1764,8 @@ async function runDrishtiBot() {
   // If LTP is >100 pts away from fair value -> use fair value (stale data guard)
   const freshPrice   = _staleness > 100 ? _fairFutures : rawLTP;
   log("FUTURES_ENTRY_PRICE", { rawLTP, fairFutures: _fairFutures, fairPrem: _fairPrem, dte: _dte, staleness: Math.round(_staleness), usingFair: _staleness > 100 });
-  drishtiDTE = _dte;  // store for futures Rs calc at exit
+  drishtiDTE = _dte;          // store for futures Rs calc at exit
+  drishtiFuturesEntry = freshPrice;  // actual futures entry (fair price, used for display + real pnlRs)
 
   tradeDirection  = entrySig.side;
   tradeSymbol     = sym;
