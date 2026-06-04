@@ -436,7 +436,7 @@ async function monitorCandleBreakouts() {
           const _bu = tradeDirection === "CE" ? price - entryPrice : entryPrice - price;
           const _bUS = _bu >= 0 ? "+" : "";
           const _bSL = DrishtiState.trailStop <= 0
-            ? (tradeDirection === "CE" ? entryPrice - 150 : entryPrice + 150).toFixed(0)
+            ? (tradeDirection === "CE" ? entryPrice - 100 : entryPrice + 100).toFixed(0)
             : (entryPrice + (tradeDirection === "CE" ? DrishtiState.trailStop : -DrishtiState.trailStop)).toFixed(0);
           const _bSLlabel = DrishtiState.trailStop <= 0 ? "Hard SL" : "Trail lock";
           strategyCtx = `In Trade (${tradeDirection}) | ${_bCtx}\n`
@@ -452,7 +452,7 @@ async function monitorCandleBreakouts() {
         } else {
           strategyCtx = `Watching | Candle #${drishtiTodayCandles.length}\n`
             + `PDH: ${_bPH} | PDL: ${_bPL} | ${_bCtx}\n`
-            + `Live: ${price} | SL: 150 pts\n`
+            + `Live: ${price} | SL: 100 pts\n`
             + `Day: ${_bSign}${dailyPnL.toFixed(0)} | T:${tradeCount}/5`;
         }
       }
@@ -1318,7 +1318,7 @@ function startDrishtiLTPMonitor() {
 // ═══════════════════════════════════════════════════════════════════════════
 // DRISHTI V1 — PDH/PDL Context + LOCK10 Trail (live bot)
 // Entry: findDrishtiEntry() detects pattern on each 15-min candle close
-// Trail: SL=150 pts; once peak>=10 pts, trail = peak-10 (LOCK10, candle-close only)
+// Trail: SL=100 pts; once peak>=10 pts, trail = peak-10 (LOCK10, candle-close only)
 // Re-entries: up to 5, gate=OFF (lastExitPts>=0), reverse always allowed (REV_UNLOCK=0)
 // Instrument: BankNifty FUTURES (not options) — P&L = index pts × 30 exact
 // ═══════════════════════════════════════════════════════════════════════════
@@ -1625,7 +1625,7 @@ async function runDrishtiBot() {
       entryPremium = 0; lastOptionLTP = 0;
 
       const exitReason = trail.action === "EXIT_SL"
-        ? "SL -150 pts"
+        ? "SL -100 pts"
         : trail.action === "EXIT_EOD"
           ? "EOD 3:15 PM"
           : `Trail locked ${pts.toFixed(0)} pts (peak ${trail.peakPts.toFixed(0)})`;
@@ -1803,7 +1803,7 @@ async function runDrishtiBot() {
   DrishtiState.dir       = entrySig.side;
   DrishtiState.entry     = bc.close;
   DrishtiState.entryIdx  = drishtiTodayCandles.length - 1;
-  DrishtiState.trailStop = -150;
+  DrishtiState.trailStop = -100;  // SL_PTS=100 (changed from 150)
   DrishtiState.peakPts   = 0;
   // startDrishtiLTPMonitor();  // DISABLED — candle-close exit only (matches backtest)
 
@@ -1836,18 +1836,19 @@ async function runDrishtiBot() {
 
   if (DrishtiState.firstDone) DrishtiState.reCount++;
 
-  // ── Shadow options trade (same signal, ATM option) ───────────────────────
+  // ── Options shadow — MONITORING ONLY (disabled for live: 5yr backtest shows net LOSS)
+  // Options P&L = -₹1.4L over 5yr due to delta=0.5 + theta + spread eroding small wins.
+  // Keep tracking for comparison data but DO NOT execute trades.
   try {
     const optSym = await getDrishtiATMOptionSymbol(entrySig.side, bc.close);
     const optLTP = await getOptionLTP(optSym).catch(() => 0);
     if (optLTP > 0) {
+      // Record for monitoring dashboard — not a real trade
       optInTrade = true; optDir = entrySig.side; optSymbol = optSym;
       optEntryPrem = optLTP; optEntryTime = Date.now();
-      log("OPT_ENTRY", { symbol: optSym, ltp: optLTP, dir: entrySig.side, indexEntry: bc.close.toFixed(0), monthly: true });
-    } else {
-      log("OPT_ENTRY_SKIP", { symbol: optSym, ltp: optLTP, reason: "zero LTP returned" });
+      log("OPT_MONITOR", { symbol: optSym, ltp: optLTP, dir: entrySig.side, indexEntry: bc.close.toFixed(0), note: "monitoring_only_not_live" });
     }
-  } catch (e) { log("OPT_ENTRY_FAIL", { error: String(e) }); }
+  } catch (_e) { /* options monitoring failure — ignore */ }
 
   tradeCount++;
   saveTradeState();
@@ -2406,7 +2407,7 @@ function printConfigSummary(cfg: any) {
     : ACTIVE_STRATEGY === "HYBRID_REVERSE"
     ? "Hybrid Reverse (body breakout + C1-3 early exit + hybrid SL reverse)"
     : ACTIVE_STRATEGY === "DRISHTI_V1"
-    ? "DRISHTI V1 · LOCK10 (BankNifty Futures, candle-close SL=150, TRAIL_GAP=10)"
+    ? "DRISHTI V1 · LOCK10 (BankNifty Futures, candle-close SL=100, TRAIL_GAP=10)"
     : "Body Breakout (direct entry on candle close)";
   console.log("===== BOT CONFIG =====");
   console.log(`Mode: ${cfg.mode}`);
@@ -2665,7 +2666,7 @@ async function preStartPrompt() {
           entryPremium: _inTrade ? entryPremium || null : null,
           livePremium:  _inTrade ? lastOptionLTP || null : null,
           sl: _inTrade ? (ACTIVE_STRATEGY === "DRISHTI_V1"
-            ? (tradeDirection === "CE" ? entryPrice - 150 : entryPrice + 150)
+            ? (tradeDirection === "CE" ? entryPrice - 100 : entryPrice + 100)
             : (tradeDirection === "CE" ? entryPrice - 100 : entryPrice + 100)) : null,
           drishtiPrevDayHigh: ACTIVE_STRATEGY === "DRISHTI_V1" && drishtiPrevDayCandles.length > 0 ? Math.max(...drishtiPrevDayCandles.map((c: {high:number}) => c.high)) : undefined,
           drishtiPrevDayLow: ACTIVE_STRATEGY === "DRISHTI_V1" && drishtiPrevDayCandles.length > 0 ? Math.min(...drishtiPrevDayCandles.map((c: {low:number}) => c.low)) : undefined,
@@ -2731,7 +2732,7 @@ async function preStartPrompt() {
     // Fire-and-forget startup Telegram — failure must not prevent trading
     if (restored && activeTrade && tradeDirection && entryPrice > 0) {
       // ── Restart with ACTIVE trade — show position details
-      const slLevel = tradeDirection === "CE" ? entryPrice - 150 : entryPrice + 150;
+      const slLevel = tradeDirection === "CE" ? entryPrice - 100 : entryPrice + 100;
       const entryIST = entryTime > 0
         ? new Date(entryTime).toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata", hour: "2-digit", minute: "2-digit" })
         : "–";
@@ -2768,7 +2769,7 @@ async function preStartPrompt() {
         `━━━━━━━━━━━━━━━━━━━━━\n` +
         `Strategy: *DRISHTI V1 · LOCK10*\n` +
         `Mode: *${config.mode.toUpperCase()}* | Qty: ${config.quantity}\n` +
-        `SL: 150 pts | Trail: LOCK10 (peak−10)\n` +
+        `SL: 100 pts | Trail: LOCK10 (peak−10)\n` +
         `⏰ ${new Date().toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata" })}\n` +
         `🔑 [Refresh Token if needed](https://139-59-18-52.nip.io/login)`
       ).catch(e => console.error("[Telegram startup notify failed]", e?.message ?? e));

@@ -173,7 +173,7 @@ function simulateDay(todayCandles, prevCandles, dte) {
 
 // ── Main loop ─────────────────────────────────────────────────────────────────
 console.log('\nDRISHTI_V1 — 5-Year Backtest');
-console.log('SL=150 pts | TRAIL_GAP=10 (LOCK10) | MAX_TRADES=5/day | DAILY_LOSS_CAP=150 | PDR>=150 filter');
+console.log('SL=100 pts | TRAIL_GAP=10 (LOCK10) | MAX_TRADES=5/day | DAILY_LOSS_CAP=150 | PDR>=150 filter');
 console.log('Data: ' + dates[0] + ' → ' + dates[dates.length - 1]);
 console.log('─'.repeat(70));
 

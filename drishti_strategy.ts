@@ -280,7 +280,7 @@ export interface DrishtiTrailResult {
   peakPts:    number;
 }
 
-const SL_PTS    = 150;
+const SL_PTS    = 100;   // changed from 150 — backtest: futures ≈same (−0.02%), options +₹62K over 5yr
 const TRAIL_GAP = 10;
 
 export function updateDrishtiTrail(
