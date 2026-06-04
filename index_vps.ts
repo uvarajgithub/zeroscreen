@@ -1532,17 +1532,22 @@ async function runDrishtiBot() {
       dailyPnL += pts;
       if (pts > 0) { consecutiveLosses = 0; drishtiWins++; } else { consecutiveLosses++; drishtiLosses++; }
 
-      // Real futures P&L — use actual futures prices (not index approximation)
-      // exitFutures = trail exit level (index) + fair premium → exact matching of entry/exit scale
-      const _fairPrem = (idx: number) => Math.round(idx * 0.07 * drishtiDTE / 365);
-      const _futEntryPrice = drishtiFuturesEntry > 0 ? drishtiFuturesEntry : bc.close + _fairPrem(bc.close);
-      const _futExitPrice  = trail.exitPrice + _fairPrem(trail.exitPrice);
-      // For CE: bought futures, P&L = exit - entry. For PE: sold futures, P&L = entry - exit
+      // Real futures P&L — use ACTUAL market LTPs
+      // Entry: drishtiFuturesEntry = rawLTP at entry time (actual futures price from market)
+      // Exit:  capturedPremiumExit = getOptionLTP(tradeSymbol) at exit time (actual futures price)
+      const _futEntryPrice = drishtiFuturesEntry > 0 ? drishtiFuturesEntry : bc.close;
+      // Use actual futures LTP at exit if available and reasonable; else use entry + index movement
+      const _futExitRaw    = capturedPremiumExit > 0 ? capturedPremiumExit : 0;
+      const _futExitFair   = _futEntryPrice + (capturedDir === "CE" ? pts : -pts);  // entry ± index pts
+      const _futExitPrice  = _futExitRaw > 0 && Math.abs(_futExitRaw - _futExitFair) < 500
+        ? _futExitRaw     // use actual market LTP at exit
+        : _futExitFair;   // fallback: entry ± index pts (same as index-based)
+      // For CE: P&L = exit - entry. For PE: P&L = entry - exit
       const _tradeRealRs = capturedDir === "CE"
         ? Math.round((_futExitPrice - _futEntryPrice) * config.quantity)
         : Math.round((_futEntryPrice - _futExitPrice) * config.quantity);
       dailyRealRs += _tradeRealRs;
-      log("FUTURES_PNL", { entryFut: _futEntryPrice.toFixed(0), exitFut: _futExitPrice.toFixed(0), indexPts: pts.toFixed(1), realRs: _tradeRealRs });
+      log("FUTURES_PNL", { entryFut: _futEntryPrice.toFixed(0), exitFut: _futExitPrice.toFixed(0), exitActual: _futExitRaw.toFixed(0), indexPts: pts.toFixed(1), realRs: _tradeRealRs });
 
       // ── Close shadow options trade ────────────────────────────────────────
       if (optInTrade && optSymbol && optEntryPrem > 0) {
@@ -1766,12 +1771,14 @@ async function runDrishtiBot() {
       return Math.max(1, Math.ceil((d.getTime() - Date.now()) / 86400000));
     } catch { return 23; }
   })();
-  const _fairPrem    = Math.round(bc.close * 0.07 * _dte / 365);
-  const _fairFutures = bc.close + _fairPrem;
-  const _staleness   = Math.abs(rawLTP - _fairFutures);
-  // If LTP is >100 pts away from fair value -> use fair value (stale data guard)
-  const freshPrice   = _staleness > 100 ? _fairFutures : rawLTP;
-  log("FUTURES_ENTRY_PRICE", { rawLTP, fairFutures: _fairFutures, fairPrem: _fairPrem, dte: _dte, staleness: Math.round(_staleness), usingFair: _staleness > 100 });
+  // Use actual market LTP directly — theoretical 7% formula gave ~270 pts but
+  // actual BankNifty futures premium is only 40-80 pts (dividend offset).
+  // The old staleness guard was comparing against the wrong baseline (270 pts expected
+  // vs 50 pts actual) → wrongly treating fresh LTP as stale → using worse estimates.
+  // New: use rawLTP if > 0. Fallback to bc.close only if LTP is 0/broken.
+  const freshPrice   = rawLTP > 0 ? rawLTP : bc.close;
+  const _actualPrem  = freshPrice - bc.close;
+  log("FUTURES_ENTRY_PRICE", { rawLTP, freshPrice: freshPrice.toFixed(0), indexClose: bc.close.toFixed(0), actualPremium: _actualPrem.toFixed(0), dte: _dte });
   drishtiDTE = _dte;          // store for futures Rs calc at exit
   drishtiFuturesEntry = freshPrice;  // actual futures entry (fair price, used for display + real pnlRs)
 
