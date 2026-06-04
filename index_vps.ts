@@ -1330,8 +1330,10 @@ function getDrishtiFuturesSymbol(): Promise<string> {
 }
 
 // Returns ATM BankNifty option symbol for the nearest weekly expiry
-const OPT_PREM_MIN = 400;  // minimum option premium (skip if LTP < 400)
-const OPT_PREM_MAX = 600;  // maximum option premium (go OTM if LTP > 600)
+// BankNifty has ONLY monthly expiry (SEBI removed weekly in 2024)
+// Monthly ATM premium is ~Rs 1000-1500. No range filter — just pick ATM.
+const OPT_PREM_MIN = 0;      // no lower limit
+const OPT_PREM_MAX = 99999;  // no upper limit — accept any ATM premium
 
 async function getDrishtiATMOptionSymbol(dir: "CE" | "PE", indexClose: number): Promise<string> {
   if (optATMCache) return dir === "CE" ? optATMCache.CE : optATMCache.PE;
@@ -1364,8 +1366,9 @@ async function getDrishtiATMOptionSymbol(dir: "CE" | "PE", indexClose: number): 
         getOptionLTP(peOpt.tradingsymbol).catch(() => 0),
       ]);
       const avgPrem = (ceLTP + peLTP) / 2;
-      if (avgPrem >= OPT_PREM_MIN && avgPrem <= OPT_PREM_MAX) {
-        log("OPT_STRIKE_FOUND", { expiry: expiryStr, strike, ceLTP: ceLTP.toFixed(0), peLTP: peLTP.toFixed(0), avgPrem: avgPrem.toFixed(0), offset });
+      // Accept any option with valid LTP — BankNifty monthly ATM, no range filter
+      if (ceLTP > 0 && peLTP > 0) {
+        log("OPT_STRIKE_FOUND", { expiry: expiryStr, strike, ceLTP: ceLTP.toFixed(0), peLTP: peLTP.toFixed(0), avgPrem: avgPrem.toFixed(0), offset, monthly: true });
         return { CE: ceOpt.tradingsymbol, PE: peOpt.tradingsymbol, ceLTP, peLTP, expiry: expiryStr };
       }
     }
@@ -1821,12 +1824,12 @@ async function runDrishtiBot() {
   try {
     const optSym = await getDrishtiATMOptionSymbol(entrySig.side, bc.close);
     const optLTP = await getOptionLTP(optSym).catch(() => 0);
-    if (optLTP >= OPT_PREM_MIN && optLTP <= OPT_PREM_MAX) {
+    if (optLTP > 0) {
       optInTrade = true; optDir = entrySig.side; optSymbol = optSym;
       optEntryPrem = optLTP; optEntryTime = Date.now();
-      log("OPT_ENTRY", { symbol: optSym, ltp: optLTP, dir: entrySig.side, indexEntry: bc.close.toFixed(0), range: "OK" });
+      log("OPT_ENTRY", { symbol: optSym, ltp: optLTP, dir: entrySig.side, indexEntry: bc.close.toFixed(0), monthly: true });
     } else {
-      log("OPT_ENTRY_SKIP", { symbol: optSym, ltp: optLTP, reason: "premium outside 400-600 range" });
+      log("OPT_ENTRY_SKIP", { symbol: optSym, ltp: optLTP, reason: "zero LTP returned" });
     }
   } catch (e) { log("OPT_ENTRY_FAIL", { error: String(e) }); }
 
