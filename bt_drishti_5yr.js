@@ -1,13 +1,13 @@
 'use strict';
 // bt_drishti_5yr.js — DRISHTI_V1 full 5-year backtest
 // Uses cache/banknifty_5yr.json + compiled dist/src/drishti_strategy.js
-// SL=150 pts | TRAIL_GAP=10 (LOCK10) | MAX_TRADES=5/day
+// SL=100 pts | TRAIL_GAP=10 (LOCK10) | MAX_TRADES=5/day | DAILY_LOSS_CAP=200
 
 const fs = require('fs');
 const { findDrishtiEntry, findDrishtiReEntry, updateDrishtiTrail, createDrishtiState } = require('./dist/src/drishti_strategy.js');
 
 const MAX_TRADES    = 5;
-const DAILY_LOSS_CAP = 150;  // stop day after -150 pts (matches live bot config)
+const DAILY_LOSS_CAP = 200;  // stop after 2 SL hits — matches live bot user-settings.json
 const RS_PER_PT     = 30;   // 30 qty x 1.0 (futures, delta=1.0) = 1 lot
 const RISK_FREE     = 0.07; // 7% annual risk-free rate for fair premium calc
 
@@ -173,7 +173,7 @@ function simulateDay(todayCandles, prevCandles, dte) {
 
 // ── Main loop ─────────────────────────────────────────────────────────────────
 console.log('\nDRISHTI_V1 — 5-Year Backtest');
-console.log('SL=100 pts | TRAIL_GAP=10 (LOCK10) | MAX_TRADES=5/day | DAILY_LOSS_CAP=150 | PDR>=150 filter');
+console.log('SL=100 pts | TRAIL_GAP=10 (LOCK10) | MAX_TRADES=5/day | DAILY_LOSS_CAP=200 | PDR>=150 filter');
 console.log('Data: ' + dates[0] + ' → ' + dates[dates.length - 1]);
 console.log('─'.repeat(70));
 
