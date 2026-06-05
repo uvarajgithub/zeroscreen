@@ -34,7 +34,7 @@ export interface DrishtiState {
 export function createDrishtiState(): DrishtiState {
   return {
     inTrade: false, dir: null, entry: 0, entryIdx: -1,
-    trailStop: -150, peakPts: 0,
+    trailStop: -100, peakPts: 0,
     firstDone: false, reCount: 0,
     lastExitPts: 0, lastExitIdx: -1, lastExitDir: null,
   };

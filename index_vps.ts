@@ -684,7 +684,7 @@ function restoreTradeState(): boolean {
       DrishtiState.dir         = s.drishtiState.dir         ?? null;
       DrishtiState.entry       = s.drishtiState.entry       ?? 0;
       DrishtiState.entryIdx    = s.drishtiState.entryIdx    ?? -1;
-      DrishtiState.trailStop   = s.drishtiState.trailStop   ?? -150;
+      DrishtiState.trailStop   = s.drishtiState.trailStop   ?? -100;
       DrishtiState.peakPts     = s.drishtiState.peakPts     ?? 0;
       DrishtiState.firstDone   = s.drishtiState.firstDone   ?? false;
       DrishtiState.reCount     = s.drishtiState.reCount     ?? 0;
@@ -1224,7 +1224,7 @@ const HR_SL_PTS_LOCAL = 100;
 // Updates intraday peak and fires exit if trail or SL is hit between candle closes.
 // This eliminates the candle-close exit discrepancy and matches backtest V15 logic.
 const DRISHTI_TRAIL_GAP = 10;  // LOCK10 — same as backtest_verify.js V15 config
-const DRISHTI_SL_PTS    = 150; // Hard SL — same as backtest
+const DRISHTI_SL_PTS    = 100; // Hard SL — matches SL_PTS in drishti_strategy.ts
 
 function stopDrishtiLTPMonitor() {
   if (ltpMonitorInterval) { clearInterval(ltpMonitorInterval); ltpMonitorInterval = null; }
