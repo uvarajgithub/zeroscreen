@@ -1,0 +1,30 @@
+{
+  "permissions": {
+    "allow": [
+      "PowerShell(.\\\\plink.exe -batch -pw \"Uvi@janya123Jas\" root@139.59.18.52 \"cp /home/ubuntu/trading-bot/index_vps.ts /home/ubuntu/trading-bot/src/index.ts && cd /home/ubuntu/trading-bot && npx tsc 2>&1 | grep -v launcher | grep -v 'TS2' && pm2 restart amina-100-variant-b --update-env && sleep 2 && pm2 list | grep amina | grep online\" 2>&1)",
+      "PowerShell(.\\\\plink.exe -batch -pw \"Uvi@janya123Jas\" root@139.59.18.52 \"cd /home/ubuntu/trading-bot && node bt_improve.js 2>&1\" 2>&1)",
+      "PowerShell(.\\\\pscp.exe -pw \"Uvi@janya123Jas\" bt_improve_premium.js root@139.59.18.52:/home/ubuntu/trading-bot/bt_improve_premium.js 2>&1)",
+      "PowerShell(.\\\\plink.exe -batch -pw \"Uvi@janya123Jas\" root@139.59.18.52 \"cd /home/ubuntu/trading-bot && node bt_improve_premium.js 2>&1\" 2>&1)",
+      "PowerShell(.\\\\pscp.exe -pw \"Uvi@janya123Jas\" simulate_june4.js root@139.59.18.52:/home/ubuntu/trading-bot/simulate_june4.js 2>&1)",
+      "PowerShell(.\\\\plink.exe -batch -pw \"Uvi@janya123Jas\" root@139.59.18.52 \"cd /home/ubuntu/trading-bot && node simulate_june4.js\" 2>&1)",
+      "PowerShell(.\\\\plink.exe -batch -pw \"Uvi@janya123Jas\" root@139.59.18.52 \"cd /home/ubuntu/trading-bot && node simulate_june4.js 2>&1\" 2>&1)",
+      "PowerShell(.\\\\plink.exe -batch -pw \"Uvi@janya123Jas\" root@139.59.18.52 \"grep '2026-06-04' /home/ubuntu/trading-bot/logs/bot-out.log | grep -E 'FUTURES_ENTRY_PRICE|FUTURES_PNL|STATE_RESET|BOT_START|DRISHTI_RESTART' | head -25\" 2>&1)",
+      "PowerShell(.\\\\plink.exe -batch -pw \"Uvi@janya123Jas\" root@139.59.18.52 \"cp /home/ubuntu/trading-bot/index_vps.ts /home/ubuntu/trading-bot/src/index.ts && cd /home/ubuntu/trading-bot && npx tsc 2>&1 | grep -v 'launcher\\\\|TS18046\\\\|TS2345\\\\|TS2769\\\\|TS2380\\\\|overload\\\\|Argument\\\\|assignable\\\\|parameter' | head -5 && pm2 restart amina-100-variant-b --update-env && sleep 3 && pm2 list | grep amina | grep online\" 2>&1)",
+      "PowerShell(.\\\\plink.exe -batch -pw \"Uvi@janya123Jas\" root@139.59.18.52 \"grep 'futuresLTP\\\\|FUTURES_ENTRY_PRICE\\\\|drishtiFuturesEntry' /home/ubuntu/trading-bot/dist/src/index.js | head -8\" 2>&1)",
+      "PowerShell(.\\\\plink.exe -batch -pw \"Uvi@janya123Jas\" root@139.59.18.52 \"grep '2026-06-04' /home/ubuntu/trading-bot/logs/bot-out.log | grep -E 'OPT_ENTRY|OPT_EXIT|OPT_STRIKE|OPT_EXIT_PRICE' | head -20\" 2>&1)",
+      "PowerShell(.\\\\pscp.exe -pw \"Uvi@janya123Jas\" simulate_options_june4.js root@139.59.18.52:/home/ubuntu/trading-bot/simulate_options_june4.js 2>&1)",
+      "PowerShell(.\\\\plink.exe -batch -pw \"Uvi@janya123Jas\" root@139.59.18.52 \"cd /home/ubuntu/trading-bot && node simulate_options_june4.js\" 2>&1)",
+      "PowerShell(.\\\\plink.exe -batch -pw \"Uvi@janya123Jas\" root@139.59.18.52 \"cd /home/ubuntu/trading-bot && node simulate_options_june4.js 2>&1\" 2>&1)",
+      "PowerShell(.\\\\plink.exe -batch -pw \"Uvi@janya123Jas\" root@139.59.18.52 \"cp /home/ubuntu/trading-bot/index_vps.ts /home/ubuntu/trading-bot/src/index.ts && cd /home/ubuntu/trading-bot && npx tsc 2>&1 | grep -v 'launcher\\\\|TS18046\\\\|TS2345\\\\|overload\\\\|Argument\\\\|assignable' | head -3 && pm2 restart amina-100-variant-b --update-env && sleep 2 && pm2 list | grep amina | grep online\" 2>&1)",
+      "PowerShell(.\\\\plink.exe -batch -pw \"Uvi@janya123Jas\" root@139.59.18.52 \"grep -n 'futuresLTP\\\\|FUTURES_ENTRY_PRICE\\\\|Get FUTURES' /home/ubuntu/trading-bot/dist/src/index.js | head -10\" 2>&1)",
+      "PowerShell(.\\\\pscp.exe -pw \"Uvi@janya123Jas\" fetch_premium_data.js root@139.59.18.52:/home/ubuntu/trading-bot/fetch_premium_data.js 2>&1)",
+      "PowerShell(.\\\\plink.exe -batch -pw \"Uvi@janya123Jas\" root@139.59.18.52 \"cd /home/ubuntu/trading-bot && timeout 30 node fetch_premium_data.js 2>&1 | head -30\" 2>&1)",
+      "PowerShell(.\\\\plink.exe -batch -pw \"Uvi@janya123Jas\" root@139.59.18.52 \"cd /home/ubuntu/trading-bot && node fetch_premium_data.js 2>&1\" 2>&1)",
+      "PowerShell(.\\\\plink.exe -batch -pw \"Uvi@janya123Jas\" root@139.59.18.52 \"cd /home/ubuntu/trading-bot && python3 -c 'import json; f=json.load\\(open\\(\\\\\"cache/banknifty_futures_recent.json\\\\\"\\)\\); o=json.load\\(open\\(\\\\\"cache/banknifty_options_recent.json\\\\\"\\)\\); fd=sorted\\(f.keys\\(\\)\\); od=sorted\\(o.keys\\(\\)\\); print\\(f\\\\\"Futures: {len\\(fd\\)} days {fd[0]} to {fd[-1]}\\\\\"\\); print\\(f\\\\\"Options: {len\\(od\\)} days\\\\\"\\); print\\(f\\\\\"Sample June 3: {f.get\\(chr\\(50\\)+chr\\(48\\)+chr\\(50\\)+chr\\(54\\)+chr\\(45\\)+chr\\(48\\)+chr\\(54\\)+chr\\(45\\)+chr\\(48\\)+chr\\(51\\), [{}]\\)[0]}\\\\\"\\)'\" 2>&1)",
+      "PowerShell(.\\\\plink.exe -batch -pw \"Uvi@janya123Jas\" root@139.59.18.52 \"cd /home/ubuntu/trading-bot && npx tsc 2>&1 | grep -v launcher | head -5 && echo TSC_DONE\" 2>&1)",
+      "PowerShell(.\\\\pscp.exe -pw \"Uvi@janya123Jas\" bt_drishti_5yr.js root@139.59.18.52:/home/ubuntu/trading-bot/bt_drishti_5yr.js 2>&1)",
+      "PowerShell(.\\\\plink.exe -batch -pw \"Uvi@janya123Jas\" root@139.59.18.52 \"cd /home/ubuntu/trading-bot && node bt_drishti_5yr.js 2>&1 | head -40\" 2>&1)",
+      "PowerShell(.\\\\plink.exe -batch -pw \"Uvi@janya123Jas\" root@139.59.18.52 \"cp /home/ubuntu/trading-bot/index_vps.ts /home/ubuntu/trading-bot/src/index.ts && cd /home/ubuntu/trading-bot && npx tsc 2>&1 | grep -v 'launcher\\\\|TS18046\\\\|TS2345\\\\|TS2769\\\\|overload\\\\|Argument\\\\|assignable' | head -3 && pm2 restart amina-100-variant-b --update-env && sleep 3 && pm2 list | grep amina | grep online\" 2>&1)"
+    ]
+  }
+}
