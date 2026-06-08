@@ -16,6 +16,7 @@
     "repo:scan-backtest-risk": "node scripts/scan-root-backtest-risk.js",
     "repo:scan-utility-js-risk": "node scripts/scan-root-utility-js-risk.js",
     "repo:scan-ts-risk": "node scripts/scan-root-ts-risk.js",
+    "repo:health": "node scripts/repo-health-check.js",
     "repo:migrate-with-wrapper": "node scripts/migrate-with-wrapper.js",
     "repo:migrate-py-with-wrapper": "node scripts/migrate-py-with-wrapper.js",
     "repo:patch-utility-js-paths": "node scripts/patch-utility-js-paths.js"

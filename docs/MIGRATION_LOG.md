@@ -514,6 +514,17 @@ Notes:
 - This is compatibility-first: root import paths remain valid.
 - Scanner noise is reduced and root duplication is minimized without changing runtime entry paths.
 
+## Tooling: Consolidated Repo Health Check
+Added:
+- `scripts/repo-health-check.js`
+- npm command: `repo:health`
+
+Purpose:
+- Runs strict structure guard + all active root risk scanners in one command.
+
+Validation:
+- `npm run repo:health` returns `Repo health check: PASS` on current state.
+
 ## Validation Performed
 - Wrapper presence validated.
 - Selected wrappers executed.
