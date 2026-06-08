@@ -11,6 +11,7 @@
 - Root check Python risk scan: `npm run repo:scan-check-py-risk`
 - Root backtest risk scan: `npm run repo:scan-backtest-risk`
 - Root utility JS risk scan: `npm run repo:scan-utility-js-risk`
+- Root TypeScript risk scan: `npm run repo:scan-ts-risk`
 - Wrapper migration helper: `npm run repo:migrate-with-wrapper -- <targetDir> <files...>`
 - Python wrapper migration helper: `npm run repo:migrate-py-with-wrapper -- <targetDir> <files...>`
 - Utility JS path patch helper: `npm run repo:patch-utility-js-paths -- <files...>`

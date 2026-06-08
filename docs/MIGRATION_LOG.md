@@ -478,6 +478,42 @@ Validation:
 - `repo:verify-structure` now passes without unexpected entries.
 - `repo:verify-structure:strict` now passes.
 
+## TypeScript Root Risk Tooling + First Move
+Added tooling:
+- `scripts/scan-root-ts-risk.js`
+- npm command: `repo:scan-ts-risk`
+
+Initial scan result:
+- `Total: 12 | LOW: 1 | RISK: 5 | CORE_IGNORED: 6`
+- Low-risk candidate identified: `drishti_strategy.ts`
+
+TS migration step (non-breaking):
+- Copied canonical implementation to `src/drishti_strategy.ts`.
+- Converted root `drishti_strategy.ts` into compatibility re-export wrapper (`export * from './src/drishti_strategy'`).
+
+Validation:
+- Re-ran TS risk scan and build after migration.
+
+Follow-up refinement:
+- Updated `scripts/scan-root-ts-risk.js` to classify compatibility re-export wrappers as `WRAPPER_IGNORED` so scanner output remains actionable.
+- Current TS scan now excludes wrapper false-positives.
+
+Build note:
+- `npm run build` currently fails due to pre-existing missing imports in `src/amina-live.ts` (`./market`, `./order`, `./notifier`, `./config`).
+- This failure is unrelated to the `drishti_strategy.ts` wrapper migration.
+
+## Batch TS-U1 (root TS duplicate service wrappers)
+Converted root duplicate TypeScript service files to compatibility re-export wrappers while keeping canonical implementations in `src/`:
+- `db.ts` -> `export * from './src/db'`
+- `mailer.ts` -> `export * from './src/mailer'`
+- `nse.ts` -> `export * from './src/nse'`
+- `scheduler.ts` -> `export * from './src/scheduler'`
+- `scraper.ts` -> `export * from './src/scraper'`
+
+Notes:
+- This is compatibility-first: root import paths remain valid.
+- Scanner noise is reduced and root duplication is minimized without changing runtime entry paths.
+
 ## Validation Performed
 - Wrapper presence validated.
 - Selected wrappers executed.
