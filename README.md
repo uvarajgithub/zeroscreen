@@ -14,6 +14,8 @@
 - Root backtest risk scan: `npm run repo:scan-backtest-risk`
 - Root utility JS risk scan: `npm run repo:scan-utility-js-risk`
 - Root TypeScript risk scan: `npm run repo:scan-ts-risk`
+- Root visible files scan (after excludes): `npm run repo:scan-visible-root`
+- Root visible files strict policy: `npm run repo:scan-visible-root:strict`
 - Full repository health check: `npm run repo:health`
 - Wrapper migration helper: `npm run repo:migrate-with-wrapper -- <targetDir> <files...>`
 - Python wrapper migration helper: `npm run repo:migrate-py-with-wrapper -- <targetDir> <files...>`

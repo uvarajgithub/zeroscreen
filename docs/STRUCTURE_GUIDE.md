@@ -63,3 +63,14 @@ The root TypeScript risk scanner (`repo:scan-ts-risk`) intentionally marks the f
 Reason:
 - These are runtime entrypoints or directly coupled to live trading/server execution paths.
 - Any migration here must be explicit, reviewed, and validated with deployment scripts before moving.
+
+## Visible Root Policy (Enforced)
+The repository now enforces a strict visible-root baseline using `repo:scan-visible-root:strict`.
+
+Only this root file set is intended to remain visible in day-to-day development:
+- `.env`, `.gitignore`, `README.md`, `package.json`, `package-lock.json`, `tsconfig.json`
+- `server.ts`, `server_zs.ts`, `amina-live.ts`, `order.ts`, `order_vps.ts`, `index_vps.ts`
+- `db.ts`, `drishti_strategy.ts`, `mailer.ts`, `nse.ts`, `scheduler.ts`, `scraper.ts`
+- `style.css`, `server.ts.bak`
+
+All other root clutter should be hidden via `.vscode/settings.json` exclude rules unless explicitly promoted to this baseline.

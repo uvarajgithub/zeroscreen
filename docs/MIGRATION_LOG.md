@@ -601,6 +601,17 @@ Action:
 - Keep files physically in root for compatibility.
 - Hide them in Explorer/Search for non-breaking visual declutter.
 
+## Root Declutter Pass 6 (Visible Root Policy Enforcement)
+Added `scripts/scan-visible-root.js` to compute root files still visible after `.vscode/files.exclude` and enforce a strict baseline.
+
+Strict baseline keeps only core files visible:
+- infra/meta: `.env`, `.gitignore`, `README.md`, `package.json`, `package-lock.json`, `tsconfig.json`
+- core runtime TS: `server.ts`, `server_zs.ts`, `amina-live.ts`, `order.ts`, `order_vps.ts`, `index_vps.ts`
+- TS wrappers: `db.ts`, `drishti_strategy.ts`, `mailer.ts`, `nse.ts`, `scheduler.ts`, `scraper.ts`
+- deployment/style: `style.css`, `server.ts.bak`
+
+Additional non-core root files flagged by strict scan were hidden (visibility-only) to satisfy policy.
+
 ## Validation Performed
 - Wrapper presence validated.
 - Selected wrappers executed.

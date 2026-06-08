@@ -10,7 +10,8 @@ const checks = [
   { name: 'Root Python wrapper risk', cmd: 'node scripts/scan-root-py-wrapper-risk.js' },
   { name: 'Root backtest risk', cmd: 'node scripts/scan-root-backtest-risk.js' },
   { name: 'Root utility JS risk', cmd: 'node scripts/scan-root-utility-js-risk.js' },
-  { name: 'Root TS risk', cmd: 'node scripts/scan-root-ts-risk.js' }
+  { name: 'Root TS risk', cmd: 'node scripts/scan-root-ts-risk.js' },
+  { name: 'Visible root strict', cmd: 'node scripts/scan-visible-root.js --strict' }
 ];
 
 function runCheck(name, cmd) {

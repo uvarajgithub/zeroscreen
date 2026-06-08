@@ -44,7 +44,23 @@
     "auto_token.js": true,
     "order.js": true,
     "server.js": true,
-    "server_vps.js": true
+    "server_vps.js": true,
+    "audit_cache.js": true,
+    "crash_audit.js": true,
+    "entry_stats.js": true,
+    "gen_futures_daily.py": true,
+    "generate_backtest_json.js": true,
+    "get_5cap_stats.js": true,
+    "investigate_today.js": true,
+    "live_trades_check.py": true,
+    "may_full.py": true,
+    "simulate_today.py": true,
+    "stats5yr.py": true,
+    "trade_count_stats.js": true,
+    "trail_sweep.js": true,
+    "update_cache.js": true,
+    "validate_may2026.js": true,
+    "why_missed.js": true
   },
   "search.exclude": {
     "backtest_*.js": true,
@@ -91,6 +107,22 @@
     "auto_token.js": true,
     "order.js": true,
     "server.js": true,
-    "server_vps.js": true
+    "server_vps.js": true,
+    "audit_cache.js": true,
+    "crash_audit.js": true,
+    "entry_stats.js": true,
+    "gen_futures_daily.py": true,
+    "generate_backtest_json.js": true,
+    "get_5cap_stats.js": true,
+    "investigate_today.js": true,
+    "live_trades_check.py": true,
+    "may_full.py": true,
+    "simulate_today.py": true,
+    "stats5yr.py": true,
+    "trade_count_stats.js": true,
+    "trail_sweep.js": true,
+    "update_cache.js": true,
+    "validate_may2026.js": true,
+    "why_missed.js": true
   }
 }
