@@ -525,6 +525,11 @@ Purpose:
 Validation:
 - `npm run repo:health` returns `Repo health check: PASS` on current state.
 
+## TS Governance Tightening
+Updated `scripts/scan-root-ts-risk.js` to print explicit `CORE_IGNORED` file rationale, making scanner output auditable and reducing ambiguity during future migration passes.
+
+Also documented the `CORE_IGNORED` TypeScript policy in `docs/STRUCTURE_GUIDE.md`.
+
 ## Validation Performed
 - Wrapper presence validated.
 - Selected wrappers executed.

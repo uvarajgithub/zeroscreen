@@ -45,3 +45,16 @@ This repository currently contains production code and a large set of research/b
 - Local and VPS deployment currently depend on specific filenames and paths.
 - Root contains many historical scripts; immediate bulk moves are high risk.
 - Use the inventory script before planning any move batch.
+
+## TypeScript Core-Ignore Governance
+The root TypeScript risk scanner (`repo:scan-ts-risk`) intentionally marks the following files as `CORE_IGNORED` and does not auto-migrate them:
+- `amina-live.ts`
+- `index_vps.ts`
+- `order.ts`
+- `order_vps.ts`
+- `server.ts`
+- `server_zs.ts`
+
+Reason:
+- These are runtime entrypoints or directly coupled to live trading/server execution paths.
+- Any migration here must be explicit, reviewed, and validated with deployment scripts before moving.

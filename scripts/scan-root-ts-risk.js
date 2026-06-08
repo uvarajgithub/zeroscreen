@@ -10,14 +10,15 @@ const files = fs
   .filter((f) => f.endsWith('.ts') && fs.statSync(path.join(root, f)).isFile())
   .sort();
 
-const coreIgnored = new Set([
-  'amina-live.ts',
-  'index_vps.ts',
-  'order.ts',
-  'order_vps.ts',
-  'server.ts',
-  'server_zs.ts'
-]);
+const coreIgnoredRationale = {
+  'amina-live.ts': 'live-bot runtime entrypoint',
+  'index_vps.ts': 'live-bot VPS runtime integration',
+  'order.ts': 'broker/order execution module',
+  'order_vps.ts': 'VPS-specific order integration',
+  'server.ts': 'primary web runtime entrypoint',
+  'server_zs.ts': 'alternate production server entrypoint'
+};
+const coreIgnored = new Set(Object.keys(coreIgnoredRationale));
 
 function reasonsFor(content) {
   const reasons = [];
@@ -63,6 +64,15 @@ if (risk.length) {
   console.log('\nRISK candidates:');
   for (const r of risk) {
     console.log(`- ${r.file}: ${r.reasons.join(', ')}`);
+  }
+}
+
+const core = rows.filter((r) => r.bucket === 'CORE_IGNORED');
+if (core.length) {
+  console.log('\nCORE_IGNORED files:');
+  for (const r of core) {
+    const why = coreIgnoredRationale[r.file] || 'core runtime coupling';
+    console.log(`- ${r.file}: ${why}`);
   }
 }
 
