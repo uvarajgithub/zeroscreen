@@ -1,5 +1,4 @@
-import urllib.request
-resp = urllib.request.urlopen('http://localhost:4000/signals').read()
-print('Size:', len(resp))
-# Show last 500 bytes
-print('Last 500:', resp[-500:])
+#!/usr/bin/env python3
+import runpy
+from pathlib import Path
+runpy.run_path(Path(__file__).resolve().parent / 'scripts' / 'checks' / 'check_page3.py', run_name='__main__')

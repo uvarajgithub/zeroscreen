@@ -1,6 +1,4 @@
-raw=open('/root/zeroscreen/dist/server.js','rb').read()
-# Find the leftover "${!" right before the first static row
-idx = raw.find(b'${!<tr>')
-print('found at:', idx)
-if idx >= 0:
-    print(repr(raw[idx-5:idx+30]))
+#!/usr/bin/env python3
+import runpy
+from pathlib import Path
+runpy.run_path(Path(__file__).resolve().parent / 'scripts' / 'checks' / 'check_prefix.py', run_name='__main__')

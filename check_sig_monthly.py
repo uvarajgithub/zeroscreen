@@ -1,4 +1,4 @@
-raw=open('/root/zeroscreen/dist/server.js','rb').read()
-idx = raw.find(b'<!-- MONTHLY P&L -->')
-print('MONTHLY P&L at:', idx)
-print(repr(raw[idx:idx+600]))
+#!/usr/bin/env python3
+import runpy
+from pathlib import Path
+runpy.run_path(Path(__file__).resolve().parent / 'scripts' / 'checks' / 'check_sig_monthly.py', run_name='__main__')

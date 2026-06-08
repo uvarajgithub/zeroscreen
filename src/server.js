@@ -420,9 +420,9 @@ function nav(active, req) {
     // 🟡 TRADERS (mid-level) — curated ideas + tools
     const traderLinks = [
         ["today", "/today", "🔥 Today's Picks"],
-        ["signals", "/signals", "🤖 Live Bot Signals"],
-        ["bot-analytics", "/bot-analytics", "📈 Bot Analytics"],
-        ["strategy-builder", "/strategy-builder", "🏗️ Strategy Builder"],
+        ["signals", "/signals", "⚙️ Algo Monitor"],
+        ["bot-analytics", "/bot-analytics", "📊 Market Dashboard"],
+        ["strategy-builder", "/strategy-builder", "🧩 Rule Builder"],
     ];
     // 🔴 INVESTORS (advanced) — do your own research
     const investorLinks = [
@@ -433,7 +433,7 @@ function nav(active, req) {
                 ["alerts", "/alerts", "🔔 Price Alerts"],
                 [isAdmin ? "my-paper-trade" : "my-portfolio",
                     isAdmin ? "/my-paper-trade" : "/my-portfolio", "💼 My Portfolio"]]
-            : [["premium", "/premium", "💎 Go Premium"]]),
+            : [["strategy-builder", "/strategy-builder", "🧩 Build Rules"]]),
     ];
     // Admin dropdown — admin only
     const adminLinks = isAdmin ? [
@@ -491,7 +491,7 @@ function nav(active, req) {
          </div>
        </div>`
         : `<div class="nav-auth">
-         <a href="/premium" class="btn-nav-premium${active === "premium" ? " active" : ""}">⚡ Premium</a>
+         <a href="/signup" class="btn-nav-premium${active === "signup" ? " active" : ""}">Start Free</a>
          <a href="/login" class="btn-nav-login">Sign In</a>
        </div>`;
     const mobileMobFooter = isLoggedIn
@@ -517,7 +517,7 @@ function nav(active, req) {
     <div class="nav-desktop-links">
       <a href="/" class="${active === "home" ? "active" : ""}">🔍 Screener</a>
       <a href="/today" class="${active === "today" ? "active" : ""}">🔥 Picks</a>
-      <a href="/signals" class="nav-signals-link${active === "signals" ? " active" : ""}"><span class="nav-live-dot"></span>🤖 Live Bot</a>
+      <a href="/signals" class="nav-signals-link${active === "signals" ? " active" : ""}">⚙️ Algo Lab</a>
       <a href="/paper-trade" class="${active === "paper-trade" ? "active" : ""}">📋 Paper Trade</a>
       <a href="${isLoggedIn ? '/dashboard' : '/paper-trade'}" class="nav-hot-link${active === 'dashboard' || active === 'my-paper-trade' || active === 'my-portfolio' ? ' active' : ''}">💼 My Trade <span class="nav-hot-badge">HOT</span></a>
       ${exploreDropHtml}
@@ -529,7 +529,7 @@ function nav(active, req) {
       </div>
       <a href="/" class="${active === "home" ? "active" : ""}">🔍 Screener</a>
       <a href="/today" class="${active === "today" ? "active" : ""}">🔥 Picks</a>
-      <a href="/signals" class="nav-signals-link${active === "signals" ? " active" : ""}"><span class="nav-live-dot"></span>🤖 Live Bot</a>
+      <a href="/signals" class="nav-signals-link${active === "signals" ? " active" : ""}">⚙️ Algo Lab</a>
       <a href="/paper-trade" class="${active === "paper-trade" ? "active" : ""}">📋 Paper Trade</a>
       <a href="${isLoggedIn ? '/dashboard' : '/paper-trade'}" class="nav-hot-link${active === 'dashboard' || active === 'my-paper-trade' || active === 'my-portfolio' ? ' active' : ''}">💼 My Trade <span class="nav-hot-badge">HOT</span></a>
       ${exploreDropHtml}
@@ -768,16 +768,16 @@ app.get("/signup", featureGate("registration_open", "New Registrations"), (req, 
           <div class="sfc sfc-signals">
             <span class="sfc-badge live">● LIVE</span>
             <div class="sfc-icon">📡</div>
-            <div class="sfc-title">Live Bot Signals</div>
-            <div class="sfc-desc">Real BANKNIFTY CE/PE trades. Refreshes every 8 seconds with AI confidence.</div>
+            <div class="sfc-title">Algo Monitor</div>
+            <div class="sfc-desc">Rule alerts, paper trades, and market workflow in one place.</div>
             <div class="sfc-pnl-preview">
               <div>
-                <div class="sfc-pnl-num" style="color:#a5f3fc">CE 48200</div>
-                <div class="sfc-pnl-label">Active position</div>
+                <div class="sfc-pnl-num" style="color:#a5f3fc">Rule #12</div>
+                <div class="sfc-pnl-label">Active alert</div>
               </div>
               <div style="margin-left:auto;text-align:right">
-                <div style="font-size:11px;font-weight:700;color:#4ade80">+142 pts</div>
-                <div style="font-size:10px;color:rgba(255,255,255,0.4)">Unrealised</div>
+                <div style="font-size:11px;font-weight:700;color:#4ade80">Ready</div>
+                <div style="font-size:10px;color:rgba(255,255,255,0.4)">Paper mode</div>
               </div>
             </div>
           </div>
@@ -853,7 +853,7 @@ app.get("/signup", featureGate("registration_open", "New Registrations"), (req, 
         <div style="margin-top:18px;padding:14px 16px;background:linear-gradient(135deg,rgba(16,185,129,0.08),rgba(59,130,246,0.08));border:1px solid rgba(16,185,129,0.2);border-radius:10px;font-size:0.8rem;color:var(--text-muted);line-height:1.6">
           ✅ <strong style="color:var(--text)">What you unlock instantly:</strong><br>
           📋 ₹1L personal paper trade portfolio &nbsp;·&nbsp; ⭐ Unlimited watchlists<br>
-          🔔 Email alerts on your custom filters &nbsp;·&nbsp; 📊 Full bot analytics
+          🔔 Email alerts on your custom filters &nbsp;·&nbsp; 📊 Portfolio workflow and paper trade tools
         </div>
         <p class="auth-switch" style="margin-top:16px">Already have an account? <a href="/login">Sign in</a></p>
       </div>
@@ -1117,7 +1117,7 @@ app.get("/login", (req, res) => {
         <div class="zl-cards">
           <a href="/signals" class="zl-card zl-card-signals">
             <div class="zl-card-icon">📡</div>
-            <div><div class="zl-card-title">Live Bot Signals</div><div class="zl-card-desc">BANKNIFTY CE/PE · AI confidence</div><div class="zl-card-pill pill-live"><span class="pill-dot"></span> LIVE</div></div>
+            <div><div class="zl-card-title">Algo Monitor</div><div class="zl-card-desc">BANKNIFTY CE/PE · AI confidence</div><div class="zl-card-pill pill-live"><span class="pill-dot"></span> LIVE</div></div>
           </a>
           <a href="/my-paper-trade" class="zl-card zl-card-trade">
             <div class="zl-card-icon">💰</div>
@@ -1129,7 +1129,7 @@ app.get("/login", (req, res) => {
           </a>
           <a href="/dashboard" class="zl-card zl-card-dash">
             <div class="zl-card-icon">📊</div>
-            <div><div class="zl-card-title">Bot Analytics</div><div class="zl-card-desc">5-year backtest · 68% win rate</div><div class="zl-card-pill pill-data">5-YR DATA</div></div>
+            <div><div class="zl-card-title">Market Dashboard</div><div class="zl-card-desc">Watchlists · alerts · portfolio review</div><div class="zl-card-pill pill-data">5-YR DATA</div></div>
           </a>
         </div>
 
@@ -1839,6 +1839,47 @@ app.get("/", async (req, res) => {
 </head>
 <body>
   ${nav("home", req)}
+
+  <section class="algo-flow-home">
+    <style>
+      .algo-flow-home{max-width:1180px;margin:18px auto 8px;padding:0 18px}
+      .afh-shell{border:1px solid #e2e8f0;border-radius:18px;background:linear-gradient(135deg,#ffffff 0%,#f8fafc 52%,#eef6ff 100%);box-shadow:0 18px 52px rgba(15,23,42,.08);padding:22px}
+      .afh-top{display:flex;gap:18px;justify-content:space-between;align-items:flex-start;flex-wrap:wrap}
+      .afh-kicker{font-size:.76rem;text-transform:uppercase;letter-spacing:.08em;color:#2563eb;font-weight:900;margin-bottom:8px}
+      .afh-title{font-size:clamp(1.6rem,3vw,3rem);line-height:1.08;margin:0;color:#0f172a;letter-spacing:0}
+      .afh-copy{max-width:560px;color:#475569;line-height:1.65;margin:6px 0 0}
+      .afh-actions{display:flex;gap:10px;flex-wrap:wrap}
+      .afh-actions a{min-height:40px;display:inline-flex;align-items:center;padding:0 14px;border-radius:10px;border:1px solid #cbd5e1;text-decoration:none;font-weight:800;color:#0f172a;background:#fff}
+      .afh-actions a:first-child{background:#0f172a;color:#fff;border-color:#0f172a}
+      .afh-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin-top:18px}
+      .afh-card{border:1px solid #e2e8f0;border-radius:14px;background:#fff;padding:15px}
+      .afh-card strong{display:block;color:#0f172a;margin-bottom:5px}
+      .afh-card span{display:block;color:#64748b;font-size:.88rem;line-height:1.5}
+      @media(max-width:780px){.afh-grid{grid-template-columns:1fr 1fr}.afh-shell{padding:18px}}
+      @media(max-width:520px){.afh-grid{grid-template-columns:1fr}.afh-actions a{width:100%;justify-content:center}}
+    </style>
+    <div class="afh-shell">
+      <div class="afh-top">
+        <div>
+          <div class="afh-kicker">Algo trading, simplified</div>
+          <h1 class="afh-title">Screen, plan, paper trade, then review.</h1>
+          <p class="afh-copy">ZeroScreen is being shaped into a public workflow for rule-based trading and portfolio decisions. The private live bot stays private; users get tools they can understand and control.</p>
+        </div>
+        <div class="afh-actions">
+          <a href="/strategy-builder">Build Rule</a>
+          <a href="/paper-trade">Paper Trade</a>
+          <a href="/premium">Portfolio Connect</a>
+        </div>
+      </div>
+      <div class="afh-grid">
+        <div class="afh-card"><strong>Smart Screener</strong><span>Find stocks by price, volume, trend, and fundamentals.</span></div>
+        <div class="afh-card"><strong>Rule Builder</strong><span>Convert a setup into entry, exit, size, and alert rules.</span></div>
+        <div class="afh-card"><strong>Paper Trading</strong><span>Practice the execution flow with virtual capital.</span></div>
+        <div class="afh-card"><strong>Portfolio Advice</strong><span>Prepare for consent-based Zerodha portfolio insights.</span></div>
+      </div>
+    </div>
+  </section>
+
 
   <!-- ── Index Ticker Marquee ── -->
   <div class="idx-ticker-outer">
@@ -4422,19 +4463,19 @@ app.get("/about", (req, res) => {
 
     </div>
 
-    <!-- Premium / AI Bot section -->
+    <!-- Portfolio workflow section -->
     <div class="about-premium-section">
       <div class="about-premium-left">
-        <div class="tier-badge" style="background:#ede9fe;color:#4c1d95;margin-bottom:12px">⚡ Advanced — AI Bot on Request</div>
-        <h2>Want the bot to trade for you?</h2>
-        <p>Beyond learning and research, we run a live BANKNIFTY intraday trading bot using two proprietary signal models. If you want the bot to execute on your account — that's a separate, request-based service with a subscription or commission arrangement.</p>
-        <p style="margin-top:10px;font-size:13px;color:var(--text-dim)">This is not sold as a guaranteed system. Past backtest results do not guarantee future returns. You invest, you decide.</p>
-        <a href="/premium" class="about-tier-cta" style="background:#7c3aed;margin-top:20px;display:inline-block">Learn About Premium →</a>
+        <div class="tier-badge" style="background:#ede9fe;color:#4c1d95;margin-bottom:12px">⚙️ Coming Next — Portfolio Connect</div>
+        <h2>Want clearer portfolio decisions?</h2>
+        <p>ZeroScreen is moving toward consent-based portfolio analytics: read holdings and positions, detect concentration risk, suggest watchlist actions, and let users approve every rule before any broker-side step.</p>
+        <p style="margin-top:10px;font-size:13px;color:var(--text-dim)">No paid plan is active right now. The public product stays focused on research, paper trading, alerts, and user-controlled workflows.</p>
+        <a href="/premium" class="about-tier-cta" style="background:#7c3aed;margin-top:20px;display:inline-block">View Portfolio Connect →</a>
       </div>
       <div class="about-premium-stats">
-        <div class="ap-stat"><div class="ap-val">5 Yrs</div><div class="ap-label">Backtested</div></div>
-        <div class="ap-stat"><div class="ap-val">2</div><div class="ap-label">Signal Models</div></div>
-        <div class="ap-stat"><div class="ap-val">Live</div><div class="ap-label">Real Trades</div></div>
+        <div class="ap-stat"><div class="ap-val">Consent</div><div class="ap-label">Portfolio</div></div>
+        <div class="ap-stat"><div class="ap-val">Rules</div><div class="ap-label">Builder</div></div>
+        <div class="ap-stat"><div class="ap-val">Paper</div><div class="ap-label">First</div></div>
         <div class="ap-stat"><div class="ap-val">9:15–3:30</div><div class="ap-label">Auto Hours</div></div>
       </div>
     </div>
@@ -4481,6 +4522,95 @@ function readBotJSON(file, fallback = null) {
         return fallback;
     }
 }
+
+function getRealPremiumHistoryWithLive() {
+    const rp = readBotJSON("real-premium-backtest-result.json", {}) || {};
+    const months = JSON.parse(JSON.stringify(rp.months || {}));
+    const dailyByMonth = JSON.parse(JSON.stringify(rp.dailyByMonth || {}));
+    const trades = readBotJSON("trades.json", []) || [];
+    const liveDays = {};
+    const asNum = (v) => {
+        const n = Number(v);
+        return Number.isFinite(n) ? n : 0;
+    };
+    for (const t of Array.isArray(trades) ? trades : []) {
+        const type = String(t.type || "");
+        if (type !== "DRISHTI_V1" && type !== "DRISHTI_V1_OPT")
+            continue;
+        if (!(asNum(t.exitPrice) > 0))
+            continue;
+        const date = String(t.date || "").slice(0, 10);
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(date))
+            continue;
+        if (!liveDays[date]) {
+            liveDays[date] = {
+                trades: 0,
+                idxPts: 0,
+                futRsNet: 0,
+                optRsNet: 0,
+                futRsGross: 0,
+                optRsGross: 0,
+                costsFut: 0,
+                costsOpt: 0,
+                reasons: ["LIVE"]
+            };
+        }
+        const day = liveDays[date];
+        const qty = asNum(t.qty) || 30;
+        const pts = asNum(t.pnl);
+        const rs = Number.isFinite(Number(t.pnlRs)) ? asNum(t.pnlRs) : Math.round(pts * qty);
+        if (type === "DRISHTI_V1") {
+            day.trades += 1;
+            day.idxPts += pts;
+            day.futRsNet += rs;
+            day.futRsGross += rs;
+        }
+        else {
+            day.optRsNet += rs;
+            day.optRsGross += rs;
+        }
+        const reason = String(t.reasonExit || t.exitReason || "").trim().toUpperCase();
+        if (reason && !day.reasons.includes(reason))
+            day.reasons.push(reason);
+    }
+    for (const [date, day] of Object.entries(liveDays)) {
+        const mo = date.slice(0, 7);
+        if (!dailyByMonth[mo])
+            dailyByMonth[mo] = {};
+        dailyByMonth[mo][date] = {
+            trades: day.trades,
+            idxPts: Number(day.idxPts.toFixed(1)),
+            futRsNet: Math.round(day.futRsNet),
+            optRsNet: Math.round(day.optRsNet),
+            futRsGross: Math.round(day.futRsGross),
+            optRsGross: Math.round(day.optRsGross),
+            costsFut: Math.round(day.costsFut),
+            costsOpt: Math.round(day.costsOpt),
+            reasons: day.reasons
+        };
+    }
+    const recomputedMonths = {};
+    for (const [mo, days] of Object.entries(dailyByMonth)) {
+        const row = { days: 0, trades: 0, idxPts: 0, futRsNet: 0, optRsNet: 0, futRsGross: 0, optRsGross: 0 };
+        for (const day of Object.values(days || {})) {
+            row.days += 1;
+            row.trades += asNum(day.trades);
+            row.idxPts += asNum(day.idxPts);
+            row.futRsNet += asNum(day.futRsNet);
+            row.optRsNet += asNum(day.optRsNet);
+            row.futRsGross += asNum(day.futRsGross);
+            row.optRsGross += asNum(day.optRsGross);
+        }
+        row.idxPts = Number(row.idxPts.toFixed(1));
+        row.futRsNet = Math.round(row.futRsNet);
+        row.optRsNet = Math.round(row.optRsNet);
+        row.futRsGross = Math.round(row.futRsGross);
+        row.optRsGross = Math.round(row.optRsGross);
+        recomputedMonths[mo] = row;
+    }
+    return { months: recomputedMonths, dailyByMonth };
+}
+
 function getTodayIST() {
     return new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" });
 }
@@ -4492,14 +4622,23 @@ function computeAnalytics(trades) {
             premiumMap[`${t.direction}|${(t.entryPrice ?? 0).toFixed(1)}`] = t.premiumEntry;
         }
     }
-    // Only include completed trades, with premiumEntry filled in
+    // Only include completed trades, with premiumEntry filled in.
+    // DRISHTI_V1 is the strategy/index mirror row; DRISHTI_V1_OPT is the actual
+    // option premium row. Keep the page design intact, but analytics must use
+    // real option premium movement and not double-count the mirror row.
     trades = trades.filter((t) => t.exitPrice && t.exitPrice > 0).map((t) => {
-        if (!(t.premiumEntry > 0)) {
-            const key = `${t.direction}|${(t.entryPrice ?? 0).toFixed(1)}`;
+        let enriched = t;
+        if (!(enriched.premiumEntry > 0)) {
+            const key = `${enriched.direction}|${(enriched.entryPrice ?? 0).toFixed(1)}`;
             if (premiumMap[key])
-                return { ...t, premiumEntry: premiumMap[key] };
+                enriched = { ...enriched, premiumEntry: premiumMap[key] };
         }
-        return t;
+        if (enriched.type === "DRISHTI_V1_OPT" && enriched.premiumEntry > 0 && enriched.premiumExit > 0) {
+            const qty = enriched.qty || 30;
+            const premiumPts = parseFloat((enriched.premiumExit - enriched.premiumEntry).toFixed(2));
+            return { ...enriched, pnl: premiumPts, pnlRs: Math.round(premiumPts * qty) };
+        }
+        return enriched;
     });
     const today = getTodayIST();
     const todayTrades = trades.filter((t) => (t.date || "").startsWith(today));
@@ -4516,7 +4655,7 @@ function computeAnalytics(trades) {
             maxDD = dd;
         equityCurve.push(parseFloat(equity.toFixed(1)));
     }
-    let todayEq = 0, todayPeak = 0, todayMaxDD = 0, todayRs = 0;
+    let todayEq = 0, todayPeak = 0, todayMaxDD = 0;
     for (const t of todayTrades) {
         todayEq += t.pnl ?? 0;
         if (todayEq > todayPeak)
@@ -4524,9 +4663,6 @@ function computeAnalytics(trades) {
         const dd = todayPeak - todayEq;
         if (dd > todayMaxDD)
             todayMaxDD = dd;
-        // Premium-based ₹ P&L
-        if (t.pnlRs != null) { todayRs += t.pnlRs; }
-        else { const hp = (t.premiumEntry ?? 0) > 0 && (t.premiumExit ?? 0) > 0; todayRs += hp ? Math.round((t.premiumExit - t.premiumEntry) * 30) : Math.round((t.pnl ?? 0) * 15); }
     }
     // Weekly P&L (last 7 days)
     const nowIST = new Date(new Date().toLocaleString("en-US", { timeZone: "Asia/Kolkata" }));
@@ -4561,7 +4697,6 @@ function computeAnalytics(trades) {
             wins: todayTrades.filter((t) => t.pnl > 0).length,
             losses: todayTrades.filter((t) => t.pnl <= 0).length,
             pnl: parseFloat(todayEq.toFixed(1)),
-            rs: todayRs,
             maxDD: parseFloat(todayMaxDD.toFixed(1)),
         },
         weekly: {
@@ -5958,9 +6093,9 @@ app.get("/today", async (req, res) => {
             <span class="picks-locked-icon">🔒</span>
             <div>
               <strong>${title} picks are ${requiredTier}-only</strong>
-              <p>${requiredTier === 'Free' ? 'Sign in' : 'Upgrade to Premium'} to unlock entry zones, targets, and stop losses for ${title.toLowerCase()} trades.</p>
+              <p>${requiredTier === 'Free' ? 'Sign in' : 'Sign in free'} to unlock entry zones, targets, and stop losses for ${title.toLowerCase()} trades.</p>
             </div>
-            <a href="${requiredTier === 'Free' ? '/login' : '/premium'}" class="btn-upgrade">${requiredTier === 'Free' ? 'Sign In Free →' : 'Upgrade ₹499/mo →'}</a>
+            <a href="${requiredTier === 'Free' ? '/login' : '/premium'}" class="btn-upgrade">${requiredTier === 'Free' ? 'Sign In Free →' : 'Sign In Free →'}</a>
           </div>
         </div>
       </div>`;
@@ -5974,7 +6109,7 @@ app.get("/today", async (req, res) => {
         </div>
         <span class="picks-section-count">${sectionPicks.length} pick${sectionPicks.length !== 1 ? 's' : ''}</span>
       </div>
-      ${!showPrices ? `<div class="picks-prices-locked-bar">${!isLoggedIn ? `🔒 <a href="/login?next=/today" style="color:inherit;font-weight:700;text-decoration:underline">Sign in free</a> to unlock entry zones, targets &amp; stop losses` : `🔒 Entry, target &amp; stop loss prices require <a href="/premium">Premium →</a>`}</div>` : ""}
+      ${!showPrices ? `<div class="picks-prices-locked-bar">${!isLoggedIn ? `🔒 <a href="/login?next=/today" style="color:inherit;font-weight:700;text-decoration:underline">Sign in free</a> to unlock entry zones, targets &amp; stop losses` : `🔒 Entry, target &amp; stop loss prices require <a href="/premium">Sign in →</a>`}</div>` : ""}
       <div class="picks-grid">${sectionPicks.map(p => renderPickCard(p, showPrices)).join("")}</div>
     </div>`;
     }
@@ -5985,13 +6120,13 @@ app.get("/today", async (req, res) => {
     const intradayVisible = true;
     const intradayPrices = isLoggedIn || isPremium;
     const swingVisible = true;
-    const swingPrices = isPremium;
+    const swingPrices = isLoggedIn || isPremium;
     const longtermVisible = true;
-    const longtermPrices = isPremium;
+    const longtermPrices = isLoggedIn || isPremium;
     const scalperVisible = true;
     const scalperPrices = isLoggedIn || isPremium;
     const intradaySection = renderSection("⚡", "Intraday Picks", "Same-day entry & exit", intradayPicks, intradayVisible, intradayPrices, "Free");
-    const swingSection = renderSection("🌊", "Swing Picks", "2–10 day holding period", swingPicks, swingVisible, swingPrices, "Premium");
+    const swingSection = renderSection("🌊", "Swing Picks", "2–10 day holding period", swingPicks, swingVisible, swingPrices, "Free");
     const scalperSection = renderSection("⚡⚡", "Scalper Picks", "15–60 min · Tight SL · Quick exit", scalperPicks, scalperVisible, scalperPrices, "Free");
     // For locked sections when not logged in or not premium, show teaser cards
     const swingTeaser = !swingVisible ? renderSection("🌊", "Swing Picks", "2–10 day holding period", swingPicks.length > 0 ? swingPicks : [{ id: 0, stock_symbol: "?", company_name: null, direction: "LONG", pick_type: "swing", entry_low: 0, entry_high: 0, target: null, stop_loss: null, reason: "", risk_level: "Medium", status: "active", published_at: "", expires_at: null, created_by: null }], false, false, "Free") : "";
@@ -6045,10 +6180,10 @@ app.get("/today", async (req, res) => {
     <div class="auto-paper-panel">
       <div class="auto-paper-icon">🤖</div>
       <div class="auto-paper-body">
-        <div class="auto-paper-title">Auto Paper Trade Today's Picks ${!isPremium ? '<span style="font-size:.7rem;background:#f59e0b22;color:#f59e0b;border:1px solid #f59e0b44;border-radius:6px;padding:1px 7px;margin-left:6px">💎 Premium</span>' : ''}</div>
+        <div class="auto-paper-title">Auto Paper Trade Today's Picks </div>
         <div class="auto-paper-desc">${isPremium
         ? `At <strong>9:15 AM IST</strong> after market opens, all today's picks are automatically paper-traded in your portfolio at the entry zone midpoint price with SL &amp; target set.`
-        : `Upgrade to Premium — picks will be auto-bought in your paper portfolio at 9:15 AM IST every trading day.`}</div>
+        : `Sign in free — picks will be auto-bought in your paper portfolio at 9:15 AM IST every trading day.`}</div>
       </div>
       <div class="auto-paper-toggle">
         ${isPremium ? `
@@ -6139,6 +6274,8 @@ app.get("/admin/subs", requireAdmin, async (req, res) => {
 });
 // ── GET /premium ────────────────────────────────────────────────────────────────
 app.get("/premium", async (req, res) => {
+    res.send("<!DOCTYPE html>\n<html lang=\"en\">\n<head>\n  <meta charset=\"UTF-8\">\n  <meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">\n  <title>Portfolio Connect - ZeroScreen</title>\n  <link rel=\"stylesheet\" href=\"/public/css/style.css\">\n  \n  <style>\n    .pp-wrap{max-width:1120px;margin:0 auto;padding:34px 18px 56px}\n    .pp-hero{display:grid;grid-template-columns:1.15fr .85fr;gap:22px;align-items:stretch;margin-top:18px}\n    .pp-panel{border:1px solid var(--border);background:linear-gradient(180deg,rgba(255,255,255,.98),rgba(248,250,252,.96));border-radius:18px;padding:28px;box-shadow:0 18px 50px rgba(15,23,42,.08)}\n    .pp-kicker{font-size:.78rem;text-transform:uppercase;letter-spacing:.08em;color:#2563eb;font-weight:800;margin-bottom:12px}\n    .pp-title{font-size:clamp(2rem,4vw,4.2rem);line-height:1.03;margin:0 0 14px;color:#0f172a;letter-spacing:0}\n    .pp-sub{font-size:1.04rem;line-height:1.7;color:#475569;margin:0;max-width:720px}\n    .pp-actions{display:flex;flex-wrap:wrap;gap:12px;margin-top:24px}\n    .pp-btn{display:inline-flex;align-items:center;justify-content:center;min-height:42px;padding:0 16px;border-radius:10px;border:1px solid #cbd5e1;text-decoration:none;font-weight:800;color:#0f172a;background:#fff}\n    .pp-btn.primary{background:#0f172a;color:#fff;border-color:#0f172a}\n    .pp-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}\n    .pp-card{border:1px solid #e2e8f0;border-radius:14px;background:#fff;padding:18px}\n    .pp-card b{display:block;color:#0f172a;margin-bottom:8px;font-size:1rem}\n    .pp-card span{display:block;color:#64748b;line-height:1.55;font-size:.92rem}\n    .pp-steps{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin-top:18px}\n    .pp-step{border:1px solid #e2e8f0;border-radius:14px;background:#fff;padding:14px;color:#475569;font-size:.9rem}\n    .pp-step strong{display:block;color:#0f172a;margin-bottom:5px}\n    @media(max-width:760px){.pp-hero,.pp-grid,.pp-steps{grid-template-columns:1fr}.pp-panel{padding:22px}.pp-wrap{padding-top:18px}}\n  </style>\n\n</head>\n<body>\n" + nav("premium", req) + "\n  <main class=\"pp-wrap\">\n    <section class=\"pp-hero\">\n      <div class=\"pp-panel\">\n        <div class=\"pp-kicker\">No paid plans active</div>\n        <h1 class=\"pp-title\">Portfolio connect is becoming the main public product.</h1>\n        <p class=\"pp-sub\">We are removing premium/live-bot positioning for now. The public workflow will focus on user-owned watchlists, paper trades, risk alerts, and eventually Zerodha portfolio consent.</p>\n        <div class=\"pp-actions\"><a class=\"pp-btn primary\" href=\"/strategy-builder\">Open Rule Builder</a><a class=\"pp-btn \" href=\"/paper-trade\">Try Paper Trade</a><a class=\"pp-btn \" href=\"/today\">See Daily Picks</a></div>\n      </div>\n      <div class=\"pp-grid\"><div class=\"pp-card\"><b>Portfolio Doctor</b><span>Read holdings and positions with consent, then show concentration, risk, and rebalance signals.</span></div><div class=\"pp-card\"><b>Rule Builder</b><span>Create simple if-this-then-that market rules without exposing the private live bot.</span></div><div class=\"pp-card\"><b>Paper Execution</b><span>Practice entries and exits using virtual capital before connecting a broker account.</span></div><div class=\"pp-card\"><b>Risk Alerts</b><span>Get clear alerts for price, exposure, drawdown, and rule breaches.</span></div></div>\n    </section>\n    <section class=\"pp-steps\">\n      <div class=\"pp-step\"><strong>1. Screen</strong>Find stocks and index setups with repeatable filters.</div>\n      <div class=\"pp-step\"><strong>2. Plan</strong>Turn the idea into rules with entry, exit, size, and risk.</div>\n      <div class=\"pp-step\"><strong>3. Paper Trade</strong>Test the workflow before any broker-side execution.</div>\n      <div class=\"pp-step\"><strong>4. Review</strong>Track P&amp;L, mistakes, alerts, and portfolio exposure.</div>\n    </section>\n    <footer class=\"site-footer\"><span>ZeroScreen is a research and execution workflow app. Broker execution stays user-approved.</span></footer>\n  </main>\n</body>\n</html>");
+    return;
     const isPremium = userIsPremium(req);
     const isLoggedIn = !!req.session?.userId;
     let activeSub = null;
@@ -6380,14 +6517,15 @@ app.get("/api/bot/status", async (_req, res) => {
         : (useDb && (Date.now() - dbUpdatedAt) < 3 * 60 * 1000);
     const botStatus = isAlive ? (hb?.status ?? "RUNNING") : (hb ? "STOPPED" : "UNKNOWN");
     const botColor = isAlive ? (hb?.inTrade ? (hb.direction === "CE" ? "blue" : "red") : "green") : "red";
-    const todayStr = getTodayIST();
-    const todayTrades = fileTrades.filter((t) => (t.date || "").startsWith(todayStr));
+    const _todayBot = new Date().toLocaleDateString('en-CA', {timeZone:'Asia/Kolkata'});
+    const _clRaw = readBotJSON("candle-log.json", {date:'',log:[]});
+    const _fileCandleLog = (_clRaw.date === _todayBot && Array.isArray(_clRaw.log)) ? _clRaw.log : [];
+    const _hbCandleLog = Array.isArray(hb?.DrishtiCandleLog) ? hb.DrishtiCandleLog : [];
+    const candleLog = _hbCandleLog.length > _fileCandleLog.length ? _hbCandleLog : _fileCandleLog;
     res.json({
+        candleLog,
         timestamp: new Date().toLocaleString("en-IN", { timeZone: "Asia/Kolkata" }),
         activeState: state,
-        aminaState: readBotJSON("amina-state.json", null),
-        candleLog: readBotJSON("amina-candle-log.json", []),
-        todayTrades,
         heartbeat: hb,
         botStatus,
         botColor,
@@ -6402,15 +6540,15 @@ app.post("/api/bot/action", requireAdmin, (req, res) => {
     const { action } = req.body;
     try {
         if (action === "restart") {
-            (0, child_process_1.execSync)("pm2 restart trading-bot", { stdio: "ignore" });
+            (0, child_process_1.execSync)("pm2 restart amina-100-variant-b", { stdio: "ignore" });
             res.json({ ok: true, msg: "Bot restarted" });
         }
         else if (action === "stop") {
-            (0, child_process_1.execSync)("pm2 stop trading-bot", { stdio: "ignore" });
+            (0, child_process_1.execSync)("pm2 stop amina-100-variant-b", { stdio: "ignore" });
             res.json({ ok: true, msg: "Bot stopped" });
         }
         else if (action === "start") {
-            (0, child_process_1.execSync)("pm2 start trading-bot", { stdio: "ignore" });
+            (0, child_process_1.execSync)("pm2 start amina-100-variant-b", { stdio: "ignore" });
             res.json({ ok: true, msg: "Bot started" });
         }
         else {
@@ -6422,6 +6560,19 @@ app.post("/api/bot/action", requireAdmin, (req, res) => {
     }
 });
 // ── POST /internal/bot-update ── bot pushes state + completed trades here ──────
+// GET /api/bot/logs -- last PM2 log lines (admin only)
+app.get("/api/bot/logs", requireAdmin, (_req, res) => {
+    try {
+        const cp = require("child_process");
+        const lines = cp.execSync(
+            "pm2 logs amina-100-variant-b --nostream --lines 80 2>&1",
+            { encoding: "utf-8", timeout: 5000 }
+        );
+        res.json({ ok: true, lines: lines.split("\n").filter(Boolean).slice(-80) });
+    } catch(e) {
+        res.json({ ok: false, lines: ["Error: " + String(e.message)] });
+    }
+});
 app.post("/internal/bot-update", async (req, res) => {
     const secret = req.headers["x-bot-secret"];
     const expected = process.env.INTERNAL_BOT_SECRET || "";
@@ -6835,7 +6986,7 @@ app.get("/paper-trade", featureGate("feature_paper_trade_bot", "Paper Trade"), a
         </div>
       </div>
       <div class="pt2-card-body">
-        ${creditsOut ? `<div style="background:#ef444415;border:1px solid #ef444455;border-radius:8px;padding:10px 14px;margin-bottom:14px;font-size:0.85rem;color:#ef4444;font-weight:600">⚠️ Free trade limit reached — <a href="/my-paper-trade/upgrade" style="color:#ef4444;text-decoration:underline">Upgrade to Premium →</a></div>` : ""}
+        ${creditsOut ? `<div style="background:#ef444415;border:1px solid #ef444455;border-radius:8px;padding:10px 14px;margin-bottom:14px;font-size:0.85rem;color:#ef4444;font-weight:600">⚠️ Free trade limit reached — <a href="/my-paper-trade/upgrade" style="color:#ef4444;text-decoration:underline">Sign in free →</a></div>` : ""}
 
         <form method="POST" action="/my-paper-trade/buy" id="pt2-buy-form">
           <input type="hidden" name="trade_type" id="pt2-trade-type" value="${ptConfig.trade_type || 'INTRADAY'}">
@@ -7006,6 +7157,7 @@ app.get("/paper-trade", featureGate("feature_paper_trade_bot", "Paper Trade"), a
                 <label style="font-size:0.75rem;font-weight:700;color:var(--text-muted)">Mode</label>
                 <select name="mode" style="padding:7px 10px;border-radius:7px;border:1px solid var(--border);background:var(--input-bg,#fff);color:var(--text);font-size:0.88rem;font-weight:600">
                   <option value="PAPER" ${bs.mode === 'PAPER' ? 'selected' : ''}>PAPER (Virtual)</option>
+                  <option value="LIVE_SHADOW" ${bs.mode === 'LIVE_SHADOW' ? 'selected' : ''}>LIVE SHADOW (No broker orders)</option>
                   <option value="LIVE" ${bs.mode === 'LIVE' ? 'selected' : ''}>LIVE (Real Money)</option>
                 </select>
                 <label style="font-size:0.75rem;font-weight:700;color:var(--text-muted)">Quantity (lots)</label>
@@ -7718,7 +7870,7 @@ async function paperPortfolioPage(req, res) {
     const [port, positions, trades, tradeCount, ptConfig, activeSub, allPicksForTrade] = await Promise.all([
         (0, db_1.getPaperPortfolio)(userId),
         (0, db_1.getPaperPositions)(userId),
-        (0, db_1.getPaperTrades)(userId, 9999),
+        (0, db_1.getPaperTrades)(userId, 60),
         (0, db_1.countPaperTrades)(userId),
         (0, db_1.getPaperTradeConfig)(userId),
         (0, db_1.getActiveSubscription)(userId),
@@ -7800,8 +7952,8 @@ async function paperPortfolioPage(req, res) {
     const investedTotal = posRows.reduce((s, p) => s + p.invested, 0);
     const curValTotal = posRows.reduce((s, p) => s + p.curVal, 0);
     const portfolioValue = parseFloat((port.balance + curValTotal).toFixed(2));
-    const totalPnl = parseFloat((portfolioValue - 1000000).toFixed(2));
-    const totalPnlPct = parseFloat(((totalPnl / 1000000) * 100).toFixed(2));
+    const totalPnl = parseFloat((portfolioValue - 100000).toFixed(2));
+    const totalPnlPct = parseFloat(((totalPnl / 100000) * 100).toFixed(2));
     const sellTrades = trades.filter(t => t.action === "SELL");
     const realizedPnl = parseFloat(sellTrades.reduce((s, t) => s + (t.pnl ?? 0), 0).toFixed(2));
     const wins = sellTrades.filter(t => (t.pnl ?? 0) > 0).length;
@@ -8010,7 +8162,7 @@ async function paperPortfolioPage(req, res) {
         ${isPremium
         ? `<span class="mpt-credits-prem">👑 Premium — Unlimited trades</span>`
         : creditsOut
-            ? `<span style="color:#ef4444;font-weight:700">⚠️ Free trades used up (${tradeCount}/${freeLimit}) — <a href="/my-paper-trade/upgrade" style="color:#ef4444">Upgrade to Premium →</a></span>`
+            ? `<span style="color:#ef4444;font-weight:700">⚠️ Free trades used up (${tradeCount}/${freeLimit}) — <a href="/my-paper-trade/upgrade" style="color:#ef4444">Sign in free →</a></span>`
             : `<span class="mpt-credits-free">🎫 Free: ${tradesLeft} of ${freeLimit} trades left</span>
                <a href="/my-paper-trade/upgrade" style="font-size:0.8rem;color:var(--text-muted)">Upgrade for unlimited →</a>`}
       </div>
@@ -8068,7 +8220,7 @@ async function paperPortfolioPage(req, res) {
             return `<tr>
                 <td><strong style="color:var(--accent)">${esc(p.stock_symbol)}</strong>${p.company_name ? `<br><span class="dim" style="font-size:.64rem">${esc(p.company_name)}</span>` : ''}</td>
                 <td><span class="${p.direction === 'BULLISH' ? 'pb-bullish' : 'pb-bearish'}">${p.direction}</span></td>
-                <td style="font-weight:600;color:var(--text-muted)">${(() => { const _pc = ptConfig && ptConfig.picks_capital || 0; const _dq = ptConfig && ptConfig.default_qty || 1; return _pc > 0 && ep > 0 ? Math.max(1, Math.floor(_pc / ep)) : _dq; })()}</td>
+                <td style="font-weight:600;color:var(--text-muted)">1</td>
                 <td style="font-size:.82rem">₹${ep.toFixed(2)}</td>
                 <td style="color:#10b981;font-size:.74rem">${p.target ? '₹' + p.target : '—'}</td>
                 <td style="color:#ef4444;font-size:.74rem">${p.stop_loss ? '₹' + p.stop_loss : '—'}</td>
@@ -8096,7 +8248,7 @@ async function paperPortfolioPage(req, res) {
                 <td><strong>${esc(p.stock_symbol)}</strong>${p.company_name ? `<br><span class="dim" style="font-size:.64rem">${esc(p.company_name)}</span>` : ''}</td>
                 <td style="font-size:.72rem">${(p.pick_type || 'intraday').toUpperCase()}</td>
                 <td><span class="${p.direction === 'BULLISH' ? 'pb-bullish' : 'pb-bearish'}">${p.direction}</span></td>
-                <td style="font-weight:600;color:var(--text-muted)">${(() => { const _mid = (p.entry_low + p.entry_high) / 2; const _pc = ptConfig && ptConfig.picks_capital || 0; const _dq = ptConfig && ptConfig.default_qty || 1; return _pc > 0 && _mid > 0 ? Math.max(1, Math.floor(_pc / _mid)) : _dq; })()}</td>
+                <td style="font-weight:600;color:var(--text-muted)">1</td>
                 <td class="dim" style="font-size:.74rem;white-space:nowrap">₹${p.entry_low}–${p.entry_high}</td>
                 <td style="color:#10b981;font-size:.74rem">${p.target ? '₹' + p.target : '—'}</td>
                 <td style="color:#ef4444;font-size:.74rem">${p.stop_loss ? '₹' + p.stop_loss : '—'}</td>
@@ -8126,7 +8278,7 @@ async function paperPortfolioPage(req, res) {
             return `<tr>
                 <td><strong style="color:var(--accent)">${esc(p.stock_symbol)}</strong>${p.company_name ? `<br><span class="dim" style="font-size:.64rem">${esc(p.company_name)}</span>` : ''}</td>
                 <td><span class="${p.direction === 'BULLISH' ? 'pb-bullish' : 'pb-bearish'}">${p.direction}</span></td>
-                <td style="font-weight:600;color:var(--text-muted)">${(() => { const _ep2 = ep || (p.entry_low + p.entry_high) / 2; const _pc = ptConfig && ptConfig.picks_capital || 0; const _dq = ptConfig && ptConfig.default_qty || 1; return _pc > 0 && _ep2 > 0 ? Math.max(1, Math.floor(_pc / _ep2)) : _dq; })()}</td>
+                <td style="font-weight:600;color:var(--text-muted)">1</td>
                 <td><span style="background:${isWin ? '#10b98122' : '#ef444422'};color:${isWin ? '#10b981' : '#ef4444'};border:1px solid ${isWin ? '#10b98144' : '#ef444444'};border-radius:20px;padding:3px 10px;font-size:.72rem;font-weight:700;white-space:nowrap">${isWin ? '✅ Target Hit' : '⛔ SL Hit'}</span></td>
                 <td class="dim" style="font-size:.74rem">${ep ? '₹' + ep : '—'}</td>
                 <td style="font-weight:700">${rp ? '₹' + rp : '—'}</td>
@@ -8150,7 +8302,7 @@ async function paperPortfolioPage(req, res) {
     <div class="mpt-kpi-row">
       <div class="mpt-kpi">
         <div class="mpt-kpi-label">Portfolio Value</div>
-        <div class="mpt-kpi-val ${portfolioValue >= 1000000 ? "mpt-green" : "mpt-red"}">₹${portfolioValue.toLocaleString("en-IN", { maximumFractionDigits: 0 })}</div>
+        <div class="mpt-kpi-val ${portfolioValue >= 100000 ? "mpt-green" : "mpt-red"}">₹${portfolioValue.toLocaleString("en-IN", { maximumFractionDigits: 0 })}</div>
       </div>
       <div class="mpt-kpi">
         <div class="mpt-kpi-label">Total PnL</div>
@@ -8379,7 +8531,8 @@ app.post("/paper-trade/bot-config", requireAdmin, async (req, res) => {
         }
         catch { }
         const q = req.body;
-        existing.mode = q.mode === "LIVE" ? "LIVE" : "PAPER";
+        const modeIn = String(q.mode || "").toUpperCase();
+    existing.mode = ["PAPER", "LIVE_SHADOW", "LIVE"].includes(modeIn) ? modeIn : "PAPER";
         existing.quantity = Math.max(1, parseInt(q.quantity) || 30);
         existing.risk = {
             ...existing.risk,
@@ -8516,13 +8669,12 @@ app.get("/dashboard", requireAuth, async (req, res) => {
         const userName = req.session.userName || "Trader";
         const isAdmin = req.session.userRole === "admin";
         // Manual paper trade data
-        const [port, positions, trades, activeSub, allPicks, ptConfig] = await Promise.all([
+        const [port, positions, trades, activeSub, allPicks] = await Promise.all([
             (0, db_1.getPaperPortfolio)(userId),
             (0, db_1.getPaperPositions)(userId),
-            (0, db_1.getPaperTrades)(userId, 9999),
+            (0, db_1.getPaperTrades)(userId, 200),
             (0, db_1.getActiveSubscription)(userId),
             (0, db_1.getAllPicks)(),
-            (0, db_1.getPaperTradeConfig)(userId),
         ]);
         const isPremium = !!activeSub || req.session.userRole === "premium" || isAdmin;
         // Live prices for open positions
@@ -8570,7 +8722,7 @@ app.get("/dashboard", requireAuth, async (req, res) => {
         const investedTotal = posRows.reduce((s, p) => s + p.invested, 0);
         const curValTotal = posRows.reduce((s, p) => s + (p.livePrice * p.qty), 0);
         const portfolioValue = parseFloat((port.balance + curValTotal).toFixed(2));
-        const totalPnl = parseFloat((portfolioValue - 1000000).toFixed(2));
+        const totalPnl = parseFloat((portfolioValue - 100000).toFixed(2));
         // Weekly P&L (last 7 days)
         const _7dAgo = new Date(Date.now() - 7 * 86400000).toISOString().slice(0, 10);
         const weekTrades = sellTrades.filter((t) => t.traded_at >= _7dAgo);
@@ -8842,7 +8994,7 @@ app.get("/dashboard", requireAuth, async (req, res) => {
       </button>
       <div class="db-kpi-collapsible" style="overflow:hidden;max-height:0;transition:max-height .3s ease">
         <div class="db-kpi-grid" style="margin-top:10px">
-          <div class="db-kpi"><div class="db-kpi-lbl">Portfolio Value</div><div class="db-kpi-val ${portfolioValue >= 1000000 ? 'db-green' : 'db-red'}">₹${portfolioValue.toLocaleString("en-IN", { maximumFractionDigits: 0 })}</div></div>
+          <div class="db-kpi"><div class="db-kpi-lbl">Portfolio Value</div><div class="db-kpi-val ${portfolioValue >= 100000 ? 'db-green' : 'db-red'}">₹${portfolioValue.toLocaleString("en-IN", { maximumFractionDigits: 0 })}</div></div>
           <div class="db-kpi"><div class="db-kpi-lbl">Cash Balance</div><div class="db-kpi-val">₹${port.balance.toLocaleString("en-IN", { maximumFractionDigits: 0 })}</div></div>
           <div class="db-kpi"><div class="db-kpi-lbl">Total P&L</div><div class="db-kpi-val ${totalPnl >= 0 ? 'db-green' : 'db-red'}">${totalPnl >= 0 ? "+" : ""}₹${Math.abs(totalPnl).toLocaleString("en-IN", { maximumFractionDigits: 0 })}</div></div>
           <div class="db-kpi"><div class="db-kpi-lbl">This Week (Manual)</div><div class="db-kpi-val ${weekPnl >= 0 ? 'db-green' : 'db-red'}">${weekPnl >= 0 ? "+" : ""}₹${Math.abs(weekPnl).toLocaleString("en-IN", { maximumFractionDigits: 0 })}</div></div>
@@ -9079,7 +9231,66 @@ app.get("/dashboard", requireAuth, async (req, res) => {
               </div>`;
                 }).join("")}</div>`;
             return `<div class="db-section">Bot Trades — Monthly P&L</div>${inner}`;
-        })() : ""}
+})() : ""}
+      ${isAdmin ? (() => {
+        const rp = readBotJSON("real-premium-backtest-result.json", null);
+        if (!rp || !rp.summary) return "";
+        const fmtRs = (n) => `${n >= 0 ? "+" : "-"}\u20b9${Math.abs(Math.round(n || 0)).toLocaleString("en-IN")}`;
+        const fmtPts = (n) => `${n >= 0 ? "+" : "-"}${Math.abs(n || 0).toLocaleString("en-IN", { maximumFractionDigits: 1 })}`;
+        const pct = (n) => `${(n || 0).toFixed(1)}%`;
+        const s = rp.summary || {};
+        const idx = s.idxStats || {};
+        const fut = s.futStats || {};
+        const opt = s.optStats || {};
+        const a = rp.assumptions || {};
+        const generated = rp.generatedAt ? new Date(rp.generatedAt).toLocaleString("en-IN", { timeZone: "Asia/Kolkata", day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" }) : "latest";
+        const optNote = a.optionPremium && /empty/i.test(a.optionPremium) ? "Options are premium-model only because historical option LTP cache is empty. Live option LTP audit now records to real-premium-audit.jsonl." : (a.optionPremium || "Options use stored premium assumptions.");
+        const cap = readBotJSON("real-premium-capital-returns.json", null);
+        const capYears = cap && cap.yearly ? Object.keys(cap.yearly).sort() : [];
+        const latestCap = capYears.length ? cap.yearly[capYears[capYears.length - 1]] : null;
+        const capPct = (n) => `${(n || 0).toFixed(2)}%`;
+        const capYearRows = capYears.slice().reverse().map(y => {
+          const r = cap.yearly[y] || {};
+          return `<tr><td style="font-weight:700">${y}${r.partial ? " *" : ""}</td><td>${(r.days || 0).toLocaleString("en-IN")}</td><td>${(r.trades || 0).toLocaleString("en-IN")}</td><td class="${(r.futuresProfitRs || 0) >= 0 ? "db-green" : "db-red"}">${fmtRs(r.futuresProfitRs || 0)}</td><td class="${(r.futuresReturnPct || 0) >= 0 ? "db-green" : "db-red"}">${capPct(r.futuresReturnPct || 0)}</td><td>${fmtRs(r.optionsCapitalRs || 0).replace("+","")}</td><td class="${(r.optionsProfitRs || 0) >= 0 ? "db-green" : "db-red"}">${fmtRs(r.optionsProfitRs || 0)}</td><td class="${(r.combinedReturnPct || 0) >= 0 ? "db-green" : "db-red"}">${capPct(r.combinedReturnPct || 0)}</td></tr>`;
+        }).join("");
+        const worstRows = (rp.worstOpt || []).slice(0, 3).map(d => `<tr><td style="font-weight:700">${d.date}</td><td>${d.trades}</td><td class="${(d.futRsNet || 0) >= 0 ? "db-green" : "db-red"}">${fmtRs(d.futRsNet || 0)}</td><td class="${(d.optRsNet || 0) >= 0 ? "db-green" : "db-red"}">${fmtRs(d.optRsNet || 0)}</td></tr>`).join("");
+        return `<div class="db-section" style="margin-top:24px">Real Premium Backtest<span style="font-size:.7rem;color:var(--muted);font-weight:400;margin-left:8px">Updated ${generated} · Risk caps: daily ₹${(a.realDailyLossCapRs || 0).toLocaleString("en-IN")}, futures/options SL ${a.realFuturesSlPts || 0}/${a.realOptionsSlPts || 0} pts</span></div>
+        <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:14px">
+          <div class="db-kpi"><div class="db-kpi-lbl">Futures Real P&L</div><div class="db-kpi-val ${fut.total >= 0 ? "db-green" : "db-red"}">${fmtRs(fut.total || 0)}</div><div class="db-kpi-sub">${pct(fut.winRate)} win · MaxDD ₹${Math.round(fut.maxDD || 0).toLocaleString("en-IN")}</div></div>
+          <div class="db-kpi"><div class="db-kpi-lbl">Options Premium P&L</div><div class="db-kpi-val ${opt.total >= 0 ? "db-green" : "db-red"}">${fmtRs(opt.total || 0)}</div><div class="db-kpi-sub">${pct(opt.winRate)} win · MaxDD ₹${Math.round(opt.maxDD || 0).toLocaleString("en-IN")}</div></div>
+          <div class="db-kpi"><div class="db-kpi-lbl">Strategy / Index</div><div class="db-kpi-val ${idx.total >= 0 ? "db-green" : "db-red"}">${fmtPts(idx.total || 0)} pts</div><div class="db-kpi-sub">${(s.days || 0).toLocaleString("en-IN")} days · ${(s.trades || 0).toLocaleString("en-IN")} trades</div></div>
+        </div>
+        <div class="db-empty" style="text-align:left;margin-bottom:14px">${optNote}</div>
+        ${latestCap ? `<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:14px">
+          <div class="db-kpi"><div class="db-kpi-lbl">Futures Return Basis</div><div class="db-kpi-val">₹${(cap.assumptions?.futuresMarginRs || 180000).toLocaleString("en-IN")}</div><div class="db-kpi-sub">margin reused daily</div></div>
+          <div class="db-kpi"><div class="db-kpi-lbl">Latest Futures Return</div><div class="db-kpi-val ${latestCap.futuresReturnPct >= 0 ? "db-green" : "db-red"}">${capPct(latestCap.futuresReturnPct)}</div><div class="db-kpi-sub">${capYears[capYears.length - 1]}${latestCap.partial ? " partial" : ""} · ${fmtRs(latestCap.futuresProfitRs || 0)}</div></div>
+          <div class="db-kpi"><div class="db-kpi-lbl">Latest Combined Return</div><div class="db-kpi-val ${latestCap.combinedReturnPct >= 0 ? "db-green" : "db-red"}">${capPct(latestCap.combinedReturnPct)}</div><div class="db-kpi-sub">capital ₹${Math.round(latestCap.combinedCapitalRs || 0).toLocaleString("en-IN")}</div></div>
+        </div>` : ""}
+        ${capYearRows ? `<div class="db-tbl-wrap" style="margin-bottom:14px"><table class="db-tbl"><thead><tr><th>Year</th><th>Days</th><th>Trades</th><th>Futures Profit</th><th>Futures Return</th><th>Options Capital</th><th>Options Profit</th><th>Combined Return</th></tr></thead><tbody>${capYearRows}</tbody></table></div>` : ""}
+        ${worstRows ? `<div class="db-tbl-wrap"><table class="db-tbl"><thead><tr><th>Worst Options Day</th><th>Trades</th><th>Futures Net</th><th>Options Net</th></tr></thead><tbody>${worstRows}</tbody></table></div>` : ""}`;
+})() : ""}
+      ${isAdmin ? (() => {
+        let futM = {};
+        try { futM = JSON.parse(fs_1.default.readFileSync(`${BOT_DIR}/futures-monthly-results.json`, "utf-8")).monthly || {}; } catch(e) {}
+        const fKeys = Object.keys(futM).sort();
+        if (!fKeys.length) return "";
+        const fTotal = fKeys.reduce((s,k) => s + futM[k].netRs, 0);
+        const fAvg = Math.round(fTotal / fKeys.length);
+        const MN = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+        const fcards = fKeys.slice(-6).reverse().map(mo => {
+          const r = futM[mo]; const [y,mn] = mo.split("-");
+          const lbl = MN[parseInt(mn)-1] + " '" + y.slice(2);
+          const wr = r.totalDays > 0 ? ((r.winDays/r.totalDays)*100).toFixed(0) : "0";
+          return `<div class="db-mo-card"><div class="db-mo-label">${lbl}</div><div class="db-mo-pnl ${r.netRs>=0?"db-green":"db-red"}">${r.netRs>=0?"+":""}\u20b9${Math.abs(r.netRs).toLocaleString("en-IN")}</div><div class="db-mo-meta">${r.trades} trades \u00b7 ${wr}% win days</div></div>`;
+        }).join("");
+        const frows = fKeys.slice().reverse().map(mo => {
+          const r = futM[mo]; const [y,mn] = mo.split("-");
+          const lbl = MN[parseInt(mn)-1] + " " + y;
+          const wr = r.totalDays > 0 ? ((r.winDays/r.totalDays)*100).toFixed(0) : "0";
+          return `<tr><td style="font-weight:700">${lbl}</td><td>${r.totalDays}</td><td>${r.trades}</td><td class="${parseFloat(wr)>=70?"db-green":"db-red"}">${wr}%</td><td>\u20b9${Math.abs(r.grossRs).toLocaleString("en-IN")}</td><td class="db-red">\u2212\u20b9${r.costs.toLocaleString("en-IN")}</td><td class="${r.netRs>=0?"db-green":"db-red"}" style="font-weight:800">${r.netRs>=0?"+":""}\u20b9${Math.abs(r.netRs).toLocaleString("en-IN")}</td></tr>`;
+        }).join("");
+        return `<div class="db-section" style="margin-top:24px">\xf0\x9f\x93\x88 BankNifty Futures \xe2\x80\x94 5-Year Backtest<span style="font-size:.7rem;color:var(--muted);font-weight:400;margin-left:8px">BankNifty Futures \xb7 SL=150pts \xb7 lot=30</span></div><div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:14px"><div class="db-kpi"><div class="db-kpi-lbl">5-Year Net P&L</div><div class="db-kpi-val db-green">+\u20b9${Math.round(fTotal).toLocaleString("en-IN")}</div></div><div class="db-kpi"><div class="db-kpi-lbl">Avg / Month</div><div class="db-kpi-val db-green">+\u20b9${fAvg.toLocaleString("en-IN")}</div></div><div class="db-kpi"><div class="db-kpi-lbl">Months</div><div class="db-kpi-val">${fKeys.length}</div></div></div><div class="db-mo-row">${fcards}</div><div class="db-tbl-wrap"><table class="db-tbl"><thead><tr><th>Month</th><th>Days</th><th>Trades</th><th>Win Days</th><th>Gross</th><th>Costs</th><th>Net P&L</th></tr></thead><tbody>${frows}</tbody></table></div>`;
+})() : ""}
     </div>
 
     <!-- ── PANEL: AI INSIGHTS ── -->
@@ -9297,8 +9508,8 @@ app.get("/dashboard", requireAuth, async (req, res) => {
               </div>`;
                 const tableHtml = `<div class="db-tbl-wrap"><table class="db-tbl">
                 <thead><tr><th>Symbol</th><th>Direction</th><th>Qty</th><th>Entry Price</th><th>Target</th><th>SL</th><th>CMP</th><th>P&amp;L</th><th>Entry At</th></tr></thead>
-                <tbody id="ptk-inpos-body">${rows.map(({ p, lp, ep, pnlPct }) => {
-                    const qty = (() => { const _pc = ptConfig && ptConfig.picks_capital || 0; const _dq = ptConfig && ptConfig.default_qty || 1; return _pc > 0 && ep > 0 ? Math.max(1, Math.floor(_pc / ep)) : _dq; })();
+                <tbody>${rows.map(({ p, lp, ep, pnlPct }) => {
+                    const qty = 1;
                     const pnlAmt = lp && ep ? parseFloat(((lp - ep) * ((p.direction === "BULLISH" || p.direction === "LONG") ? 1 : -1) * qty).toFixed(2)) : null;
                     return `<tr>
                   <td><strong style="color:var(--accent)">${esc(p.stock_symbol)}</strong>${p.company_name ? `<br><span style="color:var(--text-muted);font-size:.7rem">${esc(p.company_name)}</span>` : ""}</td>
@@ -9313,43 +9524,7 @@ app.get("/dashboard", requireAuth, async (req, res) => {
                 </tr>`;
                 }).join("")}
                 </tbody></table></div>`;
-                const liveScript = `<script>(function(){
-  var _d=${JSON.stringify(picksInPosition.map(p=>({s:p.stock_symbol,e:parseFloat(p.entry_price||(((p.entry_low||0)+(p.entry_high||0))/2)||0),d:p.direction||'BULLISH'})))};
-  if(!_d.length) return;
-  fetch('/api/picks/liveprices?syms='+encodeURIComponent(_d.map(function(x){return x.s;}).join(',')))
-    .then(function(r){return r.json();}).then(function(prices){
-      var tbody=document.getElementById('ptk-inpos-body');
-      if(!tbody) return;
-      var rows=tbody.querySelectorAll('tr');
-      var totalPnl=0,total=0;
-      rows.forEach(function(row,i){
-        var info=_d[i]; if(!info) return;
-        var lp=prices[info.s]; if(!lp) return;
-        var ep=info.e; if(!ep) return;
-        var mult=(info.d==='BULLISH'||info.d==='LONG')?1:-1;
-        var pnlAmt=parseFloat(((lp-ep)*mult).toFixed(2));
-        var pnlPct=parseFloat((((lp-ep)/ep)*100*mult).toFixed(2));
-        totalPnl+=pnlAmt; total++;
-        var cells=row.querySelectorAll('td');
-        if(cells[6]) cells[6].innerHTML='<span style="font-weight:700;color:#3b82f6">&#8377;'+lp.toFixed(2)+'</span>';
-        if(cells[7]){
-          var clr=pnlAmt>=0?'#10b981':'#ef4444';
-          cells[7].className=pnlAmt>=0?'db-green':'db-red';
-          cells[7].innerHTML='<span style="display:block;font-weight:700;color:'+clr+'">'+(pnlAmt>=0?'+':'')+'&#8377;'+Math.abs(pnlAmt).toFixed(2)+'</span><span style="font-size:.75rem;opacity:.85;color:'+clr+'">'+(pnlPct>=0?'+':'')+pnlPct+'%</span>';
-        }
-      });
-      // Update summary P&L banner
-      var banner=document.querySelector('#ptk-p-inpos [style*="Overall Unrealized"]');
-      if(banner&&total>0){
-        var el=banner.closest('div[style*="linear-gradient"]'); if(!el) return;
-        var clr=totalPnl>=0?'052e16,#166534':'450a0a,#991b1b';
-        el.style.background='linear-gradient(135deg,#'+clr+')';
-        var valEl=el.querySelector('[style*="1.9rem"]');
-        if(valEl) valEl.textContent=(totalPnl>=0?'+':'')+'\\u20b9'+Math.abs(totalPnl).toLocaleString('en-IN',{maximumFractionDigits:2});
-      }
-    }).catch(function(){});
-})();<\/script>`;
-                return summaryHtml + tableHtml + liveScript;
+                return summaryHtml + tableHtml;
             })()}
       </div>
 
@@ -9365,7 +9540,7 @@ app.get("/dashboard", requireAuth, async (req, res) => {
                   <td><strong>${esc(p.stock_symbol)}</strong>${p.company_name ? `<br><span style="color:var(--text-muted);font-size:.7rem">${esc(p.company_name)}</span>` : ""}</td>
                   <td style="font-size:.78rem">${(p.pick_type || "intraday").toUpperCase()}</td>
                   <td><span class="${p.direction === "BULLISH" ? "pb-bullish" : "pb-bearish"}">${p.direction}</span></td>
-                  <td style="font-weight:600;color:var(--text-muted)">${(() => { const _mid2 = (p.entry_low + p.entry_high) / 2; const _pc = ptConfig && ptConfig.picks_capital || 0; const _dq = ptConfig && ptConfig.default_qty || 1; return _pc > 0 && _mid2 > 0 ? Math.max(1, Math.floor(_pc / _mid2)) : _dq; })()}</td>
+                  <td style="font-weight:600;color:var(--text-muted)">1</td>
                   <td style="color:var(--text-muted);font-size:.8rem;white-space:nowrap">₹${p.entry_low}–${p.entry_high}</td>
                   <td style="color:#10b981;font-size:.8rem">${p.target ? "₹" + p.target : "—"}</td>
                   <td style="color:#ef4444;font-size:.8rem">${p.stop_loss ? "₹" + p.stop_loss : "—"}</td>
@@ -9382,7 +9557,7 @@ app.get("/dashboard", requireAuth, async (req, res) => {
               <thead><tr><th>Symbol</th><th>Direction</th><th>Qty</th><th>Result</th><th>Entry ₹</th><th>Result ₹</th><th>P&amp;L</th><th>Date</th></tr></thead>
               <tbody>${resolvedPicks.slice(0, 50).map((p) => {
                 const isWin = p.result === "target_hit";
-                const qty = (() => { const _ep = p.entry_price; const _pc = ptConfig && ptConfig.picks_capital || 0; const _dq = ptConfig && ptConfig.default_qty || 1; return _pc > 0 && _ep > 0 ? Math.max(1, Math.floor(_pc / _ep)) : _dq; })();
+                const qty = 1;
                 const ep = p.entry_price;
                 const rp = p.result_price;
                 const mult = (p.direction === "BULLISH" || p.direction === "LONG") ? 1 : -1;
@@ -9461,7 +9636,7 @@ app.post("/my-paper-trade/buy", requireAuth, async (req, res) => {
     const freeLimit = parseInt(await (0, db_1.getSetting)("paper_free_limit") || "10", 10);
     const isPremium = !!activeSub || req.session.userRole === "premium" || req.session.userRole === "admin";
     if (!isPremium && tradeCount >= freeLimit) {
-        res.redirect("/my-paper-trade/upgrade?err=" + encodeURIComponent(`Free limit reached (${freeLimit} trades). Upgrade to Premium for unlimited trades.`));
+        res.redirect("/my-paper-trade/upgrade?err=" + encodeURIComponent(`Free limit reached (${freeLimit} trades). Sign in free for unlimited trades.`));
         return;
     }
     const symbol = (req.body.symbol || "").toUpperCase().trim();
@@ -9584,7 +9759,7 @@ app.get("/my-paper-trade/config", requireAuth, async (req, res) => {
       <div class="cfg-toggle-row">
         <div>
           <div class="cfg-toggle-label">🔥 Auto-trade Today's Picks ${!isPremium ? '<span style="font-size:0.72rem;background:#f59e0b22;color:#f59e0b;border:1px solid #f59e0b44;border-radius:8px;padding:2px 8px;margin-left:6px">💎 Premium</span>' : ''}</div>
-          <div class="cfg-toggle-desc">${isPremium ? 'At 9:15 AM after market opens, automatically buy today\'s picks in your paper portfolio at live price with SL &amp; target set.' : 'Upgrade to Premium to enable automatic trading of Today\'s Picks.'}</div>
+          <div class="cfg-toggle-desc">${isPremium ? 'At 9:15 AM after market opens, automatically buy today\'s picks in your paper portfolio at live price with SL &amp; target set.' : 'Sign in free to enable automatic trading of Today\'s Picks.'}</div>
         </div>
         ${isPremium
         ? `<label class="cfg-switch" style="margin-left:16px;flex-shrink:0">
@@ -9687,25 +9862,10 @@ app.get("/api/price/:symbol", async (req, res) => {
     const row = await (0, db_1.dbAll)("SELECT price FROM prices WHERE symbol=?", [symbol]);
     res.json({ price: row[0]?.price ?? null });
 });
-// ── GET /api/picks/liveprices?syms=A,B,C ─ Yahoo Finance live prices for picks ─
-app.get("/api/picks/liveprices", async (req, res) => {
-    const raw = (req.query.syms || "").toString().trim();
-    if (!raw) return res.json({});
-    const syms = raw.split(",").map(s => s.trim().toUpperCase()).filter(Boolean).slice(0, 20);
-    const results = {};
-    await Promise.all(syms.map(async sym => {
-        try {
-            const r = await fetch(`https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(sym)}.NS?interval=1d&range=1d`, { headers: { "User-Agent": "Mozilla/5.0" }, signal: AbortSignal.timeout(6000) });
-            const d = await r.json();
-            const meta = d?.chart?.result?.[0]?.meta;
-            const price = meta?.regularMarketPrice;
-            if (price) results[sym] = parseFloat(price.toFixed(2));
-        } catch { /* ignore per-symbol errors */ }
-    }));
-    res.json(results);
-});
 // ── GET /strategies ────────────────────────────────────────────────────────────
 app.get("/strategies", featureGate("feature_strategies", "Strategies"), (req, res) => {
+    res.send("<!DOCTYPE html>\n<html lang=\"en\">\n<head>\n  <meta charset=\"UTF-8\">\n  <meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">\n  <title>Rule Builder - ZeroScreen</title>\n  <link rel=\"stylesheet\" href=\"/public/css/style.css\">\n  \n  <style>\n    .pp-wrap{max-width:1120px;margin:0 auto;padding:34px 18px 56px}\n    .pp-hero{display:grid;grid-template-columns:1.15fr .85fr;gap:22px;align-items:stretch;margin-top:18px}\n    .pp-panel{border:1px solid var(--border);background:linear-gradient(180deg,rgba(255,255,255,.98),rgba(248,250,252,.96));border-radius:18px;padding:28px;box-shadow:0 18px 50px rgba(15,23,42,.08)}\n    .pp-kicker{font-size:.78rem;text-transform:uppercase;letter-spacing:.08em;color:#2563eb;font-weight:800;margin-bottom:12px}\n    .pp-title{font-size:clamp(2rem,4vw,4.2rem);line-height:1.03;margin:0 0 14px;color:#0f172a;letter-spacing:0}\n    .pp-sub{font-size:1.04rem;line-height:1.7;color:#475569;margin:0;max-width:720px}\n    .pp-actions{display:flex;flex-wrap:wrap;gap:12px;margin-top:24px}\n    .pp-btn{display:inline-flex;align-items:center;justify-content:center;min-height:42px;padding:0 16px;border-radius:10px;border:1px solid #cbd5e1;text-decoration:none;font-weight:800;color:#0f172a;background:#fff}\n    .pp-btn.primary{background:#0f172a;color:#fff;border-color:#0f172a}\n    .pp-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}\n    .pp-card{border:1px solid #e2e8f0;border-radius:14px;background:#fff;padding:18px}\n    .pp-card b{display:block;color:#0f172a;margin-bottom:8px;font-size:1rem}\n    .pp-card span{display:block;color:#64748b;line-height:1.55;font-size:.92rem}\n    .pp-steps{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin-top:18px}\n    .pp-step{border:1px solid #e2e8f0;border-radius:14px;background:#fff;padding:14px;color:#475569;font-size:.9rem}\n    .pp-step strong{display:block;color:#0f172a;margin-bottom:5px}\n    @media(max-width:760px){.pp-hero,.pp-grid,.pp-steps{grid-template-columns:1fr}.pp-panel{padding:22px}.pp-wrap{padding-top:18px}}\n  </style>\n\n</head>\n<body>\n" + nav("strategies", req) + "\n  <main class=\"pp-wrap\">\n    <section class=\"pp-hero\">\n      <div class=\"pp-panel\">\n        <div class=\"pp-kicker\">Algo workflow</div>\n        <h1 class=\"pp-title\">Build simple trading rules without seeing private bot logic.</h1>\n        <p class=\"pp-sub\">This page now acts as the public strategy workspace: screen an idea, define rule conditions, paper trade it, and review outcomes. Proprietary live-bot strategy and execution details stay admin-only.</p>\n        <div class=\"pp-actions\"><a class=\"pp-btn primary\" href=\"/strategy-builder\">Create Rule</a><a class=\"pp-btn \" href=\"/paper-trade\">Paper Trade</a><a class=\"pp-btn \" href=\"/?guest=1\">Open Screener</a></div>\n      </div>\n      <div class=\"pp-grid\"><div class=\"pp-card\"><b>Screening Presets</b><span>Start from momentum, value, breakout, or volatility filters.</span></div><div class=\"pp-card\"><b>Entry Rules</b><span>Convert a setup into clear trigger conditions users can understand.</span></div><div class=\"pp-card\"><b>Exit Rules</b><span>Attach stop-loss, target, trailing exit, and time-based square-off rules.</span></div><div class=\"pp-card\"><b>Backtest Later</b><span>Show public tests only when they are based on real instrument prices and clear assumptions.</span></div></div>\n    </section>\n    <section class=\"pp-steps\">\n      <div class=\"pp-step\"><strong>1. Screen</strong>Find stocks and index setups with repeatable filters.</div>\n      <div class=\"pp-step\"><strong>2. Plan</strong>Turn the idea into rules with entry, exit, size, and risk.</div>\n      <div class=\"pp-step\"><strong>3. Paper Trade</strong>Test the workflow before any broker-side execution.</div>\n      <div class=\"pp-step\"><strong>4. Review</strong>Track P&amp;L, mistakes, alerts, and portfolio exposure.</div>\n    </section>\n    <footer class=\"site-footer\"><span>ZeroScreen is a research and execution workflow app. Broker execution stays user-approved.</span></footer>\n  </main>\n</body>\n</html>");
+    return;
     const backtest = readBotJSON("5year-backtest-result.json", {});
     const monthly = backtest.monthly || {};
     const mKeys = Object.keys(monthly).sort();
@@ -9750,7 +9910,7 @@ app.get("/strategies", featureGate("feature_strategies", "Strategies"), (req, re
       </div>
       <div class="strat-hero-stats">
         <div class="strat-hero-stat"><span class="strat-hs-val">+${parseFloat(totalPnl.toFixed(0)).toLocaleString("en-IN")}</span><span class="strat-hs-label">5-Year PnL (pts)</span></div>
-        <div class="strat-hero-stat"><span class="strat-hs-val">${mKeys.length}</span><span class="strat-hs-label">Months Backtested</span></div>
+        <div class="strat-hero-stat"><span class="strat-hs-val">${mKeys.length}</span><span class="strat-hs-label">Months Portfolio</span></div>
         <div class="strat-hero-stat"><span class="strat-hs-val">${monthPct}%</span><span class="strat-hs-label">Profitable Months</span></div>
         <div class="strat-hero-stat"><span class="strat-hs-val">${backtest.tradingDays ?? "—"}</span><span class="strat-hs-label">Trading Days</span></div>
       </div>
@@ -9769,7 +9929,7 @@ app.get("/strategies", featureGate("feature_strategies", "Strategies"), (req, re
           </div>
         </div>
         <p class="strat-mode-desc">
-          Backtested across 1,241 trading days (2021–2026) covering multiple bull and bear market cycles.
+          Portfolio across 1,241 trading days (2021–2026) covering multiple bull and bear market cycles.
           Demonstrates consistent profitability with ${monthPct}% of months ending in positive territory.
         </p>
         <div class="strat-mode-stats">
@@ -9860,8 +10020,14 @@ app.get("/strategies", featureGate("feature_strategies", "Strategies"), (req, re
 });
 // ── GET /bot-analytics ────────────────────────────────────────────────────────
 app.get("/bot-analytics", featureGate("feature_dashboard", "Dashboard"), async (req, res) => {
+    if (req.session?.userRole !== "admin") {
+        res.redirect("/strategy-builder");
+        return;
+    }
     const trades = readBotJSON("trades.json", []);
     const backtest = readBotJSON("5year-backtest-result.json", {});
+    const realBacktest = readBotJSON("real-premium-backtest-result.json", null);
+    const capitalReturns = readBotJSON("real-premium-capital-returns.json", null);
     const analytics = computeAnalytics(trades);
     // Build equity curve labels (trade numbers)
     const eqLabels = analytics.equityCurve.map((_, i) => `#${i + 1}`);
@@ -9879,9 +10045,19 @@ app.get("/bot-analytics", featureGate("feature_dashboard", "Dashboard"), async (
     const combColors = combData.map((v) => v >= 0 ? "rgba(16,185,129,0.7)" : "rgba(239,68,68,0.7)");
     // Backtest totals
     const btTotal = (backtest.totals?.bodyBreakout ?? 0) + (backtest.totals?.rcConfirm ?? 0);
-    const btDays = backtest.tradingDays ?? 0;
-    const btFrom = backtest.period?.from ?? "";
-    const btTo = backtest.period?.to ?? "";
+    const btDays = realBacktest?.summary?.days ?? backtest.tradingDays ?? 0;
+    const btFrom = realBacktest ? "2021-01-01" : (backtest.period?.from ?? "");
+    const btTo = realBacktest ? "2026-06-02" : (backtest.period?.to ?? "");
+    const rpIdx = realBacktest?.summary?.idxStats || {};
+    const rpFut = realBacktest?.summary?.futStats || {};
+    const rpOpt = realBacktest?.summary?.optStats || {};
+    const rpTrades = realBacktest?.summary?.trades || 0;
+    const capYears = capitalReturns?.yearly ? Object.keys(capitalReturns.yearly).sort() : [];
+    const latestCapYear = capYears.length ? capYears[capYears.length - 1] : "";
+    const latestCap = latestCapYear ? capitalReturns.yearly[latestCapYear] : null;
+    const rpRs = (n) => `${n >= 0 ? "+" : "-"}₹${Math.abs(Math.round(n || 0)).toLocaleString("en-IN")}`;
+    const rpPts = (n) => `${n >= 0 ? "+" : "-"}${Math.abs(n || 0).toLocaleString("en-IN", { maximumFractionDigits: 1 })} pts`;
+    const rpPct = (n) => `${(n || 0).toFixed(1)}%`;
     // All monthly win rates
     const allBbTrades = mKeys.reduce((s, k) => s + (monthly[k].bbTrades ?? 0), 0);
     const allBbWins = mKeys.reduce((s, k) => s + (monthly[k].bbWins ?? 0), 0);
@@ -10041,43 +10217,59 @@ app.get("/bot-analytics", featureGate("feature_dashboard", "Dashboard"), async (
     </div>
 
     <!-- BACKTEST SECTION -->
-    <div class="dash-section-label"><span class="dash-sl-dot dash-sl-purple"></span>5-Year Backtest (2021–2026)</div>
-    <div class="dash-kpi-grid">
+    <div class="dash-section-label"><span class="dash-sl-dot dash-sl-purple"></span>Real Premium Backtest (2021–2026)</div>
+    ${realBacktest ? `<div class="dash-kpi-grid">
       <div class="dash-kpi">
-        <div class="dash-kpi-label">Total Backtest PnL</div>
-        <div class="dash-kpi-val dash-green">+${parseFloat(btTotal.toFixed(0)).toLocaleString("en-IN")} pts</div>
+        <div class="dash-kpi-label">Futures Real PnL</div>
+        <div class="dash-kpi-val ${rpFut.total >= 0 ? "dash-green" : "dash-red"}">${rpRs(rpFut.total)}</div>
       </div>
       <div class="dash-kpi">
-        <div class="dash-kpi-label">Model A PnL</div>
-        <div class="dash-kpi-val dash-green">+${parseFloat((backtest.totals?.bodyBreakout ?? 0).toFixed(0)).toLocaleString("en-IN")} pts</div>
+        <div class="dash-kpi-label">Options Premium PnL</div>
+        <div class="dash-kpi-val ${rpOpt.total >= 0 ? "dash-green" : "dash-red"}">${rpRs(rpOpt.total)}</div>
       </div>
       <div class="dash-kpi">
-        <div class="dash-kpi-label">Model B PnL</div>
-        <div class="dash-kpi-val dash-green">+${parseFloat((backtest.totals?.rcConfirm ?? 0).toFixed(0)).toLocaleString("en-IN")} pts</div>
+        <div class="dash-kpi-label">Strategy / Index Reference</div>
+        <div class="dash-kpi-val ${rpIdx.total >= 0 ? "dash-green" : "dash-red"}">${rpPts(rpIdx.total)}</div>
       </div>
       <div class="dash-kpi">
-        <div class="dash-kpi-label">Model A Win Rate</div>
-        <div class="dash-kpi-val">${bbWinRate}%</div>
+        <div class="dash-kpi-label">Futures Win Rate</div>
+        <div class="dash-kpi-val">${rpPct(rpFut.winRate)}</div>
       </div>
       <div class="dash-kpi">
-        <div class="dash-kpi-label">Model B Win Rate</div>
-        <div class="dash-kpi-val">${rcWinRate}%</div>
+        <div class="dash-kpi-label">Options Win Rate</div>
+        <div class="dash-kpi-val">${rpPct(rpOpt.winRate)}</div>
       </div>
       <div class="dash-kpi">
-        <div class="dash-kpi-label">Trading Days</div>
-        <div class="dash-kpi-val">${btDays}</div>
+        <div class="dash-kpi-label">Days / Trades</div>
+        <div class="dash-kpi-val">${btDays.toLocaleString("en-IN")} / ${rpTrades.toLocaleString("en-IN")}</div>
       </div>
+      ${latestCap ? `<div class="dash-kpi">
+        <div class="dash-kpi-label">Futures Return Basis</div>
+        <div class="dash-kpi-val">₹${(capitalReturns.assumptions?.futuresMarginRs || 180000).toLocaleString("en-IN")}</div>
+      </div>
+      <div class="dash-kpi">
+        <div class="dash-kpi-label">${latestCapYear} Futures Return</div>
+        <div class="dash-kpi-val ${latestCap.futuresReturnPct >= 0 ? "dash-green" : "dash-red"}">${rpPct(latestCap.futuresReturnPct)}</div>
+      </div>
+      <div class="dash-kpi">
+        <div class="dash-kpi-label">${latestCapYear} Combined Return</div>
+        <div class="dash-kpi-val ${latestCap.combinedReturnPct >= 0 ? "dash-green" : "dash-red"}">${rpPct(latestCap.combinedReturnPct)}</div>
+      </div>` : ""}
     </div>
+    <div class="dash-empty" style="margin-top:12px;text-align:left">Options result is premium-model until enough live option LTP audit is collected. Futures result uses real/fallback futures values, ₹1.8L reused margin return basis, and stricter real-money caps.</div>` : `<div class="dash-kpi-grid">
+      <div class="dash-kpi"><div class="dash-kpi-label">Total Backtest PnL</div><div class="dash-kpi-val dash-green">+${parseFloat(btTotal.toFixed(0)).toLocaleString("en-IN")} pts</div></div>
+      <div class="dash-kpi"><div class="dash-kpi-label">Trading Days</div><div class="dash-kpi-val">${btDays}</div></div>
+    </div>`}
 
     <!-- MONTHLY BACKTEST CHART -->
     <div class="dash-chart-card">
-      <div class="dash-chart-title">📊 Monthly Combined PnL (points)</div>
+      <div class="dash-chart-title">📊 Legacy Monthly Index PnL (reference)</div>
       <canvas id="monthlyChart" height="90"></canvas>
     </div>
 
     <!-- BB vs RC CHART -->
     <div class="dash-chart-card">
-      <div class="dash-chart-title">⚔️ Model A vs Model B — Monthly PnL</div>
+      <div class="dash-chart-title">⚔️ Legacy Model A vs Model B — Index Reference</div>
       <canvas id="stratChart" height="90"></canvas>
     </div>
 
@@ -10116,19 +10308,6 @@ app.get("/bot-analytics", featureGate("feature_dashboard", "Dashboard"), async (
             </tr>`;
     }).join("")}
         </tbody>
-        <tfoot>
-          <tr style="border-top:2px solid var(--border);font-weight:700">
-            <td class="dash-td-month">TOTAL</td>
-            <td>${mKeys.reduce((s,k)=>s+(monthly[k].days??0),0)}</td>
-            <td class="${bbPnl>=0?'dash-green':'dash-red'}">${bbPnl>=0?'+':''}${bbPnl.toFixed(1)}</td>
-            <td>${allBbTrades}</td>
-            <td>${allBbWins}/${allBbTrades-allBbWins}</td>
-            <td class="${rcPnl>=0?'dash-green':'dash-red'}">${rcPnl>=0?'+':''}${rcPnl.toFixed(1)}</td>
-            <td>${allRcTrades}</td>
-            <td>${allRcWins}/${allRcTrades-allRcWins}</td>
-            <td class="${totalPnl>=0?'dash-green dash-td-bold':'dash-red dash-td-bold'}">${totalPnl>=0?'+':''}${totalPnl.toFixed(1)}</td>
-          </tr>
-        </tfoot>
       </table>
     </div>
 
@@ -10322,7 +10501,7 @@ app.get("/signals", featureGate("feature_signals", "Signals"), async (req, res) 
     });
     // ── PREMIUM VIEW (full details) ────────────────────────────────────────────
     const isAdmin = req.session?.userRole === 'admin';
-    if (premium) {
+    if (isAdmin) {
         const an2 = computeAnalytics(trades);
         const hb2 = readBotJSON("bot-heartbeat.json", {});
         const _qty2ssr = hb2?.qty ?? 30;
@@ -10346,21 +10525,6 @@ app.get("/signals", featureGate("feature_signals", "Signals"), async (req, res) 
         const durStr2 = durMin2 >= 60 ? `${Math.floor(durMin2 / 60)}h ${durMin2 % 60}m` : durMin2 > 0 ? `${durMin2}m` : "";
         const entryIST2 = entryMs2 > 0 ? new Date(entryMs2).toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata", hour: "2-digit", minute: "2-digit" }) : "";
         const mode2 = hb2.mode ?? state.mode ?? "PAPER";
-        // ── Amina state (premium P&L, phase) ──────────────────────────────────────
-        const as2 = readBotJSON("amina-state.json", null);
-        const phaseDone2 = (hb2?.status||'').includes('DONE') || as2?.phase === 'DONE';
-        const inREPhase2 = inTrade2 && (hb2?.reEntry ?? 0) > 0;
-        const t1Rs2ssr = as2?.t1Rs ?? null;
-        const t1PremPts2ssr = t1Rs2ssr != null ? Math.round(t1Rs2ssr / 30) : null;
-        const t1LTP2ssr = as2?.t1EntryLTP ?? 0;
-        const t1ExitLTP2ssr = t1LTP2ssr > 0 && t1Rs2ssr != null ? +(t1LTP2ssr + t1Rs2ssr/30).toFixed(1) : 0;
-        const reRs2ssr = as2?.reRs ?? null;
-        const rePremPts2ssr = reRs2ssr != null ? Math.round(reRs2ssr / 30) : null;
-        const reLTP2ssr = as2?.reEntryLTP ?? 0;
-        const reExitLTP2ssr = reLTP2ssr > 0 && reRs2ssr != null ? +(reLTP2ssr + reRs2ssr/30).toFixed(1) : 0;
-        const phaseLbl2 = inREPhase2 ? 'In RE' : inTrade2 ? 'In T1' : phaseDone2 ? 'Done for Day' : 'Watching';
-        const _rsFmt = (rs) => rs == null ? '—' : (rs>=0?'+':'−')+'\u20b9'+Math.abs(rs).toLocaleString('en-IN');
-        const _ptsFmt = (p) => p == null ? '—' : (p>=0?'+':'')+p+' prem pts';
         const kiteToken2 = await (0, db_1.getSetting)("kite_access_token").catch(() => "");
         const kiteTokenAt2 = await (0, db_1.getSetting)("kite_token_set_at").catch(() => "");
         const tokenMasked2 = kiteToken2 ? kiteToken2.slice(0, 6) + "\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022" + kiteToken2.slice(-4) : "";
@@ -10392,7 +10556,28 @@ app.get("/signals", featureGate("feature_signals", "Signals"), async (req, res) 
                 return t;
             });
         })();
-        const closedToday2 = todayTradesAll2.filter((t) => (t.date || "").startsWith(todayStr2) && t.exitPrice && t.exitPrice > 0);
+        const closedTodayOpt2 = todayTradesAll2.filter((t) => (t.date || "").startsWith(todayStr2) && t.exitPrice && t.exitPrice > 0 && t.type === "DRISHTI_V1_OPT").map((t) => {
+            const entry = Number(t.premiumEntry || t.entryPrice || 0);
+            const exit = Number(t.premiumExit || t.exitPrice || 0);
+            const pts = entry > 0 && exit > 0 ? parseFloat((exit - entry).toFixed(2)) : Number(t.pnl || 0);
+            return { ...t, realEntry: entry, realExit: exit, realPts: pts, realRs: Math.round(pts * (t.qty || 30)) };
+        });
+        const closedTodayFut2 = todayTradesAll2.filter((t) => (t.date || "").startsWith(todayStr2) && t.exitPrice && t.exitPrice > 0 && (t.type || "DRISHTI_V1") === "DRISHTI_V1").map((t) => {
+            const entry = Number(t.entryPrice || 0);
+            const exit = Number(t.exitPrice || 0);
+            const dir = (t.direction || "").toUpperCase();
+            const pts = entry > 0 && exit > 0 ? parseFloat(((dir === "PE" ? entry - exit : exit - entry)).toFixed(2)) : Number(t.pnl || 0);
+            return { ...t, realEntry: entry, realExit: exit, realPts: pts, realRs: Math.round(pts * (t.qty || 30)) };
+        });
+        const closedToday2 = closedTodayOpt2;
+        const futTodayPtsSSR = closedTodayFut2.reduce((s, t) => s + (t.realPts || 0), 0);
+        const futTodayRsSSR = closedTodayFut2.reduce((s, t) => s + (t.realRs || 0), 0);
+        const optTodayPtsSSR = closedTodayOpt2.reduce((s, t) => s + (t.realPts || 0), 0);
+        const optTodayRsSSR = closedTodayOpt2.reduce((s, t) => s + (t.realRs || 0), 0);
+        function fmtFutPtsSSR(v) { return `${v >= 0 ? "+" : ""}${v.toFixed(1)} pts`; }
+        function fmtFutRsSSR(v) { return `${v >= 0 ? "+" : "-"}₹${Math.abs(Math.round(v)).toLocaleString("en-IN")}`; }
+        function fmtOptPtsSSR(v) { return `${v >= 0 ? "+" : ""}${v.toFixed(1)} premium pts`; }
+        function fmtOptRsSSR(v) { return `${v >= 0 ? "+" : "−"}₹${Math.abs(Math.round(v)).toLocaleString("en-IN")}`; }
         function fmtTime2(iso) {
             return new Date(iso).toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata", hour: "2-digit", minute: "2-digit" });
         }
@@ -10401,11 +10586,10 @@ app.get("/signals", featureGate("feature_signals", "Signals"), async (req, res) 
             return d.toLocaleDateString("en-IN", { timeZone: "Asia/Kolkata", day: "2-digit", month: "short" })
                 + " " + d.toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata", hour: "2-digit", minute: "2-digit" });
         }
-        const QTY_MULT2 = 15; // 30 qty × 0.5 delta — option premium ₹ per index pt
+        const QTY_MULT2 = 30; // BankNifty Futures lot size // 30 qty × 0.5 delta — option premium ₹ per index pt
         function pnlCls2(v) { return v >= 0 ? "sig-green" : "sig-red"; }
         function fmtPts2(v) { return `${v >= 0 ? "+" : ""}${v.toFixed(0)} pts`; }
         function fmtRs2(v) { const r = Math.round(v * QTY_MULT2); return `${r >= 0 ? "+" : "−"}₹${Math.abs(r).toLocaleString("en-IN")}`; }
-        function fmtRsD2(rs) { return `${rs >= 0 ? "+" : "−"}₹${Math.abs(rs).toLocaleString("en-IN")}`; }
         function fmtBoth2(v) { return `${fmtPts2(v)} <span class="rs-sub">${fmtRs2(v)}</span>`; }
         function rcCls(r) {
             if (!r)
@@ -10480,8 +10664,8 @@ app.get("/signals", featureGate("feature_signals", "Signals"), async (req, res) 
     @media(min-width:700px){.db-main{grid-template-columns:minmax(0,1.6fr) minmax(0,1fr)}}
     /* ═══ Position Hero Card ════════════════════════════════════ */
     .pos-card{border-radius:14px;padding:20px 22px;border:1.5px solid;position:relative;overflow:hidden}
-    .pos-ce{background:linear-gradient(135deg,rgba(219,234,254,.55),rgba(219,234,254,.25));border-color:rgba(37,99,235,.3)}
-    .pos-pe{background:linear-gradient(135deg,rgba(254,226,226,.55),rgba(254,226,226,.25));border-color:rgba(220,38,38,.3)}
+    .pos-ce{background:linear-gradient(135deg,rgba(56,189,248,.12),rgba(56,189,248,.06));border-color:rgba(56,189,248,.3)}
+    .pos-pe{background:linear-gradient(135deg,rgba(192,132,252,.12),rgba(192,132,252,.06));border-color:rgba(192,132,252,.3)}
     .pos-flat{background:var(--card);border-color:var(--border-c)}
     .pos-hdr{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:16px}
     .pos-badge{font-size:.75rem;font-weight:800;padding:.22rem .6rem;border-radius:6px}
@@ -10514,10 +10698,11 @@ app.get("/signals", featureGate("feature_signals", "Signals"), async (req, res) 
     .pos-prem-val{font-size:.9rem;font-weight:700;font-family:monospace}
     /* Watching card */
     .watch-card{padding:18px 22px;background:var(--card);border:1.5px solid var(--border-c);border-radius:14px}
-    .watch-title{font-size:.92rem;font-weight:700;margin-bottom:8px;display:flex;align-items:center;gap:8px}
+    .watch-title{font-size:.82rem;font-weight:600;margin-bottom:10px;display:flex;align-items:center;gap:8px;color:var(--muted)}
     .watch-lvl-row{display:flex;align-items:center;gap:10px;padding:9px 12px;border-radius:8px;margin-bottom:6px}
-    .watch-ce-row{background:rgba(37,99,235,.08);border:1px solid rgba(59,130,246,.2)}
-    .watch-pe-row{background:rgba(185,28,28,.08);border:1px solid rgba(239,68,68,.2)}
+    .watch-ce-row{background:rgba(59,130,246,.12);border:1.5px solid rgba(37,99,235,.45)}
+    .watch-pe-row{background:rgba(239,68,68,.16);border:1px solid rgba(248,113,113,.4)}
+    .watch-cnd-row{background:rgba(217,119,6,.12);border:1.5px solid rgba(180,83,9,.45)}
     .watch-lvl-dir{font-size:.73rem;font-weight:800;min-width:30px}
     .watch-lvl-val{font-size:1rem;font-weight:800;font-family:monospace;flex:1}
     .watch-lvl-dist{font-size:.72rem;font-weight:600}
@@ -10605,14 +10790,6 @@ app.get("/signals", featureGate("feature_signals", "Signals"), async (req, res) 
     .pm-tl-label{font-size:.68rem;color:var(--muted);margin-top:1px}
     .pm-tl-note{font-size:.62rem;color:#7c3aed;font-weight:600;margin-top:2px;display:none}
     .pm-tl-note.show{display:block}
-    /* trade event rows */
-    .atl-ev{border-top:1px dashed rgba(99,102,241,.2);margin-top:6px;padding-top:6px}
-    .atl-ev-dot{width:20px;height:20px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:.6rem;font-weight:800;flex-shrink:0;margin-top:1px;z-index:1;position:relative;color:#fff}
-    .atl-ev-dot.ev-ce{background:#2563eb;border:2px solid #2563eb}
-    .atl-ev-dot.ev-pe{background:#dc2626;border:2px solid #dc2626}
-    .atl-ev-dot.ev-sl{background:#ef4444;border:2px solid #ef4444;font-size:.5rem}
-    .atl-ev-dot.ev-ok{background:#059669;border:2px solid #059669}
-    .atl-ev-note{font-size:.6rem;color:#6366f1;font-weight:600;margin-top:2px}
     .pm-pred{display:flex;flex-direction:column;gap:10px}
     .pm-pred-label{font-size:.62rem;font-weight:700;text-transform:uppercase;letter-spacing:.07em;color:var(--muted);margin-bottom:4px}
 
@@ -10683,7 +10860,10 @@ app.get("/signals", featureGate("feature_signals", "Signals"), async (req, res) 
     <div class="db-hdr">
       <div>
         <div class="db-title">📡 Live Bot Dashboard</div>
-        <div class="db-sub">BANKNIFTY · BODY_BREAKOUT · <strong>${mode2}</strong> · 30 qty · ₹ P&L = pts × 15</div>
+        <div class="db-sub">BANKNIFTY &middot; BankNifty Futures &middot; <strong>${mode2}</strong> &middot; 30 qty &middot; SL: ${_slPts2ssr} pts &middot; Entry: PDH/PDL Break &middot; Candle-close SL &middot; Max 5 trades/day</div>
+        <div class="db-sub" style="margin-top:3px">PDH: <span id="db-pdh" style="color:#10b981;font-weight:600">${hb2?.bhavPrevDayHigh ?? "&mdash;"}</span> &middot; PDL: <span id="db-pdl" style="color:#ef4444;font-weight:600">${hb2?.bhavPrevDayLow ?? "&mdash;"}</span> &middot; Candles today: <span id="db-cndl">${hb2?.bhavCandles ?? "&mdash;"}</span> &middot; &#8377; P&amp;L: lot 30 &times; pts</div>
+        <div class="db-sub" style="margin-top:3px">Real-premium Backtest (2021&ndash;2026): Futures <strong style="color:#10b981">&#8377;43.39L</strong> &middot; 73.4% win &middot; Options model <strong style="color:#f59e0b">&#8377;2.91L</strong> &middot; 50.7% win &middot; 1,232 days / 5,383 trades</div>
+        <div class="db-sub" style="margin-top:3px;color:var(--muted)">Options use premium model until historical option LTP cache is available; futures use real/fallback futures values.</div>
       </div>
       <div class="db-live"><span class="db-pulse"></span><span id="db-upd">Connecting…</span></div>
     </div>
@@ -10723,24 +10903,18 @@ app.get("/signals", featureGate("feature_signals", "Signals"), async (req, res) 
     <!-- ── Strategy Tab Switcher ──────────────────────────────── -->
 
     <div class="stab-wrap">
-      <button class="stab act" id="stab-lock50" type="button" onclick="_sTab('lock50')">
-        <span class="stab-name">&#9679; AMINA 100</span>
-        <span class="stab-sub" id="stab-phase-lbl" style="color:${phaseDone2?'#059669':inTrade2?'#fbbf24':'var(--muted)'}">${phaseLbl2}</span>
-        <span class="stab-pnl" id="stab-pnl-lock50" style="color:${(an2.today.rs??an2.today.pnl)>=0?'#059669':'#dc2626'}">${fmtRsD2(an2.today.rs??Math.round(an2.today.pnl*QTY_MULT2))}</span>
-      </button>
-      <button class="stab" id="stab-vmt" type="button" onclick="_sTab('vmt')">
-        <span class="stab-name">&#128161; VMT</span>
-        <span class="stab-sub">Option shadow</span>
-        <span class="stab-pnl" id="stab-pnl-vmt" style="color:#8b949e">&#8212;</span>
-      </button>
+      <div class="stab act" style="cursor:default;min-width:260px">
+        <span class="stab-name">&#9679; BankNifty Futures</span>
+        <span class="stab-sub">${mode2} &middot; 30 qty &middot; SL: ${_slPts2ssr} pts</span>
+        <span class="stab-pnl" id="stab-pnl-bhav" style="color:${an2.today.pnl>=0?'#059669':'#dc2626'}">${fmtRs2(an2.today.pnl)}</span>
+      </div>
     </div>
-    <script>/* _sTab defined in main script below */</script>
 
 
     <!-- ════════════════════════════════════════════════════════
          TICK TRAIL PANEL
          ════════════════════════════════════════════════════════ -->
-    <div id="panel-lock50">
+    <div id="panel-bhav">
 
     <!-- === AMINA 100: 2-col top (Timeline + Position) === -->
     <div style="display:grid;grid-template-columns:1fr;gap:14px;margin-bottom:1rem;align-items:start">
@@ -10755,7 +10929,7 @@ app.get("/signals", featureGate("feature_signals", "Signals"), async (req, res) 
           <span class="pm-phase" id="atl-phase-badge">Loading&hellip;</span>
         </div>
 <div class="pm-tl" id="atl-tl">
-                    <div class="pm-tl-row" id="atl-row-0">
+          <div class="pm-tl-row" id="atl-row-0">
             <div class="pm-tl-dot" id="atl-dot-0"></div>
             <div class="pm-tl-txt">
               <div class="pm-tl-time">7:30 AM &mdash; Token Auto-Refreshed &mdash; Bot Ready</div>
@@ -10765,68 +10939,67 @@ app.get("/signals", featureGate("feature_signals", "Signals"), async (req, res) 
           <div class="pm-tl-row" id="atl-row-1">
             <div class="pm-tl-dot" id="atl-dot-1"></div>
             <div class="pm-tl-txt">
-              <div class="pm-tl-time">8:30 AM &mdash; Global Cues</div>
-              <div class="pm-tl-label">Check Gift Nifty / SGX Nifty for BNF gap-up or gap-down bias</div>
+              <div class="pm-tl-time">8:30 AM &mdash; Morning Telegram Sent</div>
+              <div class="pm-tl-label">Yesterday P&amp;L + today&rsquo;s picks + token status delivered to Telegram</div>
             </div>
           </div>
           <div class="pm-tl-row" id="atl-row-2">
             <div class="pm-tl-dot" id="atl-dot-2"></div>
             <div class="pm-tl-txt">
-              <div class="pm-tl-time">9:15 AM &mdash; Market Opens &mdash; Bot Active</div>
-              <div class="pm-tl-label">Bot begins scanning. First 15-min candle (C1) starts forming</div>
+              <div class="pm-tl-time">9:00 AM &mdash; PDH/PDL Loaded &mdash; Context Set</div>
+              <div class="pm-tl-label">ABOVE_PDH: fade gap &rarr; PE &bull; BELOW_PDL: fade gap &rarr; CE &bull; INSIDE: body% scan</div>
             </div>
           </div>
           <div class="pm-tl-row" id="atl-row-3">
             <div class="pm-tl-dot" id="atl-dot-3"></div>
             <div class="pm-tl-txt">
-              <div class="pm-tl-time">9:15 &ndash; 9:30 AM &mdash; C1 Candle Watch</div>
-              <div class="pm-tl-label">Bot records C1 high &amp; low. No entries during this window</div>
+              <div class="pm-tl-time">9:15 AM &mdash; Market Opens &mdash; C0 Starts</div>
+              <div class="pm-tl-label">Bot live. ABOVE_PDH &amp; BELOW_PDL: C0 body% may trigger immediate entry</div>
             </div>
           </div>
           <div class="pm-tl-row" id="atl-row-4">
             <div class="pm-tl-dot" id="atl-dot-4"></div>
             <div class="pm-tl-txt">
-              <div class="pm-tl-time">9:30 AM &mdash; C1 Level Locked</div>
-              <div class="pm-tl-label">C1 high/low fixed. C2 early-entry scan begins immediately</div>
-              <div class="pm-tl-note show" style="display:block;font-size:.61rem;color:#7c3aed;font-weight:600;margin-top:2px">C2 breaks C1 level at close &rarr; enter at C2.close &rarr; SL: &minus;60 pts, trail 100 pts behind peak</div>
+              <div class="pm-tl-time">9:30 AM &mdash; C1 Closes &mdash; First Signal Check</div>
+              <div class="pm-tl-label">Body% candle analysis &bull; Reversal or breakout entry &bull; SL: candle-close only</div>
             </div>
           </div>
           <div class="pm-tl-row" id="atl-row-5">
             <div class="pm-tl-dot" id="atl-dot-5"></div>
             <div class="pm-tl-txt">
-              <div class="pm-tl-time">9:30 &ndash; 9:45 AM &mdash; C2 Early Entry Window</div>
-              <div class="pm-tl-label">If C2.close breaks C1 level &rarr; enter at C2.close. SL: &minus;60 pts</div>
+              <div class="pm-tl-time">9:45 AM &mdash; C2 Closes &mdash; Second Window</div>
+              <div class="pm-tl-label">Rolling scan active &bull; SL = 150 pts candle-close &bull; LOCK20 trail (locks +20 at peak &ge;20)</div>
             </div>
           </div>
+          <!-- trade events injected by JS (between morning setup and EOD) -->
+          <div id="atl-trades"></div>
           <div class="pm-tl-row" id="atl-row-6">
             <div class="pm-tl-dot" id="atl-dot-6"></div>
-            <div class="pm-tl-txt">
-              <div class="pm-tl-time">9:45 AM &mdash; C3+ Rolling Scan Active</div>
-              <div class="pm-tl-label">No C2 entry? Bot watches every candle to break max(C1, C2) level</div>
-            </div>
-          </div>
-          <!-- Dynamic trade events injected here by JS (chronologically between scan and EOD) -->
-          <div id="atl-trade-events" class="atl-ev"></div>
-          <div class="pm-tl-row" id="atl-row-7">
-            <div class="pm-tl-dot" id="atl-dot-7"></div>
             <div class="pm-tl-txt">
               <div class="pm-tl-time">3:14 PM &mdash; EOD Exit</div>
               <div class="pm-tl-label">Bot exits all open positions at market. P&amp;L locked for the day</div>
             </div>
           </div>
-          <div class="pm-tl-row" id="atl-row-8">
-            <div class="pm-tl-dot" id="atl-dot-8"></div>
+          <div class="pm-tl-row" id="atl-row-7">
+            <div class="pm-tl-dot" id="atl-dot-7"></div>
             <div class="pm-tl-txt">
               <div class="pm-tl-time">3:30 PM &mdash; Market Closes</div>
               <div class="pm-tl-label">Session complete. Bot sleeping until next trading day</div>
+            </div>
+          </div>
+          <div class="pm-tl-row" id="atl-row-8">
+            <div class="pm-tl-dot" id="atl-dot-8"></div>
+            <div class="pm-tl-txt">
+              <div class="pm-tl-time">3:31 PM &mdash; EOD Telegram Sent</div>
+              <div class="pm-tl-label">Day P&amp;L + trade summary + tomorrow&rsquo;s context preview delivered to Telegram</div>
             </div>
           </div>
         </div>
       </div>
       <script>
       (function(){
-        var _ATL=[{id:0,h:7,m:30},{id:1,h:8,m:30},{id:2,h:9,m:15},{id:3,h:9,m:15},{id:4,h:9,m:30},{id:5,h:9,m:30},{id:6,h:9,m:45},{id:7,h:15,m:14},{id:8,h:15,m:30}];
-        var _ATLPH=[[7,30,'Token Refresh',''],[8,30,'Pre-Market',''],[9,15,'Global Cues',''],[9,30,'C1 Forming','live'],[9,45,'C2 Entry','live'],[15,14,'C3+ Scan','live'],[15,30,'EOD Exit','live'],[24,0,'Closed','closed']];
+        var _ATL=[{id:0,h:7,m:30},{id:1,h:8,m:30},{id:2,h:9,m:0},{id:3,h:9,m:15},{id:4,h:9,m:30},{id:5,h:9,m:45},{id:6,h:15,m:14},{id:7,h:15,m:30},{id:8,h:15,m:31}];
+        var _ATLPH=[[7,30,'Token Refresh',''],[8,30,'Pre-Market',''],[9,0,'Context Set',''],[9,15,'Mkt Open','live'],[9,30,'C1 Signal','live'],[9,45,'Scanning','live'],[15,14,'EOD Exit','live'],[15,30,'Closed','closed'],[24,0,'Closed','closed']];
         function _atlN(){var d=new Date(new Date().toLocaleString('en-US',{timeZone:'Asia/Kolkata'}));return{h:d.getHours(),m:d.getMinutes()};}
         function _atlM(h,m){return h*60+m;}
         function _atlUpd(){
@@ -10836,7 +11009,7 @@ app.get("/signals", featureGate("feature_signals", "Signals"), async (req, res) 
             var dot=document.getElementById('atl-dot-'+row.id);if(!dot)return;
             if(closed){dot.className='pm-tl-dot';dot.textContent='';return;}
             var isActive,isDone;
-            if(row.id===2){isActive=nowM>=_atlM(9,15)&&nowM<_atlM(9,30);isDone=nowM>=_atlM(9,30);}
+            if(row.id===2){isActive=nowM>=_atlM(9,0)&&nowM<_atlM(9,15);isDone=nowM>=_atlM(9,15);}
             else if(row.id===4){isActive=nowM>=_atlM(9,30)&&nowM<_atlM(9,45);isDone=nowM>=_atlM(9,45);}
             else{var rowM=_atlM(row.h,row.m);isActive=nowM>=rowM&&nowM<rowM+3;isDone=nowM>=rowM+3;}
             if(isDone){dot.className='pm-tl-dot done';dot.textContent='\u2714';}
@@ -10854,106 +11027,48 @@ app.get("/signals", featureGate("feature_signals", "Signals"), async (req, res) 
       <div>
         <div style="font-size:.72rem;text-transform:uppercase;letter-spacing:1px;color:#8b949e;font-weight:700;margin-bottom:8px">&#128203; Current Position</div>
         <div id="pos-lock50-wrap">
-
-          <!-- ── DONE FOR DAY card ── -->
-          <div id="pos-lock50-done" style="${phaseDone2&&!inTrade2?'':'display:none'}">
-            <div class="pos-card pos-flat" style="border-color:rgba(5,150,105,.3);background:rgba(5,150,105,.04)">
-              <div class="pos-hdr" style="margin-bottom:12px">
-                <span class="pos-badge" style="background:rgba(5,150,105,.15);color:#059669;border:1px solid rgba(5,150,105,.3)">&#x2713; DONE FOR DAY</span>
-                <span class="pos-mode">${mode2}</span>
-                <span style="margin-left:auto;font-size:.63rem;color:var(--muted)" id="pos-done-date">${new Date().toLocaleDateString('en-IN',{timeZone:'Asia/Kolkata',day:'2-digit',month:'short'})}</span>
-              </div>
-              ${hb2.t1Entry > 0 ? `
-              <div style="border:1px solid var(--border-c);border-radius:8px;padding:9px 12px;margin-bottom:8px">
-                <div style="display:flex;align-items:center;gap:7px;margin-bottom:5px">
-                  <span style="font-size:.58rem;font-weight:800;color:var(--muted);background:var(--border-c);padding:1px 5px;border-radius:3px">T1</span>
-                  <span class="db-badge ${(hb2.t1Dir||'ce').toLowerCase()}">${hb2.t1Dir||'?'}</span>
-                  <code style="font-size:.58rem;color:var(--muted);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${hb2.t1Symbol||''}</code>
-                  <span style="font-size:.58rem;font-weight:700;background:rgba(5,150,105,.1);color:#34d399;padding:1px 6px;border-radius:3px">REALISED</span>
-                </div>
-                ${t1LTP2ssr>0?`<div style="font-size:.68rem;color:var(--muted);margin-bottom:5px"><span class="prem-buy">BUY &#8377;${t1LTP2ssr.toFixed(1)}</span> &#8594; <span class="prem-sell">EXIT &#8377;${t1ExitLTP2ssr>0?t1ExitLTP2ssr.toFixed(1):'—'}</span></div>`:''}
-                <div style="display:flex;align-items:center;gap:10px">
-                  <span class="${(t1Rs2ssr??0)>=0?'g':'r'}" style="font-size:1rem;font-weight:800" id="pos-done-t1rs">${_rsFmt(t1Rs2ssr)}</span>
-                  <span class="${(t1PremPts2ssr??0)>=0?'g':'r'}" style="font-size:.75rem;font-weight:700" id="pos-done-t1pts">${_ptsFmt(t1PremPts2ssr)}</span>
-                </div>
-              </div>` : ''}
-              ${hb2.reEntry > 0 ? `
-              <div style="border:1px solid var(--border-c);border-radius:8px;padding:9px 12px;margin-bottom:10px">
-                <div style="display:flex;align-items:center;gap:7px;margin-bottom:5px">
-                  <span style="font-size:.58rem;font-weight:800;color:var(--muted);background:var(--border-c);padding:1px 5px;border-radius:3px">RE</span>
-                  <span class="db-badge ${(hb2.reDir||'ce').toLowerCase()}">${hb2.reDir||'?'}</span>
-                  <code style="font-size:.58rem;color:var(--muted);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${hb2.reSymbol||''}</code>
-                  <span style="font-size:.58rem;font-weight:700;background:rgba(5,150,105,.1);color:#34d399;padding:1px 6px;border-radius:3px">REALISED</span>
-                </div>
-                ${reLTP2ssr>0?`<div style="font-size:.68rem;color:var(--muted);margin-bottom:5px"><span class="prem-buy">BUY &#8377;${reLTP2ssr.toFixed(1)}</span> &#8594; <span class="prem-sell">EXIT &#8377;${reExitLTP2ssr>0?reExitLTP2ssr.toFixed(1):'—'}</span></div>`:''}
-                <div style="display:flex;align-items:center;gap:10px">
-                  <span class="${(reRs2ssr??0)>=0?'g':'r'}" style="font-size:1rem;font-weight:800" id="pos-done-rers">${_rsFmt(reRs2ssr)}</span>
-                  <span class="${(rePremPts2ssr??0)>=0?'g':'r'}" style="font-size:.75rem;font-weight:700" id="pos-done-repts">${_ptsFmt(rePremPts2ssr)}</span>
-                </div>
-              </div>` : ''}
-              <div style="display:flex;align-items:center;justify-content:space-between;border-top:1px solid var(--border-c);padding-top:8px">
-                <span style="font-size:.62rem;color:var(--muted);font-weight:700;text-transform:uppercase;letter-spacing:.06em">Day Total</span>
-                <div style="display:flex;align-items:center;gap:12px">
-                  <span class="${(hb2.dayRs??0)>=0?'g':'r'}" style="font-size:.8rem;font-weight:700" id="pos-done-daypts">${_ptsFmt(hb2.dayRs!=null?Math.round(hb2.dayRs/30):null)}</span>
-                  <span class="${(hb2.dayRs??0)>=0?'g':'r'}" style="font-size:1rem;font-weight:800" id="pos-done-dayrs">${_rsFmt(hb2.dayRs)}</span>
-                </div>
-              </div>
+          ${inTrade2 && ep2 > 0 ? `
+          <div class="pos-card pos-${(dir2||'ce').toLowerCase()}" id="pos-lock50-card">
+            <div class="pos-hdr">
+              <span class="pos-live-dot"></span>
+              <span class="pos-badge pos-b-${(dir2||'ce').toLowerCase()}">${dir2||'?'} OPTION</span>
+              <span class="pos-sym">${sym2||'BANKNIFTY'}</span>
+              <span class="pos-mode">${mode2}</span>
+              ${durStr2 ? `<span class="pos-dur">⏱ ${durStr2}</span>` : ''}
             </div>
-          </div>
-
-          <!-- ── IN POSITION card ── -->
-          <div id="pos-lock50-card" style="${inTrade2&&ep2>0?'':'display:none'}">
-            <div class="pos-card pos-${(dir2||'ce').toLowerCase()}">
-              <div class="pos-hdr">
-                <span class="pos-live-dot"></span>
-                <span class="pos-badge pos-b-${(dir2||'ce').toLowerCase()}">${dir2||'?'} OPTION</span>
-                <span style="font-size:.62rem;font-weight:800;padding:2px 7px;border-radius:4px;background:rgba(251,191,36,.12);color:#fbbf24;border:1px solid rgba(251,191,36,.25)" id="pos-phase-badge">${inREPhase2?'&#9679; In RE':'&#9679; In T1'}</span>
-                <span class="pos-sym">${sym2||'BANKNIFTY'}</span>
-                <span class="pos-mode">${mode2}</span>
-                ${durStr2 ? `<span class="pos-dur">&#x23F1; ${durStr2}</span>` : ''}
-              </div>
-              ${inREPhase2 && hb2.t1Entry > 0 ? `
-              <div style="font-size:.68rem;color:var(--muted);background:var(--card);border:1px solid var(--border-c);border-radius:6px;padding:5px 9px;margin-bottom:8px;display:flex;align-items:center;gap:8px">
-                <span style="font-size:.58rem;font-weight:800;background:var(--border-c);padding:1px 5px;border-radius:3px;color:var(--muted)">T1</span>
-                <span class="db-badge ${(hb2.t1Dir||'ce').toLowerCase()}" style="font-size:.56rem">${hb2.t1Dir||'?'}</span>
-                <span style="font-size:.6rem;font-weight:700;background:rgba(5,150,105,.1);color:#34d399;padding:1px 5px;border-radius:3px">DONE</span>
-                <span class="${(t1Rs2ssr??0)>=0?'g':'r'}" style="font-weight:800;margin-left:auto">${_rsFmt(t1Rs2ssr)}</span>
-                <span class="${(t1PremPts2ssr??0)>=0?'g':'r'}">${_ptsFmt(t1PremPts2ssr)}</span>
-              </div>` : ''}
-              <div class="pos-pnl-rs ${unreal2>=0?'g':'r'}" id="pos-lock50-rs">${fmtRs2(unreal2)}</div>
-              <div class="pos-pnl-pts ${unreal2>=0?'g':'r'}" id="pos-lock50-pts">${unreal2>=0?'+':''}${unreal2.toFixed(0)} index pts unrealised</div>
-              <div class="pos-gauge"><div class="pos-gauge-fill" id="pos-lock50-gauge" style="width:50%;background:${unreal2>=0?'#10b981':'#ef4444'}"></div></div>
-              <div class="pos-grid">
-                <div><div class="pos-lbl">Entry Index</div><div class="pos-val mono" id="pos-lock50-ep">${ep2.toFixed(1)}</div></div>
-                <div><div class="pos-lbl">Live Index</div><div class="pos-val g mono" id="pos-lock50-lp">${live2>0?live2.toFixed(1):'…'}</div></div>
-                <div><div class="pos-lbl">Stop Loss</div><div class="pos-val r mono">${sl2>0?sl2.toFixed(1):'—'}</div></div>
-                <div><div class="pos-lbl">SL Risk &#8377;</div><div class="pos-val r">&#8722;&#8377;${_slRs2ssr}</div></div>
-                <div><div class="pos-lbl">Qty</div><div class="pos-val">${qty2>0?qty2:30}</div></div>
-                <div><div class="pos-lbl">Entry Time</div><div class="pos-val">${entryIST2||'—'}</div></div>
-              </div>
-              ${hb2.entryPremium||hb2.livePremium ? `
-              <div class="pos-divider"></div>
-              <div class="pos-prem-row">
-                ${hb2.entryPremium ? `<div class="pos-prem-cell"><span class="pos-prem-tag buy-tag">BUY Prem</span><span class="pos-prem-val">&#8377;${hb2.entryPremium.toFixed(1)}</span></div>` : ''}
-                ${hb2.livePremium  ? `<div class="pos-prem-cell"><span class="pos-prem-tag" style="background:rgba(251,191,36,.15);color:#fbbf24">LIVE Prem</span><span class="pos-prem-val" id="pos-lock50-liveprem">&#8377;${hb2.livePremium.toFixed(1)}</span></div>` : ''}
-              </div>` : ''}
+            <div class="pos-pnl-rs ${unreal2>=0?'g':'r'}" id="pos-lock50-rs">${fmtRs2(unreal2)}</div>
+            <div class="pos-pnl-pts ${unreal2>=0?'g':'r'}" id="pos-lock50-pts">${unreal2>=0?'+':''}${unreal2.toFixed(0)} index pts unrealised</div>
+            <div class="pos-gauge"><div class="pos-gauge-fill" id="pos-lock50-gauge" style="width:50%;background:${unreal2>=0?'#10b981':'#ef4444'}"></div></div>
+            <div class="pos-grid">
+              <div><div class="pos-lbl">Entry Index</div><div class="pos-val mono" id="pos-lock50-ep">${ep2.toFixed(1)}</div></div>
+              <div><div class="pos-lbl">Live Index</div><div class="pos-val g mono" id="pos-lock50-lp">${live2>0?live2.toFixed(1):'…'}</div></div>
+              <div><div class="pos-lbl">Stop Loss</div><div class="pos-val r mono">${sl2>0?sl2.toFixed(1):'—'}</div></div>
+              <div><div class="pos-lbl">SL Risk ₹</div><div class="pos-val r">−₹${_slRs2ssr}</div></div>
+              <div><div class="pos-lbl">Qty</div><div class="pos-val">${qty2>0?qty2:30}</div></div>
+              <div><div class="pos-lbl">Entry Time</div><div class="pos-val">${entryIST2||'—'}</div></div>
             </div>
+            ${hb2.entryPremium||hb2.livePremium ? `
+            <div class="pos-divider"></div>
+            <div class="pos-prem-row">
+              ${hb2.entryPremium ? `<div class="pos-prem-cell"><span class="pos-prem-tag buy-tag">BUY Premium</span><span class="pos-prem-val">₹${hb2.entryPremium.toFixed(1)}</span></div>` : ''}
+              ${hb2.livePremium  ? `<div class="pos-prem-cell"><span class="pos-prem-tag" style="background:rgba(251,191,36,.15);color:#fbbf24">LIVE Premium</span><span class="pos-prem-val" id="pos-lock50-liveprem">₹${hb2.livePremium.toFixed(1)}</span></div>` : ''}
+            </div>` : ''}
           </div>
-
-          <!-- ── WATCHING card ── -->
-          <div id="pos-lock50-flat" style="${!inTrade2&&!phaseDone2?'':'display:none'}">
-            <div class="watch-card">
-              <div class="watch-title"><span>&#x23F3;</span>Watching for Next Signal</div>
-              <div id="pos-lock50-watch" style="font-size:.78rem;color:var(--muted)"><span style="opacity:.4">Loading trigger levels&hellip;</span></div>
-            </div>
-          </div>
-
+          ` : `
+          <div class="watch-card" id="pos-lock50-flat">
+            <div class="watch-title"><span>⏳</span>Watching for Next Signal</div>
+            <div id="pos-lock50-watch" style="font-size:.78rem;color:var(--muted)"><span style="opacity:.4">Loading trigger levels…</span></div>
+          </div>`}
         </div>
         <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:10px">
           <div class="kpi-m">
-            <div class="kpi-m-l">Today P&amp;L</div>
-            <div class="kpi-m-v ${(an2.today.rs??an2.today.pnl)>=0?'sig-green':'sig-red'}" id="ss-today-rs">${fmtRsD2(an2.today.rs??Math.round(an2.today.pnl*QTY_MULT2))}</div>
-            <div class="kpi-m-s" id="ss-today-pts">${an2.today.rs!=null?((an2.today.rs/30)>=0?'+':'')+Math.round(an2.today.rs/30)+' prem pts':fmtPts2(an2.today.pnl)}</div>
+            <div class="kpi-m-l">Futures P&amp;L</div>
+            <div class="kpi-m-v ${pnlCls2(futTodayRsSSR)}" id="ss-today-rs">${fmtFutRsSSR(futTodayRsSSR)}</div>
+            <div class="kpi-m-s" id="ss-today-pts">${fmtFutPtsSSR(futTodayPtsSSR)}</div>
+            <div style="height:1px;background:rgba(255,255,255,.07);margin:7px 0"></div>
+            <div class="kpi-m-l">Options P&amp;L</div>
+            <div class="kpi-m-v" id="ss-opt-today-rs" style="font-size:1rem;color:${optTodayRsSSR >= 0 ? '#10b981' : '#ef4444'}">${fmtOptRsSSR(optTodayRsSSR)}</div>
+            <div class="kpi-m-s" id="ss-opt-today-pts" style="color:${optTodayRsSSR >= 0 ? '#10b981' : '#ef4444'}">${fmtOptPtsSSR(optTodayPtsSSR)}</div>
           </div>
           <div class="kpi-m">
             <div class="kpi-m-l">Trades Today</div>
@@ -10961,24 +11076,117 @@ app.get("/signals", featureGate("feature_signals", "Signals"), async (req, res) 
             <div class="kpi-m-s"><span class="g" id="ss-wins">${an2.today.wins}W</span> / <span class="r" id="ss-losses">${an2.today.losses}L</span></div>
           </div>
         </div>
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:8px">
-          <div class="kpi-m" id="kpi-t1-cell" style="${hb2.t1Entry>0?'':'opacity:.4'}">
-            <div class="kpi-m-l">T1 P&amp;L <span style="font-size:.55rem;font-weight:600;padding:1px 4px;border-radius:3px;background:${(t1Rs2ssr??0)>=0?'rgba(5,150,105,.1)':'rgba(239,68,68,.1)'};color:${(t1Rs2ssr??0)>=0?'#34d399':'#f87171'}">${hb2.t1Entry>0?'REAL':'—'}</span></div>
-            <div class="kpi-m-v ${(t1Rs2ssr??0)>=0?'sig-green':'sig-red'}" id="kpi-t1-rs">${hb2.t1Entry>0?_rsFmt(t1Rs2ssr):'—'}</div>
-            <div class="kpi-m-s" id="kpi-t1-pts">${hb2.t1Entry>0?_ptsFmt(t1PremPts2ssr):'—'}</div>
-          </div>
-          <div class="kpi-m" id="kpi-re-cell" style="${hb2.reEntry>0?'':'opacity:.4'}">
-            <div class="kpi-m-l">RE P&amp;L <span style="font-size:.55rem;font-weight:600;padding:1px 4px;border-radius:3px;background:${(reRs2ssr??0)>=0?'rgba(5,150,105,.1)':'rgba(239,68,68,.1)'};color:${(reRs2ssr??0)>=0?'#34d399':'#f87171'}">${hb2.reEntry>0?'REAL':inREPhase2?'LIVE':'—'}</span></div>
-            <div class="kpi-m-v ${(reRs2ssr??0)>=0?'sig-green':'sig-red'}" id="kpi-re-rs">${hb2.reEntry>0?_rsFmt(reRs2ssr):'—'}</div>
-            <div class="kpi-m-s" id="kpi-re-pts">${hb2.reEntry>0?_ptsFmt(rePremPts2ssr):'—'}</div>
-          </div>
-        </div>
+        <div id="ss-trade-breakdown" style="margin-top:6px;font-size:.65rem;color:#8b949e;line-height:1.7"></div>
+        <div id="ss-options-breakdown" style="margin-top:8px;font-size:.65rem;color:#8b949e;line-height:1.7"></div>
       </div>
 
     </div><!-- /atl-top-grid -->
 
+      <!-- ── Trade History (Daily / Weekly / Monthly) ── -->
+      <div style="display:flex;align-items:center;gap:8px;margin-top:1.5rem;margin-bottom:.6rem;flex-wrap:wrap">
+        <span style="font-size:.72rem;text-transform:uppercase;letter-spacing:1px;color:#8b949e;font-weight:700">Trade History</span>
+        <div style="display:flex;gap:3px;background:rgba(255,255,255,.04);border:1px solid var(--border);border-radius:7px;padding:2px">
+          <button id="real-tab-fut" onclick="_realInst('fut')" style="padding:3px 10px;border-radius:5px;font-size:.68rem;font-weight:700;cursor:pointer;border:none;background:rgba(124,58,237,.25);color:#a78bfa">Futures</button>
+          <button id="real-tab-opt" onclick="_realInst('opt')" style="padding:3px 10px;border-radius:5px;font-size:.68rem;font-weight:700;cursor:pointer;border:none;background:transparent;color:var(--text-muted)">Options</button>
+        </div>
+        <div style="display:flex;gap:4px;margin-left:auto">
+          <button id="th-btn-d" onclick="_thFilter('d')" style="padding:3px 12px;border-radius:5px;font-size:.72rem;font-weight:700;cursor:pointer;border:1px solid #7c3aed;background:rgba(124,58,237,.2);color:#a78bfa">Daily</button>
+          <button id="th-btn-w" onclick="_thFilter('w')" style="padding:3px 12px;border-radius:5px;font-size:.72rem;font-weight:700;cursor:pointer;border:1px solid var(--border);background:transparent;color:var(--text-muted)">Weekly</button>
+          <button id="th-btn-m" onclick="_thFilter('m')" style="padding:3px 12px;border-radius:5px;font-size:.72rem;font-weight:700;cursor:pointer;border:1px solid var(--border);background:transparent;color:var(--text-muted)">Monthly</button>
+          <button id="th-btn-c" onclick="_thFilter('c')" style="padding:3px 12px;border-radius:5px;font-size:.72rem;font-weight:700;cursor:pointer;border:1px solid var(--border);background:transparent;color:var(--text-muted)">Candle Log</button>
+        </div>
+        <span class="sec-count" id="th-count" style="margin:0"></span>
+      </div>
+
+      <!-- DAILY panel (default visible) -->
+      <div id="th-panel-d">
+        <div class="tw"><table class="tt">
+          <thead><tr><th>Time</th><th>Dir</th><th>Side</th><th>Futures</th><th>Premium</th><th>Symbol</th><th>Real P&amp;L</th><th>&#8377; P&amp;L</th><th>Reason</th><th>Dur</th></tr></thead>
+          <tbody id="tt-body-lock50">
+            ${closedTodayFut2.length===0&&!inTrade2
+              ? `<tr><td colspan="10" class="tt-e">No futures trades today</td></tr>`
+              : [...closedTodayFut2].reverse().map(t=>{
+                  const d3=(t.direction||'').toLowerCase();
+                  const pts=t.realPts??0;
+                  const rs=t.realRs??0;
+                  const reason=t.reasonExit||'—';
+                  const rTag=reason.toLowerCase().includes('sl')||reason.toLowerCase().includes('stop')?'rc-sl':reason.toLowerCase().includes('trail')||reason.toLowerCase().includes('early')?'rc-trail':'rc-eod';
+                  const dur=t.duration?(t.duration<60?t.duration+'s':Math.round(t.duration / 60)+'m'):'—';
+                  return `
+                  <tr style="border-bottom:none">
+                    <td class="tc" rowspan="2" style="vertical-align:middle">${fmtTime2(t.date)}</td>
+                    <td rowspan="2" style="vertical-align:middle"><span class="db-badge ${d3}">${t.direction||'—'}</span></td>
+                    <td style="font-size:.65rem;color:#60a5fa;font-weight:700">BUY</td>
+                    <td class="mono">${(t.entryPrice??0)>0?(t.entryPrice??0).toFixed(1):'—'}</td>
+                    <td class="mono" style="color:#94a3b8">—</td>
+                    <td class="tc mono" rowspan="2" style="vertical-align:middle">${t.symbol||'BANKNIFTY FUT'}</td>
+                    <td class="${pts>=0?'g':'r'}" style="font-weight:800" rowspan="2">${pts>=0?'+':''}${pts.toFixed(1)} pts</td>
+                    <td rowspan="2"><span class="pnl-rs ${rs>=0?'g':'r'}">${rs>=0?'+':'&#8722;'}&#8377;${Math.abs(rs).toLocaleString('en-IN')}</span></td>
+                    <td rowspan="2">${reason!='—'?`<span class="rc-b ${rTag}">${reason}</span>`:'—'}</td>
+                    <td class="tc" rowspan="2" style="vertical-align:middle">${dur}</td>
+                  </tr>
+                  <tr>
+                    <td style="font-size:.65rem;color:#fca5a5;font-weight:700">SELL</td>
+                    <td class="mono">${(t.exitPrice??0)>0?(t.exitPrice??0).toFixed(1):'—'}</td>
+                    <td class="mono" style="color:#94a3b8">—</td>
+                  </tr>`;
+                }).join('')
+            }
+          </tbody>
+        </table></div>
+      </div>
+
+      <!-- WEEKLY panel -->
+      <div id="th-panel-w" style="display:none">
+        <div class="tw"><table class="tt">
+          <thead><tr><th>Date</th><th>Dir</th><th>Buy Index</th><th>Sell Index</th><th>Index P&amp;L</th><th>&#8377; P&amp;L</th><th>Reason</th></tr></thead>
+          <tbody id="tt-body-weekly">
+            ${(()=>{
+              const _7d=new Date(); _7d.setDate(_7d.getDate()-7);
+              const wkT=an2.recentTrades.filter(t=>t.date&&new Date(t.date)>=_7d&&(t.exitPrice??0)>0);
+              if(!wkT.length) return '<tr><td colspan="7" class="tt-e">No trades in last 7 days</td></tr>';
+              return wkT.map(t=>{
+                const d3=(t.direction||'').toLowerCase();
+                const pts=t.pnl??0; const rs=Math.round(pts*QTY_MULT2);
+                const reason=t.reasonExit||'—';
+                const rTag=reason.toLowerCase().includes('sl')?'rc-sl':reason.toLowerCase().includes('trail')||reason.toLowerCase().includes('early')?'rc-trail':'rc-eod';
+                return `<tr>
+                  <td class="tc">${t.date?fmtDate2(t.date):'—'}</td>
+                  <td><span class="db-badge ${d3}">${t.direction||'—'}</span></td>
+                  <td class="mono">${(t.entryPrice??0)>0?(t.entryPrice??0).toFixed(1):'—'}</td>
+                  <td class="mono">${(t.exitPrice??0)>0?(t.exitPrice??0).toFixed(1):'—'}</td>
+                  <td class="${pts>=0?'g':'r'}" style="font-weight:800">${pts>=0?'+':''}${pts.toFixed(0)} pts</td>
+                  <td><span class="pnl-rs ${pts>=0?'g':'r'}">${rs>=0?'+':'&#8722;'}&#8377;${Math.abs(rs).toLocaleString('en-IN')}</span></td>
+                  <td>${reason!=='—'?`<span class="rc-b ${rTag}">${reason}</span>`:'—'}</td>
+                </tr>`;
+              }).join('');
+            })()}
+          </tbody>
+        </table></div>
+      </div>
+
+      <!-- MONTHLY panel -->
+      <div id="th-panel-m" style="display:none">
+        <div id="th-yr-bar" style="margin-bottom:.5rem;display:flex;flex-wrap:wrap;gap:0"><button onclick="_thYr(this,'all')" id="th-yr-all" style="padding:.25rem .7rem;font-size:.75rem;cursor:pointer;border:1px solid var(--accent-purple);border-radius:4px 0 0 4px;background:var(--accent-purple);color:#fff">All</button><button onclick="_thYr(this,'2026')" style="padding:.25rem .7rem;font-size:.75rem;cursor:pointer;border:1px solid var(--border);border-radius:0;background:transparent;color:var(--text-muted)">2026</button><button onclick="_thYr(this,'2025')" style="padding:.25rem .7rem;font-size:.75rem;cursor:pointer;border:1px solid var(--border);border-radius:0;background:transparent;color:var(--text-muted)">2025</button><button onclick="_thYr(this,'2024')" style="padding:.25rem .7rem;font-size:.75rem;cursor:pointer;border:1px solid var(--border);border-radius:0;background:transparent;color:var(--text-muted)">2024</button><button onclick="_thYr(this,'2023')" style="padding:.25rem .7rem;font-size:.75rem;cursor:pointer;border:1px solid var(--border);border-radius:0;background:transparent;color:var(--text-muted)">2023</button><button onclick="_thYr(this,'2022')" style="padding:.25rem .7rem;font-size:.75rem;cursor:pointer;border:1px solid var(--border);border-radius:0;background:transparent;color:var(--text-muted)">2022</button><button onclick="_thYr(this,'2021')" style="padding:.25rem .7rem;font-size:.75rem;cursor:pointer;border:1px solid var(--border);border-radius:4px 0 0 4px;background:transparent;color:var(--text-muted)">2021</button></div>
+        <div class="tw"><table class="tt">
+          <thead><tr><th>Month</th><th>Futures</th><th>Options</th><th>Trades</th><th>Days</th><th>Details</th></tr></thead>
+          <tbody id="th-mo-tbody">
+            <tr data-year="2026" data-mo="2026-06" style="cursor:pointer" onclick="_thDrill('2026-06')"><td style="font-weight:600"><span id="th-i-2026-06" style="font-size:.7rem;margin-right:.3rem;transition:transform .2s">&#9658;</span>Jun 2026</td><td class="g" style="font-weight:800">+&#8377;13,846</td><td class="g">+662 pts</td><td>10</td><td><span class="g">2W</span> / <span class="r">0L</span></td><td>100%</td></tr><tr id="th-d-2026-06" style="display:none"><td colspan="6" style="padding:0"></td></tr><tr data-year="2026" data-mo="2026-05" style="cursor:pointer" onclick="_thDrill('2026-05')"><td style="font-weight:600"><span id="th-i-2026-05" style="font-size:.7rem;margin-right:.3rem;transition:transform .2s">&#9658;</span>May 2026</td><td class="g" style="font-weight:800">+&#8377;108,188</td><td class="g">+4862 pts</td><td>80</td><td><span class="g">15W</span> / <span class="r">1L</span></td><td>94%</td></tr><tr id="th-d-2026-05" style="display:none"><td colspan="6" style="padding:0"></td></tr><tr data-year="2026" data-mo="2026-04" style="cursor:pointer" onclick="_thDrill('2026-04')"><td style="font-weight:600"><span id="th-i-2026-04" style="font-size:.7rem;margin-right:.3rem;transition:transform .2s">&#9658;</span>Apr 2026</td><td class="g" style="font-weight:800">+&#8377;100,783</td><td class="g">+4554 pts</td><td>76</td><td><span class="g">16W</span> / <span class="r">0L</span></td><td>100%</td></tr><tr id="th-d-2026-04" style="display:none"><td colspan="6" style="padding:0"></td></tr><tr data-year="2026" data-mo="2026-03" style="cursor:pointer" onclick="_thDrill('2026-03')"><td style="font-weight:600"><span id="th-i-2026-03" style="font-size:.7rem;margin-right:.3rem;transition:transform .2s">&#9658;</span>Mar 2026</td><td class="g" style="font-weight:800">+&#8377;140,935</td><td class="g">+5802 pts</td><td>70</td><td><span class="g">13W</span> / <span class="r">1L</span></td><td>93%</td></tr><tr id="th-d-2026-03" style="display:none"><td colspan="6" style="padding:0"></td></tr><tr data-year="2026" data-mo="2026-02" style="cursor:pointer" onclick="_thDrill('2026-02')"><td style="font-weight:600"><span id="th-i-2026-02" style="font-size:.7rem;margin-right:.3rem;transition:transform .2s">&#9658;</span>Feb 2026</td><td class="g" style="font-weight:800">+&#8377;93,165</td><td class="g">+4557 pts</td><td>93</td><td><span class="g">16W</span> / <span class="r">4L</span></td><td>80%</td></tr><tr id="th-d-2026-02" style="display:none"><td colspan="6" style="padding:0"></td></tr><tr data-year="2026" data-mo="2026-01" style="cursor:pointer" onclick="_thDrill('2026-01')"><td style="font-weight:600"><span id="th-i-2026-01" style="font-size:.7rem;margin-right:.3rem;transition:transform .2s">&#9658;</span>Jan 2026</td><td class="g" style="font-weight:800">+&#8377;107,454</td><td class="g">+4897 pts</td><td>84</td><td><span class="g">15W</span> / <span class="r">2L</span></td><td>88%</td></tr><tr id="th-d-2026-01" style="display:none"><td colspan="6" style="padding:0"></td></tr><tr data-year="2025" data-mo="2025-12" style="cursor:pointer" onclick="_thDrill('2025-12')"><td style="font-weight:600"><span id="th-i-2025-12" style="font-size:.7rem;margin-right:.3rem;transition:transform .2s">&#9658;</span>Dec 2025</td><td class="g" style="font-weight:800">+&#8377;56,139</td><td class="g">+3458 pts</td><td>102</td><td><span class="g">16W</span> / <span class="r">5L</span></td><td>76%</td></tr><tr id="th-d-2025-12" style="display:none"><td colspan="6" style="padding:0"></td></tr><tr data-year="2025" data-mo="2025-11" style="cursor:pointer" onclick="_thDrill('2025-11')"><td style="font-weight:600"><span id="th-i-2025-11" style="font-size:.7rem;margin-right:.3rem;transition:transform .2s">&#9658;</span>Nov 2025</td><td class="g" style="font-weight:800">+&#8377;60,440</td><td class="g">+3406 pts</td><td>89</td><td><span class="g">17W</span> / <span class="r">1L</span></td><td>94%</td></tr><tr id="th-d-2025-11" style="display:none"><td colspan="6" style="padding:0"></td></tr><tr data-year="2025" data-mo="2025-10" style="cursor:pointer" onclick="_thDrill('2025-10')"><td style="font-weight:600"><span id="th-i-2025-10" style="font-size:.7rem;margin-right:.3rem;transition:transform .2s">&#9658;</span>Oct 2025</td><td class="g" style="font-weight:800">+&#8377;65,957</td><td class="g">+3680 pts</td><td>95</td><td><span class="g">15W</span> / <span class="r">4L</span></td><td>79%</td></tr><tr id="th-d-2025-10" style="display:none"><td colspan="6" style="padding:0"></td></tr><tr data-year="2025" data-mo="2025-09" style="cursor:pointer" onclick="_thDrill('2025-09')"><td style="font-weight:600"><span id="th-i-2025-09" style="font-size:.7rem;margin-right:.3rem;transition:transform .2s">&#9658;</span>Sep 2025</td><td class="g" style="font-weight:800">+&#8377;62,662</td><td class="g">+3781 pts</td><td>109</td><td><span class="g">18W</span> / <span class="r">4L</span></td><td>82%</td></tr><tr id="th-d-2025-09" style="display:none"><td colspan="6" style="padding:0"></td></tr><tr data-year="2025" data-mo="2025-08" style="cursor:pointer" onclick="_thDrill('2025-08')"><td style="font-weight:600"><span id="th-i-2025-08" style="font-size:.7rem;margin-right:.3rem;transition:transform .2s">&#9658;</span>Aug 2025</td><td class="g" style="font-weight:800">+&#8377;61,305</td><td class="g">+3450 pts</td><td>90</td><td><span class="g">16W</span> / <span class="r">2L</span></td><td>89%</td></tr><tr id="th-d-2025-08" style="display:none"><td colspan="6" style="padding:0"></td></tr><tr data-year="2025" data-mo="2025-07" style="cursor:pointer" onclick="_thDrill('2025-07')"><td style="font-weight:600"><span id="th-i-2025-07" style="font-size:.7rem;margin-right:.3rem;transition:transform .2s">&#9658;</span>Jul 2025</td><td class="g" style="font-weight:800">+&#8377;87,887</td><td class="g">+4637 pts</td><td>110</td><td><span class="g">21W</span> / <span class="r">1L</span></td><td>95%</td></tr><tr id="th-d-2025-07" style="display:none"><td colspan="6" style="padding:0"></td></tr><tr data-year="2025" data-mo="2025-06" style="cursor:pointer" onclick="_thDrill('2025-06')"><td style="font-weight:600"><span id="th-i-2025-06" style="font-size:.7rem;margin-right:.3rem;transition:transform .2s">&#9658;</span>Jun 2025</td><td class="g" style="font-weight:800">+&#8377;81,894</td><td class="g">+4226 pts</td><td>96</td><td><span class="g">20W</span> / <span class="r">1L</span></td><td>95%</td></tr><tr id="th-d-2025-06" style="display:none"><td colspan="6" style="padding:0"></td></tr><tr data-year="2025" data-mo="2025-05" style="cursor:pointer" onclick="_thDrill('2025-05')"><td style="font-weight:600"><span id="th-i-2025-05" style="font-size:.7rem;margin-right:.3rem;transition:transform .2s">&#9658;</span>May 2025</td><td class="g" style="font-weight:800">+&#8377;107,910</td><td class="g">+5093 pts</td><td>96</td><td><span class="g">18W</span> / <span class="r">2L</span></td><td>90%</td></tr><tr id="th-d-2025-05" style="display:none"><td colspan="6" style="padding:0"></td></tr><tr data-year="2025" data-mo="2025-04" style="cursor:pointer" onclick="_thDrill('2025-04')"><td style="font-weight:600"><span id="th-i-2025-04" style="font-size:.7rem;margin-right:.3rem;transition:transform .2s">&#9658;</span>Apr 2025</td><td class="g" style="font-weight:800">+&#8377;101,582</td><td class="g">+4777 pts</td><td>89</td><td><span class="g">15W</span> / <span class="r">3L</span></td><td>83%</td></tr><tr id="th-d-2025-04" style="display:none"><td colspan="6" style="padding:0"></td></tr><tr data-year="2025" data-mo="2025-03" style="cursor:pointer" onclick="_thDrill('2025-03')"><td style="font-weight:600"><span id="th-i-2025-03" style="font-size:.7rem;margin-right:.3rem;transition:transform .2s">&#9658;</span>Mar 2025</td><td class="g" style="font-weight:800">+&#8377;64,870</td><td class="g">+3629 pts</td><td>94</td><td><span class="g">18W</span> / <span class="r">1L</span></td><td>95%</td></tr><tr id="th-d-2025-03" style="display:none"><td colspan="6" style="padding:0"></td></tr><tr data-year="2025" data-mo="2025-02" style="cursor:pointer" onclick="_thDrill('2025-02')"><td style="font-weight:600"><span id="th-i-2025-02" style="font-size:.7rem;margin-right:.3rem;transition:transform .2s">&#9658;</span>Feb 2025</td><td class="g" style="font-weight:800">+&#8377;122,801</td><td class="g">+5484 pts</td><td>89</td><td><span class="g">17W</span> / <span class="r">1L</span></td><td>94%</td></tr><tr id="th-d-2025-02" style="display:none"><td colspan="6" style="padding:0"></td></tr><tr data-year="2025" data-mo="2025-01" style="cursor:pointer" onclick="_thDrill('2025-01')"><td style="font-weight:600"><span id="th-i-2025-01" style="font-size:.7rem;margin-right:.3rem;transition:transform .2s">&#9658;</span>Jan 2025</td><td class="g" style="font-weight:800">+&#8377;147,920</td><td class="g">+6638 pts</td><td>110</td><td><span class="g">19W</span> / <span class="r">3L</span></td><td>86%</td></tr><tr id="th-d-2025-01" style="display:none"><td colspan="6" style="padding:0"></td></tr><tr data-year="2024" data-mo="2024-12" style="cursor:pointer" onclick="_thDrill('2024-12')"><td style="font-weight:600"><span id="th-i-2024-12" style="font-size:.7rem;margin-right:.3rem;transition:transform .2s">&#9658;</span>Dec 2024</td><td class="g" style="font-weight:800">+&#8377;98,175</td><td class="g">+4724 pts</td><td>93</td><td><span class="g">16W</span> / <span class="r">3L</span></td><td>84%</td></tr><tr id="th-d-2024-12" style="display:none"><td colspan="6" style="padding:0"></td></tr><tr data-year="2024" data-mo="2024-11" style="cursor:pointer" onclick="_thDrill('2024-11')"><td style="font-weight:600"><span id="th-i-2024-11" style="font-size:.7rem;margin-right:.3rem;transition:transform .2s">&#9658;</span>Nov 2024</td><td class="g" style="font-weight:800">+&#8377;90,685</td><td class="g">+4354 pts</td><td>85</td><td><span class="g">15W</span> / <span class="r">2L</span></td><td>88%</td></tr><tr id="th-d-2024-11" style="display:none"><td colspan="6" style="padding:0"></td></tr><tr data-year="2024" data-mo="2024-10" style="cursor:pointer" onclick="_thDrill('2024-10')"><td style="font-weight:600"><span id="th-i-2024-10" style="font-size:.7rem;margin-right:.3rem;transition:transform .2s">&#9658;</span>Oct 2024</td><td class="g" style="font-weight:800">+&#8377;193,175</td><td class="g">+8146 pts</td><td>110</td><td><span class="g">22W</span> / <span class="r">0L</span></td><td>100%</td></tr><tr id="th-d-2024-10" style="display:none"><td colspan="6" style="padding:0"></td></tr><tr data-year="2024" data-mo="2024-09" style="cursor:pointer" onclick="_thDrill('2024-09')"><td style="font-weight:600"><span id="th-i-2024-09" style="font-size:.7rem;margin-right:.3rem;transition:transform .2s">&#9658;</span>Sep 2024</td><td class="g" style="font-weight:800">+&#8377;44,725</td><td class="g">+2957 pts</td><td>94</td><td><span class="g">14W</span> / <span class="r">6L</span></td><td>70%</td></tr><tr id="th-d-2024-09" style="display:none"><td colspan="6" style="padding:0"></td></tr><tr data-year="2024" data-mo="2024-08" style="cursor:pointer" onclick="_thDrill('2024-08')"><td style="font-weight:600"><span id="th-i-2024-08" style="font-size:.7rem;margin-right:.3rem;transition:transform .2s">&#9658;</span>Aug 2024</td><td class="g" style="font-weight:800">+&#8377;102,460</td><td class="g">+4927 pts</td><td>97</td><td><span class="g">15W</span> / <span class="r">5L</span></td><td>75%</td></tr><tr id="th-d-2024-08" style="display:none"><td colspan="6" style="padding:0"></td></tr><tr data-year="2024" data-mo="2024-07" style="cursor:pointer" onclick="_thDrill('2024-07')"><td style="font-weight:600"><span id="th-i-2024-07" style="font-size:.7rem;margin-right:.3rem;transition:transform .2s">&#9658;</span>Jul 2024</td><td class="g" style="font-weight:800">+&#8377;143,105</td><td class="g">+6116 pts</td><td>86</td><td><span class="g">16W</span> / <span class="r">2L</span></td><td>89%</td></tr><tr id="th-d-2024-07" style="display:none"><td colspan="6" style="padding:0"></td></tr><tr data-year="2024" data-mo="2024-06" style="cursor:pointer" onclick="_thDrill('2024-06')"><td style="font-weight:600"><span id="th-i-2024-06" style="font-size:.7rem;margin-right:.3rem;transition:transform .2s">&#9658;</span>Jun 2024</td><td class="g" style="font-weight:800">+&#8377;160,229</td><td class="g">+6822 pts</td><td>95</td><td><span class="g">15W</span> / <span class="r">4L</span></td><td>79%</td></tr><tr id="th-d-2024-06" style="display:none"><td colspan="6" style="padding:0"></td></tr><tr data-year="2024" data-mo="2024-05" style="cursor:pointer" onclick="_thDrill('2024-05')"><td style="font-weight:600"><span id="th-i-2024-05" style="font-size:.7rem;margin-right:.3rem;transition:transform .2s">&#9658;</span>May 2024</td><td class="g" style="font-weight:800">+&#8377;78,298</td><td class="g">+4167 pts</td><td>100</td><td><span class="g">18W</span> / <span class="r">3L</span></td><td>86%</td></tr><tr id="th-d-2024-05" style="display:none"><td colspan="6" style="padding:0"></td></tr><tr data-year="2024" data-mo="2024-04" style="cursor:pointer" onclick="_thDrill('2024-04')"><td style="font-weight:600"><span id="th-i-2024-04" style="font-size:.7rem;margin-right:.3rem;transition:transform .2s">&#9658;</span>Apr 2024</td><td class="g" style="font-weight:800">+&#8377;39,149</td><td class="g">+2651 pts</td><td>86</td><td><span class="g">11W</span> / <span class="r">7L</span></td><td>61%</td></tr><tr id="th-d-2024-04" style="display:none"><td colspan="6" style="padding:0"></td></tr><tr data-year="2024" data-mo="2024-03" style="cursor:pointer" onclick="_thDrill('2024-03')"><td style="font-weight:600"><span id="th-i-2024-03" style="font-size:.7rem;margin-right:.3rem;transition:transform .2s">&#9658;</span>Mar 2024</td><td class="g" style="font-weight:800">+&#8377;80,915</td><td class="g">+4043 pts</td><td>86</td><td><span class="g">17W</span> / <span class="r">1L</span></td><td>94%</td></tr><tr id="th-d-2024-03" style="display:none"><td colspan="6" style="padding:0"></td></tr><tr data-year="2024" data-mo="2024-02" style="cursor:pointer" onclick="_thDrill('2024-02')"><td style="font-weight:600"><span id="th-i-2024-02" style="font-size:.7rem;margin-right:.3rem;transition:transform .2s">&#9658;</span>Feb 2024</td><td class="g" style="font-weight:800">+&#8377;155,904</td><td class="g">+6738 pts</td><td>99</td><td><span class="g">17W</span> / <span class="r">3L</span></td><td>85%</td></tr><tr id="th-d-2024-02" style="display:none"><td colspan="6" style="padding:0"></td></tr><tr data-year="2024" data-mo="2024-01" style="cursor:pointer" onclick="_thDrill('2024-01')"><td style="font-weight:600"><span id="th-i-2024-01" style="font-size:.7rem;margin-right:.3rem;transition:transform .2s">&#9658;</span>Jan 2024</td><td class="g" style="font-weight:800">+&#8377;90,010</td><td class="g">+4602 pts</td><td>103</td><td><span class="g">16W</span> / <span class="r">5L</span></td><td>76%</td></tr><tr id="th-d-2024-01" style="display:none"><td colspan="6" style="padding:0"></td></tr><tr data-year="2023" data-mo="2023-12" style="cursor:pointer" onclick="_thDrill('2023-12')"><td style="font-weight:600"><span id="th-i-2023-12" style="font-size:.7rem;margin-right:.3rem;transition:transform .2s">&#9658;</span>Dec 2023</td><td class="g" style="font-weight:800">+&#8377;74,741</td><td class="g">+3973 pts</td><td>95</td><td><span class="g">14W</span> / <span class="r">5L</span></td><td>74%</td></tr><tr id="th-d-2023-12" style="display:none"><td colspan="6" style="padding:0"></td></tr><tr data-year="2023" data-mo="2023-11" style="cursor:pointer" onclick="_thDrill('2023-11')"><td style="font-weight:600"><span id="th-i-2023-11" style="font-size:.7rem;margin-right:.3rem;transition:transform .2s">&#9658;</span>Nov 2023</td><td class="g" style="font-weight:800">+&#8377;30,504</td><td class="g">+2332 pts</td><td>84</td><td><span class="g">14W</span> / <span class="r">5L</span></td><td>74%</td></tr><tr id="th-d-2023-11" style="display:none"><td colspan="6" style="padding:0"></td></tr><tr data-year="2023" data-mo="2023-10" style="cursor:pointer" onclick="_thDrill('2023-10')"><td style="font-weight:600"><span id="th-i-2023-10" style="font-size:.7rem;margin-right:.3rem;transition:transform .2s">&#9658;</span>Oct 2023</td><td class="g" style="font-weight:800">+&#8377;58,276</td><td class="g">+3273 pts</td><td>85</td><td><span class="g">15W</span> / <span class="r">3L</span></td><td>83%</td></tr><tr id="th-d-2023-10" style="display:none"><td colspan="6" style="padding:0"></td></tr><tr data-year="2023" data-mo="2023-09" style="cursor:pointer" onclick="_thDrill('2023-09')"><td style="font-weight:600"><span id="th-i-2023-09" style="font-size:.7rem;margin-right:.3rem;transition:transform .2s">&#9658;</span>Sep 2023</td><td class="g" style="font-weight:800">+&#8377;75,670</td><td class="g">+3989 pts</td><td>94</td><td><span class="g">16W</span> / <span class="r">3L</span></td><td>84%</td></tr><tr id="th-d-2023-09" style="display:none"><td colspan="6" style="padding:0"></td></tr><tr data-year="2023" data-mo="2023-08" style="cursor:pointer" onclick="_thDrill('2023-08')"><td style="font-weight:600"><span id="th-i-2023-08" style="font-size:.7rem;margin-right:.3rem;transition:transform .2s">&#9658;</span>Aug 2023</td><td class="g" style="font-weight:800">+&#8377;33,227</td><td class="g">+2589 pts</td><td>95</td><td><span class="g">14W</span> / <span class="r">6L</span></td><td>70%</td></tr><tr id="th-d-2023-08" style="display:none"><td colspan="6" style="padding:0"></td></tr><tr data-year="2023" data-mo="2023-07" style="cursor:pointer" onclick="_thDrill('2023-07')"><td style="font-weight:600"><span id="th-i-2023-07" style="font-size:.7rem;margin-right:.3rem;transition:transform .2s">&#9658;</span>Jul 2023</td><td class="g" style="font-weight:800">+&#8377;43,817</td><td class="g">+2987 pts</td><td>98</td><td><span class="g">15W</span> / <span class="r">5L</span></td><td>75%</td></tr><tr id="th-d-2023-07" style="display:none"><td colspan="6" style="padding:0"></td></tr><tr data-year="2023" data-mo="2023-06" style="cursor:pointer" onclick="_thDrill('2023-06')"><td style="font-weight:600"><span id="th-i-2023-06" style="font-size:.7rem;margin-right:.3rem;transition:transform .2s">&#9658;</span>Jun 2023</td><td class="g" style="font-weight:800">+&#8377;11,592</td><td class="g">+1883 pts</td><td>96</td><td><span class="g">13W</span> / <span class="r">7L</span></td><td>65%</td></tr><tr id="th-d-2023-06" style="display:none"><td colspan="6" style="padding:0"></td></tr><tr data-year="2023" data-mo="2023-05" style="cursor:pointer" onclick="_thDrill('2023-05')"><td style="font-weight:600"><span id="th-i-2023-05" style="font-size:.7rem;margin-right:.3rem;transition:transform .2s">&#9658;</span>May 2023</td><td class="g" style="font-weight:800">+&#8377;48,584</td><td class="g">+3236 pts</td><td>104</td><td><span class="g">16W</span> / <span class="r">5L</span></td><td>76%</td></tr><tr id="th-d-2023-05" style="display:none"><td colspan="6" style="padding:0"></td></tr><tr data-year="2023" data-mo="2023-04" style="cursor:pointer" onclick="_thDrill('2023-04')"><td style="font-weight:600"><span id="th-i-2023-04" style="font-size:.7rem;margin-right:.3rem;transition:transform .2s">&#9658;</span>Apr 2023</td><td class="g" style="font-weight:800">+&#8377;7,154</td><td class="g">+1403 pts</td><td>74</td><td><span class="g">10W</span> / <span class="r">6L</span></td><td>62%</td></tr><tr id="th-d-2023-04" style="display:none"><td colspan="6" style="padding:0"></td></tr><tr data-year="2023" data-mo="2023-03" style="cursor:pointer" onclick="_thDrill('2023-03')"><td style="font-weight:600"><span id="th-i-2023-03" style="font-size:.7rem;margin-right:.3rem;transition:transform .2s">&#9658;</span>Mar 2023</td><td class="g" style="font-weight:800">+&#8377;101,827</td><td class="g">+4860 pts</td><td>94</td><td><span class="g">18W</span> / <span class="r">1L</span></td><td>95%</td></tr><tr id="th-d-2023-03" style="display:none"><td colspan="6" style="padding:0"></td></tr><tr data-year="2023" data-mo="2023-02" style="cursor:pointer" onclick="_thDrill('2023-02')"><td style="font-weight:600"><span id="th-i-2023-02" style="font-size:.7rem;margin-right:.3rem;transition:transform .2s">&#9658;</span>Feb 2023</td><td class="g" style="font-weight:800">+&#8377;90,875</td><td class="g">+4510 pts</td><td>95</td><td><span class="g">16W</span> / <span class="r">3L</span></td><td>84%</td></tr><tr id="th-d-2023-02" style="display:none"><td colspan="6" style="padding:0"></td></tr><tr data-year="2023" data-mo="2023-01" style="cursor:pointer" onclick="_thDrill('2023-01')"><td style="font-weight:600"><span id="th-i-2023-01" style="font-size:.7rem;margin-right:.3rem;transition:transform .2s">&#9658;</span>Jan 2023</td><td class="g" style="font-weight:800">+&#8377;90,291</td><td class="g">+4642 pts</td><td>105</td><td><span class="g">18W</span> / <span class="r">3L</span></td><td>86%</td></tr><tr id="th-d-2023-01" style="display:none"><td colspan="6" style="padding:0"></td></tr><tr data-year="2022" data-mo="2022-12" style="cursor:pointer" onclick="_thDrill('2022-12')"><td style="font-weight:600"><span id="th-i-2022-12" style="font-size:.7rem;margin-right:.3rem;transition:transform .2s">&#9658;</span>Dec 2022</td><td class="g" style="font-weight:800">+&#8377;37,437</td><td class="g">+2880 pts</td><td>105</td><td><span class="g">14W</span> / <span class="r">7L</span></td><td>67%</td></tr><tr id="th-d-2022-12" style="display:none"><td colspan="6" style="padding:0"></td></tr><tr data-year="2022" data-mo="2022-11" style="cursor:pointer" onclick="_thDrill('2022-11')"><td style="font-weight:600"><span id="th-i-2022-11" style="font-size:.7rem;margin-right:.3rem;transition:transform .2s">&#9658;</span>Nov 2022</td><td class="r" style="font-weight:800">&#8722;&#8377;3,995</td><td class="r">+1378 pts</td><td>97</td><td><span class="g">11W</span> / <span class="r">10L</span></td><td>52%</td></tr><tr id="th-d-2022-11" style="display:none"><td colspan="6" style="padding:0"></td></tr><tr data-year="2022" data-mo="2022-10" style="cursor:pointer" onclick="_thDrill('2022-10')"><td style="font-weight:600"><span id="th-i-2022-10" style="font-size:.7rem;margin-right:.3rem;transition:transform .2s">&#9658;</span>Oct 2022</td><td class="g" style="font-weight:800">+&#8377;50,928</td><td class="g">+2878 pts</td><td>75</td><td><span class="g">11W</span> / <span class="r">4L</span></td><td>73%</td></tr><tr id="th-d-2022-10" style="display:none"><td colspan="6" style="padding:0"></td></tr><tr data-year="2022" data-mo="2022-09" style="cursor:pointer" onclick="_thDrill('2022-09')"><td style="font-weight:600"><span id="th-i-2022-09" style="font-size:.7rem;margin-right:.3rem;transition:transform .2s">&#9658;</span>Sep 2022</td><td class="g" style="font-weight:800">+&#8377;99,656</td><td class="g">+4939 pts</td><td>104</td><td><span class="g">16W</span> / <span class="r">5L</span></td><td>76%</td></tr><tr id="th-d-2022-09" style="display:none"><td colspan="6" style="padding:0"></td></tr><tr data-year="2022" data-mo="2022-08" style="cursor:pointer" onclick="_thDrill('2022-08')"><td style="font-weight:600"><span id="th-i-2022-08" style="font-size:.7rem;margin-right:.3rem;transition:transform .2s">&#9658;</span>Aug 2022</td><td class="g" style="font-weight:800">+&#8377;51,787</td><td class="g">+3238 pts</td><td>97</td><td><span class="g">13W</span> / <span class="r">7L</span></td><td>65%</td></tr><tr id="th-d-2022-08" style="display:none"><td colspan="6" style="padding:0"></td></tr><tr data-year="2022" data-mo="2022-07" style="cursor:pointer" onclick="_thDrill('2022-07')"><td style="font-weight:600"><span id="th-i-2022-07" style="font-size:.7rem;margin-right:.3rem;transition:transform .2s">&#9658;</span>Jul 2022</td><td class="g" style="font-weight:800">+&#8377;47,525</td><td class="g">+3201 pts</td><td>104</td><td><span class="g">17W</span> / <span class="r">4L</span></td><td>81%</td></tr><tr id="th-d-2022-07" style="display:none"><td colspan="6" style="padding:0"></td></tr><tr data-year="2022" data-mo="2022-06" style="cursor:pointer" onclick="_thDrill('2022-06')"><td style="font-weight:600"><span id="th-i-2022-06" style="font-size:.7rem;margin-right:.3rem;transition:transform .2s">&#9658;</span>Jun 2022</td><td class="g" style="font-weight:800">+&#8377;63,054</td><td class="g">+3553 pts</td><td>93</td><td><span class="g">15W</span> / <span class="r">4L</span></td><td>79%</td></tr><tr id="th-d-2022-06" style="display:none"><td colspan="6" style="padding:0"></td></tr><tr data-year="2022" data-mo="2022-05" style="cursor:pointer" onclick="_thDrill('2022-05')"><td style="font-weight:600"><span id="th-i-2022-05" style="font-size:.7rem;margin-right:.3rem;transition:transform .2s">&#9658;</span>May 2022</td><td class="g" style="font-weight:800">+&#8377;82,998</td><td class="g">+4308 pts</td><td>99</td><td><span class="g">15W</span> / <span class="r">5L</span></td><td>75%</td></tr><tr id="th-d-2022-05" style="display:none"><td colspan="6" style="padding:0"></td></tr><tr data-year="2022" data-mo="2022-04" style="cursor:pointer" onclick="_thDrill('2022-04')"><td style="font-weight:600"><span id="th-i-2022-04" style="font-size:.7rem;margin-right:.3rem;transition:transform .2s">&#9658;</span>Apr 2022</td><td class="g" style="font-weight:800">+&#8377;107,179</td><td class="g">+4903 pts</td><td>85</td><td><span class="g">16W</span> / <span class="r">1L</span></td><td>94%</td></tr><tr id="th-d-2022-04" style="display:none"><td colspan="6" style="padding:0"></td></tr><tr data-year="2022" data-mo="2022-03" style="cursor:pointer" onclick="_thDrill('2022-03')"><td style="font-weight:600"><span id="th-i-2022-03" style="font-size:.7rem;margin-right:.3rem;transition:transform .2s">&#9658;</span>Mar 2022</td><td class="g" style="font-weight:800">+&#8377;137,057</td><td class="g">+6050 pts</td><td>95</td><td><span class="g">17W</span> / <span class="r">2L</span></td><td>89%</td></tr><tr id="th-d-2022-03" style="display:none"><td colspan="6" style="padding:0"></td></tr><tr data-year="2022" data-mo="2022-02" style="cursor:pointer" onclick="_thDrill('2022-02')"><td style="font-weight:600"><span id="th-i-2022-02" style="font-size:.7rem;margin-right:.3rem;transition:transform .2s">&#9658;</span>Feb 2022</td><td class="g" style="font-weight:800">+&#8377;155,502</td><td class="g">+6589 pts</td><td>90</td><td><span class="g">17W</span> / <span class="r">1L</span></td><td>94%</td></tr><tr id="th-d-2022-02" style="display:none"><td colspan="6" style="padding:0"></td></tr><tr data-year="2022" data-mo="2022-01" style="cursor:pointer" onclick="_thDrill('2022-01')"><td style="font-weight:600"><span id="th-i-2022-01" style="font-size:.7rem;margin-right:.3rem;transition:transform .2s">&#9658;</span>Jan 2022</td><td class="g" style="font-weight:800">+&#8377;80,366</td><td class="g">+4205 pts</td><td>98</td><td><span class="g">14W</span> / <span class="r">6L</span></td><td>70%</td></tr><tr id="th-d-2022-01" style="display:none"><td colspan="6" style="padding:0"></td></tr><tr data-year="2021" data-mo="2021-12" style="cursor:pointer" onclick="_thDrill('2021-12')"><td style="font-weight:600"><span id="th-i-2021-12" style="font-size:.7rem;margin-right:.3rem;transition:transform .2s">&#9658;</span>Dec 2021</td><td class="g" style="font-weight:800">+&#8377;112,382</td><td class="g">+5453 pts</td><td>110</td><td><span class="g">20W</span> / <span class="r">2L</span></td><td>91%</td></tr><tr id="th-d-2021-12" style="display:none"><td colspan="6" style="padding:0"></td></tr><tr data-year="2021" data-mo="2021-11" style="cursor:pointer" onclick="_thDrill('2021-11')"><td style="font-weight:600"><span id="th-i-2021-11" style="font-size:.7rem;margin-right:.3rem;transition:transform .2s">&#9658;</span>Nov 2021</td><td class="g" style="font-weight:800">+&#8377;131,413</td><td class="g">+5711 pts</td><td>85</td><td><span class="g">16W</span> / <span class="r">1L</span></td><td>94%</td></tr><tr id="th-d-2021-11" style="display:none"><td colspan="6" style="padding:0"></td></tr><tr data-year="2021" data-mo="2021-10" style="cursor:pointer" onclick="_thDrill('2021-10')"><td style="font-weight:600"><span id="th-i-2021-10" style="font-size:.7rem;margin-right:.3rem;transition:transform .2s">&#9658;</span>Oct 2021</td><td class="g" style="font-weight:800">+&#8377;109,523</td><td class="g">+5132 pts</td><td>95</td><td><span class="g">18W</span> / <span class="r">1L</span></td><td>95%</td></tr><tr id="th-d-2021-10" style="display:none"><td colspan="6" style="padding:0"></td></tr><tr data-year="2021" data-mo="2021-09" style="cursor:pointer" onclick="_thDrill('2021-09')"><td style="font-weight:600"><span id="th-i-2021-09" style="font-size:.7rem;margin-right:.3rem;transition:transform .2s">&#9658;</span>Sep 2021</td><td class="g" style="font-weight:800">+&#8377;57,200</td><td class="g">+3388 pts</td><td>95</td><td><span class="g">13W</span> / <span class="r">7L</span></td><td>65%</td></tr><tr id="th-d-2021-09" style="display:none"><td colspan="6" style="padding:0"></td></tr><tr data-year="2021" data-mo="2021-08" style="cursor:pointer" onclick="_thDrill('2021-08')"><td style="font-weight:600"><span id="th-i-2021-08" style="font-size:.7rem;margin-right:.3rem;transition:transform .2s">&#9658;</span>Aug 2021</td><td class="g" style="font-weight:800">+&#8377;52,617</td><td class="g">+3250 pts</td><td>96</td><td><span class="g">17W</span> / <span class="r">3L</span></td><td>85%</td></tr><tr id="th-d-2021-08" style="display:none"><td colspan="6" style="padding:0"></td></tr><tr data-year="2021" data-mo="2021-07" style="cursor:pointer" onclick="_thDrill('2021-07')"><td style="font-weight:600"><span id="th-i-2021-07" style="font-size:.7rem;margin-right:.3rem;transition:transform .2s">&#9658;</span>Jul 2021</td><td class="g" style="font-weight:800">+&#8377;42,387</td><td class="g">+2954 pts</td><td>99</td><td><span class="g">16W</span> / <span class="r">4L</span></td><td>80%</td></tr><tr id="th-d-2021-07" style="display:none"><td colspan="6" style="padding:0"></td></tr><tr data-year="2021" data-mo="2021-06" style="cursor:pointer" onclick="_thDrill('2021-06')"><td style="font-weight:600"><span id="th-i-2021-06" style="font-size:.7rem;margin-right:.3rem;transition:transform .2s">&#9658;</span>Jun 2021</td><td class="g" style="font-weight:800">+&#8377;67,142</td><td class="g">+3945 pts</td><td>110</td><td><span class="g">18W</span> / <span class="r">4L</span></td><td>82%</td></tr><tr id="th-d-2021-06" style="display:none"><td colspan="6" style="padding:0"></td></tr><tr data-year="2021" data-mo="2021-05" style="cursor:pointer" onclick="_thDrill('2021-05')"><td style="font-weight:600"><span id="th-i-2021-05" style="font-size:.7rem;margin-right:.3rem;transition:transform .2s">&#9658;</span>May 2021</td><td class="g" style="font-weight:800">+&#8377;113,368</td><td class="g">+5336 pts</td><td>100</td><td><span class="g">18W</span> / <span class="r">2L</span></td><td>90%</td></tr><tr id="th-d-2021-05" style="display:none"><td colspan="6" style="padding:0"></td></tr><tr data-year="2021" data-mo="2021-04" style="cursor:pointer" onclick="_thDrill('2021-04')"><td style="font-weight:600"><span id="th-i-2021-04" style="font-size:.7rem;margin-right:.3rem;transition:transform .2s">&#9658;</span>Apr 2021</td><td class="g" style="font-weight:800">+&#8377;124,411</td><td class="g">+5478 pts</td><td>85</td><td><span class="g">17W</span> / <span class="r">0L</span></td><td>100%</td></tr><tr id="th-d-2021-04" style="display:none"><td colspan="6" style="padding:0"></td></tr><tr data-year="2021" data-mo="2021-03" style="cursor:pointer" onclick="_thDrill('2021-03')"><td style="font-weight:600"><span id="th-i-2021-03" style="font-size:.7rem;margin-right:.3rem;transition:transform .2s">&#9658;</span>Mar 2021</td><td class="g" style="font-weight:800">+&#8377;203,377</td><td class="g">+8336 pts</td><td>100</td><td><span class="g">20W</span> / <span class="r">0L</span></td><td>100%</td></tr><tr id="th-d-2021-03" style="display:none"><td colspan="6" style="padding:0"></td></tr><tr data-year="2021" data-mo="2021-02" style="cursor:pointer" onclick="_thDrill('2021-02')"><td style="font-weight:600"><span id="th-i-2021-02" style="font-size:.7rem;margin-right:.3rem;transition:transform .2s">&#9658;</span>Feb 2021</td><td class="g" style="font-weight:800">+&#8377;149,142</td><td class="g">+6423 pts</td><td>93</td><td><span class="g">17W</span> / <span class="r">2L</span></td><td>89%</td></tr><tr id="th-d-2021-02" style="display:none"><td colspan="6" style="padding:0"></td></tr><tr data-year="2021" data-mo="2021-01" style="cursor:pointer" onclick="_thDrill('2021-01')"><td style="font-weight:600"><span id="th-i-2021-01" style="font-size:.7rem;margin-right:.3rem;transition:transform .2s">&#9658;</span>Jan 2021</td><td class="g" style="font-weight:800">+&#8377;87,462</td><td class="g">+4367 pts</td><td>93</td><td><span class="g">16W</span> / <span class="r">3L</span></td><td>84%</td></tr><tr id="th-d-2021-01" style="display:none"><td colspan="6" style="padding:0"></td></tr>
+          </tbody>
+        </table></div>
+      </div>
+
+      <!-- CANDLE LOG panel -->
+      <div id="th-panel-c" style="display:none">
+        <div class="tw"><table class="tt">
+          <thead><tr><th>#</th><th>Time</th><th>Close</th><th>Body%</th><th>Signal</th><th>Reason</th></tr></thead>
+          <tbody id="th-clog-tbody"><tr class="tt-e"><td colspan="6" style="text-align:center;color:var(--text-muted);padding:18px;font-size:.8rem">Loading...</td></tr></tbody>
+        </table></div>
+      </div>
+
+
     <!-- Stats strip -->
-    <div class="kpi-mini" style="grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:8px;margin-bottom:1rem">
+    <div class="kpi-mini" style="grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:8px;margin-top:1rem">
       <div class="kpi-m">
         <div class="kpi-m-l">This Week</div>
         <div class="kpi-m-v ${pnlCls2(an2.weekly.pnl)}" id="ss-wk-rs">${fmtRs2(an2.weekly.pnl)}</div>
@@ -10996,116 +11204,141 @@ app.get("/signals", featureGate("feature_signals", "Signals"), async (req, res) 
       </div>
     </div>
 
-      <!-- ── Trade History (Daily / Weekly / Monthly) ── -->
-      <div style="display:flex;align-items:center;gap:8px;margin-top:1.5rem;margin-bottom:.6rem;flex-wrap:wrap">
-        <span style="font-size:.72rem;text-transform:uppercase;letter-spacing:1px;color:#8b949e;font-weight:700">Trade History</span>
-        <div style="display:flex;gap:4px;margin-left:auto">
-          <button id="th-btn-d" onclick="_thFilter('d')" style="padding:3px 12px;border-radius:5px;font-size:.72rem;font-weight:700;cursor:pointer;border:1px solid #7c3aed;background:rgba(124,58,237,.2);color:#a78bfa">Daily</button>
-          <button id="th-btn-w" onclick="_thFilter('w')" style="padding:3px 12px;border-radius:5px;font-size:.72rem;font-weight:700;cursor:pointer;border:1px solid var(--border);background:transparent;color:var(--text-muted)">Weekly</button>
-          <button id="th-btn-m" onclick="_thFilter('m')" style="padding:3px 12px;border-radius:5px;font-size:.72rem;font-weight:700;cursor:pointer;border:1px solid var(--border);background:transparent;color:var(--text-muted)">Monthly</button>
-        </div>
-        <span class="sec-count" id="th-count" style="margin:0"></span>
-      </div>
-
-      <!-- DAILY panel (default visible) -->
-      <div id="th-panel-d">
-        <div class="tw"><table class="tt">
-          <thead><tr><th>Time</th><th>Dir</th><th>Buy Index</th><th>Buy Prem</th><th>Symbol</th><th>Sell Index</th><th>Sell Prem</th><th>Prem P&amp;L</th><th>&#8377; P&amp;L</th><th>Reason</th><th>Dur</th></tr></thead>
-          <tbody id="tt-body-lock50">
-            ${closedToday2.length===0&&!inTrade2
-              ? `<tr><td colspan="11" class="tt-e">No closed trades today</td></tr>`
-              : [...closedToday2].reverse().map(t=>{
-                  const d3=(t.direction||'').toLowerCase();
-                  const hasPrem2=(t.premiumEntry??0)>0&&(t.premiumExit??0)>0;
-                  const premPts2=hasPrem2?+(t.premiumExit-t.premiumEntry).toFixed(2):null;
-                  const pts=premPts2!==null?premPts2:(t.pnlRs!=null?t.pnlRs/30:(t.pnl??0));
-                  const rs=t.pnlRs!=null?t.pnlRs:(premPts2!==null?Math.round(premPts2*30):Math.round((t.pnl??0)*QTY_MULT2));
-                  const reason=t.reasonExit||'—';
-                  const rTag=reason.toLowerCase().includes('sl')||reason.toLowerCase().includes('stop')?'rc-sl':reason.toLowerCase().includes('trail')||reason.toLowerCase().includes('early')?'rc-trail':'rc-eod';
-                  const dur=t.duration?(t.duration<60?t.duration+'s':Math.round(t.duration/60)+'m'):'—';
-                  return `<tr>
-                    <td class="tc">${fmtTime2(t.date)}</td>
-                    <td><span class="db-badge ${d3}">${t.direction||'—'}</span></td>
-                    <td class="mono">${(t.entryPrice??0)>0?(t.entryPrice??0).toFixed(1):'—'}</td>
-                    <td class="mono ${d3==='ce'?'b':'r'}">${(t.premiumEntry??0)>0?(t.premiumEntry??0).toFixed(1):'—'}</td>
-                    <td class="tc mono">${t.symbol||'—'}</td>
-                    <td class="mono">${(t.exitPrice??0)>0?(t.exitPrice??0).toFixed(1):'—'}</td>
-                    <td class="mono ${d3==='ce'?'b':'r'}">${(t.premiumExit??0)>0?(t.premiumExit??0).toFixed(1):'—'}</td>
-                    <td class="${pts>=0?'g':'r'}" style="font-weight:800">${pts>=0?'+':''}${pts.toFixed(0)} pts</td>
-                    <td><span class="pnl-rs ${pts>=0?'g':'r'}">${rs>=0?'+':'&#8722;'}&#8377;${Math.abs(rs).toLocaleString('en-IN')}</span></td>
-                    <td>${reason!=='—'?`<span class="rc-b ${rTag}">${reason}</span>`:'—'}</td>
-                    <td class="tc">${dur}</td>
-                  </tr>`;
-                }).join('')
-            }
-          </tbody>
-        </table></div>
-      </div>
-
-      <!-- WEEKLY panel -->
-      <div id="th-panel-w" style="display:none">
-        <div class="tw"><table class="tt">
-          <thead><tr><th>Date</th><th>Dir</th><th>Buy Index</th><th>Buy Prem</th><th>Symbol</th><th>Sell Index</th><th>Sell Prem</th><th>Prem P&amp;L</th><th>&#8377; P&amp;L</th><th>Reason</th></tr></thead>
-          <tbody id="tt-body-weekly">
-            ${(()=>{
-              const _7d=new Date(); _7d.setDate(_7d.getDate()-7);
-              const wkT=an2.recentTrades.filter(t=>t.date&&new Date(t.date)>=_7d&&(t.exitPrice??0)>0);
-              if(!wkT.length) return '<tr><td colspan="10" class="tt-e">No trades in last 7 days</td></tr>';
-              return wkT.map(t=>{
-                const d3=(t.direction||'').toLowerCase();
-                const hasPremW=(t.premiumEntry??0)>0&&(t.premiumExit??0)>0;
-                const premPtsW=hasPremW?+(t.premiumExit-t.premiumEntry).toFixed(2):null;
-                const pts=premPtsW!==null?premPtsW:(t.pnlRs!=null?t.pnlRs/30:(t.pnl??0));
-                const rs=t.pnlRs!=null?t.pnlRs:(premPtsW!==null?Math.round(premPtsW*30):Math.round((t.pnl??0)*QTY_MULT2));
-                const reason=t.reasonExit||'—';
-                const rTag=reason.toLowerCase().includes('sl')?'rc-sl':reason.toLowerCase().includes('trail')||reason.toLowerCase().includes('early')?'rc-trail':'rc-eod';
-                return `<tr>
-                  <td class="tc">${t.date?fmtDate2(t.date):'—'}</td>
-                  <td><span class="db-badge ${d3}">${t.direction||'—'}</span></td>
-                  <td class="mono">${(t.entryPrice??0)>0?(t.entryPrice??0).toFixed(1):'—'}</td>
-                  <td class="mono ${d3==='ce'?'b':'r'}">${(t.premiumEntry??0)>0?(t.premiumEntry??0).toFixed(1):'—'}</td>
-                  <td class="tc mono">${t.symbol||'—'}</td>
-                  <td class="mono">${(t.exitPrice??0)>0?(t.exitPrice??0).toFixed(1):'—'}</td>
-                  <td class="mono ${d3==='ce'?'b':'r'}">${(t.premiumExit??0)>0?(t.premiumExit??0).toFixed(1):'—'}</td>
-                  <td class="${pts>=0?'g':'r'}" style="font-weight:800">${pts>=0?'+':''}${pts.toFixed(0)} pts</td>
-                  <td><span class="pnl-rs ${pts>=0?'g':'r'}">${rs>=0?'+':'&#8722;'}&#8377;${Math.abs(rs).toLocaleString('en-IN')}</span></td>
-                  <td>${reason!=='—'?`<span class="rc-b ${rTag}">${reason}</span>`:'—'}</td>
-                </tr>`;
-              }).join('');
-            })()}
-          </tbody>
-        </table></div>
-      </div>
-
-      <!-- MONTHLY panel -->
-      <div id="th-panel-m" style="display:none">
-        <div class="tw"><table class="tt">
-          <thead><tr><th>Month</th><th>&#8377; P&amp;L</th><th>Index P&amp;L</th><th>Trades</th><th>W/L</th><th>Win%</th></tr></thead>
-          <tbody>
-            ${!an2.monthly.length
-              ? '<tr><td colspan="6" class="tt-e">No monthly data yet</td></tr>'
-              : an2.monthly.map(m=>{
-                  const [y,mo]=m.month.split('-');
-                  const ml=new Date(parseInt(y),parseInt(mo)-1,1).toLocaleString('en-IN',{month:'long',year:'numeric'});
-                  const rs=Math.round(m.pnl*QTY_MULT2);
-                  return `<tr>
-                    <td style="font-weight:600">${ml}</td>
-                    <td class="${m.pnl>=0?'g':'r'}" style="font-weight:800">${rs>=0?'+':'&#8722;'}&#8377;${Math.abs(rs).toLocaleString('en-IN')}</td>
-                    <td class="${m.pnl>=0?'g':'r'}">${m.pnl>=0?'+':''}${m.pnl.toFixed(0)} pts</td>
-                    <td>${m.trades}</td>
-                    <td><span class="g">${m.wins}W</span> / <span class="r">${m.losses}L</span></td>
-                    <td>${m.trades>0?m.winRate+'%':'—'}</td>
-                  </tr>`;
-                }).join('')
-            }
-          </tbody>
-        </table></div>
-      </div>
-
       <script>
       (function(){
+
+
+        window._thDly={"2021-01":{"2021-01-04":{"grossPts":333.7,"netRs":7751,"trades":5},"2021-01-05":{"grossPts":198.1,"netRs":3683,"trades":5},"2021-01-06":{"grossPts":435,"netRs":10790,"trades":5},"2021-01-07":{"grossPts":118.3,"netRs":1289,"trades":5},"2021-01-08":{"grossPts":1,"netRs":-1326,"trades":3},"2021-01-11":{"grossPts":277.4,"netRs":6062,"trades":5},"2021-01-12":{"grossPts":292.9,"netRs":6527,"trades":5},"2021-01-13":{"grossPts":375.7,"netRs":9011,"trades":5},"2021-01-14":{"grossPts":153.2,"netRs":2336,"trades":5},"2021-01-15":{"grossPts":231.6,"netRs":4688,"trades":5},"2021-01-18":{"grossPts":273.3,"netRs":5939,"trades":5},"2021-01-19":{"grossPts":68.9,"netRs":-193,"trades":5},"2021-01-20":{"grossPts":224.8,"netRs":4484,"trades":5},"2021-01-21":{"grossPts":109,"netRs":1010,"trades":5},"2021-01-22":{"grossPts":21.3,"netRs":-1621,"trades":5},"2021-01-25":{"grossPts":315.3,"netRs":7199,"trades":5},"2021-01-27":{"grossPts":424.5,"netRs":10475,"trades":5},"2021-01-28":{"grossPts":183.6,"netRs":3248,"trades":5},"2021-01-29":{"grossPts":329,"netRs":7610,"trades":5}},"2021-02":{"2021-02-01":{"grossPts":266.5,"netRs":5735,"trades":5},"2021-02-02":{"grossPts":816.9,"netRs":22247,"trades":5},"2021-02-03":{"grossPts":45.6,"netRs":-892,"trades":5},"2021-02-04":{"grossPts":232.8,"netRs":4724,"trades":5},"2021-02-05":{"grossPts":110.5,"netRs":1055,"trades":5},"2021-02-08":{"grossPts":303.5,"netRs":6845,"trades":5},"2021-02-09":{"grossPts":489.6,"netRs":12428,"trades":5},"2021-02-10":{"grossPts":291.6,"netRs":6488,"trades":5},"2021-02-11":{"grossPts":412.4,"netRs":10112,"trades":5},"2021-02-12":{"grossPts":329.3,"netRs":7619,"trades":5},"2021-02-15":{"grossPts":173.9,"netRs":2957,"trades":5},"2021-02-16":{"grossPts":290.8,"netRs":6464,"trades":5},"2021-02-17":{"grossPts":532.7,"netRs":13721,"trades":5},"2021-02-18":{"grossPts":474.5,"netRs":11975,"trades":5},"2021-02-19":{"grossPts":13.3,"netRs":-1861,"trades":5},"2021-02-22":{"grossPts":372.3,"netRs":8909,"trades":5},"2021-02-23":{"grossPts":116.3,"netRs":1229,"trades":5},"2021-02-24":{"grossPts":154.9,"netRs":4195,"trades":1},"2021-02-25":{"grossPts":616,"netRs":16220,"trades":5}},"2021-03":{"2021-03-01":{"grossPts":457.4,"netRs":11462,"trades":5},"2021-03-02":{"grossPts":331.6,"netRs":7688,"trades":5},"2021-03-03":{"grossPts":289.7,"netRs":6431,"trades":5},"2021-03-04":{"grossPts":429.8,"netRs":10634,"trades":5},"2021-03-05":{"grossPts":390.3,"netRs":9449,"trades":5},"2021-03-08":{"grossPts":745.2,"netRs":20096,"trades":5},"2021-03-09":{"grossPts":584,"netRs":15260,"trades":5},"2021-03-10":{"grossPts":116.3,"netRs":1229,"trades":5},"2021-03-12":{"grossPts":446.3,"netRs":11129,"trades":5},"2021-03-15":{"grossPts":607.9,"netRs":15977,"trades":5},"2021-03-16":{"grossPts":560.7,"netRs":14561,"trades":5},"2021-03-17":{"grossPts":357.8,"netRs":8474,"trades":5},"2021-03-18":{"grossPts":676.2,"netRs":18026,"trades":5},"2021-03-22":{"grossPts":334,"netRs":7760,"trades":5},"2021-03-23":{"grossPts":419.1,"netRs":10313,"trades":5},"2021-03-24":{"grossPts":286,"netRs":6320,"trades":5},"2021-03-25":{"grossPts":370.2,"netRs":8846,"trades":5},"2021-03-26":{"grossPts":294.4,"netRs":6572,"trades":5},"2021-03-30":{"grossPts":415.6,"netRs":10208,"trades":5},"2021-03-31":{"grossPts":223.4,"netRs":4442,"trades":5}},"2021-04":{"2021-04-01":{"grossPts":299.6,"netRs":6728,"trades":5},"2021-04-05":{"grossPts":534.6,"netRs":13778,"trades":5},"2021-04-06":{"grossPts":493.6,"netRs":12548,"trades":5},"2021-04-07":{"grossPts":204,"netRs":3860,"trades":5},"2021-04-08":{"grossPts":146.5,"netRs":2135,"trades":5},"2021-04-09":{"grossPts":288,"netRs":6380,"trades":5},"2021-04-12":{"grossPts":330.2,"netRs":7646,"trades":5},"2021-04-13":{"grossPts":302.4,"netRs":6812,"trades":5},"2021-04-15":{"grossPts":195.8,"netRs":3614,"trades":5},"2021-04-16":{"grossPts":140.9,"netRs":1967,"trades":5},"2021-04-20":{"grossPts":339.6,"netRs":7928,"trades":5},"2021-04-23":{"grossPts":281,"netRs":6170,"trades":5},"2021-04-26":{"grossPts":77.9,"netRs":77,"trades":5},"2021-04-27":{"grossPts":246.6,"netRs":5138,"trades":5},"2021-04-28":{"grossPts":398.2,"netRs":9686,"trades":5},"2021-04-29":{"grossPts":923.5,"netRs":25445,"trades":5},"2021-04-30":{"grossPts":275.3,"netRs":5999,"trades":5}},"2021-05":{"2021-05-03":{"grossPts":285.5,"netRs":6305,"trades":5},"2021-05-04":{"grossPts":254.7,"netRs":5381,"trades":5},"2021-05-05":{"grossPts":258.6,"netRs":5498,"trades":5},"2021-05-06":{"grossPts":73.6,"netRs":-52,"trades":5},"2021-05-07":{"grossPts":388.5,"netRs":9395,"trades":5},"2021-05-10":{"grossPts":217.1,"netRs":4253,"trades":5},"2021-05-11":{"grossPts":327.3,"netRs":7559,"trades":5},"2021-05-12":{"grossPts":313.6,"netRs":7148,"trades":5},"2021-05-14":{"grossPts":188,"netRs":3380,"trades":5},"2021-05-17":{"grossPts":193.9,"netRs":3557,"trades":5},"2021-05-18":{"grossPts":474.1,"netRs":11963,"trades":5},"2021-05-19":{"grossPts":247.5,"netRs":5165,"trades":5},"2021-05-20":{"grossPts":103.7,"netRs":851,"trades":5},"2021-05-21":{"grossPts":697.1,"netRs":18653,"trades":5},"2021-05-24":{"grossPts":240.5,"netRs":4955,"trades":5},"2021-05-25":{"grossPts":325.4,"netRs":7502,"trades":5},"2021-05-26":{"grossPts":306.3,"netRs":6929,"trades":5},"2021-05-27":{"grossPts":56.8,"netRs":-556,"trades":5},"2021-05-28":{"grossPts":180,"netRs":3140,"trades":5},"2021-05-31":{"grossPts":203.4,"netRs":3842,"trades":5}},"2021-06":{"2021-06-01":{"grossPts":175.4,"netRs":3002,"trades":5},"2021-06-02":{"grossPts":124.1,"netRs":1463,"trades":5},"2021-06-03":{"grossPts":139.6,"netRs":1928,"trades":5},"2021-06-04":{"grossPts":378.8,"netRs":9104,"trades":5},"2021-06-07":{"grossPts":76.5,"netRs":35,"trades":5},"2021-06-08":{"grossPts":275.8,"netRs":6014,"trades":5},"2021-06-09":{"grossPts":487.3,"netRs":12359,"trades":5},"2021-06-10":{"grossPts":135.5,"netRs":1805,"trades":5},"2021-06-11":{"grossPts":155.4,"netRs":2402,"trades":5},"2021-06-14":{"grossPts":353,"netRs":8330,"trades":5},"2021-06-15":{"grossPts":143.6,"netRs":2048,"trades":5},"2021-06-16":{"grossPts":208.6,"netRs":3998,"trades":5},"2021-06-17":{"grossPts":66.2,"netRs":-274,"trades":5},"2021-06-18":{"grossPts":-4.8,"netRs":-2404,"trades":5},"2021-06-21":{"grossPts":166.9,"netRs":2747,"trades":5},"2021-06-22":{"grossPts":25.5,"netRs":-1495,"trades":5},"2021-06-23":{"grossPts":277.1,"netRs":6053,"trades":5},"2021-06-24":{"grossPts":184.5,"netRs":3275,"trades":5},"2021-06-25":{"grossPts":377.2,"netRs":9056,"trades":5},"2021-06-28":{"grossPts":101.4,"netRs":782,"trades":5},"2021-06-29":{"grossPts":110.5,"netRs":1055,"trades":5},"2021-06-30":{"grossPts":-12.7,"netRs":-2641,"trades":5}},"2021-07":{"2021-07-01":{"grossPts":131,"netRs":1670,"trades":5},"2021-07-02":{"grossPts":-41.3,"netRs":-3499,"trades":5},"2021-07-05":{"grossPts":192.2,"netRs":3506,"trades":5},"2021-07-06":{"grossPts":-69.1,"netRs":-4333,"trades":5},"2021-07-07":{"grossPts":81.7,"netRs":191,"trades":5},"2021-07-08":{"grossPts":262.9,"netRs":5627,"trades":5},"2021-07-09":{"grossPts":186.2,"netRs":3326,"trades":5},"2021-07-12":{"grossPts":107.8,"netRs":974,"trades":5},"2021-07-13":{"grossPts":164.4,"netRs":2672,"trades":5},"2021-07-14":{"grossPts":199.5,"netRs":3725,"trades":5},"2021-07-15":{"grossPts":183.7,"netRs":3251,"trades":5},"2021-07-16":{"grossPts":210.5,"netRs":4055,"trades":5},"2021-07-19":{"grossPts":302.3,"netRs":6809,"trades":5},"2021-07-22":{"grossPts":167.1,"netRs":2753,"trades":5},"2021-07-23":{"grossPts":206.8,"netRs":3944,"trades":5},"2021-07-26":{"grossPts":180.2,"netRs":3146,"trades":5},"2021-07-27":{"grossPts":107.2,"netRs":956,"trades":5},"2021-07-28":{"grossPts":544.7,"netRs":14081,"trades":5},"2021-07-29":{"grossPts":-90.1,"netRs":-4511,"trades":4},"2021-07-30":{"grossPts":-73.2,"netRs":-4456,"trades":5}},"2021-08":{"2021-08-02":{"grossPts":97.4,"netRs":662,"trades":5},"2021-08-03":{"grossPts":218.3,"netRs":4289,"trades":5},"2021-08-04":{"grossPts":285.8,"netRs":6314,"trades":5},"2021-08-05":{"grossPts":298.3,"netRs":6689,"trades":5},"2021-08-06":{"grossPts":54.6,"netRs":1186,"trades":1},"2021-08-09":{"grossPts":245.1,"netRs":5093,"trades":5},"2021-08-10":{"grossPts":-37.2,"netRs":-3376,"trades":5},"2021-08-11":{"grossPts":505.9,"netRs":12917,"trades":5},"2021-08-12":{"grossPts":205.7,"netRs":3911,"trades":5},"2021-08-13":{"grossPts":-28.1,"netRs":-3103,"trades":5},"2021-08-16":{"grossPts":114.1,"netRs":1163,"trades":5},"2021-08-18":{"grossPts":400.3,"netRs":9749,"trades":5},"2021-08-20":{"grossPts":91.2,"netRs":476,"trades":5},"2021-08-23":{"grossPts":301.8,"netRs":6794,"trades":5},"2021-08-24":{"grossPts":218.8,"netRs":4304,"trades":5},"2021-08-25":{"grossPts":105.4,"netRs":902,"trades":5},"2021-08-26":{"grossPts":142.1,"netRs":2003,"trades":5},"2021-08-27":{"grossPts":126.8,"netRs":1544,"trades":5},"2021-08-30":{"grossPts":122.3,"netRs":1409,"trades":5},"2021-08-31":{"grossPts":-218.3,"netRs":-8809,"trades":5}},"2021-09":{"2021-09-01":{"grossPts":454.4,"netRs":11372,"trades":5},"2021-09-02":{"grossPts":200.6,"netRs":3758,"trades":5},"2021-09-03":{"grossPts":321.9,"netRs":7397,"trades":5},"2021-09-06":{"grossPts":120.3,"netRs":1349,"trades":5},"2021-09-07":{"grossPts":403.5,"netRs":9845,"trades":5},"2021-09-08":{"grossPts":-27.2,"netRs":-3076,"trades":5},"2021-09-09":{"grossPts":133.5,"netRs":1745,"trades":5},"2021-09-13":{"grossPts":39.8,"netRs":-614,"trades":4},"2021-09-14":{"grossPts":-117.9,"netRs":-3989,"trades":1},"2021-09-15":{"grossPts":-83.2,"netRs":-4756,"trades":5},"2021-09-16":{"grossPts":131.8,"netRs":1694,"trades":5},"2021-09-17":{"grossPts":753.6,"netRs":20348,"trades":5},"2021-09-21":{"grossPts":405.8,"netRs":9914,"trades":5},"2021-09-22":{"grossPts":228.6,"netRs":4598,"trades":5},"2021-09-23":{"grossPts":83,"netRs":230,"trades":5},"2021-09-24":{"grossPts":130.6,"netRs":1658,"trades":5},"2021-09-27":{"grossPts":22.9,"netRs":-1573,"trades":5},"2021-09-28":{"grossPts":186.2,"netRs":3326,"trades":5},"2021-09-29":{"grossPts":38.3,"netRs":-1111,"trades":5},"2021-09-30":{"grossPts":-38.5,"netRs":-3415,"trades":5}},"2021-10":{"2021-10-04":{"grossPts":212.1,"netRs":4103,"trades":5},"2021-10-05":{"grossPts":207.9,"netRs":3977,"trades":5},"2021-10-06":{"grossPts":160.8,"netRs":2564,"trades":5},"2021-10-07":{"grossPts":86.1,"netRs":323,"trades":5},"2021-10-08":{"grossPts":265.6,"netRs":5708,"trades":5},"2021-10-11":{"grossPts":326.9,"netRs":7547,"trades":5},"2021-10-12":{"grossPts":80.2,"netRs":146,"trades":5},"2021-10-13":{"grossPts":123.2,"netRs":1436,"trades":5},"2021-10-14":{"grossPts":284.9,"netRs":6287,"trades":5},"2021-10-18":{"grossPts":324.4,"netRs":7472,"trades":5},"2021-10-19":{"grossPts":77.1,"netRs":53,"trades":5},"2021-10-20":{"grossPts":331.7,"netRs":7691,"trades":5},"2021-10-21":{"grossPts":268.5,"netRs":5795,"trades":5},"2021-10-22":{"grossPts":451.7,"netRs":11291,"trades":5},"2021-10-25":{"grossPts":708,"netRs":18980,"trades":5},"2021-10-26":{"grossPts":239.7,"netRs":4931,"trades":5},"2021-10-27":{"grossPts":38.5,"netRs":-1105,"trades":5},"2021-10-28":{"grossPts":364,"netRs":8660,"trades":5},"2021-10-29":{"grossPts":580.8,"netRs":15164,"trades":5}},"2021-11":{"2021-11-01":{"grossPts":163.2,"netRs":2636,"trades":5},"2021-11-02":{"grossPts":2.1,"netRs":-2197,"trades":5},"2021-11-03":{"grossPts":931.1,"netRs":25673,"trades":5},"2021-11-09":{"grossPts":117.8,"netRs":1274,"trades":5},"2021-11-11":{"grossPts":215,"netRs":4190,"trades":5},"2021-11-12":{"grossPts":187.7,"netRs":3371,"trades":5},"2021-11-15":{"grossPts":263.6,"netRs":5648,"trades":5},"2021-11-16":{"grossPts":235.1,"netRs":4793,"trades":5},"2021-11-17":{"grossPts":388.6,"netRs":9398,"trades":5},"2021-11-18":{"grossPts":376.8,"netRs":9044,"trades":5},"2021-11-22":{"grossPts":484.7,"netRs":12281,"trades":5},"2021-11-23":{"grossPts":222.4,"netRs":4412,"trades":5},"2021-11-24":{"grossPts":217.1,"netRs":4253,"trades":5},"2021-11-25":{"grossPts":276,"netRs":6020,"trades":5},"2021-11-26":{"grossPts":135.1,"netRs":1793,"trades":5},"2021-11-29":{"grossPts":580.4,"netRs":15152,"trades":5},"2021-11-30":{"grossPts":914.4,"netRs":25172,"trades":5}},"2021-12":{"2021-12-01":{"grossPts":191.5,"netRs":3485,"trades":5},"2021-12-02":{"grossPts":216.5,"netRs":4235,"trades":5},"2021-12-03":{"grossPts":219.3,"netRs":4319,"trades":5},"2021-12-06":{"grossPts":377.1,"netRs":9053,"trades":5},"2021-12-07":{"grossPts":365.4,"netRs":8702,"trades":5},"2021-12-08":{"grossPts":351.4,"netRs":8282,"trades":5},"2021-12-09":{"grossPts":269.3,"netRs":5819,"trades":5},"2021-12-10":{"grossPts":191.5,"netRs":3485,"trades":5},"2021-12-13":{"grossPts":369.9,"netRs":8837,"trades":5},"2021-12-15":{"grossPts":246.3,"netRs":5129,"trades":5},"2021-12-16":{"grossPts":177.6,"netRs":3068,"trades":5},"2021-12-17":{"grossPts":63,"netRs":-370,"trades":5},"2021-12-20":{"grossPts":346.2,"netRs":8126,"trades":5},"2021-12-21":{"grossPts":104,"netRs":860,"trades":5},"2021-12-22":{"grossPts":340.8,"netRs":7964,"trades":5},"2021-12-23":{"grossPts":199.3,"netRs":3719,"trades":5},"2021-12-24":{"grossPts":486.5,"netRs":12335,"trades":5},"2021-12-27":{"grossPts":325.7,"netRs":7511,"trades":5},"2021-12-28":{"grossPts":152.2,"netRs":2306,"trades":5},"2021-12-29":{"grossPts":210.6,"netRs":4058,"trades":5},"2021-12-30":{"grossPts":-52.9,"netRs":-3847,"trades":5},"2021-12-31":{"grossPts":302.2,"netRs":6806,"trades":5}},"2022-01":{"2022-01-03":{"grossPts":301.1,"netRs":6773,"trades":5},"2022-01-04":{"grossPts":6.8,"netRs":-2056,"trades":5},"2022-01-05":{"grossPts":453.9,"netRs":11357,"trades":5},"2022-01-06":{"grossPts":312.6,"netRs":7118,"trades":5},"2022-01-07":{"grossPts":305.1,"netRs":6893,"trades":5},"2022-01-10":{"grossPts":-106.7,"netRs":-5461,"trades":5},"2022-01-11":{"grossPts":175.9,"netRs":3017,"trades":5},"2022-01-12":{"grossPts":-134.5,"netRs":-5843,"trades":4},"2022-01-13":{"grossPts":64.4,"netRs":-328,"trades":5},"2022-01-14":{"grossPts":213.3,"netRs":4139,"trades":5},"2022-01-17":{"grossPts":116.5,"netRs":1687,"trades":4},"2022-01-18":{"grossPts":402.3,"netRs":9809,"trades":5},"2022-01-19":{"grossPts":104.5,"netRs":875,"trades":5},"2022-01-20":{"grossPts":500.8,"netRs":12764,"trades":5},"2022-01-21":{"grossPts":-27.3,"netRs":-3079,"trades":5},"2022-01-24":{"grossPts":637.9,"netRs":16877,"trades":5},"2022-01-25":{"grossPts":443.8,"netRs":11054,"trades":5},"2022-01-27":{"grossPts":-191.8,"netRs":-8014,"trades":5},"2022-01-28":{"grossPts":211.2,"netRs":4076,"trades":5},"2022-01-31":{"grossPts":415.6,"netRs":10208,"trades":5}},"2022-02":{"2022-02-01":{"grossPts":1062,"netRs":29600,"trades":5},"2022-02-02":{"grossPts":28.1,"netRs":-1417,"trades":5},"2022-02-03":{"grossPts":211.2,"netRs":4076,"trades":5},"2022-02-04":{"grossPts":357.8,"netRs":8474,"trades":5},"2022-02-07":{"grossPts":218.4,"netRs":4292,"trades":5},"2022-02-08":{"grossPts":576.1,"netRs":15023,"trades":5},"2022-02-09":{"grossPts":199.9,"netRs":3737,"trades":5},"2022-02-10":{"grossPts":319.8,"netRs":7334,"trades":5},"2022-02-11":{"grossPts":287.1,"netRs":6353,"trades":5},"2022-02-15":{"grossPts":472.8,"netRs":11924,"trades":5},"2022-02-16":{"grossPts":612.4,"netRs":16112,"trades":5},"2022-02-17":{"grossPts":463.4,"netRs":11642,"trades":5},"2022-02-18":{"grossPts":103.6,"netRs":848,"trades":5},"2022-02-21":{"grossPts":419.3,"netRs":10319,"trades":5},"2022-02-22":{"grossPts":283.9,"netRs":6257,"trades":5},"2022-02-23":{"grossPts":84.4,"netRs":272,"trades":5},"2022-02-25":{"grossPts":714.2,"netRs":19166,"trades":5},"2022-02-28":{"grossPts":175,"netRs":2990,"trades":5}},"2022-03":{"2022-03-03":{"grossPts":278.4,"netRs":6092,"trades":5},"2022-03-04":{"grossPts":826,"netRs":22520,"trades":5},"2022-03-08":{"grossPts":529.5,"netRs":13625,"trades":5},"2022-03-09":{"grossPts":160.2,"netRs":2546,"trades":5},"2022-03-10":{"grossPts":390.7,"netRs":9461,"trades":5},"2022-03-11":{"grossPts":510.3,"netRs":13049,"trades":5},"2022-03-14":{"grossPts":271.8,"netRs":5894,"trades":5},"2022-03-15":{"grossPts":551.6,"netRs":14288,"trades":5},"2022-03-16":{"grossPts":183.7,"netRs":3251,"trades":5},"2022-03-17":{"grossPts":164.9,"netRs":2687,"trades":5},"2022-03-21":{"grossPts":213.9,"netRs":4157,"trades":5},"2022-03-22":{"grossPts":846,"netRs":23120,"trades":5},"2022-03-23":{"grossPts":-203.3,"netRs":-8359,"trades":5},"2022-03-24":{"grossPts":460.6,"netRs":11558,"trades":5},"2022-03-25":{"grossPts":144.9,"netRs":2087,"trades":5},"2022-03-28":{"grossPts":308.2,"netRs":6986,"trades":5},"2022-03-29":{"grossPts":244.9,"netRs":5087,"trades":5},"2022-03-30":{"grossPts":154.9,"netRs":2387,"trades":5},"2022-03-31":{"grossPts":12.7,"netRs":-1879,"trades":5}},"2022-04":{"2022-04-01":{"grossPts":288.5,"netRs":6395,"trades":5},"2022-04-04":{"grossPts":520.2,"netRs":13346,"trades":5},"2022-04-05":{"grossPts":717.8,"netRs":19274,"trades":5},"2022-04-08":{"grossPts":295.9,"netRs":6617,"trades":5},"2022-04-11":{"grossPts":258,"netRs":5480,"trades":5},"2022-04-12":{"grossPts":207,"netRs":3950,"trades":5},"2022-04-13":{"grossPts":191.4,"netRs":3482,"trades":5},"2022-04-18":{"grossPts":160.4,"netRs":2552,"trades":5},"2022-04-19":{"grossPts":203.4,"netRs":3842,"trades":5},"2022-04-20":{"grossPts":354.7,"netRs":8381,"trades":5},"2022-04-21":{"grossPts":216.5,"netRs":4235,"trades":5},"2022-04-22":{"grossPts":208.8,"netRs":4004,"trades":5},"2022-04-25":{"grossPts":690.7,"netRs":18461,"trades":5},"2022-04-26":{"grossPts":-43.6,"netRs":-3568,"trades":5},"2022-04-27":{"grossPts":276.3,"netRs":6029,"trades":5},"2022-04-28":{"grossPts":123,"netRs":1430,"trades":5},"2022-04-29":{"grossPts":234.3,"netRs":4769,"trades":5}},"2022-05":{"2022-05-02":{"grossPts":48.8,"netRs":-796,"trades":5},"2022-05-04":{"grossPts":127.6,"netRs":1568,"trades":5},"2022-05-05":{"grossPts":-2.4,"netRs":-2332,"trades":5},"2022-05-06":{"grossPts":189,"netRs":3410,"trades":5},"2022-05-09":{"grossPts":215.7,"netRs":4211,"trades":5},"2022-05-10":{"grossPts":374.7,"netRs":8981,"trades":5},"2022-05-11":{"grossPts":452.9,"netRs":11327,"trades":5},"2022-05-12":{"grossPts":355.5,"netRs":8405,"trades":5},"2022-05-13":{"grossPts":80.7,"netRs":161,"trades":5},"2022-05-16":{"grossPts":533.5,"netRs":13745,"trades":5},"2022-05-17":{"grossPts":246.5,"netRs":5135,"trades":5},"2022-05-18":{"grossPts":-226.8,"netRs":-8612,"trades":4},"2022-05-20":{"grossPts":327.1,"netRs":7553,"trades":5},"2022-05-23":{"grossPts":319,"netRs":7310,"trades":5},"2022-05-24":{"grossPts":167.6,"netRs":2768,"trades":5},"2022-05-25":{"grossPts":-42.8,"netRs":-3544,"trades":5},"2022-05-26":{"grossPts":553.3,"netRs":14339,"trades":5},"2022-05-27":{"grossPts":264.3,"netRs":5669,"trades":5},"2022-05-30":{"grossPts":-78.3,"netRs":-4609,"trades":5},"2022-05-31":{"grossPts":402.3,"netRs":9809,"trades":5}},"2022-06":{"2022-06-01":{"grossPts":127.5,"netRs":1565,"trades":5},"2022-06-02":{"grossPts":74.3,"netRs":421,"trades":4},"2022-06-03":{"grossPts":37.5,"netRs":-1135,"trades":5},"2022-06-07":{"grossPts":134.3,"netRs":1769,"trades":5},"2022-06-08":{"grossPts":274.7,"netRs":5981,"trades":5},"2022-06-09":{"grossPts":149,"netRs":2210,"trades":5},"2022-06-10":{"grossPts":-233.7,"netRs":-8819,"trades":4},"2022-06-15":{"grossPts":-9.4,"netRs":-2542,"trades":5},"2022-06-16":{"grossPts":549.7,"netRs":14231,"trades":5},"2022-06-17":{"grossPts":269.6,"netRs":5828,"trades":5},"2022-06-20":{"grossPts":348.1,"netRs":8183,"trades":5},"2022-06-21":{"grossPts":394.3,"netRs":9569,"trades":5},"2022-06-22":{"grossPts":226.8,"netRs":4544,"trades":5},"2022-06-23":{"grossPts":433,"netRs":10730,"trades":5},"2022-06-24":{"grossPts":167.3,"netRs":2759,"trades":5},"2022-06-27":{"grossPts":190.2,"netRs":3446,"trades":5},"2022-06-28":{"grossPts":143.5,"netRs":2045,"trades":5},"2022-06-29":{"grossPts":75.3,"netRs":-1,"trades":5},"2022-06-30":{"grossPts":201,"netRs":3770,"trades":5}},"2022-07":{"2022-07-01":{"grossPts":136.6,"netRs":1838,"trades":5},"2022-07-04":{"grossPts":62.1,"netRs":-397,"trades":5},"2022-07-05":{"grossPts":160.4,"netRs":2552,"trades":5},"2022-07-06":{"grossPts":350.1,"netRs":8243,"trades":5},"2022-07-07":{"grossPts":266.3,"netRs":5729,"trades":5},"2022-07-08":{"grossPts":159.8,"netRs":2534,"trades":5},"2022-07-11":{"grossPts":-16.3,"netRs":-2749,"trades":5},"2022-07-12":{"grossPts":86,"netRs":772,"trades":4},"2022-07-13":{"grossPts":222.8,"netRs":4424,"trades":5},"2022-07-14":{"grossPts":164.6,"netRs":2678,"trades":5},"2022-07-15":{"grossPts":175.7,"netRs":3011,"trades":5},"2022-07-18":{"grossPts":80.9,"netRs":167,"trades":5},"2022-07-19":{"grossPts":290,"netRs":6440,"trades":5},"2022-07-20":{"grossPts":101.5,"netRs":785,"trades":5},"2022-07-21":{"grossPts":327.8,"netRs":7574,"trades":5},"2022-07-22":{"grossPts":280.8,"netRs":6164,"trades":5},"2022-07-25":{"grossPts":-108.5,"netRs":-5515,"trades":5},"2022-07-26":{"grossPts":172,"netRs":2900,"trades":5},"2022-07-27":{"grossPts":99.3,"netRs":719,"trades":5},"2022-07-28":{"grossPts":-103.2,"netRs":-5356,"trades":5},"2022-07-29":{"grossPts":292.4,"netRs":6512,"trades":5}},"2022-08":{"2022-08-01":{"grossPts":151.1,"netRs":2273,"trades":5},"2022-08-02":{"grossPts":104,"netRs":860,"trades":5},"2022-08-03":{"grossPts":219.7,"netRs":4331,"trades":5},"2022-08-04":{"grossPts":533.6,"netRs":13748,"trades":5},"2022-08-05":{"grossPts":305.4,"netRs":6902,"trades":5},"2022-08-08":{"grossPts":95,"netRs":590,"trades":5},"2022-08-10":{"grossPts":63.5,"netRs":-355,"trades":5},"2022-08-11":{"grossPts":42.2,"netRs":-994,"trades":5},"2022-08-12":{"grossPts":-187.7,"netRs":-7439,"trades":4},"2022-08-16":{"grossPts":68.8,"netRs":-196,"trades":5},"2022-08-17":{"grossPts":-101.2,"netRs":-4392,"trades":3},"2022-08-18":{"grossPts":46.7,"netRs":-859,"trades":5},"2022-08-19":{"grossPts":479.9,"netRs":12137,"trades":5},"2022-08-22":{"grossPts":192,"netRs":3500,"trades":5},"2022-08-23":{"grossPts":253.6,"netRs":5348,"trades":5},"2022-08-24":{"grossPts":48.9,"netRs":-793,"trades":5},"2022-08-25":{"grossPts":117.8,"netRs":1274,"trades":5},"2022-08-26":{"grossPts":308,"netRs":6980,"trades":5},"2022-08-29":{"grossPts":163,"netRs":2630,"trades":5},"2022-08-30":{"grossPts":333.4,"netRs":7742,"trades":5}},"2022-09":{"2022-09-01":{"grossPts":453.8,"netRs":11354,"trades":5},"2022-09-02":{"grossPts":216.7,"netRs":4241,"trades":5},"2022-09-05":{"grossPts":214.9,"netRs":4187,"trades":5},"2022-09-06":{"grossPts":-409.8,"netRs":-14554,"trades":5},"2022-09-07":{"grossPts":204.6,"netRs":3878,"trades":5},"2022-09-08":{"grossPts":218.3,"netRs":4289,"trades":5},"2022-09-09":{"grossPts":-213.1,"netRs":-8653,"trades":5},"2022-09-12":{"grossPts":8,"netRs":-2020,"trades":5},"2022-09-13":{"grossPts":38.9,"netRs":-1093,"trades":5},"2022-09-14":{"grossPts":-295.4,"netRs":-10670,"trades":4},"2022-09-15":{"grossPts":302.6,"netRs":6818,"trades":5},"2022-09-16":{"grossPts":172.6,"netRs":2918,"trades":5},"2022-09-19":{"grossPts":374,"netRs":8960,"trades":5},"2022-09-20":{"grossPts":251.9,"netRs":5297,"trades":5},"2022-09-21":{"grossPts":463.1,"netRs":11633,"trades":5},"2022-09-22":{"grossPts":167.4,"netRs":2762,"trades":5},"2022-09-23":{"grossPts":641.7,"netRs":16991,"trades":5},"2022-09-27":{"grossPts":493.3,"netRs":12539,"trades":5},"2022-09-28":{"grossPts":548.6,"netRs":14198,"trades":5},"2022-09-29":{"grossPts":488.8,"netRs":12404,"trades":5},"2022-09-30":{"grossPts":597.9,"netRs":15677,"trades":5}},"2022-10":{"2022-10-03":{"grossPts":268.3,"netRs":5789,"trades":5},"2022-10-04":{"grossPts":167.3,"netRs":2759,"trades":5},"2022-10-06":{"grossPts":321.5,"netRs":7385,"trades":5},"2022-10-07":{"grossPts":175.1,"netRs":2993,"trades":5},"2022-10-11":{"grossPts":211,"netRs":4070,"trades":5},"2022-10-12":{"grossPts":-46.1,"netRs":-3643,"trades":5},"2022-10-13":{"grossPts":372.5,"netRs":8915,"trades":5},"2022-10-14":{"grossPts":208.6,"netRs":3998,"trades":5},"2022-10-17":{"grossPts":495.5,"netRs":12605,"trades":5},"2022-10-18":{"grossPts":95.1,"netRs":593,"trades":5},"2022-10-19":{"grossPts":414.8,"netRs":10184,"trades":5},"2022-10-21":{"grossPts":109.9,"netRs":1037,"trades":5},"2022-10-27":{"grossPts":67.8,"netRs":-226,"trades":5},"2022-10-28":{"grossPts":-44.6,"netRs":-3598,"trades":5},"2022-10-31":{"grossPts":60.9,"netRs":-433,"trades":5}},"2022-11":{"2022-11-01":{"grossPts":333,"netRs":7730,"trades":5},"2022-11-02":{"grossPts":108.7,"netRs":1001,"trades":5},"2022-11-03":{"grossPts":159.9,"netRs":2537,"trades":5},"2022-11-04":{"grossPts":213.8,"netRs":4154,"trades":5},"2022-11-07":{"grossPts":294.6,"netRs":6578,"trades":5},"2022-11-09":{"grossPts":-36,"netRs":-3340,"trades":5},"2022-11-10":{"grossPts":-28.3,"netRs":-3109,"trades":5},"2022-11-11":{"grossPts":193.6,"netRs":3548,"trades":5},"2022-11-14":{"grossPts":-272.6,"netRs":-9986,"trades":4},"2022-11-15":{"grossPts":84.9,"netRs":287,"trades":5},"2022-11-16":{"grossPts":167.5,"netRs":2765,"trades":5},"2022-11-17":{"grossPts":-22,"netRs":-2920,"trades":5},"2022-11-18":{"grossPts":93.2,"netRs":988,"trades":4},"2022-11-21":{"grossPts":-142.3,"netRs":-4721,"trades":1},"2022-11-22":{"grossPts":128.5,"netRs":1595,"trades":5},"2022-11-23":{"grossPts":-297.3,"netRs":-10275,"trades":3},"2022-11-24":{"grossPts":63.5,"netRs":-355,"trades":5},"2022-11-25":{"grossPts":262.7,"netRs":5621,"trades":5},"2022-11-28":{"grossPts":-72.1,"netRs":-4423,"trades":5},"2022-11-29":{"grossPts":73.7,"netRs":-49,"trades":5},"2022-11-30":{"grossPts":71.3,"netRs":-121,"trades":5}},"2022-12":{"2022-12-01":{"grossPts":-41.6,"netRs":-3508,"trades":5},"2022-12-02":{"grossPts":-29.9,"netRs":-3157,"trades":5},"2022-12-05":{"grossPts":205.6,"netRs":3908,"trades":5},"2022-12-06":{"grossPts":92.3,"netRs":509,"trades":5},"2022-12-07":{"grossPts":268.5,"netRs":5795,"trades":5},"2022-12-08":{"grossPts":135.5,"netRs":1805,"trades":5},"2022-12-09":{"grossPts":301.8,"netRs":6794,"trades":5},"2022-12-12":{"grossPts":56.4,"netRs":-568,"trades":5},"2022-12-13":{"grossPts":76.5,"netRs":35,"trades":5},"2022-12-14":{"grossPts":94.4,"netRs":572,"trades":5},"2022-12-15":{"grossPts":89.6,"netRs":428,"trades":5},"2022-12-16":{"grossPts":278.5,"netRs":6095,"trades":5},"2022-12-19":{"grossPts":177.6,"netRs":3068,"trades":5},"2022-12-20":{"grossPts":32.6,"netRs":-1282,"trades":5},"2022-12-21":{"grossPts":-45.9,"netRs":-3637,"trades":5},"2022-12-22":{"grossPts":356.1,"netRs":8423,"trades":5},"2022-12-23":{"grossPts":2.3,"netRs":-2191,"trades":5},"2022-12-26":{"grossPts":266.7,"netRs":5741,"trades":5},"2022-12-27":{"grossPts":297.2,"netRs":6656,"trades":5},"2022-12-28":{"grossPts":225.8,"netRs":4514,"trades":5},"2022-12-30":{"grossPts":39.9,"netRs":-1063,"trades":5}},"2023-01":{"2023-01-02":{"grossPts":137.4,"netRs":1862,"trades":5},"2023-01-03":{"grossPts":324.7,"netRs":7481,"trades":5},"2023-01-04":{"grossPts":-77.5,"netRs":-4585,"trades":5},"2023-01-05":{"grossPts":292.3,"netRs":6509,"trades":5},"2023-01-06":{"grossPts":462.1,"netRs":11603,"trades":5},"2023-01-09":{"grossPts":244.8,"netRs":5084,"trades":5},"2023-01-10":{"grossPts":154.7,"netRs":2381,"trades":5},"2023-01-11":{"grossPts":159.5,"netRs":2525,"trades":5},"2023-01-12":{"grossPts":403.7,"netRs":9851,"trades":5},"2023-01-13":{"grossPts":296.7,"netRs":6641,"trades":5},"2023-01-16":{"grossPts":275.3,"netRs":5999,"trades":5},"2023-01-17":{"grossPts":208.2,"netRs":3986,"trades":5},"2023-01-18":{"grossPts":-65.3,"netRs":-4219,"trades":5},"2023-01-19":{"grossPts":122.1,"netRs":1403,"trades":5},"2023-01-20":{"grossPts":149.4,"netRs":2222,"trades":5},"2023-01-23":{"grossPts":-140.9,"netRs":-6487,"trades":5},"2023-01-24":{"grossPts":220.2,"netRs":4346,"trades":5},"2023-01-25":{"grossPts":435.9,"netRs":10817,"trades":5},"2023-01-27":{"grossPts":137.8,"netRs":1874,"trades":5},"2023-01-30":{"grossPts":653.5,"netRs":17345,"trades":5},"2023-01-31":{"grossPts":247.1,"netRs":5153,"trades":5}},"2023-02":{"2023-02-01":{"grossPts":508.6,"netRs":12998,"trades":5},"2023-02-02":{"grossPts":258.7,"netRs":5501,"trades":5},"2023-02-03":{"grossPts":443.2,"netRs":11036,"trades":5},"2023-02-06":{"grossPts":334.8,"netRs":7784,"trades":5},"2023-02-07":{"grossPts":367.3,"netRs":8759,"trades":5},"2023-02-08":{"grossPts":221.2,"netRs":4376,"trades":5},"2023-02-09":{"grossPts":160.5,"netRs":2555,"trades":5},"2023-02-10":{"grossPts":167.5,"netRs":2765,"trades":5},"2023-02-13":{"grossPts":252.5,"netRs":5315,"trades":5},"2023-02-14":{"grossPts":69.4,"netRs":-178,"trades":5},"2023-02-15":{"grossPts":304,"netRs":6860,"trades":5},"2023-02-16":{"grossPts":234.4,"netRs":4772,"trades":5},"2023-02-17":{"grossPts":155,"netRs":2390,"trades":5},"2023-02-20":{"grossPts":233.7,"netRs":4751,"trades":5},"2023-02-21":{"grossPts":90.2,"netRs":446,"trades":5},"2023-02-23":{"grossPts":517.6,"netRs":13268,"trades":5},"2023-02-24":{"grossPts":-31.2,"netRs":-3196,"trades":5},"2023-02-27":{"grossPts":32.5,"netRs":-1285,"trades":5},"2023-02-28":{"grossPts":190.6,"netRs":3458,"trades":5}},"2023-03":{"2023-03-01":{"grossPts":325.3,"netRs":7499,"trades":5},"2023-03-02":{"grossPts":149.6,"netRs":2228,"trades":5},"2023-03-03":{"grossPts":499.3,"netRs":12719,"trades":5},"2023-03-06":{"grossPts":216.8,"netRs":4244,"trades":5},"2023-03-08":{"grossPts":261.7,"netRs":5591,"trades":5},"2023-03-09":{"grossPts":2.3,"netRs":-2191,"trades":5},"2023-03-13":{"grossPts":311.8,"netRs":7094,"trades":5},"2023-03-14":{"grossPts":353.4,"netRs":8342,"trades":5},"2023-03-15":{"grossPts":365,"netRs":8690,"trades":5},"2023-03-16":{"grossPts":523.7,"netRs":13451,"trades":5},"2023-03-17":{"grossPts":90.8,"netRs":464,"trades":5},"2023-03-20":{"grossPts":252.6,"netRs":5318,"trades":5},"2023-03-21":{"grossPts":225.9,"netRs":4517,"trades":5},"2023-03-22":{"grossPts":141.4,"netRs":1982,"trades":5},"2023-03-23":{"grossPts":448.3,"netRs":11189,"trades":5},"2023-03-27":{"grossPts":233,"netRs":4730,"trades":5},"2023-03-28":{"grossPts":152.9,"netRs":2327,"trades":5},"2023-03-29":{"grossPts":158.2,"netRs":2486,"trades":5},"2023-03-31":{"grossPts":148.5,"netRs":2647,"trades":4}},"2023-04":{"2023-04-03":{"grossPts":224.9,"netRs":4487,"trades":5},"2023-04-05":{"grossPts":136.9,"netRs":2299,"trades":4},"2023-04-06":{"grossPts":204.4,"netRs":4324,"trades":4},"2023-04-10":{"grossPts":177.3,"netRs":3059,"trades":5},"2023-04-11":{"grossPts":199.5,"netRs":3725,"trades":5},"2023-04-12":{"grossPts":-104.3,"netRs":-4033,"trades":2},"2023-04-13":{"grossPts":61.2,"netRs":-424,"trades":5},"2023-04-17":{"grossPts":214.2,"netRs":4166,"trades":5},"2023-04-18":{"grossPts":213.3,"netRs":4139,"trades":5},"2023-04-19":{"grossPts":127.5,"netRs":2017,"trades":4},"2023-04-20":{"grossPts":-128,"netRs":-6100,"trades":5},"2023-04-21":{"grossPts":-168.3,"netRs":-7309,"trades":5},"2023-04-24":{"grossPts":110.6,"netRs":1058,"trades":5},"2023-04-25":{"grossPts":-42.2,"netRs":-3526,"trades":5},"2023-04-27":{"grossPts":66.2,"netRs":-274,"trades":5},"2023-04-28":{"grossPts":110.2,"netRs":1046,"trades":5}},"2023-05":{"2023-05-02":{"grossPts":85.6,"netRs":308,"trades":5},"2023-05-03":{"grossPts":-52.9,"netRs":-3395,"trades":4},"2023-05-04":{"grossPts":37.3,"netRs":-1141,"trades":5},"2023-05-05":{"grossPts":353,"netRs":8330,"trades":5},"2023-05-08":{"grossPts":192.8,"netRs":3524,"trades":5},"2023-05-09":{"grossPts":-3.8,"netRs":-2374,"trades":5},"2023-05-10":{"grossPts":369.2,"netRs":8816,"trades":5},"2023-05-11":{"grossPts":154.7,"netRs":2381,"trades":5},"2023-05-12":{"grossPts":131.1,"netRs":1673,"trades":5},"2023-05-15":{"grossPts":71.4,"netRs":-118,"trades":5},"2023-05-16":{"grossPts":288.1,"netRs":6383,"trades":5},"2023-05-17":{"grossPts":200.9,"netRs":3767,"trades":5},"2023-05-18":{"grossPts":204.8,"netRs":3884,"trades":5},"2023-05-19":{"grossPts":374.5,"netRs":8975,"trades":5},"2023-05-22":{"grossPts":-21,"netRs":-2890,"trades":5},"2023-05-23":{"grossPts":119.5,"netRs":1325,"trades":5},"2023-05-24":{"grossPts":176.3,"netRs":3029,"trades":5},"2023-05-26":{"grossPts":126.1,"netRs":1523,"trades":5},"2023-05-29":{"grossPts":123.4,"netRs":1442,"trades":5},"2023-05-30":{"grossPts":121.3,"netRs":1379,"trades":5},"2023-05-31":{"grossPts":184.1,"netRs":3263,"trades":5}},"2023-06":{"2023-06-01":{"grossPts":112.6,"netRs":1118,"trades":5},"2023-06-02":{"grossPts":231.9,"netRs":4697,"trades":5},"2023-06-05":{"grossPts":-43,"netRs":-3098,"trades":4},"2023-06-06":{"grossPts":-121.7,"netRs":-5459,"trades":4},"2023-06-07":{"grossPts":116,"netRs":1220,"trades":5},"2023-06-08":{"grossPts":219.9,"netRs":4337,"trades":5},"2023-06-09":{"grossPts":140.8,"netRs":1964,"trades":5},"2023-06-12":{"grossPts":84.2,"netRs":266,"trades":5},"2023-06-13":{"grossPts":0.9,"netRs":-2233,"trades":5},"2023-06-14":{"grossPts":83.5,"netRs":697,"trades":4},"2023-06-15":{"grossPts":-35.7,"netRs":-3331,"trades":5},"2023-06-16":{"grossPts":85.2,"netRs":296,"trades":5},"2023-06-19":{"grossPts":271.8,"netRs":5894,"trades":5},"2023-06-20":{"grossPts":46.8,"netRs":-856,"trades":5},"2023-06-21":{"grossPts":233,"netRs":4730,"trades":5},"2023-06-22":{"grossPts":31.9,"netRs":-1303,"trades":5},"2023-06-26":{"grossPts":95.5,"netRs":605,"trades":5},"2023-06-27":{"grossPts":208.8,"netRs":4004,"trades":5},"2023-06-28":{"grossPts":203.8,"netRs":3854,"trades":5},"2023-06-30":{"grossPts":-83.4,"netRs":-4310,"trades":4}},"2023-07":{"2023-07-03":{"grossPts":220.4,"netRs":4352,"trades":5},"2023-07-04":{"grossPts":128.3,"netRs":1589,"trades":5},"2023-07-05":{"grossPts":132.8,"netRs":1724,"trades":5},"2023-07-06":{"grossPts":119.9,"netRs":1337,"trades":5},"2023-07-07":{"grossPts":300.2,"netRs":6746,"trades":5},"2023-07-10":{"grossPts":269.3,"netRs":5819,"trades":5},"2023-07-11":{"grossPts":170.8,"netRs":2864,"trades":5},"2023-07-12":{"grossPts":-128.2,"netRs":-5654,"trades":4},"2023-07-13":{"grossPts":155.6,"netRs":2408,"trades":5},"2023-07-14":{"grossPts":159,"netRs":2510,"trades":5},"2023-07-17":{"grossPts":367.4,"netRs":8762,"trades":5},"2023-07-18":{"grossPts":292,"netRs":6500,"trades":5},"2023-07-19":{"grossPts":48,"netRs":-368,"trades":4},"2023-07-20":{"grossPts":193.6,"netRs":3548,"trades":5},"2023-07-21":{"grossPts":-13.2,"netRs":-2656,"trades":5},"2023-07-24":{"grossPts":362.2,"netRs":8606,"trades":5},"2023-07-25":{"grossPts":16.3,"netRs":-1771,"trades":5},"2023-07-26":{"grossPts":104.3,"netRs":869,"trades":5},"2023-07-27":{"grossPts":-58.3,"netRs":-4009,"trades":5},"2023-07-31":{"grossPts":146.7,"netRs":2141,"trades":5}},"2023-08":{"2023-08-01":{"grossPts":139.2,"netRs":1916,"trades":5},"2023-08-02":{"grossPts":266,"netRs":5720,"trades":5},"2023-08-03":{"grossPts":250.9,"netRs":5267,"trades":5},"2023-08-04":{"grossPts":317.3,"netRs":7259,"trades":5},"2023-08-07":{"grossPts":56.8,"netRs":-556,"trades":5},"2023-08-08":{"grossPts":189.1,"netRs":3413,"trades":5},"2023-08-09":{"grossPts":153.7,"netRs":2351,"trades":5},"2023-08-10":{"grossPts":-5.3,"netRs":-2419,"trades":5},"2023-08-11":{"grossPts":172.4,"netRs":2912,"trades":5},"2023-08-14":{"grossPts":124.2,"netRs":1466,"trades":5},"2023-08-17":{"grossPts":57.3,"netRs":-541,"trades":5},"2023-08-18":{"grossPts":77.5,"netRs":65,"trades":5},"2023-08-21":{"grossPts":90.9,"netRs":467,"trades":5},"2023-08-22":{"grossPts":-145.4,"netRs":-5266,"trades":2},"2023-08-23":{"grossPts":257.5,"netRs":5465,"trades":5},"2023-08-24":{"grossPts":182.3,"netRs":3209,"trades":5},"2023-08-28":{"grossPts":178.6,"netRs":3098,"trades":5},"2023-08-29":{"grossPts":-41.7,"netRs":-2607,"trades":3},"2023-08-30":{"grossPts":192.5,"netRs":3515,"trades":5},"2023-08-31":{"grossPts":75.1,"netRs":-7,"trades":5}},"2023-09":{"2023-09-01":{"grossPts":269.4,"netRs":5822,"trades":5},"2023-09-04":{"grossPts":226.7,"netRs":4541,"trades":5},"2023-09-05":{"grossPts":-130.1,"netRs":-6163,"trades":5},"2023-09-06":{"grossPts":-2,"netRs":-2320,"trades":5},"2023-09-07":{"grossPts":301.9,"netRs":6797,"trades":5},"2023-09-08":{"grossPts":90.8,"netRs":464,"trades":5},"2023-09-11":{"grossPts":151.8,"netRs":2294,"trades":5},"2023-09-12":{"grossPts":96.2,"netRs":626,"trades":5},"2023-09-13":{"grossPts":275.6,"netRs":6008,"trades":5},"2023-09-14":{"grossPts":346.2,"netRs":8126,"trades":5},"2023-09-15":{"grossPts":184.7,"netRs":3733,"trades":4},"2023-09-18":{"grossPts":116.6,"netRs":1238,"trades":5},"2023-09-20":{"grossPts":116.5,"netRs":1235,"trades":5},"2023-09-22":{"grossPts":354.6,"netRs":8378,"trades":5},"2023-09-25":{"grossPts":649.3,"netRs":17219,"trades":5},"2023-09-26":{"grossPts":63.8,"netRs":-346,"trades":5},"2023-09-27":{"grossPts":447.9,"netRs":11177,"trades":5},"2023-09-28":{"grossPts":208,"netRs":3980,"trades":5},"2023-09-29":{"grossPts":220.7,"netRs":4361,"trades":5}},"2023-10":{"2023-10-03":{"grossPts":97.4,"netRs":662,"trades":5},"2023-10-04":{"grossPts":125.1,"netRs":1493,"trades":5},"2023-10-05":{"grossPts":-28.4,"netRs":-3112,"trades":5},"2023-10-06":{"grossPts":220.6,"netRs":4358,"trades":5},"2023-10-10":{"grossPts":334.8,"netRs":7784,"trades":5},"2023-10-11":{"grossPts":128.4,"netRs":1592,"trades":5},"2023-10-12":{"grossPts":-97,"netRs":-3362,"trades":1},"2023-10-16":{"grossPts":59.6,"netRs":-472,"trades":5},"2023-10-17":{"grossPts":175.3,"netRs":3451,"trades":4},"2023-10-18":{"grossPts":332.9,"netRs":7727,"trades":5},"2023-10-19":{"grossPts":346.9,"netRs":8147,"trades":5},"2023-10-20":{"grossPts":152.7,"netRs":2321,"trades":5},"2023-10-23":{"grossPts":104.1,"netRs":863,"trades":5},"2023-10-25":{"grossPts":330,"netRs":7640,"trades":5},"2023-10-26":{"grossPts":335,"netRs":7790,"trades":5},"2023-10-27":{"grossPts":159.8,"netRs":2534,"trades":5},"2023-10-30":{"grossPts":295,"netRs":6590,"trades":5},"2023-10-31":{"grossPts":201,"netRs":3770,"trades":5}},"2023-11":{"2023-11-01":{"grossPts":88.7,"netRs":853,"trades":4},"2023-11-02":{"grossPts":398,"netRs":9680,"trades":5},"2023-11-03":{"grossPts":100.9,"netRs":1219,"trades":4},"2023-11-06":{"grossPts":170.5,"netRs":2855,"trades":5},"2023-11-07":{"grossPts":75.5,"netRs":5,"trades":5},"2023-11-08":{"grossPts":120.7,"netRs":1361,"trades":5},"2023-11-09":{"grossPts":197.8,"netRs":3674,"trades":5},"2023-11-10":{"grossPts":146.8,"netRs":2144,"trades":5},"2023-11-15":{"grossPts":100.2,"netRs":746,"trades":5},"2023-11-16":{"grossPts":353.8,"netRs":8354,"trades":5},"2023-11-17":{"grossPts":10.6,"netRs":-1038,"trades":3},"2023-11-20":{"grossPts":73.8,"netRs":-46,"trades":5},"2023-11-21":{"grossPts":46.7,"netRs":-859,"trades":5},"2023-11-22":{"grossPts":315.3,"netRs":7199,"trades":5},"2023-11-23":{"grossPts":44.9,"netRs":443,"trades":2},"2023-11-24":{"grossPts":-150,"netRs":-4952,"trades":1},"2023-11-28":{"grossPts":83.7,"netRs":251,"trades":5},"2023-11-29":{"grossPts":12.8,"netRs":-1876,"trades":5},"2023-11-30":{"grossPts":141.7,"netRs":1991,"trades":5}},"2023-12":{"2023-12-01":{"grossPts":256,"netRs":5420,"trades":5},"2023-12-04":{"grossPts":590.7,"netRs":15461,"trades":5},"2023-12-05":{"grossPts":524.9,"netRs":13487,"trades":5},"2023-12-06":{"grossPts":474,"netRs":11960,"trades":5},"2023-12-07":{"grossPts":-12.5,"netRs":-2635,"trades":5},"2023-12-08":{"grossPts":316.8,"netRs":7244,"trades":5},"2023-12-11":{"grossPts":229.7,"netRs":4631,"trades":5},"2023-12-12":{"grossPts":63.3,"netRs":-361,"trades":5},"2023-12-13":{"grossPts":167.1,"netRs":2753,"trades":5},"2023-12-14":{"grossPts":95.3,"netRs":599,"trades":5},"2023-12-15":{"grossPts":306.9,"netRs":6947,"trades":5},"2023-12-18":{"grossPts":135.8,"netRs":1814,"trades":5},"2023-12-19":{"grossPts":5.6,"netRs":-2092,"trades":5},"2023-12-20":{"grossPts":182.3,"netRs":3209,"trades":5},"2023-12-22":{"grossPts":181.3,"netRs":3179,"trades":5},"2023-12-26":{"grossPts":132.9,"netRs":1727,"trades":5},"2023-12-27":{"grossPts":254.4,"netRs":5372,"trades":5},"2023-12-28":{"grossPts":55.2,"netRs":-604,"trades":5},"2023-12-29":{"grossPts":13,"netRs":-1870,"trades":5}},"2024-01":{"2024-01-01":{"grossPts":68.4,"netRs":-208,"trades":5},"2024-01-02":{"grossPts":146.5,"netRs":2135,"trades":5},"2024-01-03":{"grossPts":300.3,"netRs":6749,"trades":5},"2024-01-04":{"grossPts":233.3,"netRs":4739,"trades":5},"2024-01-05":{"grossPts":152.2,"netRs":2306,"trades":5},"2024-01-08":{"grossPts":49.9,"netRs":-763,"trades":5},"2024-01-09":{"grossPts":362.1,"netRs":8603,"trades":5},"2024-01-11":{"grossPts":-1.5,"netRs":-2305,"trades":5},"2024-01-12":{"grossPts":84,"netRs":260,"trades":5},"2024-01-15":{"grossPts":264.2,"netRs":5666,"trades":5},"2024-01-16":{"grossPts":161.1,"netRs":2573,"trades":5},"2024-01-17":{"grossPts":335.5,"netRs":7805,"trades":5},"2024-01-18":{"grossPts":301.9,"netRs":6797,"trades":5},"2024-01-19":{"grossPts":528,"netRs":13580,"trades":5},"2024-01-20":{"grossPts":117.1,"netRs":1253,"trades":5},"2024-01-23":{"grossPts":533.4,"netRs":13742,"trades":5},"2024-01-24":{"grossPts":412.9,"netRs":10127,"trades":5},"2024-01-25":{"grossPts":47.5,"netRs":-835,"trades":5},"2024-01-29":{"grossPts":376.3,"netRs":9029,"trades":5},"2024-01-30":{"grossPts":-119.9,"netRs":-4953,"trades":3},"2024-01-31":{"grossPts":249,"netRs":5210,"trades":5}},"2024-02":{"2024-02-01":{"grossPts":540.9,"netRs":13967,"trades":5},"2024-02-02":{"grossPts":1009.8,"netRs":28034,"trades":5},"2024-02-05":{"grossPts":345.8,"netRs":8114,"trades":5},"2024-02-06":{"grossPts":258.3,"netRs":5489,"trades":5},"2024-02-07":{"grossPts":341.6,"netRs":8440,"trades":4},"2024-02-08":{"grossPts":730.8,"netRs":19664,"trades":5},"2024-02-09":{"grossPts":177.9,"netRs":3077,"trades":5},"2024-02-12":{"grossPts":366.7,"netRs":8741,"trades":5},"2024-02-13":{"grossPts":612.4,"netRs":16112,"trades":5},"2024-02-14":{"grossPts":429.6,"netRs":10628,"trades":5},"2024-02-15":{"grossPts":402.5,"netRs":9815,"trades":5},"2024-02-16":{"grossPts":39.9,"netRs":-1063,"trades":5},"2024-02-19":{"grossPts":244.9,"netRs":5087,"trades":5},"2024-02-20":{"grossPts":6.4,"netRs":-2068,"trades":5},"2024-02-21":{"grossPts":379.2,"netRs":9116,"trades":5},"2024-02-22":{"grossPts":218.6,"netRs":4298,"trades":5},"2024-02-23":{"grossPts":204.8,"netRs":3884,"trades":5},"2024-02-26":{"grossPts":295.6,"netRs":6608,"trades":5},"2024-02-28":{"grossPts":339.5,"netRs":7925,"trades":5},"2024-02-29":{"grossPts":-206.8,"netRs":-8464,"trades":5}},"2024-03":{"2024-03-01":{"grossPts":626.9,"netRs":16547,"trades":5},"2024-03-02":{"grossPts":59.9,"netRs":893,"trades":2},"2024-03-04":{"grossPts":-29.4,"netRs":-3142,"trades":5},"2024-03-05":{"grossPts":106.7,"netRs":941,"trades":5},"2024-03-06":{"grossPts":219.5,"netRs":4325,"trades":5},"2024-03-07":{"grossPts":185.6,"netRs":3308,"trades":5},"2024-03-11":{"grossPts":325.4,"netRs":7502,"trades":5},"2024-03-12":{"grossPts":405.4,"netRs":9902,"trades":5},"2024-03-13":{"grossPts":242.1,"netRs":5003,"trades":5},"2024-03-15":{"grossPts":125.5,"netRs":1505,"trades":5},"2024-03-18":{"grossPts":258.8,"netRs":5504,"trades":5},"2024-03-19":{"grossPts":158.6,"netRs":2498,"trades":5},"2024-03-20":{"grossPts":291.3,"netRs":6931,"trades":4},"2024-03-21":{"grossPts":199.5,"netRs":3725,"trades":5},"2024-03-22":{"grossPts":252.3,"netRs":5309,"trades":5},"2024-03-26":{"grossPts":157.8,"netRs":2474,"trades":5},"2024-03-27":{"grossPts":212.5,"netRs":4115,"trades":5},"2024-03-28":{"grossPts":244.5,"netRs":5075,"trades":5}},"2024-04":{"2024-04-01":{"grossPts":177.4,"netRs":3062,"trades":5},"2024-04-02":{"grossPts":-72.3,"netRs":-3525,"trades":3},"2024-04-04":{"grossPts":358,"netRs":8480,"trades":5},"2024-04-05":{"grossPts":277.3,"netRs":6059,"trades":5},"2024-04-08":{"grossPts":62.7,"netRs":-379,"trades":5},"2024-04-09":{"grossPts":133.6,"netRs":1748,"trades":5},"2024-04-10":{"grossPts":49.1,"netRs":-335,"trades":4},"2024-04-12":{"grossPts":244.4,"netRs":5072,"trades":5},"2024-04-16":{"grossPts":140.6,"netRs":1958,"trades":5},"2024-04-18":{"grossPts":-81.7,"netRs":-4711,"trades":5},"2024-04-19":{"grossPts":551.9,"netRs":14297,"trades":5},"2024-04-22":{"grossPts":-183.2,"netRs":-7756,"trades":5},"2024-04-23":{"grossPts":119,"netRs":1310,"trades":5},"2024-04-24":{"grossPts":-80,"netRs":-4208,"trades":4},"2024-04-25":{"grossPts":-21.3,"netRs":-2899,"trades":5},"2024-04-26":{"grossPts":226.8,"netRs":4544,"trades":5},"2024-04-29":{"grossPts":231.3,"netRs":4679,"trades":5},"2024-04-30":{"grossPts":517.1,"netRs":13253,"trades":5}},"2024-05":{"2024-05-02":{"grossPts":-47.6,"netRs":-3688,"trades":5},"2024-05-03":{"grossPts":-43.7,"netRs":-3571,"trades":5},"2024-05-06":{"grossPts":227,"netRs":4550,"trades":5},"2024-05-07":{"grossPts":259,"netRs":5510,"trades":5},"2024-05-09":{"grossPts":361.1,"netRs":8573,"trades":5},"2024-05-10":{"grossPts":282.1,"netRs":6203,"trades":5},"2024-05-13":{"grossPts":527,"netRs":13550,"trades":5},"2024-05-14":{"grossPts":112,"netRs":1552,"trades":4},"2024-05-15":{"grossPts":133.1,"netRs":1733,"trades":5},"2024-05-16":{"grossPts":363,"netRs":8630,"trades":5},"2024-05-17":{"grossPts":-6.3,"netRs":-2449,"trades":5},"2024-05-18":{"grossPts":50,"netRs":596,"trades":2},"2024-05-21":{"grossPts":137.5,"netRs":1865,"trades":5},"2024-05-22":{"grossPts":213.4,"netRs":4142,"trades":5},"2024-05-23":{"grossPts":245,"netRs":5090,"trades":5},"2024-05-24":{"grossPts":208.4,"netRs":3992,"trades":5},"2024-05-27":{"grossPts":452.3,"netRs":11309,"trades":5},"2024-05-28":{"grossPts":63.5,"netRs":97,"trades":4},"2024-05-29":{"grossPts":192.2,"netRs":3506,"trades":5},"2024-05-30":{"grossPts":279.4,"netRs":6122,"trades":5},"2024-05-31":{"grossPts":158.2,"netRs":2486,"trades":5}},"2024-06":{"2024-06-03":{"grossPts":193.2,"netRs":3536,"trades":5},"2024-06-04":{"grossPts":1874.2,"netRs":53966,"trades":5},"2024-06-05":{"grossPts":960.4,"netRs":26552,"trades":5},"2024-06-06":{"grossPts":349.7,"netRs":8231,"trades":5},"2024-06-07":{"grossPts":20.4,"netRs":-1648,"trades":5},"2024-06-10":{"grossPts":233.6,"netRs":4748,"trades":5},"2024-06-11":{"grossPts":382.6,"netRs":9218,"trades":5},"2024-06-12":{"grossPts":-148.4,"netRs":-6712,"trades":5},"2024-06-13":{"grossPts":16.5,"netRs":-1765,"trades":5},"2024-06-14":{"grossPts":174,"netRs":2960,"trades":5},"2024-06-18":{"grossPts":-38.6,"netRs":-3418,"trades":5},"2024-06-19":{"grossPts":826.4,"netRs":22532,"trades":5},"2024-06-20":{"grossPts":223.3,"netRs":4439,"trades":5},"2024-06-21":{"grossPts":282.1,"netRs":6203,"trades":5},"2024-06-24":{"grossPts":329.9,"netRs":7637,"trades":5},"2024-06-25":{"grossPts":352.5,"netRs":8315,"trades":5},"2024-06-26":{"grossPts":238.2,"netRs":4886,"trades":5},"2024-06-27":{"grossPts":248.1,"netRs":5183,"trades":5},"2024-06-28":{"grossPts":304.2,"netRs":6866,"trades":5}},"2024-07":{"2024-07-01":{"grossPts":272.3,"netRs":5909,"trades":5},"2024-07-02":{"grossPts":545.3,"netRs":14099,"trades":5},"2024-07-03":{"grossPts":214.7,"netRs":4181,"trades":5},"2024-07-04":{"grossPts":346.3,"netRs":8129,"trades":5},"2024-07-08":{"grossPts":335.8,"netRs":7814,"trades":5},"2024-07-09":{"grossPts":-83.8,"netRs":-3418,"trades":2},"2024-07-10":{"grossPts":177.7,"netRs":3071,"trades":5},"2024-07-11":{"grossPts":472.6,"netRs":11918,"trades":5},"2024-07-12":{"grossPts":184.8,"netRs":3284,"trades":5},"2024-07-15":{"grossPts":192.9,"netRs":3527,"trades":5},"2024-07-16":{"grossPts":94.5,"netRs":1027,"trades":4},"2024-07-18":{"grossPts":548.3,"netRs":14189,"trades":5},"2024-07-19":{"grossPts":253.6,"netRs":5348,"trades":5},"2024-07-23":{"grossPts":875,"netRs":23990,"trades":5},"2024-07-24":{"grossPts":514.7,"netRs":13181,"trades":5},"2024-07-29":{"grossPts":872,"netRs":23900,"trades":5},"2024-07-30":{"grossPts":70.3,"netRs":-151,"trades":5},"2024-07-31":{"grossPts":228.9,"netRs":4607,"trades":5}},"2024-08":{"2024-08-01":{"grossPts":-0.2,"netRs":-2266,"trades":5},"2024-08-05":{"grossPts":528.1,"netRs":13583,"trades":5},"2024-08-06":{"grossPts":92.7,"netRs":521,"trades":5},"2024-08-07":{"grossPts":577.9,"netRs":15077,"trades":5},"2024-08-08":{"grossPts":597.7,"netRs":15671,"trades":5},"2024-08-09":{"grossPts":142.1,"netRs":2003,"trades":5},"2024-08-12":{"grossPts":547.9,"netRs":14177,"trades":5},"2024-08-13":{"grossPts":314.2,"netRs":7166,"trades":5},"2024-08-14":{"grossPts":-31.3,"netRs":-1843,"trades":2},"2024-08-16":{"grossPts":442.8,"netRs":11024,"trades":5},"2024-08-19":{"grossPts":398.3,"netRs":9689,"trades":5},"2024-08-20":{"grossPts":36.1,"netRs":-1177,"trades":5},"2024-08-21":{"grossPts":42.3,"netRs":-991,"trades":5},"2024-08-22":{"grossPts":230.3,"netRs":4649,"trades":5},"2024-08-23":{"grossPts":79,"netRs":110,"trades":5},"2024-08-26":{"grossPts":125.3,"netRs":1499,"trades":5},"2024-08-27":{"grossPts":332,"netRs":7700,"trades":5},"2024-08-28":{"grossPts":180.7,"netRs":3161,"trades":5},"2024-08-29":{"grossPts":232.3,"netRs":4709,"trades":5},"2024-08-30":{"grossPts":58.6,"netRs":-502,"trades":5}},"2024-09":{"2024-09-02":{"grossPts":101,"netRs":770,"trades":5},"2024-09-03":{"grossPts":237.8,"netRs":4874,"trades":5},"2024-09-04":{"grossPts":-186.3,"netRs":-7397,"trades":4},"2024-09-05":{"grossPts":46.3,"netRs":-871,"trades":5},"2024-09-06":{"grossPts":247.9,"netRs":5177,"trades":5},"2024-09-09":{"grossPts":-197,"netRs":-8170,"trades":5},"2024-09-10":{"grossPts":188.3,"netRs":3389,"trades":5},"2024-09-11":{"grossPts":-128.9,"netRs":-6127,"trades":5},"2024-09-12":{"grossPts":382,"netRs":9200,"trades":5},"2024-09-13":{"grossPts":247.6,"netRs":5168,"trades":5},"2024-09-16":{"grossPts":174,"netRs":2960,"trades":5},"2024-09-17":{"grossPts":49.8,"netRs":-314,"trades":4},"2024-09-18":{"grossPts":498.6,"netRs":12698,"trades":5},"2024-09-19":{"grossPts":311.9,"netRs":7097,"trades":5},"2024-09-20":{"grossPts":184.8,"netRs":3284,"trades":5},"2024-09-23":{"grossPts":222.8,"netRs":4424,"trades":5},"2024-09-24":{"grossPts":148.8,"netRs":2204,"trades":5},"2024-09-25":{"grossPts":-150,"netRs":-4952,"trades":1},"2024-09-26":{"grossPts":243,"netRs":5030,"trades":5},"2024-09-27":{"grossPts":334.7,"netRs":7781,"trades":5}},"2024-10":{"2024-10-01":{"grossPts":197.1,"netRs":3653,"trades":5},"2024-10-03":{"grossPts":232.1,"netRs":4703,"trades":5},"2024-10-04":{"grossPts":592.8,"netRs":15524,"trades":5},"2024-10-07":{"grossPts":973,"netRs":26930,"trades":5},"2024-10-08":{"grossPts":422.4,"netRs":10412,"trades":5},"2024-10-09":{"grossPts":388.6,"netRs":9398,"trades":5},"2024-10-10":{"grossPts":370.4,"netRs":8852,"trades":5},"2024-10-11":{"grossPts":334.1,"netRs":7763,"trades":5},"2024-10-14":{"grossPts":319.2,"netRs":7316,"trades":5},"2024-10-15":{"grossPts":351.3,"netRs":8279,"trades":5},"2024-10-16":{"grossPts":171,"netRs":2870,"trades":5},"2024-10-17":{"grossPts":401.6,"netRs":9788,"trades":5},"2024-10-18":{"grossPts":255.6,"netRs":5408,"trades":5},"2024-10-21":{"grossPts":339,"netRs":7910,"trades":5},"2024-10-22":{"grossPts":831.4,"netRs":22682,"trades":5},"2024-10-23":{"grossPts":80.1,"netRs":143,"trades":5},"2024-10-24":{"grossPts":446.4,"netRs":11132,"trades":5},"2024-10-25":{"grossPts":631.7,"netRs":16691,"trades":5},"2024-10-28":{"grossPts":134.5,"netRs":1775,"trades":5},"2024-10-29":{"grossPts":265.7,"netRs":5711,"trades":5},"2024-10-30":{"grossPts":162.4,"netRs":2612,"trades":5},"2024-10-31":{"grossPts":246.1,"netRs":5123,"trades":5}},"2024-11":{"2024-11-05":{"grossPts":433.6,"netRs":10748,"trades":5},"2024-11-06":{"grossPts":149.5,"netRs":2225,"trades":5},"2024-11-07":{"grossPts":257.1,"netRs":5453,"trades":5},"2024-11-08":{"grossPts":324.1,"netRs":7463,"trades":5},"2024-11-11":{"grossPts":225.7,"netRs":4511,"trades":5},"2024-11-12":{"grossPts":360.6,"netRs":8558,"trades":5},"2024-11-13":{"grossPts":161.5,"netRs":2585,"trades":5},"2024-11-14":{"grossPts":179.4,"netRs":3122,"trades":5},"2024-11-18":{"grossPts":-286.6,"netRs":-10858,"trades":5},"2024-11-19":{"grossPts":297,"netRs":6650,"trades":5},"2024-11-21":{"grossPts":808.6,"netRs":21998,"trades":5},"2024-11-22":{"grossPts":311.7,"netRs":7091,"trades":5},"2024-11-25":{"grossPts":-55.8,"netRs":-3934,"trades":5},"2024-11-26":{"grossPts":219.4,"netRs":4322,"trades":5},"2024-11-27":{"grossPts":217.4,"netRs":4262,"trades":5},"2024-11-28":{"grossPts":566.7,"netRs":14741,"trades":5},"2024-11-29":{"grossPts":183.6,"netRs":3248,"trades":5}},"2024-12":{"2024-12-02":{"grossPts":149.1,"netRs":2213,"trades":5},"2024-12-03":{"grossPts":144.4,"netRs":2072,"trades":5},"2024-12-04":{"grossPts":345.3,"netRs":8099,"trades":5},"2024-12-05":{"grossPts":618.2,"netRs":16286,"trades":5},"2024-12-06":{"grossPts":256.3,"netRs":5429,"trades":5},"2024-12-09":{"grossPts":-23,"netRs":-2950,"trades":5},"2024-12-10":{"grossPts":210.4,"netRs":4052,"trades":5},"2024-12-11":{"grossPts":166.4,"netRs":3636,"trades":3},"2024-12-12":{"grossPts":120.2,"netRs":1346,"trades":5},"2024-12-16":{"grossPts":142.9,"netRs":2027,"trades":5},"2024-12-17":{"grossPts":478.5,"netRs":12095,"trades":5},"2024-12-19":{"grossPts":333.8,"netRs":7754,"trades":5},"2024-12-20":{"grossPts":402.4,"netRs":9812,"trades":5},"2024-12-23":{"grossPts":244.6,"netRs":5078,"trades":5},"2024-12-24":{"grossPts":135.9,"netRs":1817,"trades":5},"2024-12-26":{"grossPts":502.5,"netRs":12815,"trades":5},"2024-12-27":{"grossPts":72.8,"netRs":-76,"trades":5},"2024-12-30":{"grossPts":439.7,"netRs":10931,"trades":5},"2024-12-31":{"grossPts":-16.7,"netRs":-2761,"trades":5}},"2025-01":{"2025-01-01":{"grossPts":246.7,"netRs":5141,"trades":5},"2025-01-02":{"grossPts":343,"netRs":8030,"trades":5},"2025-01-03":{"grossPts":464.3,"netRs":11669,"trades":5},"2025-01-06":{"grossPts":650.1,"netRs":17243,"trades":5},"2025-01-07":{"grossPts":316.6,"netRs":7238,"trades":5},"2025-01-08":{"grossPts":481.7,"netRs":12191,"trades":5},"2025-01-09":{"grossPts":96.6,"netRs":638,"trades":5},"2025-01-10":{"grossPts":567.3,"netRs":14759,"trades":5},"2025-01-13":{"grossPts":441.9,"netRs":10997,"trades":5},"2025-01-14":{"grossPts":92.3,"netRs":509,"trades":5},"2025-01-15":{"grossPts":629.8,"netRs":16634,"trades":5},"2025-01-16":{"grossPts":307.1,"netRs":6953,"trades":5},"2025-01-20":{"grossPts":496,"netRs":12620,"trades":5},"2025-01-21":{"grossPts":142.6,"netRs":2018,"trades":5},"2025-01-22":{"grossPts":407.5,"netRs":9965,"trades":5},"2025-01-23":{"grossPts":267.3,"netRs":5759,"trades":5},"2025-01-24":{"grossPts":378.4,"netRs":9092,"trades":5},"2025-01-27":{"grossPts":-186.7,"netRs":-7861,"trades":5},"2025-01-28":{"grossPts":288.6,"netRs":6398,"trades":5},"2025-01-29":{"grossPts":-1.1,"netRs":-2293,"trades":5},"2025-01-30":{"grossPts":156.4,"netRs":2432,"trades":5},"2025-01-31":{"grossPts":51.6,"netRs":-712,"trades":5}},"2025-02":{"2025-02-01":{"grossPts":506.5,"netRs":12935,"trades":5},"2025-02-03":{"grossPts":116.9,"netRs":1247,"trades":5},"2025-02-04":{"grossPts":129.7,"netRs":1631,"trades":5},"2025-02-05":{"grossPts":183.6,"netRs":3248,"trades":5},"2025-02-06":{"grossPts":204.1,"netRs":3863,"trades":5},"2025-02-07":{"grossPts":736.6,"netRs":19838,"trades":5},"2025-02-10":{"grossPts":113.7,"netRs":1151,"trades":5},"2025-02-11":{"grossPts":253.8,"netRs":5354,"trades":5},"2025-02-12":{"grossPts":829,"netRs":22610,"trades":5},"2025-02-13":{"grossPts":136.2,"netRs":1826,"trades":5},"2025-02-14":{"grossPts":318.3,"netRs":7289,"trades":5},"2025-02-17":{"grossPts":454.5,"netRs":11375,"trades":5},"2025-02-18":{"grossPts":420.3,"netRs":10349,"trades":5},"2025-02-19":{"grossPts":302.7,"netRs":6821,"trades":5},"2025-02-20":{"grossPts":124.7,"netRs":1933,"trades":4},"2025-02-21":{"grossPts":420.6,"netRs":10358,"trades":5},"2025-02-25":{"grossPts":59.2,"netRs":-484,"trades":5},"2025-02-27":{"grossPts":173.9,"netRs":2957,"trades":5}},"2025-03":{"2025-03-03":{"grossPts":204.2,"netRs":3866,"trades":5},"2025-03-04":{"grossPts":155.2,"netRs":2396,"trades":5},"2025-03-05":{"grossPts":230.7,"netRs":4661,"trades":5},"2025-03-06":{"grossPts":273.4,"netRs":5942,"trades":5},"2025-03-07":{"grossPts":259.2,"netRs":5516,"trades":5},"2025-03-10":{"grossPts":140.4,"netRs":1952,"trades":5},"2025-03-11":{"grossPts":143.7,"netRs":2051,"trades":5},"2025-03-12":{"grossPts":125.8,"netRs":1514,"trades":5},"2025-03-13":{"grossPts":200.8,"netRs":3764,"trades":5},"2025-03-17":{"grossPts":173.2,"netRs":2936,"trades":5},"2025-03-18":{"grossPts":247.7,"netRs":5171,"trades":5},"2025-03-19":{"grossPts":146.8,"netRs":2144,"trades":5},"2025-03-20":{"grossPts":235.7,"netRs":4811,"trades":5},"2025-03-21":{"grossPts":115.3,"netRs":1199,"trades":5},"2025-03-24":{"grossPts":502.5,"netRs":12815,"trades":5},"2025-03-25":{"grossPts":-152.5,"netRs":-6835,"trades":5},"2025-03-26":{"grossPts":172.8,"netRs":3376,"trades":4},"2025-03-27":{"grossPts":266.8,"netRs":5744,"trades":5},"2025-03-28":{"grossPts":186.9,"netRs":3347,"trades":5}},"2025-04":{"2025-04-01":{"grossPts":284.2,"netRs":6266,"trades":5},"2025-04-02":{"grossPts":248.6,"netRs":5198,"trades":5},"2025-04-03":{"grossPts":112.5,"netRs":1115,"trades":5},"2025-04-04":{"grossPts":93.6,"netRs":548,"trades":5},"2025-04-08":{"grossPts":453.6,"netRs":11348,"trades":5},"2025-04-09":{"grossPts":182.6,"netRs":3218,"trades":5},"2025-04-11":{"grossPts":336.9,"netRs":7847,"trades":5},"2025-04-15":{"grossPts":-31.2,"netRs":-3196,"trades":5},"2025-04-16":{"grossPts":-28.5,"netRs":-2663,"trades":4},"2025-04-17":{"grossPts":603.7,"netRs":15851,"trades":5},"2025-04-21":{"grossPts":263.5,"netRs":5645,"trades":5},"2025-04-22":{"grossPts":474.5,"netRs":11975,"trades":5},"2025-04-23":{"grossPts":539.4,"netRs":13922,"trades":5},"2025-04-24":{"grossPts":50.5,"netRs":-745,"trades":5},"2025-04-25":{"grossPts":342.4,"netRs":8012,"trades":5},"2025-04-28":{"grossPts":470.6,"netRs":11858,"trades":5},"2025-04-29":{"grossPts":206.8,"netRs":3944,"trades":5},"2025-04-30":{"grossPts":173.3,"netRs":2939,"trades":5}},"2025-05":{"2025-05-02":{"grossPts":102.6,"netRs":818,"trades":5},"2025-05-05":{"grossPts":-14.4,"netRs":-2692,"trades":5},"2025-05-06":{"grossPts":331.5,"netRs":7685,"trades":5},"2025-05-07":{"grossPts":394.4,"netRs":9572,"trades":5},"2025-05-08":{"grossPts":217.3,"netRs":4259,"trades":5},"2025-05-12":{"grossPts":290.1,"netRs":6443,"trades":5},"2025-05-13":{"grossPts":265.3,"netRs":6151,"trades":4},"2025-05-14":{"grossPts":144.8,"netRs":2084,"trades":5},"2025-05-15":{"grossPts":719,"netRs":19310,"trades":5},"2025-05-16":{"grossPts":116,"netRs":1672,"trades":4},"2025-05-19":{"grossPts":161.1,"netRs":2573,"trades":5},"2025-05-20":{"grossPts":265.9,"netRs":5717,"trades":5},"2025-05-21":{"grossPts":573.3,"netRs":14939,"trades":5},"2025-05-22":{"grossPts":250.9,"netRs":5719,"trades":4},"2025-05-23":{"grossPts":378.1,"netRs":9083,"trades":5},"2025-05-26":{"grossPts":349.3,"netRs":8671,"trades":4},"2025-05-27":{"grossPts":134,"netRs":1760,"trades":5},"2025-05-28":{"grossPts":204.7,"netRs":3881,"trades":5},"2025-05-29":{"grossPts":-50.3,"netRs":-3769,"trades":5},"2025-05-30":{"grossPts":259.8,"netRs":5534,"trades":5}},"2025-06":{"2025-06-02":{"grossPts":98.8,"netRs":1608,"trades":3},"2025-06-03":{"grossPts":346.7,"netRs":8141,"trades":5},"2025-06-04":{"grossPts":25.7,"netRs":-585,"trades":3},"2025-06-05":{"grossPts":166.5,"netRs":2735,"trades":5},"2025-06-06":{"grossPts":467.9,"netRs":11777,"trades":5},"2025-06-09":{"grossPts":124.5,"netRs":1475,"trades":5},"2025-06-10":{"grossPts":102.9,"netRs":827,"trades":5},"2025-06-11":{"grossPts":93.2,"netRs":536,"trades":5},"2025-06-12":{"grossPts":164.2,"netRs":2666,"trades":5},"2025-06-13":{"grossPts":225.9,"netRs":4517,"trades":5},"2025-06-16":{"grossPts":259.7,"netRs":5531,"trades":5},"2025-06-17":{"grossPts":144.4,"netRs":2524,"trades":4},"2025-06-18":{"grossPts":185.6,"netRs":3308,"trades":5},"2025-06-19":{"grossPts":152.3,"netRs":2309,"trades":5},"2025-06-20":{"grossPts":305.4,"netRs":6902,"trades":5},"2025-06-23":{"grossPts":283,"netRs":6230,"trades":5},"2025-06-24":{"grossPts":283.6,"netRs":6248,"trades":5},"2025-06-25":{"grossPts":32.5,"netRs":523,"trades":1},"2025-06-26":{"grossPts":113.1,"netRs":1133,"trades":5},"2025-06-27":{"grossPts":308,"netRs":6980,"trades":5},"2025-06-30":{"grossPts":342.3,"netRs":8009,"trades":5}},"2025-07":{"2025-07-01":{"grossPts":136.5,"netRs":1835,"trades":5},"2025-07-02":{"grossPts":271,"netRs":5870,"trades":5},"2025-07-03":{"grossPts":-117.8,"netRs":-5794,"trades":5},"2025-07-04":{"grossPts":195.4,"netRs":3602,"trades":5},"2025-07-07":{"grossPts":120.5,"netRs":1355,"trades":5},"2025-07-08":{"grossPts":180.5,"netRs":3155,"trades":5},"2025-07-09":{"grossPts":165.1,"netRs":2693,"trades":5},"2025-07-10":{"grossPts":250.3,"netRs":5249,"trades":5},"2025-07-11":{"grossPts":378,"netRs":9080,"trades":5},"2025-07-14":{"grossPts":227.5,"netRs":4565,"trades":5},"2025-07-15":{"grossPts":286.3,"netRs":6329,"trades":5},"2025-07-16":{"grossPts":206.3,"netRs":3929,"trades":5},"2025-07-17":{"grossPts":238.9,"netRs":4907,"trades":5},"2025-07-18":{"grossPts":212.9,"netRs":4127,"trades":5},"2025-07-21":{"grossPts":148,"netRs":2180,"trades":5},"2025-07-22":{"grossPts":218.9,"netRs":4307,"trades":5},"2025-07-23":{"grossPts":253,"netRs":5330,"trades":5},"2025-07-24":{"grossPts":190.9,"netRs":3467,"trades":5},"2025-07-25":{"grossPts":344.2,"netRs":8066,"trades":5},"2025-07-28":{"grossPts":311.9,"netRs":7097,"trades":5},"2025-07-29":{"grossPts":203.3,"netRs":3839,"trades":5},"2025-07-30":{"grossPts":215.3,"netRs":4199,"trades":5}},"2025-08":{"2025-08-01":{"grossPts":189.1,"netRs":3413,"trades":5},"2025-08-04":{"grossPts":304.4,"netRs":6872,"trades":5},"2025-08-05":{"grossPts":139.4,"netRs":1922,"trades":5},"2025-08-06":{"grossPts":238.6,"netRs":4898,"trades":5},"2025-08-07":{"grossPts":414.1,"netRs":10163,"trades":5},"2025-08-08":{"grossPts":197.8,"netRs":3674,"trades":5},"2025-08-11":{"grossPts":222.9,"netRs":4427,"trades":5},"2025-08-12":{"grossPts":263.8,"netRs":5654,"trades":5},"2025-08-13":{"grossPts":217.7,"netRs":4271,"trades":5},"2025-08-14":{"grossPts":217.1,"netRs":4253,"trades":5},"2025-08-18":{"grossPts":346.1,"netRs":8123,"trades":5},"2025-08-19":{"grossPts":289.6,"netRs":6428,"trades":5},"2025-08-20":{"grossPts":43.4,"netRs":-958,"trades":5},"2025-08-21":{"grossPts":198.5,"netRs":3695,"trades":5},"2025-08-25":{"grossPts":-277.8,"netRs":-10594,"trades":5},"2025-08-26":{"grossPts":199.3,"netRs":3719,"trades":5},"2025-08-28":{"grossPts":83,"netRs":230,"trades":5},"2025-08-29":{"grossPts":162.5,"netRs":2615,"trades":5}},"2025-09":{"2025-09-01":{"grossPts":221,"netRs":4370,"trades":5},"2025-09-02":{"grossPts":389.4,"netRs":9422,"trades":5},"2025-09-03":{"grossPts":183.3,"netRs":3239,"trades":5},"2025-09-04":{"grossPts":166.5,"netRs":2735,"trades":5},"2025-09-05":{"grossPts":349.3,"netRs":8219,"trades":5},"2025-09-08":{"grossPts":-33.5,"netRs":-3265,"trades":5},"2025-09-09":{"grossPts":152.1,"netRs":2303,"trades":5},"2025-09-10":{"grossPts":115.9,"netRs":1217,"trades":5},"2025-09-11":{"grossPts":162.3,"netRs":2609,"trades":5},"2025-09-12":{"grossPts":87,"netRs":350,"trades":5},"2025-09-15":{"grossPts":58.6,"netRs":-502,"trades":5},"2025-09-16":{"grossPts":48.8,"netRs":-796,"trades":5},"2025-09-17":{"grossPts":243.8,"netRs":5054,"trades":5},"2025-09-18":{"grossPts":183,"netRs":3230,"trades":5},"2025-09-19":{"grossPts":86.9,"netRs":347,"trades":5},"2025-09-22":{"grossPts":236.8,"netRs":4844,"trades":5},"2025-09-23":{"grossPts":340.1,"netRs":7943,"trades":5},"2025-09-24":{"grossPts":231.9,"netRs":4697,"trades":5},"2025-09-25":{"grossPts":221,"netRs":4370,"trades":5},"2025-09-26":{"grossPts":9.5,"netRs":-1523,"trades":4},"2025-09-29":{"grossPts":247.3,"netRs":5159,"trades":5},"2025-09-30":{"grossPts":80,"netRs":140,"trades":5}},"2025-10":{"2025-10-01":{"grossPts":248.1,"netRs":5183,"trades":5},"2025-10-03":{"grossPts":264.6,"netRs":5678,"trades":5},"2025-10-06":{"grossPts":199,"netRs":3710,"trades":5},"2025-10-07":{"grossPts":325,"netRs":7490,"trades":5},"2025-10-08":{"grossPts":153.7,"netRs":2351,"trades":5},"2025-10-09":{"grossPts":249,"netRs":5210,"trades":5},"2025-10-10":{"grossPts":253.7,"netRs":5351,"trades":5},"2025-10-13":{"grossPts":308.9,"netRs":7007,"trades":5},"2025-10-14":{"grossPts":280,"netRs":6140,"trades":5},"2025-10-15":{"grossPts":231.1,"netRs":4673,"trades":5},"2025-10-16":{"grossPts":-16.1,"netRs":-2743,"trades":5},"2025-10-17":{"grossPts":-13.8,"netRs":-2674,"trades":5},"2025-10-20":{"grossPts":149.9,"netRs":2237,"trades":5},"2025-10-24":{"grossPts":152.8,"netRs":2324,"trades":5},"2025-10-27":{"grossPts":172.6,"netRs":2918,"trades":5},"2025-10-28":{"grossPts":484.9,"netRs":12287,"trades":5},"2025-10-29":{"grossPts":-113,"netRs":-5650,"trades":5},"2025-10-30":{"grossPts":-53,"netRs":-3850,"trades":5},"2025-10-31":{"grossPts":402.5,"netRs":9815,"trades":5}},"2025-11":{"2025-11-03":{"grossPts":231.3,"netRs":4679,"trades":5},"2025-11-04":{"grossPts":171.7,"netRs":2891,"trades":5},"2025-11-07":{"grossPts":353.7,"netRs":8351,"trades":5},"2025-11-10":{"grossPts":156.2,"netRs":2426,"trades":5},"2025-11-11":{"grossPts":236,"netRs":4820,"trades":5},"2025-11-12":{"grossPts":112.5,"netRs":1115,"trades":5},"2025-11-13":{"grossPts":177.3,"netRs":3059,"trades":5},"2025-11-14":{"grossPts":88.2,"netRs":386,"trades":5},"2025-11-17":{"grossPts":186.7,"netRs":3341,"trades":5},"2025-11-18":{"grossPts":170.1,"netRs":2843,"trades":5},"2025-11-19":{"grossPts":339.4,"netRs":7922,"trades":5},"2025-11-20":{"grossPts":116.4,"netRs":1684,"trades":4},"2025-11-21":{"grossPts":233.2,"netRs":4736,"trades":5},"2025-11-24":{"grossPts":172.1,"netRs":2903,"trades":5},"2025-11-25":{"grossPts":181,"netRs":3170,"trades":5},"2025-11-26":{"grossPts":340.1,"netRs":7943,"trades":5},"2025-11-27":{"grossPts":173.2,"netRs":2936,"trades":5},"2025-11-28":{"grossPts":-33.5,"netRs":-3265,"trades":5}},"2025-12":{"2025-12-01":{"grossPts":169.9,"netRs":2837,"trades":5},"2025-12-02":{"grossPts":-63.7,"netRs":-4171,"trades":5},"2025-12-04":{"grossPts":386.5,"netRs":9335,"trades":5},"2025-12-05":{"grossPts":222.2,"netRs":4406,"trades":5},"2025-12-08":{"grossPts":246.2,"netRs":5126,"trades":5},"2025-12-09":{"grossPts":342.9,"netRs":8027,"trades":5},"2025-12-10":{"grossPts":267.7,"netRs":5771,"trades":5},"2025-12-11":{"grossPts":410.8,"netRs":10064,"trades":5},"2025-12-12":{"grossPts":363.1,"netRs":8633,"trades":5},"2025-12-15":{"grossPts":149.3,"netRs":2219,"trades":5},"2025-12-16":{"grossPts":178.8,"netRs":3104,"trades":5},"2025-12-17":{"grossPts":162.9,"netRs":2627,"trades":5},"2025-12-18":{"grossPts":169.9,"netRs":2837,"trades":5},"2025-12-19":{"grossPts":98.4,"netRs":692,"trades":5},"2025-12-22":{"grossPts":37.7,"netRs":-1129,"trades":5},"2025-12-23":{"grossPts":-80.1,"netRs":-3307,"trades":2},"2025-12-24":{"grossPts":-3.6,"netRs":-2368,"trades":5},"2025-12-26":{"grossPts":137.4,"netRs":1862,"trades":5},"2025-12-29":{"grossPts":125,"netRs":1490,"trades":5},"2025-12-30":{"grossPts":1.6,"netRs":-2212,"trades":5},"2025-12-31":{"grossPts":135.2,"netRs":1796,"trades":5}},"2026-01":{"2026-01-01":{"grossPts":72.9,"netRs":-73,"trades":5},"2026-01-02":{"grossPts":208.8,"netRs":4004,"trades":5},"2026-01-05":{"grossPts":405,"netRs":9890,"trades":5},"2026-01-06":{"grossPts":104.7,"netRs":881,"trades":5},"2026-01-07":{"grossPts":35.9,"netRs":-731,"trades":4},"2026-01-08":{"grossPts":100.2,"netRs":746,"trades":5},"2026-01-12":{"grossPts":376.7,"netRs":9041,"trades":5},"2026-01-13":{"grossPts":375.8,"netRs":9014,"trades":5},"2026-01-14":{"grossPts":287.8,"netRs":6374,"trades":5},"2026-01-19":{"grossPts":383.9,"netRs":9257,"trades":5},"2026-01-20":{"grossPts":158.8,"netRs":2504,"trades":5},"2026-01-21":{"grossPts":1085.9,"netRs":30317,"trades":5},"2026-01-22":{"grossPts":427.6,"netRs":10568,"trades":5},"2026-01-23":{"grossPts":233.2,"netRs":4736,"trades":5},"2026-01-28":{"grossPts":160.8,"netRs":2564,"trades":5},"2026-01-29":{"grossPts":194.5,"netRs":3575,"trades":5},"2026-01-30":{"grossPts":284.9,"netRs":6287,"trades":5}},"2026-02":{"2026-02-01":{"grossPts":1413.6,"netRs":40148,"trades":5},"2026-02-02":{"grossPts":661.7,"netRs":17591,"trades":5},"2026-02-03":{"grossPts":128.5,"netRs":1595,"trades":5},"2026-02-04":{"grossPts":246.9,"netRs":5147,"trades":5},"2026-02-05":{"grossPts":231.7,"netRs":4691,"trades":5},"2026-02-06":{"grossPts":422.8,"netRs":10424,"trades":5},"2026-02-09":{"grossPts":107.9,"netRs":977,"trades":5},"2026-02-10":{"grossPts":149.5,"netRs":2225,"trades":5},"2026-02-11":{"grossPts":102.3,"netRs":809,"trades":5},"2026-02-12":{"grossPts":80.6,"netRs":158,"trades":5},"2026-02-16":{"grossPts":66.8,"netRs":-256,"trades":5},"2026-02-17":{"grossPts":79.4,"netRs":1478,"trades":2},"2026-02-18":{"grossPts":191.2,"netRs":3476,"trades":5},"2026-02-19":{"grossPts":125.6,"netRs":1508,"trades":5},"2026-02-20":{"grossPts":-20.8,"netRs":-2884,"trades":5},"2026-02-23":{"grossPts":-22.5,"netRs":-2935,"trades":5},"2026-02-24":{"grossPts":-44.9,"netRs":-3607,"trades":5},"2026-02-25":{"grossPts":70.8,"netRs":1672,"trades":1},"2026-02-26":{"grossPts":304.7,"netRs":6881,"trades":5},"2026-02-27":{"grossPts":260.9,"netRs":5567,"trades":5}},"2026-03":{"2026-03-02":{"grossPts":463.3,"netRs":11639,"trades":5},"2026-03-05":{"grossPts":600.3,"netRs":15749,"trades":5},"2026-03-06":{"grossPts":141,"netRs":1970,"trades":5},"2026-03-10":{"grossPts":-163.6,"netRs":-7168,"trades":5},"2026-03-11":{"grossPts":453.9,"netRs":11357,"trades":5},"2026-03-16":{"grossPts":504.9,"netRs":12887,"trades":5},"2026-03-17":{"grossPts":208.6,"netRs":3998,"trades":5},"2026-03-18":{"grossPts":493.8,"netRs":12554,"trades":5},"2026-03-19":{"grossPts":669.6,"netRs":17828,"trades":5},"2026-03-20":{"grossPts":738.9,"netRs":19907,"trades":5},"2026-03-23":{"grossPts":252.3,"netRs":5309,"trades":5},"2026-03-24":{"grossPts":706.8,"netRs":18944,"trades":5},"2026-03-25":{"grossPts":396.8,"netRs":9644,"trades":5},"2026-03-30":{"grossPts":335.9,"netRs":7817,"trades":5}},"2026-04":{"2026-04-02":{"grossPts":157.4,"netRs":2462,"trades":5},"2026-04-07":{"grossPts":197.8,"netRs":3674,"trades":5},"2026-04-08":{"grossPts":594,"netRs":15560,"trades":5},"2026-04-09":{"grossPts":445.8,"netRs":11114,"trades":5},"2026-04-10":{"grossPts":256.1,"netRs":5423,"trades":5},"2026-04-13":{"grossPts":509,"netRs":13010,"trades":5},"2026-04-16":{"grossPts":313.3,"netRs":8043,"trades":3},"2026-04-17":{"grossPts":356.4,"netRs":8432,"trades":5},"2026-04-20":{"grossPts":139.3,"netRs":1919,"trades":5},"2026-04-21":{"grossPts":126,"netRs":1520,"trades":5},"2026-04-22":{"grossPts":289.9,"netRs":6437,"trades":5},"2026-04-23":{"grossPts":153.7,"netRs":2351,"trades":5},"2026-04-27":{"grossPts":137.3,"netRs":2763,"trades":3},"2026-04-28":{"grossPts":178.9,"netRs":3107,"trades":5},"2026-04-29":{"grossPts":500.9,"netRs":12767,"trades":5},"2026-04-30":{"grossPts":198.7,"netRs":3701,"trades":5}},"2026-05":{"2026-05-05":{"grossPts":526.8,"netRs":13544,"trades":5},"2026-05-06":{"grossPts":182.5,"netRs":3215,"trades":5},"2026-05-07":{"grossPts":383.7,"netRs":9251,"trades":5},"2026-05-08":{"grossPts":334.8,"netRs":7784,"trades":5},"2026-05-13":{"grossPts":620.4,"netRs":16352,"trades":5},"2026-05-14":{"grossPts":713.1,"netRs":19133,"trades":5},"2026-05-15":{"grossPts":342.3,"netRs":8009,"trades":5},"2026-05-18":{"grossPts":23.1,"netRs":-1567,"trades":5},"2026-05-19":{"grossPts":186.6,"netRs":3338,"trades":5},"2026-05-20":{"grossPts":184.3,"netRs":3269,"trades":5},"2026-05-21":{"grossPts":548.7,"netRs":14201,"trades":5},"2026-05-22":{"grossPts":201.8,"netRs":3794,"trades":5}}};
+        window._thDrill=function(mo){
+          var dr=document.getElementById('th-d-'+mo);
+          var ic=document.getElementById('th-i-'+mo);
+          if(!dr)return;
+          if(dr.style.display!=='none'){dr.style.display='none';if(ic)ic.innerHTML='&#9658;';return;}
+          var days=(window._thDly&&window._thDly[mo])||{};
+          var sorted=Object.keys(days).sort().reverse();
+          var MN=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+          var html='<table style="width:100%;border-collapse:collapse">';
+          if(sorted.length===0){
+            html+='<tr><td colspan="4" style="padding:.5rem 1.8rem;font-size:.8rem;color:var(--text-muted)">Daily breakdown not available</td></tr>';
+          } else {
+            for(var i=0;i<sorted.length;i++){
+              var date=sorted[i];var d=days[date];
+              var parts=date.split('-');var lbl=parseInt(parts[2])+' '+MN[parseInt(parts[1])-1];
+              var cls=d.netRs>=0?'g':'r';
+              var sign=d.netRs>=0?'+':'&#8722;';
+              var absRs=Math.abs(d.netRs).toLocaleString('en-IN');
+              var pts=Math.round(d.grossPts);var ps=pts>=0?'+':'';
+              html+='<tr style="background:rgba(255,255,255,.025)">'
+                +'<td style="padding:.2rem .5rem .2rem 1.8rem;font-size:.76rem;color:var(--text-muted)">'+lbl+'</td>'
+                +'<td style="font-size:.8rem" class="'+cls+'">'+sign+'&#8377;'+absRs+'</td>'
+                +'<td style="font-size:.75rem" class="'+cls+'">'+ps+pts+' pts</td>'
+                +'<td style="font-size:.75rem;color:var(--text-muted)">'+d.trades+' tr</td>'
+                +'<td></td><td></td>'
+                +'</tr>';
+            }
+          }
+          html+='</table>';
+          dr.querySelector('td').innerHTML=html;
+          dr.style.display='';
+          if(ic)ic.innerHTML='&#9660;';
+        };
+        window._thYr=function _thYr(btn,yr){var rows=document.querySelectorAll('#th-mo-tbody tr');rows.forEach(function(r){r.style.display=(yr==='all'||r.dataset.year===yr)?'':'none';});document.querySelectorAll('#th-yr-bar button').forEach(function(b){b.style.background='transparent';b.style.color='var(--text-muted)';b.style.borderColor='var(--border)';});btn.style.background='var(--accent-purple)';btn.style.color='#fff';btn.style.borderColor='var(--accent-purple)';}
+
+        window._thRpMonths=${JSON.stringify(getRealPremiumHistoryWithLive().months)};
+        window._thRpDaily=${JSON.stringify(getRealPremiumHistoryWithLive().dailyByMonth)};
+        (function(){
+          var tbody=document.getElementById('th-mo-tbody');
+          if(!tbody||!window._thRpMonths)return;
+          function money(n){n=Math.round(Number(n||0));return (n>=0?'+':'&#8722;')+'&#8377;'+Math.abs(n).toLocaleString('en-IN');}
+          function cls(n){return Number(n||0)>=0?'g':'r';}
+          function label(mo){var p=mo.split('-');var names=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];return names[parseInt(p[1],10)-1]+' '+p[0];}
+          tbody.innerHTML=Object.keys(window._thRpMonths).sort().reverse().map(function(mo){
+            var m=window._thRpMonths[mo]||{};var yr=mo.slice(0,4);
+            return '<tr data-year="'+yr+'" data-mo="'+mo+'" style="cursor:pointer" onclick="_thDrill(\\\''+mo+'\\\')">'
+              +'<td style="font-weight:600"><span id="th-i-'+mo+'" style="font-size:.7rem;margin-right:.3rem;transition:transform .2s">&#9658;</span>'+label(mo)+'</td>'
+              +'<td class="'+cls(m.futRsNet)+'" style="font-weight:800">'+money(m.futRsNet)+'</td>'
+              +'<td class="'+cls(m.optRsNet)+'" style="font-weight:800">'+money(m.optRsNet)+'</td>'
+              +'<td>'+(m.trades||0)+'</td><td>'+(m.days||0)+'</td><td style="color:var(--text-muted)">day-wise</td>'
+              +'</tr><tr id="th-d-'+mo+'" style="display:none"><td colspan="6" style="padding:0"></td></tr>';
+          }).join('');
+        })();
+        window._thDrill=function(mo){
+          var dr=document.getElementById('th-d-'+mo);
+          var ic=document.getElementById('th-i-'+mo);
+          if(!dr)return;
+          if(dr.style.display!=='none'){dr.style.display='none';if(ic)ic.innerHTML='&#9658;';return;}
+          var days=(window._thRpDaily&&window._thRpDaily[mo])||{};
+          var sorted=Object.keys(days).sort().reverse();
+          function money(n){n=Math.round(Number(n||0));return (n>=0?'+':'&#8722;')+'&#8377;'+Math.abs(n).toLocaleString('en-IN');}
+          function cls(n){return Number(n||0)>=0?'g':'r';}
+          var MN=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+          var html='<table style="width:100%;border-collapse:collapse"><thead><tr style="background:rgba(255,255,255,.035)"><th style="padding:.35rem .5rem .35rem 1.8rem;text-align:left;font-size:.68rem;color:var(--text-muted)">Day</th><th style="text-align:left;font-size:.68rem;color:var(--text-muted)">Futures</th><th style="text-align:left;font-size:.68rem;color:var(--text-muted)">Options</th><th style="text-align:left;font-size:.68rem;color:var(--text-muted)">Trades</th><th style="text-align:left;font-size:.68rem;color:var(--text-muted)">Exit reasons</th></tr></thead><tbody>';
+          if(!sorted.length){
+            html+='<tr><td colspan="5" style="padding:.5rem 1.8rem;font-size:.8rem;color:var(--text-muted)">Daily real-premium breakdown not stored yet for this month</td></tr>';
+          } else {
+            sorted.forEach(function(date){
+              var d=days[date]||{};var p=date.split('-');var lbl=parseInt(p[2],10)+' '+MN[parseInt(p[1],10)-1];
+              var reasons=(d.reasons||[]).join(', ').replace(/_/g,' ');
+              html+='<tr style="background:rgba(255,255,255,.025)">'
+                +'<td style="padding:.28rem .5rem .28rem 1.8rem;font-size:.76rem;color:var(--text-muted)">'+lbl+'</td>'
+                +'<td style="font-size:.78rem;font-weight:800" class="'+cls(d.futRsNet)+'">'+money(d.futRsNet)+'</td>'
+                +'<td style="font-size:.78rem;font-weight:800" class="'+cls(d.optRsNet)+'">'+money(d.optRsNet)+'</td>'
+                +'<td style="font-size:.75rem;color:var(--text-muted)">'+(d.trades||0)+'</td>'
+                +'<td style="font-size:.68rem;color:var(--text-muted)">'+(reasons||'—')+'</td>'
+                +'</tr>';
+            });
+          }
+          html+='</tbody></table>';
+          dr.querySelector('td').innerHTML=html;
+          dr.style.display='';
+          if(ic)ic.innerHTML='&#9660;';
+        };
+
+        var _realInstMode='fut';
+        window._realAllTrades=${JSON.stringify(todayTradesAll2)};
+        function _realCalc(t,isOpt){
+          var qty=t.qty||30;
+          var entry=isOpt?Number(t.premiumEntry||t.entryPrice||0):Number(t.entryPrice||0);
+          var exit=isOpt?Number(t.premiumExit||t.exitPrice||0):Number(t.exitPrice||0);
+          var pts=0;
+          if(entry>0&&exit>0){pts=isOpt?(exit-entry):(((t.direction||'').toUpperCase()==='PE')?(entry-exit):(exit-entry));}
+          pts=Math.round(pts*100)/100;
+          return {entry:entry,exit:exit,pts:pts,rs:Math.round(pts*qty)};
+        }
+        function _realInst(mode){
+          _realInstMode=mode;
+          var fb=document.getElementById('real-tab-fut'),ob=document.getElementById('real-tab-opt');
+          if(fb){fb.style.background=mode==='fut'?'rgba(124,58,237,.25)':'transparent';fb.style.color=mode==='fut'?'#a78bfa':'var(--text-muted)';}
+          if(ob){ob.style.background=mode==='opt'?'rgba(16,185,129,.2)':'transparent';ob.style.color=mode==='opt'?'#6ee7b7':'var(--text-muted)';}
+          _renderRealDaily();
+        }
+        function _renderRealDaily(){
+          var tbody=document.getElementById('tt-body-lock50'); if(!tbody)return;
+          var today=new Date().toISOString().slice(0,10);
+          var isOpt=_realInstMode==='opt';
+          var typeKey=isOpt?'DRISHTI_V1_OPT':'DRISHTI_V1';
+          var rows=(window._realAllTrades||[]).filter(function(t){return (t.type||'DRISHTI_V1')===typeKey&&t.exitPrice&&t.exitPrice>0&&(t.date||'').startsWith(today);}).slice().reverse();
+          if(!rows.length){tbody.innerHTML='<tr><td colspan="10" class="tt-e">No '+(isOpt?'options':'futures')+' trades today</td></tr>';return;}
+          tbody.innerHTML=rows.map(function(t){
+            var r=_realCalc(t,isOpt), d=(t.direction||'').toLowerCase(), reason=t.reasonExit||'—';
+            var rTag=reason.toLowerCase().includes('sl')||reason.toLowerCase().includes('stop')?'rc-sl':reason.toLowerCase().includes('trail')||reason.toLowerCase().includes('early')?'rc-trail':'rc-eod';
+            var dur=t.duration?(t.duration<60?t.duration+'s':Math.round(t.duration/60)+'m'):'—';
+            var tm=t.date?new Date(t.date).toLocaleTimeString('en-IN',{hour:'2-digit',minute:'2-digit',timeZone:'Asia/Kolkata'}):'—';
+            var buyF=isOpt?'—':(r.entry>0?r.entry.toFixed(1):'—'), sellF=isOpt?'—':(r.exit>0?r.exit.toFixed(1):'—');
+            var buyP=isOpt&&r.entry>0?'₹'+r.entry.toFixed(1):'—', sellP=isOpt&&r.exit>0?'₹'+r.exit.toFixed(1):'—';
+            return '<tr style="border-bottom:none"><td class="tc" rowspan="2" style="vertical-align:middle">'+tm+'</td>'
+              +'<td rowspan="2" style="vertical-align:middle"><span class="db-badge '+d+'">'+(t.direction||'—')+'</span></td>'
+              +'<td style="font-size:.65rem;color:#60a5fa;font-weight:700">BUY</td><td class="mono">'+buyF+'</td><td class="mono" style="color:#94a3b8">'+buyP+'</td>'
+              +'<td class="tc mono" rowspan="2" style="vertical-align:middle">'+(t.symbol||(isOpt?'BANKNIFTY OPT':'BANKNIFTY FUT'))+'</td>'
+              +'<td class="'+(r.pts>=0?'g':'r')+'" style="font-weight:800" rowspan="2">'+(r.pts>=0?'+':'')+r.pts.toFixed(1)+' pts</td>'
+              +'<td rowspan="2"><span class="pnl-rs '+(r.rs>=0?'g':'r')+'">'+(r.rs>=0?'+':'&#8722;')+'&#8377;'+Math.abs(r.rs).toLocaleString('en-IN')+'</span></td>'
+              +'<td rowspan="2">'+(reason!=='—'?'<span class="rc-b '+rTag+'">'+reason+'</span>':'—')+'</td><td class="tc" rowspan="2" style="vertical-align:middle">'+dur+'</td>'
+              +'</tr><tr><td style="font-size:.65rem;color:#fca5a5;font-weight:700">SELL</td><td class="mono">'+sellF+'</td><td class="mono" style="color:#94a3b8">'+sellP+'</td></tr>';
+          }).join('');
+        }
+        window._realInst=_realInst;
         function _thFilter(f){
-          ['d','w','m'].forEach(function(x){
+          ['d','w','m','c'].forEach(function(x){
             var p=document.getElementById('th-panel-'+x);
             var b=document.getElementById('th-btn-'+x);
             if(p) p.style.display=(x===f)?'':'none';
@@ -11116,14 +11349,217 @@ app.get("/signals", featureGate("feature_signals", "Signals"), async (req, res) 
           });
           var rows=document.querySelectorAll('#th-panel-'+f+' tbody tr:not(.tt-e)');
           var cnt=document.getElementById('th-count');
-          if(cnt) cnt.textContent=rows.length?'('+rows.length+' trades)':'';
+          if(cnt) cnt.textContent=rows.length?'('+rows.length+' '+(f==='c'?'candles':'trades')+')':'';
         }
         window._thFilter=_thFilter;
         _thFilter('d');
       })();
       </script>
 
-    </div><!-- /panel-lock50 -->
+    <!-- Console Log section -->
+      <div style="margin-top:1.5rem">
+        <div style="display:flex;align-items:center;gap:8px;margin-bottom:.6rem">
+          <span style="font-size:.72rem;text-transform:uppercase;letter-spacing:1px;color:#8b949e;font-weight:700">Console Log</span>
+          <button onclick="_slogRefresh()" style="margin-left:auto;padding:3px 10px;border-radius:5px;font-size:.7rem;font-weight:700;cursor:pointer;border:1px solid var(--border);background:transparent;color:var(--text-muted)">&#8635; Refresh</button>
+        </div>
+        <div style="background:#0d1117;border:1px solid #30363d;border-radius:10px;padding:12px 14px;max-height:300px;overflow-y:auto;font-family:monospace;font-size:.7rem;line-height:1.55" id="slog-box"><span style="color:#6e7681">Loading...</span></div>
+      </div>
+
+    </div><!-- /panel-bhav -->
+
+    <!-- ════════════════════════════════════════════════════════
+         TRAIL PAPER SHADOW PANEL
+         ════════════════════════════════════════════════════════ -->
+    <div id="panel-trail" style="display:none"><div class="db-main">
+        <!-- Position -->
+        <div id="sh-pos-trail-wrap">
+          ${hb2.shadowInTrade && (hb2.shadowEntry||0) > 0 ? `
+          <!-- In-trade card -->
+          <div class="pos-card pos-${(hb2.shadowDir||'ce').toLowerCase()}" id="sh-pos-trail-card">
+            <div class="pos-hdr">
+              <span class="pos-live-dot"></span>
+              <span class="pos-badge pos-b-${(hb2.shadowDir||'ce').toLowerCase()}" id="sh-trail-card-badge">${(hb2.shadowDir||'CE').toUpperCase()} OPTION</span>
+              <span class="pos-sym">BANKNIFTY</span>
+              <span class="pos-mode">PAPER</span>
+            </div>
+            <div class="pos-pnl-rs g" id="sh-trail-card-rs">—</div>
+            <div class="pos-pnl-pts g" id="sh-trail-card-pts">— unrealised</div>
+            <div class="pos-grid">
+              <div><div class="pos-lbl">Entry Index</div><div class="pos-val mono" id="sh-trail-card-ep">${(hb2.shadowEntry||0).toFixed(1)}</div></div>
+              <div><div class="pos-lbl">Live Index</div><div class="pos-val g mono" id="sh-trail-card-lp">${live2>0?live2.toFixed(1):'—'}</div></div>
+              <div><div class="pos-lbl">Stop Loss</div><div class="pos-val r mono" id="sh-trail-card-sl">${(hb2.shadowSL||0)>0?(hb2.shadowSL).toFixed(1):'—'}</div></div>
+              <div><div class="pos-lbl">SL Risk ₹</div><div class="pos-val r" id="sh-trail-card-slrs">—</div></div>
+            </div>
+          </div>
+          <div class="sh-pos sh-pos-watch" id="sh-pos-trail-flat" style="display:none">
+            <div class="watch-title"><span>⏳</span> TRAIL Shadow — <span id="sh-trail-status">In Trade</span></div>
+            <div id="sh-trail-detail" style="margin-top:8px;font-size:.8rem;color:var(--muted)"></div>
+            <div id="sh-trail-watch" style="margin-top:10px"></div>
+          </div>
+          ` : `
+          <!-- Flat / watching card -->
+          <div class="sh-pos sh-pos-watch" id="sh-pos-trail-flat">
+            <div class="watch-title"><span>⏳</span> TRAIL Shadow — <span id="sh-trail-status">Watching</span></div>
+            <div id="sh-trail-detail" style="margin-top:8px;font-size:.8rem;color:var(--muted)">Watching for next signal⏳</div>
+            <div id="sh-trail-watch" style="margin-top:10px"></div>
+          </div>
+          <div class="pos-card pos-ce" id="sh-pos-trail-card" style="display:none">
+            <div class="pos-hdr">
+              <span class="pos-live-dot"></span>
+              <span class="pos-badge pos-b-ce" id="sh-trail-card-badge">CE OPTION</span>
+              <span class="pos-sym">BANKNIFTY</span>
+              <span class="pos-mode">PAPER</span>
+            </div>
+            <div class="pos-pnl-rs g" id="sh-trail-card-rs">—</div>
+            <div class="pos-pnl-pts g" id="sh-trail-card-pts">— unrealised</div>
+            <div class="pos-grid">
+              <div><div class="pos-lbl">Entry Index</div><div class="pos-val mono" id="sh-trail-card-ep">—</div></div>
+              <div><div class="pos-lbl">Live Index</div><div class="pos-val g mono" id="sh-trail-card-lp">—</div></div>
+              <div><div class="pos-lbl">Stop Loss</div><div class="pos-val r mono" id="sh-trail-card-sl">—</div></div>
+              <div><div class="pos-lbl">SL Risk ₹</div><div class="pos-val r" id="sh-trail-card-slrs">—</div></div>
+            </div>
+          </div>
+          `}
+        </div>
+        <div id="sh-trail-signal" class="watch-card" style="margin-top:8px;display:none"></div>
+        <!-- Stats -->
+        <div>
+          <div class="ss-card">
+            <div class="ss-row">
+              <div><div class="ss-lbl">Today P&amp;L</div></div>
+              <div style="text-align:right"><div class="ss-val" id="sh-trail-pnl-rs" style="color:#818cf8">—</div><div class="ss-sub" id="sh-trail-pnl-pts"></div></div>
+            </div>
+            <div class="ss-row" id="sh-trail-unr-row" style="display:none">
+              <div><div class="ss-lbl" style="color:var(--muted);font-style:italic">↳ Paper mode</div></div>
+              <div style="text-align:right"><div class="ss-val" id="sh-trail-unr-rs"></div><div class="ss-sub" id="sh-trail-unr-pts"></div></div>
+            </div>
+            <div class="ss-row">
+              <div><div class="ss-lbl">Trades Today</div></div>
+              <div style="text-align:right"><div class="ss-val" id="sh-trail-tc">0</div><div class="ss-sub"><span class="g" id="sh-trail-w">0W</span> / <span class="r" id="sh-trail-l">0L</span></div></div>
+            </div>
+            <div class="ss-row">
+              <div><div class="ss-lbl">This Week</div></div>
+              <div style="text-align:right"><div class="ss-val" id="sh-trail-wk-rs" style="color:#818cf8">—</div><div class="ss-sub" id="sh-trail-wk-pts"></div></div>
+            </div>
+            <div class="ss-row">
+              <div><div class="ss-lbl">All-Time P&amp;L</div></div>
+              <div style="text-align:right"><div class="ss-val" style="color:var(--muted)">—</div><div class="ss-sub">Paper only</div></div>
+            </div>
+            <div class="ss-row">
+              <div><div class="ss-lbl">Win Rate (All-Time)</div></div>
+              <div style="text-align:right"><div class="ss-val" id="sh-trail-wr">—</div><div class="ss-sub" id="sh-trail-wrs"></div></div>
+            </div>
+          </div>
+          <div style="font-size:.67rem;color:var(--muted);padding:4px 2px">Shadow paper strategy — trailDefault</div>
+        </div>
+      </div>
+
+      <!-- Trade log -->
+      <div class="sec">TRAIL Trades Today <span class="sec-count" id="sh-trail-today-count"></span></div>
+      <div class="tw">
+        <table class="tt">
+          <thead><tr><th>Time</th><th>Dir</th><th>Entry Index</th><th>Exit Index</th><th>Index P&L</th><th>₹ P&L</th><th>Reason</th><th>Duration</th></tr></thead>
+          <tbody id="sh-trail-body"><tr><td colspan="8" class="tt-e">No TRAIL trades today</td></tr></tbody>
+        </table>
+      </div>
+    </div><!-- /panel-trail -->
+
+    <!-- ════════════════════════════════════════════════════════
+         LOCK50 OLD SHADOW PANEL
+         ════════════════════════════════════════════════════════ -->
+    <div id="panel-bhavold" style="display:none">
+      <div class="db-main">
+        <div id="sh-pos-l50o-wrap">
+          ${hb2.scalp1InTrade && (hb2.scalp1Entry||0) > 0 ? `
+          <!-- In-trade card (server-rendered) -->
+          <div class="pos-card pos-${(hb2.scalp1Dir||'ce').toLowerCase()}" id="sh-pos-l50o-card">
+            <div class="pos-hdr">
+              <span class="pos-live-dot"></span>
+              <span class="pos-badge pos-b-${(hb2.scalp1Dir||'ce').toLowerCase()}" id="sh-l50o-card-badge">${(hb2.scalp1Dir||'CE').toUpperCase()} OPTION</span>
+              <span class="pos-sym">BANKNIFTY</span>
+              <span class="pos-mode">PAPER</span>
+            </div>
+            <div class="pos-pnl-rs g" id="sh-l50o-card-rs">—</div>
+            <div class="pos-pnl-pts g" id="sh-l50o-card-pts">— unrealised</div>
+            <div class="pos-grid">
+              <div><div class="pos-lbl">Entry Index</div><div class="pos-val mono" id="sh-l50o-card-ep">${(hb2.scalp1Entry||0).toFixed(1)}</div></div>
+              <div><div class="pos-lbl">Live Index</div><div class="pos-val g mono" id="sh-l50o-card-lp">${live2>0?live2.toFixed(1):'—'}</div></div>
+              <div><div class="pos-lbl">Stop Loss</div><div class="pos-val r mono" id="sh-l50o-card-sl">${(hb2.scalp1SL||0)>0?(hb2.scalp1SL).toFixed(1):'—'}</div></div>
+              <div><div class="pos-lbl">SL Risk ₹</div><div class="pos-val r" id="sh-l50o-card-slrs">—</div></div>
+            </div>
+          </div>
+          <div class="sh-pos sh-pos-watch" id="sh-pos-l50o-flat" style="display:none">
+            <div class="watch-title"><span>🔆</span> LOCK50 Old Shadow — <span id="sh-l50o-status">In Trade</span></div>
+            <div id="sh-l50o-detail" style="margin-top:8px;font-size:.8rem;color:var(--muted)"></div>
+            <div id="sh-l50o-watch" style="margin-top:10px"></div>
+          </div>
+          ` : `
+          <!-- Flat / watching card -->
+          <div class="sh-pos sh-pos-watch" id="sh-pos-l50o-flat">
+            <div class="watch-title"><span>🔆</span> LOCK50 Old Shadow — <span id="sh-l50o-status">Watching</span></div>
+            <div id="sh-l50o-detail" style="margin-top:8px;font-size:.8rem;color:var(--muted)">Watching for next signal⏳</div>
+            <div id="sh-l50o-watch" style="margin-top:10px"></div>
+          </div>
+          <div class="pos-card pos-ce" id="sh-pos-l50o-card" style="display:none">
+            <div class="pos-hdr">
+              <span class="pos-live-dot"></span>
+              <span class="pos-badge pos-b-ce" id="sh-l50o-card-badge">CE OPTION</span>
+              <span class="pos-sym">BANKNIFTY</span>
+              <span class="pos-mode">PAPER</span>
+            </div>
+            <div class="pos-pnl-rs g" id="sh-l50o-card-rs">—</div>
+            <div class="pos-pnl-pts g" id="sh-l50o-card-pts">— unrealised</div>
+            <div class="pos-grid">
+              <div><div class="pos-lbl">Entry Index</div><div class="pos-val mono" id="sh-l50o-card-ep">—</div></div>
+              <div><div class="pos-lbl">Live Index</div><div class="pos-val g mono" id="sh-l50o-card-lp">—</div></div>
+              <div><div class="pos-lbl">Stop Loss</div><div class="pos-val r mono" id="sh-l50o-card-sl">—</div></div>
+              <div><div class="pos-lbl">SL Risk ₹</div><div class="pos-val r" id="sh-l50o-card-slrs">—</div></div>
+            </div>
+          </div>
+          `}
+        </div>
+        <div id="sh-l50o-signal" class="watch-card" style="margin-top:8px;display:none"></div>
+        <!-- Stats -->
+        <div>
+          <div class="ss-card">
+            <div class="ss-row">
+              <div><div class="ss-lbl">Today P&amp;L</div></div>
+              <div style="text-align:right"><div class="ss-val am" id="sh-l50o-pnl-rs">—</div><div class="ss-sub" id="sh-l50o-pnl-pts"></div></div>
+            </div>
+            <div class="ss-row" id="sh-l50o-unr-row" style="display:none">
+              <div><div class="ss-lbl" style="color:var(--muted);font-style:italic">↳ Paper mode</div></div>
+              <div style="text-align:right"><div class="ss-val" id="sh-l50o-unr-rs"></div><div class="ss-sub" id="sh-l50o-unr-pts"></div></div>
+            </div>
+            <div class="ss-row">
+              <div><div class="ss-lbl">Trades Today</div></div>
+              <div style="text-align:right"><div class="ss-val" id="sh-l50o-tc">0</div><div class="ss-sub"><span class="g" id="sh-l50o-w">0W</span> / <span class="r" id="sh-l50o-l">0L</span></div></div>
+            </div>
+            <div class="ss-row">
+              <div><div class="ss-lbl">This Week</div></div>
+              <div style="text-align:right"><div class="ss-val am" id="sh-l50o-wk-rs">—</div><div class="ss-sub" id="sh-l50o-wk-pts"></div></div>
+            </div>
+            <div class="ss-row">
+              <div><div class="ss-lbl">All-Time P&amp;L</div></div>
+              <div style="text-align:right"><div class="ss-val" style="color:var(--muted)">—</div><div class="ss-sub">Paper only</div></div>
+            </div>
+            <div class="ss-row">
+              <div><div class="ss-lbl">Win Rate (All-Time)</div></div>
+              <div style="text-align:right"><div class="ss-val" id="sh-l50o-wr">—</div><div class="ss-sub" id="sh-l50o-wrs"></div></div>
+            </div>
+          </div>
+          <div style="font-size:.67rem;color:var(--muted);padding:4px 2px">Shadow paper strategy — trailLock50Old</div>
+        </div>
+      </div>
+
+      <!-- Trade log -->
+      <div class="sec">LOCK50 Old Trades Today <span class="sec-count" id="sh-l50o-today-count"></span></div>
+      <div class="tw">
+        <table class="tt">
+          <thead><tr><th>Time</th><th>Dir</th><th>Entry Index</th><th>Exit Index</th><th>Index P&L</th><th>₹ P&L</th><th>Reason</th><th>Duration</th></tr></thead>
+          <tbody id="sh-l50o-body"><tr><td colspan="8" class="tt-e">No LOCK50 Old trades today</td></tr></tbody>
+        </table>
+      </div>
+    </div><!-- /panel-bhavold -->
 
     <!-- ════════════════════════════════════════════════════════
          VMT SHADOW PANEL (Option Premium Breakout)
@@ -11520,7 +11956,7 @@ app.get("/signals", featureGate("feature_signals", "Signals"), async (req, res) 
               </div>
             </div>
             <div class="ss-row" id="vmt-ss-unr-row" style="display:none">
-              <div><div class="ss-lbl" style="color:var(--muted);font-style:italic">&#8517; Unrealised</div></div>
+              <div><div class="ss-lbl" style="color:var(--muted);font-style:italic">&#8517; Paper mode</div></div>
               <div style="text-align:right">
                 <div class="ss-val" id="vmt-ss-unr-rs">&#8212;</div>
                 <div class="ss-sub" id="vmt-ss-unr-pts"></div>
@@ -11827,193 +12263,12 @@ app.get("/signals", featureGate("feature_signals", "Signals"), async (req, res) 
   }
   // Wire tab buttons immediately (script is at bottom of body, elements exist)
   (function(){
-    var tabMap={'stab-lock50':'lock50','stab-vmt':'vmt'};
+    var tabMap={'stab-lock50':'lock50','stab-trail':'trail','stab-lock50old':'lock50old','stab-vmt':'vmt'};
     Object.keys(tabMap).forEach(function(btnId){
       var btn=ge(btnId);
       if(btn)btn.addEventListener('click',function(){_sTab(tabMap[btnId]);});
     });
   })();
-
-  // ── Trade event timeline injector ─────────────────────────────
-  function _fmtTlTime(ts){
-    if(!ts)return '';
-    var t=(ts.split(' ')[1]||'');
-    var p=t.split(':');if(p.length<2)return t;
-    var h=parseInt(p[0]),m=parseInt(p[1]);
-    var ampm=h>=12?'PM':'AM';
-    var h12=h>12?h-12:(h===0?12:h);
-    return h12+':'+(m<10?'0'+m:m)+' '+ampm;
-  }
-  function _updateTradeTimeline(hb,as,candleLog){
-    var el=ge('atl-trade-events');if(!el)return;
-    // ── Candle log rendering (authoritative when present) ─────────────────────
-    if(candleLog&&candleLog.length>0){
-      var rows='';
-      candleLog.forEach(function(ev){
-        var t=ev.time?_fmtTlTime(ev.time):'';
-        if(ev.type==='SCAN_MISS'){
-          var sig=ev.sig||'?';
-          var checkType=ev.isC2check?'C2 check':'C'+(ev.candleNum||'?')+' check';
-          var dirLbl=sig==='CE'?'<span style="color:#3b82f6">CE&#x25B2;</span>':'<span style="color:#ef4444">PE&#x25BC;</span>';
-          var brokeClr=ev.broke?'#059669':'#94a3b8';
-          var brokeWord=ev.broke?'Broke':'No break';
-          rows+='<div class="pm-tl-row">'
-            +'<div class="atl-ev-dot" style="background:#334155;border-color:#475569;font-size:.5rem;color:#94a3b8;min-width:20px">C'+(ev.candleNum||'?')+'</div>'
-            +'<div class="pm-tl-txt">'
-            +'<div class="pm-tl-time">'+(t?t+' &mdash; ':'')+checkType+' &mdash; '
-            +dirLbl+' level <b>'+parseFloat(ev.watchLevel||0).toFixed(1)+'</b>'
-            +' &mdash; <span style="color:'+brokeClr+'">'+brokeWord+'</span></div>'
-            +'<div class="pm-tl-label">O:<b>'+parseFloat(ev.open||0).toFixed(0)+'</b>'
-            +' H:<b>'+parseFloat(ev.high||0).toFixed(0)+'</b>'
-            +' L:<b>'+parseFloat(ev.low||0).toFixed(0)+'</b>'
-            +' C:<b>'+parseFloat(ev.close||0).toFixed(0)+'</b>'
-            +' &nbsp;&middot;&nbsp; <span style="color:#94a3b8">'+(ev.broke?'Broke by ':'Away by ')+parseFloat(ev.dist||0).toFixed(0)+' pts</span>'
-            +(ev.rule?' &nbsp;&middot;&nbsp; Rule '+ev.rule:'')+'</div>'
-            +'</div></div>';
-        } else if(ev.type==='T1_ENTRY'){
-          var d1=ev.dir||'?';
-          var dCls1=d1==='CE'?'ev-ce':'ev-pe';
-          var dArrow1=d1==='CE'?'&#x25B2;':'&#x25BC;';
-          rows+='<div class="pm-tl-row">'
-            +'<div class="atl-ev-dot '+dCls1+'">'+dArrow1+'</div>'
-            +'<div class="pm-tl-txt">'
-            +'<div class="pm-tl-time">'+(t?t+' &mdash; ':'')+'<span class="db-badge '+d1.toLowerCase()+'">'+d1+'</span> T1 Entry &mdash; C'+(ev.candleNum||'?')+' Break'+(ev.rule?' (Rule '+ev.rule+')':'')+'</div>'
-            +'<div class="pm-tl-label">Index: <b>'+parseFloat(ev.index||0).toFixed(1)+'</b>'
-            +(ev.premium>0?' &nbsp;&middot;&nbsp; Prem: <b>&#8377;'+parseFloat(ev.premium).toFixed(1)+'</b>':' <span style="color:#94a3b8">(prem not recorded)</span>')+'</div>'
-            +'<div class="pm-tl-label"><code style="font-size:.6rem;color:var(--muted)">'+(ev.symbol||'')+'</code>'
-            +' &nbsp;&middot;&nbsp; SL: '+(ev.sl?parseFloat(ev.sl).toFixed(0):'?')+' (&minus;60 pts)'
-            +(ev.breakLevel?' &nbsp;&middot;&nbsp; BL: '+parseFloat(ev.breakLevel).toFixed(0):'')+'</div>'
-            +'</div></div>';
-        } else if(ev.type==='T1_SL'){
-          var slPts=parseFloat(ev.pts||0);
-          var slClr=slPts>=0?'color:#059669':'color:#dc2626';
-          var slRs=ev.pnlRs!=null?ev.pnlRs:Math.round(slPts*15);
-          var slPremPts=(ev.premiumEntry>0&&ev.premiumExit>=0)?+(ev.premiumExit-ev.premiumEntry).toFixed(2):slPts;
-          var slDispClr=slRs>=0?'color:#059669':'color:#dc2626';
-          rows+='<div class="pm-tl-row">'
-            +'<div class="atl-ev-dot ev-sl">SL</div>'
-            +'<div class="pm-tl-txt">'
-            +'<div class="pm-tl-time">'+(t?t+' &mdash; ':'')+'T1 SL Hit</div>'
-            +'<div class="pm-tl-label">Entry: <b>'+parseFloat(ev.entryIndex||0).toFixed(1)+'</b> &rarr; Exit: <b>'+parseFloat(ev.exitIndex||0).toFixed(1)+'</b>'
-            +(ev.premiumEntry>0?' &nbsp;&middot;&nbsp; Prem: <b>&#8377;'+parseFloat(ev.premiumEntry).toFixed(1)+'</b> &rarr; <b>&#8377;'+parseFloat(ev.premiumExit||0).toFixed(1)+'</b>':'')+'</div>'
-            +'<div class="pm-tl-label">T1 P&amp;L: <b style="'+slDispClr+'">'+(slPremPts>=0?'+':'')+slPremPts.toFixed(0)+' prem pts</b>'
-            +' &nbsp;&middot;&nbsp; <b style="'+slDispClr+'">'+(slRs>=0?'+':'&minus;')+'&#8377;'+Math.abs(slRs).toLocaleString('en-IN')+'</b>'
-            +(ev.peak>0?' &nbsp;&middot;&nbsp; <span style="color:#94a3b8">Peak: +'+parseFloat(ev.peak||0).toFixed(0)+' pts</span>':'')+'</div>'
-            +'</div></div>';
-        } else if(ev.type==='RE_ENTRY'){
-          var d2=ev.dir||'?';
-          var dCls2=d2==='CE'?'ev-ce':'ev-pe';
-          var dArrow2=d2==='CE'?'&#x25B2;':'&#x25BC;';
-          rows+='<div class="pm-tl-row">'
-            +'<div class="atl-ev-dot '+dCls2+'">'+dArrow2+'</div>'
-            +'<div class="pm-tl-txt">'
-            +'<div class="pm-tl-time">'+(t?t+' &mdash; ':'')+'<span class="db-badge '+d2.toLowerCase()+'">'+d2+'</span> Re-Entry</div>'
-            +'<div class="pm-tl-label">Index: <b>'+parseFloat(ev.index||0).toFixed(1)+'</b>'
-            +(ev.premium>0?' &nbsp;&middot;&nbsp; Prem: <b>&#8377;'+parseFloat(ev.premium).toFixed(1)+'</b>':' <span style="color:#94a3b8">(prem not recorded)</span>')+'</div>'
-            +'<div class="pm-tl-label"><code style="font-size:.6rem;color:var(--muted)">'+(ev.symbol||'')+'</code>'
-            +' &nbsp;&middot;&nbsp; SL: '+(ev.sl?parseFloat(ev.sl).toFixed(0):'?')+' (&minus;60 pts)</div>'
-            +'</div></div>';
-        } else if(ev.type==='RE_SL'){
-          var rePts2=parseFloat(ev.pts||0);
-          var reClr2=rePts2>=0?'color:#059669':'color:#dc2626';
-          var reRs2=ev.pnlRs!=null?ev.pnlRs:Math.round(rePts2*15);
-          var rePremPts2=(ev.premiumEntry>0&&ev.premiumExit>=0)?+(ev.premiumExit-ev.premiumEntry).toFixed(2):rePts2;
-          var reReason2=rePremPts2>0?'RE Trail Exit':rePremPts2===0?'RE BE Exit':'RE SL Hit';
-          var reDispClr=reRs2>=0?'color:#059669':'color:#dc2626';
-          var dayRs2=parseInt(ev.dayRs||0);
-          var dayClr2=dayRs2>=0?'color:#059669':'color:#dc2626';
-          var dayPremPts2=dayRs2!==0?Math.round(dayRs2/30):parseFloat(ev.dayPts||0);
-          rows+='<div class="pm-tl-row">'
-            +'<div class="atl-ev-dot '+(rePremPts2>=0?'ev-ok':'ev-sl')+'">'+(rePremPts2>=0?'&#x2713;':'SL')+'</div>'
-            +'<div class="pm-tl-txt">'
-            +'<div class="pm-tl-time">'+reReason2+'</div>'
-            +'<div class="pm-tl-label">Entry: <b>'+parseFloat(ev.entryIndex||0).toFixed(1)+'</b> &rarr; Exit: <b>'+parseFloat(ev.exitIndex||0).toFixed(1)+'</b>'
-            +(ev.premiumEntry>0?' &nbsp;&middot;&nbsp; Prem: <b>&#8377;'+parseFloat(ev.premiumEntry).toFixed(1)+'</b> &rarr; <b>&#8377;'+parseFloat(ev.premiumExit||0).toFixed(1)+'</b>':'')+'</div>'
-            +'<div class="pm-tl-label">RE P&amp;L: <b style="'+reDispClr+'">'+(rePremPts2>=0?'+':'')+rePremPts2.toFixed(0)+' prem pts</b>'
-            +' &nbsp;&middot;&nbsp; <b style="'+reDispClr+'">'+(reRs2>=0?'+':'&minus;')+'&#8377;'+Math.abs(reRs2).toLocaleString('en-IN')+'</b>'
-            +(ev.peak>0?' &nbsp;&middot;&nbsp; <span style="color:#94a3b8">Peak: +'+parseFloat(ev.peak||0).toFixed(0)+' prem pts</span>':'')+'</div>'
-            +'<div class="pm-tl-label">Day Total: <b style="'+dayClr2+'">'+(dayPremPts2>=0?'+':'')+dayPremPts2.toFixed(0)+' prem pts</b>'
-            +' &nbsp;&middot;&nbsp; <b style="'+dayClr2+'">'+(dayRs2>=0?'+':'&minus;')+'&#8377;'+Math.abs(dayRs2).toLocaleString('en-IN')+'</b></div>'
-            +'</div></div>';
-        }
-      });
-      el.innerHTML=rows||'';
-      return;
-    }
-    // ── Fallback: render from heartbeat/aminaState if no candle log ───────────
-    if(!hb||!hb.t1Dir){el.innerHTML='';return;}
-    var rows2='';
-    var QM=hb.qty||30;
-    // T1 Entry
-    if(hb.t1Entry>0){
-      var f1=hb.t1Dir;
-      var fCls1=f1==='CE'?'ev-ce':'ev-pe';
-      var fArrow1=f1==='CE'?'&#x25B2;':'&#x25BC;';
-      var ft1time=as?_fmtTlTime(as.t1EntryTime):'';
-      var fltp1=(as&&as.t1EntryLTP>0)?(' &nbsp;&middot;&nbsp; Option Prem: <b>&#8377;'+as.t1EntryLTP.toFixed(1)+'</b>'):
-               (hb.entryPremium>0?' &nbsp;&middot;&nbsp; Option Prem: <b>&#8377;'+hb.entryPremium.toFixed(1)+'</b>':' <span style="color:#94a3b8">(prem not recorded)</span>');
-      var fslDist=hb.t1SL&&hb.t1Entry?Math.abs(hb.t1SL-hb.t1Entry).toFixed(0):'60';
-      rows2+='<div class="pm-tl-row">'
-        +'<div class="atl-ev-dot '+fCls1+'">'+fArrow1+'</div>'
-        +'<div class="pm-tl-txt">'
-        +'<div class="pm-tl-time">'+(ft1time?ft1time+' &mdash; ':'')+'<span class="db-badge '+f1.toLowerCase()+'">'+f1+'</span> T1 Entry</div>'
-        +'<div class="pm-tl-label">Index: <b>'+hb.t1Entry.toFixed(1)+'</b>'+fltp1+'</div>'
-        +'<div class="pm-tl-label"><code style="font-size:.6rem;color:var(--muted)">'+(hb.t1Symbol||'')+'</code> &nbsp;&middot;&nbsp; SL: &minus;'+fslDist+' pts'+(hb.t1Rule?' &nbsp;&middot;&nbsp; Rule: '+hb.t1Rule:'')+'</div>'
-        +'</div></div>';
-    }
-    var ft1Done=(as&&as.phase!=='IN_T1')||(hb.status&&!hb.status.includes('T1'));
-    if(hb.t1Entry>0&&hb.t1Pts!=null&&ft1Done){
-      var fslPts=parseFloat(hb.t1Pts||0);
-      var fslClr=fslPts>=0?'color:#059669':'color:#dc2626';
-      var fslRs=as&&as.t1Rs!=null?as.t1Rs:Math.round(fslPts*(QM*0.5));
-      var fslExit=hb.reEntry>0?hb.reEntry.toFixed(1):(hb.slClose||'');
-      var fsltime=as?_fmtTlTime(as.slTime):'';
-      rows2+='<div class="pm-tl-row">'
-        +'<div class="atl-ev-dot ev-sl">SL</div>'
-        +'<div class="pm-tl-txt">'
-        +'<div class="pm-tl-time">'+(fsltime?fsltime+' &mdash; ':'')+'T1 SL Hit</div>'
-        +'<div class="pm-tl-label">Exit Index: <b>'+(fslExit||'&mdash;')+'</b></div>'
-        +'<div class="pm-tl-label">T1 P&amp;L: <b style="'+fslClr+'">'+(fslPts>=0?'+':'')+fslPts.toFixed(0)+' pts</b>'
-        +' &nbsp;&middot;&nbsp; <b style="'+fslClr+'">'+(fslRs>=0?'+':'&minus;')+'&#8377;'+Math.abs(fslRs).toLocaleString('en-IN')+'</b>'
-        +(hb.t1Peak>0?' &nbsp;&middot;&nbsp; <span style="color:#94a3b8">Peak: +'+parseFloat(hb.t1Peak||0).toFixed(0)+' pts</span>':'')
-        +'</div>'
-        +'</div></div>';
-    }
-    if(hb.reEntry>0&&hb.reDir){
-      var f2=hb.reDir;
-      var fCls2=f2==='CE'?'ev-ce':'ev-pe';
-      var fArrow2=f2==='CE'?'&#x25B2;':'&#x25BC;';
-      var fretime=as?_fmtTlTime(as.reEntryTime):'';
-      var fltp2=(as&&as.reEntryLTP>0)?(' &nbsp;&middot;&nbsp; Option Prem: <b>&#8377;'+as.reEntryLTP.toFixed(1)+'</b>'):' <span style="color:#94a3b8">(prem not recorded)</span>';
-      rows2+='<div class="pm-tl-row">'
-        +'<div class="atl-ev-dot '+fCls2+'">'+fArrow2+'</div>'
-        +'<div class="pm-tl-txt">'
-        +'<div class="pm-tl-time">'+(fretime?fretime+' &mdash; ':'')+'<span class="db-badge '+f2.toLowerCase()+'">'+f2+'</span> Re-Entry</div>'
-        +'<div class="pm-tl-label">Index: <b>'+hb.reEntry.toFixed(1)+'</b>'+fltp2+'</div>'
-        +'<div class="pm-tl-label"><code style="font-size:.6rem;color:var(--muted)">'+(hb.reSymbol||'')+'</code></div>'
-        +'</div></div>';
-    }
-    var freDone=(as&&as.phase==='DONE')||(hb.status&&hb.status.includes('DONE'));
-    if(hb.reEntry>0&&hb.rePts!=null&&freDone){
-      var frePts=parseFloat(hb.rePts||0);
-      var freClr=frePts>=0?'color:#059669':'color:#dc2626';
-      var freRs=as&&as.reRs!=null?as.reRs:Math.round(frePts*(QM*0.5));
-      var freReason=frePts>0?'RE Trail Exit':frePts===0?'RE Trail BE Exit':'RE SL Hit';
-      var fdayPts=parseFloat(hb.dayPts||0);
-      var fdayRs=parseInt(hb.dayRs||0);
-      var fdayClr=fdayPts>=0?'color:#059669':'color:#dc2626';
-      rows2+='<div class="pm-tl-row">'
-        +'<div class="atl-ev-dot '+(frePts>=0?'ev-ok':'ev-sl')+'">'+(frePts>=0?'&#x2713;':'SL')+'</div>'
-        +'<div class="pm-tl-txt">'
-        +'<div class="pm-tl-time">'+freReason+'</div>'
-        +'<div class="pm-tl-label">RE P&amp;L: <b style="'+freClr+'">'+(frePts>=0?'+':'')+frePts.toFixed(0)+' pts</b>'
-        +' &nbsp;&middot;&nbsp; <b style="'+freClr+'">'+(freRs>=0?'+':'&minus;')+'&#8377;'+Math.abs(freRs).toLocaleString('en-IN')+'</b></div>'
-        +'<div class="pm-tl-label">Day Total: <b style="'+fdayClr+'">'+(fdayPts>=0?'+':'')+fdayPts.toFixed(0)+' pts</b>'
-        +' &nbsp;&middot;&nbsp; <b style="'+fdayClr+'">'+(fdayRs>=0?'+':'&minus;')+'&#8377;'+Math.abs(fdayRs).toLocaleString('en-IN')+'</b></div>'
-        +'</div></div>';
-    }
-    el.innerHTML=rows2;
-  }
 
   // ── Session candle timeline builder ───────────────────────────
   // slots: 9:15 9:30 9:45 … 3:15 3:30  = 25 slots
@@ -12103,6 +12358,9 @@ app.get("/signals", featureGate("feature_signals", "Signals"), async (req, res) 
     try{
       const r=await fetch('/api/bot/status');
       const d=await r.json();
+      try{ if(typeof _populateCandleLog==='function') _populateCandleLog(d.candleLog||[]); }catch(_clErr){ console.error('candle log render error', _clErr); }
+      var _pd=d.heartbeat||{};var _pdh=document.getElementById('db-pdh');var _pdl=document.getElementById('db-pdl');var _pdc=document.getElementById('db-cndl');if(_pdh&&_pd.bhavPrevDayHigh)_pdh.textContent=_pd.bhavPrevDayHigh;if(_pdl&&_pd.bhavPrevDayLow)_pdl.textContent=_pd.bhavPrevDayLow;if(_pdc&&_pd.bhavCandles!==undefined)_pdc.textContent=_pd.bhavCandles;
+      var _pd=d.heartbeat||{};if(document.getElementById('db-pdh')&&_pd.bhavPrevDayHigh)document.getElementById('db-pdh').textContent=_pd.bhavPrevDayHigh;if(document.getElementById('db-pdl')&&_pd.bhavPrevDayLow)document.getElementById('db-pdl').textContent=_pd.bhavPrevDayLow;if(document.getElementById('db-cndl')&&_pd.bhavCandles!==undefined)document.getElementById('db-cndl').textContent=_pd.bhavCandles;
       ge('db-upd').textContent='Updated '+new Date().toLocaleTimeString('en-IN',{hour:'2-digit',minute:'2-digit',second:'2-digit'});
 
       const hb=d.heartbeat||{};
@@ -12132,60 +12390,14 @@ app.get("/signals", featureGate("feature_signals", "Signals"), async (req, res) 
       }
 
       // ── Tab P&L badges ──────────────────────────────────────
-      const totRsLock=(d.today?.rs??0)+(inT?Math.round(unr*QM):0);
-      const totPnl=totRsLock/QM;
+      const totPnl=parseFloat(((d.today?.pnl||0)+(inT?unr:0)).toFixed(0));
       const shPnl=parseFloat((hb.shadowPnL||0).toFixed(0));
       const s1Pnl=parseFloat((hb.scalp1PnL||0).toFixed(0));
       const tpLock=ge('stab-pnl-lock50');if(tpLock){tpLock.textContent=fR(totPnl);tpLock.style.color=gc(totPnl);}
       const tpTrail=ge('stab-pnl-trail');if(tpTrail){tpTrail.textContent=fR(shPnl);tpTrail.style.color=gc(shPnl);}
       const tpL50o=ge('stab-pnl-l50o');if(tpL50o){tpL50o.textContent=fR(s1Pnl);tpL50o.style.color=gc(s1Pnl);}
-      const _phaseLblEl=ge('stab-phase-lbl');
-      if(_phaseLblEl){
-        var _isDone2=(hb.status||'').includes('DONE')||(d.aminaState?.phase==='DONE');
-        var _isRE2=inT&&(hb.reEntry??0)>0;
-        _phaseLblEl.textContent=_isDone2?'Done for Day':_isRE2?'In RE':inT?'In T1':'Watching';
-        _phaseLblEl.style.color=_isDone2?'#059669':inT?'#fbbf24':'var(--muted)';
-      }
 
-      // ── Position card state switching ──────────────────────────────────
-      var _pdone=ge('pos-lock50-done'),_plive=ge('pos-lock50-card'),_pwatch=ge('pos-lock50-flat');
-      var _isDonePhase=(hb.status||'').includes('DONE')||(d.aminaState?.phase==='DONE');
-      var _isREPhase=inT&&(hb.reEntry??0)>0;
-      if(_isDonePhase&&!inT){
-        if(_pdone)_pdone.style.display='';
-        if(_plive)_plive.style.display='none';
-        if(_pwatch)_pwatch.style.display='none';
-        // Update done card KPIs from aminaState
-        var _as=d.aminaState||{};
-        var _t1R=_as.t1Rs,_t1LP=_as.t1EntryLTP??0,_t1XP=_t1LP>0&&_t1R!=null?(+(_t1LP+_t1R/30).toFixed(1)):0;
-        var _reR=_as.reRs,_rLP=_as.reEntryLTP??0,_rXP=_rLP>0&&_reR!=null?(+(_rLP+_reR/30).toFixed(1)):0;
-        var _fmt=function(rs){return rs==null?'—':(rs>=0?'+':'−')+'₹'+Math.abs(rs).toLocaleString('en-IN');};
-        var _fpts=function(rs){if(rs==null)return'—';var p=Math.round(rs/30);return(p>=0?'+':'')+p+' prem pts';};
-        if(ge('pos-done-t1rs')&&_t1R!=null){ge('pos-done-t1rs').textContent=_fmt(_t1R);ge('pos-done-t1rs').className=_t1R>=0?'g':'r';}
-        if(ge('pos-done-t1pts')&&_t1R!=null){ge('pos-done-t1pts').textContent=_fpts(_t1R);ge('pos-done-t1pts').className=_t1R>=0?'g':'r';}
-        if(ge('pos-done-rers')&&_reR!=null){ge('pos-done-rers').textContent=_fmt(_reR);ge('pos-done-rers').className=_reR>=0?'g':'r';}
-        if(ge('pos-done-repts')&&_reR!=null){ge('pos-done-repts').textContent=_fpts(_reR);ge('pos-done-repts').className=_reR>=0?'g':'r';}
-        var _dR=hb.dayRs??0;var _dP=Math.round(_dR/30);
-        if(ge('pos-done-dayrs')){ge('pos-done-dayrs').textContent=_fmt(_dR);ge('pos-done-dayrs').className=_dR>=0?'g':'r';}
-        if(ge('pos-done-daypts')){ge('pos-done-daypts').textContent=_fpts(_dR);ge('pos-done-daypts').className=_dR>=0?'g':'r';}
-        // T1/RE KPI cells
-        if(ge('kpi-t1-rs')&&_t1R!=null){ge('kpi-t1-rs').textContent=_fmt(_t1R);ge('kpi-t1-rs').className='kpi-m-v '+((_t1R)>=0?'sig-green':'sig-red');}
-        if(ge('kpi-t1-pts')&&_t1R!=null)ge('kpi-t1-pts').textContent=_fpts(_t1R);
-        if(ge('kpi-re-rs')&&_reR!=null){ge('kpi-re-rs').textContent=_fmt(_reR);ge('kpi-re-rs').className='kpi-m-v '+((_reR)>=0?'sig-green':'sig-red');}
-        if(ge('kpi-re-pts')&&_reR!=null)ge('kpi-re-pts').textContent=_fpts(_reR);
-      }else if(inT&&ep>0){
-        if(_pdone)_pdone.style.display='none';
-        if(_plive)_plive.style.display='';
-        if(_pwatch)_pwatch.style.display='none';
-        var _phBadge=ge('pos-phase-badge');
-        if(_phBadge)_phBadge.textContent=_isREPhase?'● In RE':'● In T1';
-      }else{
-        if(_pdone)_pdone.style.display='none';
-        if(_plive)_plive.style.display='none';
-        if(_pwatch)_pwatch.style.display='';
-      }
-
-      // ── TICK TRAIL position card (live P&L update) ───────────────────
+      // ── TICK TRAIL position card ────────────────────────────
       if(inT&&ep>0){
         const g=ge('pos-lock50-rs');if(g){g.textContent=fR(unr);g.style.color=gc(unr);}
         const gp=ge('pos-lock50-pts');if(gp){gp.textContent=(unr>=0?'+':'')+unr.toFixed(0)+' index pts unrealised';gp.style.color=gc(unr);}
@@ -12199,35 +12411,98 @@ app.get("/signals", featureGate("feature_signals", "Signals"), async (req, res) 
           gf.style.background=unr>=0?'#10b981':'#ef4444';
         }
       }
-      // Watching card trigger levels
+      function _appendClosedTrades(el,d){
+        var _td3=new Date().toISOString().slice(0,10);
+        var _all=window._realAllTrades||d.recentTrades||[];
+        var _futs=_all.filter(function(t){return (t.type||'DRISHTI_V1')==='DRISHTI_V1'&&t.exitPrice&&t.exitPrice>0&&(t.date||'').startsWith(_td3);});
+        var _opts=_all.filter(function(t){return (t.type||'')==='DRISHTI_V1_OPT'&&t.exitPrice&&t.exitPrice>0&&(t.date||'').startsWith(_td3);});
+        if(!_futs.length&&!_opts.length)return;
+        function _miniList(rows,isOpt,title,color){
+          var sumRs=rows.reduce(function(s,t){return s+_realCalc(t,isOpt).rs;},0);
+          var sumPts=rows.reduce(function(s,t){return s+_realCalc(t,isOpt).pts;},0);
+          var out='<div style="min-width:0"><div style="font-size:.58rem;text-transform:uppercase;letter-spacing:.8px;color:'+color+';font-weight:800;margin-bottom:5px">'+title+': '+(sumRs>=0?'+':'-')+'&#8377;'+Math.abs(sumRs).toLocaleString('en-IN')+' / '+(sumPts>=0?'+':'')+sumPts.toFixed(1)+' pts</div>';
+          if(!rows.length){return out+'<div style="font-size:.64rem;color:#64748b">No closed trades</div></div>';}
+          rows.slice().reverse().forEach(function(t,i){
+            var r=_realCalc(t,isOpt);
+            var _tc=r.rs>=0?'#4ade80':'#fb923c';
+            var _dc=t.direction==='CE'?'#38bdf8':'#c084fc';
+            var _tm=t.date?new Date(t.date).toLocaleTimeString('en-IN',{hour:'2-digit',minute:'2-digit',timeZone:'Asia/Kolkata'}):'';
+            var _px=isOpt?('₹'+(r.entry>0?r.entry.toFixed(1):'—')+'&rarr;₹'+(r.exit>0?r.exit.toFixed(1):'—')):(((t.entryPrice||0)>0?t.entryPrice.toFixed(1):'—')+'&rarr;'+((t.exitPrice||0)>0?t.exitPrice.toFixed(1):'—'));
+            out+='<div style="display:flex;align-items:center;gap:6px;padding:3px 0;font-size:.66rem;min-width:0">'
+              +'<span style="color:#64748b">'+_tm+'</span>'
+              +(t.direction?'<span style="color:'+_dc+';font-weight:700">'+t.direction+'</span>':'')
+              +'<b style="color:'+_tc+';white-space:nowrap">'+(r.rs>=0?'+':'-')+'&#8377;'+Math.abs(r.rs)+'</b>'
+              +'<span style="color:#475569;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+_px+'</span>'
+              +'</div>';
+          });
+          return out+'</div>';
+        }
+        var _ch='<div style="margin-top:10px;border-top:1px solid rgba(255,255,255,.06);padding-top:8px;display:grid;grid-template-columns:1fr;gap:10px">';
+        _ch+='<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">';
+        _ch+=_miniList(_futs,false,'Futures','#a78bfa');
+        _ch+=_miniList(_opts,true,'Options','#6ee7b7');
+        _ch+='</div></div>';
+        el.innerHTML+=_ch;
+      }
+      // Watching card — BHAV V3 candle status
       if(!inT){
-        const lc=hb.lastCandle;
         const noEl=ge('pos-lock50-watch');
-        if(lc&&noEl){
-          const bH=Math.max(lc.open,lc.close);
-          const bL=Math.min(lc.open,lc.close);
-          const ce=(bH+25).toFixed(0);
-          const pe=(bL-25).toFixed(0);
-          const ceD=lp>0?(lp-(bH+25)):null;
-          const peD=lp>0?((bL-25)-lp):null;
-          const ceA=ceD!==null?(' <span style="color:'+(ceD>=0?'#10b981':'#94a3b8')+'">'+(ceD>=0?'✓ past':'↑ '+Math.abs(ceD).toFixed(0)+' pts away')+'</span>'):'';
-          const peA=peD!==null?(' <span style="color:'+(peD>=0?'#10b981':'#94a3b8')+'">'+(peD>=0?'✓ past':'↓ '+Math.abs(peD).toFixed(0)+' pts away')+'</span>'):'';
-          noEl.innerHTML=
-            '<div class="watch-lvl-row watch-ce-row"><span class="watch-lvl-dir" style="color:#60a5fa">CE ▲</span><span class="watch-lvl-val">'+ce+'</span><span class="watch-lvl-dist">close ≥'+ce+ceA+'</span></div>'+
-            '<div class="watch-lvl-row watch-pe-row"><span class="watch-lvl-dir" style="color:#fca5a5">PE ▼</span><span class="watch-lvl-val">'+pe+'</span><span class="watch-lvl-dist">close ≤'+pe+peA+'</span></div>'+
-            (lp>0?'<div style="font-size:.73rem;color:var(--muted);margin-top:7px">Live index: <b style="color:var(--text-main)">'+lp.toFixed(1)+'</b></div>':'');
-        } else if(noEl){
-          noEl.innerHTML='<span style="opacity:.4">Waiting for first 15-min candle…</span>';
+        if(noEl){
+          const _pdh=parseFloat(hb.bhavPrevDayHigh||0);
+          const _pdl=parseFloat(hb.bhavPrevDayLow||0);
+          const _cn=parseInt(hb.bhavCandles||0);
+          const _ctx=_pdh>0?(lp>_pdh?'ABOVE PDH':((_pdl>0&&lp<_pdl)?'BELOW PDL':'INSIDE')):'';
+          const _now=new Date();
+          const _rm=_now.getMinutes();const _rs=_now.getSeconds();
+          const _rem=(15-(_rm%15))*60-_rs;
+          const _remFix=_rem<=0?_rem+900:_rem;
+          const _remStr=Math.floor(_remFix/60)+':'+(_remFix%60<10?'0':'')+(_remFix%60);
+          let _wh='';
+          if(_pdh>0){
+            // PDH row — pe-row style (above PDH → PE fade)
+            const _pdhDist=lp>0?Math.abs(lp-_pdh).toFixed(0):'';
+            const _pdhAbove=lp>_pdh;
+            const _pdhCol=_pdhAbove?'#dc2626':'#64748b';
+            const _pdhNote=lp>0?(' <span style="color:'+_pdhCol+'">'+(_pdhAbove?'&#8593; '+_pdhDist+' above &rarr; PE fade':''+_pdhDist+' pts below')+'</span>'):'';
+            _wh+='<div class="watch-lvl-row watch-pe-row"><span class="watch-lvl-dir" style="color:#dc2626">PDH &#9660;</span><span class="watch-lvl-val">'+_pdh.toFixed(0)+'</span><span class="watch-lvl-dist">'+(_pdl>0?'PDL '+_pdl.toFixed(0):'')+''+_pdhNote+'</span></div>';
+            // Candle row — amber style
+            _wh+='<div class="watch-lvl-row watch-cnd-row"><span class="watch-lvl-dir" style="color:#d97706;min-width:28px">&#8987;</span><span class="watch-lvl-val" style="font-size:.85rem">Candle #'+(_cn+1)+'</span><span class="watch-lvl-dist" style="color:#94a3b8">next close <b style="color:#fbbf24">'+_remStr+'</b>'+(lp>0?' &middot; spot <b style="color:var(--text-main)">'+lp.toFixed(0)+'</b>':'')+'</span></div>';
+          } else {
+            _wh='<span style="opacity:.4;font-size:.78rem">Waiting for first 15-min candle&#8230;</span>';
+          }
+          noEl.innerHTML=_wh;
+          _appendClosedTrades(noEl,d);
         }
       }
 
       // ── Session stats ───────────────────────────────────────
       if(d.today){
-        const totRs2=(d.today.rs??0)+(inT?Math.round(unr*QM):0);
-        const tot=totRs2/QM;
-        if(ge('ss-today-rs')){ge('ss-today-rs').textContent=fR(tot);ge('ss-today-rs').style.color=gc(totRs2);}
-        if(ge('ss-today-pts')&&d.today.rs!=null){const pPts=Math.round(d.today.rs/30);ge('ss-today-pts').textContent=(pPts>=0?'+':'')+pPts+' prem pts';}
-        // Unrealised sub-row
+        var _today2=new Date().toLocaleDateString('en-CA',{timeZone:'Asia/Kolkata'});
+        if(d.recentTrades){
+          var _seen={};
+          (window._realAllTrades||[]).forEach(function(t){_seen[(t.type||'')+'|'+(t.date||'')+'|'+(t.entryPrice||'')+'|'+(t.exitPrice||'')]=t;});
+          d.recentTrades.forEach(function(t){_seen[(t.type||'')+'|'+(t.date||'')+'|'+(t.entryPrice||'')+'|'+(t.exitPrice||'')]=t;});
+          window._realAllTrades=Object.keys(_seen).map(function(k){return _seen[k];});
+          _renderRealDaily();
+        }
+        var _allRealNow=window._realAllTrades||d.recentTrades||[];
+        var _todayTds=_allRealNow.filter(function(t){return (t.type||'DRISHTI_V1')==='DRISHTI_V1'&&t.exitPrice&&t.exitPrice>0&&(t.date||'').startsWith(_today2);});
+        var _todayOptTds=_allRealNow.filter(function(t){return (t.type||'')==='DRISHTI_V1_OPT'&&t.exitPrice&&t.exitPrice>0&&(t.date||'').startsWith(_today2);});
+        var _premTot=_todayTds.reduce(function(s,t){return s+_realCalc(t,false).rs;},0);
+        var _optTotRs=_todayOptTds.reduce(function(s,t){return s+_realCalc(t,true).rs;},0);
+        var _optTotPts=_todayOptTds.reduce(function(s,t){return s+_realCalc(t,true).pts;},0);
+        if(!_todayOptTds.length && hb){
+          _optTotRs=Number(hb.optDailyRs||0);
+          _optTotPts=Number(hb.optDailyPts||0);
+        }
+        var _ep2h=parseFloat(hb.entryPremium||0);var _lp2h=parseFloat(hb.livePremium||0);
+        var _livePremUnr2=inT?(_ep2h>0&&_lp2h>0?Math.round((_lp2h-_ep2h)*(qty||30)):Math.round(unr*15)):0;
+        var _totInr=_premTot+_livePremUnr2;
+        const tot=parseFloat((_todayTds.reduce(function(s,t){return s+_realCalc(t,false).pts;},0)+(inT?unr:0)).toFixed(1));
+        if(ge('ss-today-rs')){var _rs=(_totInr>=0?'+':'−')+'₹'+Math.abs(_totInr).toLocaleString('en-IN');ge('ss-today-rs').textContent=_rs;ge('ss-today-rs').style.color=gc(_totInr);}
+        if(ge('ss-opt-today-rs')){var _ors=(_optTotRs>=0?'+':'−')+'₹'+Math.abs(_optTotRs).toLocaleString('en-IN');ge('ss-opt-today-rs').textContent=_ors;ge('ss-opt-today-rs').style.color=gc(_optTotRs);}
+        if(ge('ss-opt-today-pts')){ge('ss-opt-today-pts').textContent=(_optTotPts>=0?'+':'')+_optTotPts.toFixed(1)+' premium pts';ge('ss-opt-today-pts').style.color=gc(_optTotRs);}
+        // Paper mode sub-row
         var unrRow=ge('ss-unr-row');
         if(unrRow){
           unrRow.style.display=inT?'':'none';
@@ -12241,6 +12516,43 @@ app.get("/signals", featureGate("feature_signals", "Signals"), async (req, res) 
         if(ge('ss-tc'))ge('ss-tc').innerHTML=hb.tradeCount+(inT?'<span style="font-size:.6rem;color:#10b981"> +live</span>':'');
         if(ge('ss-wins'))ge('ss-wins').textContent=d.today.wins+'W';
         if(ge('ss-losses'))ge('ss-losses').textContent=d.today.losses+'L';
+        // Per-trade breakdown: futures and options are shown separately.
+        var _bdEl=ge('ss-trade-breakdown');
+        var _obdEl=ge('ss-options-breakdown');
+        var _allReal=window._realAllTrades||[];
+        function _fmtMiniTrade(t,isOpt,i){
+          var _calc=_realCalc(t,isOpt);
+          var _tc=_calc.rs>=0?'#6ee7b7':'#fca5a5';
+          var _td=t.direction?'<span style="color:'+(t.direction==='CE'?'#93c5fd':'#fda4af')+'">'+t.direction+'</span> ':'';
+          var _tm=t.date?new Date(t.date).toLocaleTimeString('en-IN',{hour:'2-digit',minute:'2-digit',timeZone:'Asia/Kolkata'}):'';
+          var _tp=isOpt?' (₹'+(_calc.entry>0?_calc.entry.toFixed(1):'—')+'→₹'+(_calc.exit>0?_calc.exit.toFixed(1):'—')+')':' ('+((t.entryPrice||0)>0?t.entryPrice.toFixed(1):'—')+'→'+((t.exitPrice||0)>0?t.exitPrice.toFixed(1):'—')+')';
+          return '<div style="display:flex;align-items:center;gap:6px;padding:2px 0">'
+            +'<span style="color:#64748b;font-size:.6rem">T'+(i+1)+'</span>'+_td
+            +'<b style="color:'+_tc+'">'+(_calc.rs>=0?'+':'-')+'&#8377;'+Math.abs(_calc.rs)+'</b>'
+            +'<span style="color:#475569;font-size:.6rem">'+_tp+'</span>'
+            +'<span style="color:#64748b;font-size:.6rem">'+_tm+'</span></div>';
+        }
+        if(_bdEl){
+          var _futRs=_todayTds.reduce(function(s,t){return s+_realCalc(t,false).rs;},0);
+          var _futPts=_todayTds.reduce(function(s,t){return s+_realCalc(t,false).pts;},0);
+          var _bdHtml='<div style="color:#a78bfa;font-weight:700;font-size:.6rem;text-transform:uppercase;letter-spacing:.6px">Futures today: '+(_futRs>=0?'+':'-')+'&#8377;'+Math.abs(_futRs).toLocaleString('en-IN')+' / '+(_futPts>=0?'+':'')+_futPts.toFixed(1)+' pts</div>';
+          _todayTds.forEach(function(t,i){_bdHtml+=_fmtMiniTrade(t,false,i);});
+          if(inT){
+            var _lti=_ep2h>0&&_lp2h>0?Math.round((_lp2h-_ep2h)*(qty||30)):Math.round(unr*15);
+            var _ltc=_lti>=0?'#6ee7b7':'#fca5a5';
+            var _ldir=(hb.direction||'').toUpperCase();
+            _bdHtml+='<div style="display:flex;align-items:center;gap:6px;padding:2px 0"><span style="color:#64748b;font-size:.6rem">T'+(_todayTds.length+1)+'</span><span style="color:'+(_ldir==='CE'?'#60a5fa':'#fca5a5')+'">'+_ldir+'</span> <b style="color:'+_ltc+'">'+(_lti>=0?'+':'-')+'&#8377;'+Math.abs(_lti)+'</b><span style="color:#f59e0b;font-size:.6rem">&#9679; live</span></div>';
+          }
+          _bdEl.innerHTML=(_todayTds.length||inT)?_bdHtml:'<div style="color:#64748b">Futures today: no closed trades</div>';
+        }
+        if(_obdEl){
+          var _optRs=_todayOptTds.reduce(function(s,t){return s+_realCalc(t,true).rs;},0);
+          var _optPts=_todayOptTds.reduce(function(s,t){return s+_realCalc(t,true).pts;},0);
+          if(!_todayOptTds.length && hb){ _optRs=Number(hb.optDailyRs||0); _optPts=Number(hb.optDailyPts||0); }
+          var _oh='<div style="color:#6ee7b7;font-weight:700;font-size:.6rem;text-transform:uppercase;letter-spacing:.6px">Options today: '+(_optRs>=0?'+':'-')+'&#8377;'+Math.abs(_optRs).toLocaleString('en-IN')+' / '+(_optPts>=0?'+':'')+_optPts.toFixed(1)+' pts</div>';
+          _todayOptTds.forEach(function(t,i){_oh+=_fmtMiniTrade(t,true,i);});
+          _obdEl.innerHTML=(_todayOptTds.length||_optRs||_optPts)?_oh:'<div style="color:#64748b">Options today: no closed trades</div>';
+        }
       }
       if(d.weekly){
         if(ge('ss-wk-rs')){ge('ss-wk-rs').textContent=fR(d.weekly.pnl);ge('ss-wk-rs').style.color=gc(d.weekly.pnl);}
@@ -12254,47 +12566,60 @@ app.get("/signals", featureGate("feature_signals", "Signals"), async (req, res) 
         if(tbody){
           const cl=[...d.todayTrades].filter(function(t){return t.exitPrice&&t.exitPrice>0;});
           const cnt=ge('tt-count');
-          if(cnt)cnt.textContent='('+cl.length+' closed'+(inT?' + 1 live':'')+')'+'';
-          if(cl.length>0){
-            tbody.innerHTML=[...cl].reverse().map(function(t){
-              const d3=(t.direction||'').toLowerCase();
-              const hasPremC=(t.premiumEntry??0)>0&&(t.premiumExit??0)>0;
-              const premPtsC=hasPremC?+(t.premiumExit-t.premiumEntry).toFixed(2):null;
-              const pts=premPtsC!==null?premPtsC:(t.pnlRs!=null?t.pnlRs/30:(t.pnl??0));
-              const rs=t.pnlRs!=null?t.pnlRs:(premPtsC!==null?Math.round(premPtsC*30):Math.round((t.pnl??0)*15));
-              const reason=t.reasonExit||'—';
-              const rTag=reason.toLowerCase().includes('sl')||reason.toLowerCase().includes('stop')?'rc-sl':reason.toLowerCase().includes('trail')||reason.toLowerCase().includes('early')?'rc-trail':'rc-eod';
-              const dur=t.duration?(t.duration<60?t.duration+'s':Math.round(t.duration/60)+'m'):'—';
-              const pEntry=(t.premiumEntry??0)>0?(t.premiumEntry??0).toFixed(1):'—';
-              const pExit=(t.premiumExit??0)>0?(t.premiumExit??0).toFixed(1):'—';
-              return '<tr>'
-                +'<td class="tc">'+new Date(t.date).toLocaleTimeString('en-IN',{timeZone:'Asia/Kolkata',hour:'2-digit',minute:'2-digit'})+'</td>'
-                +'<td><span class="db-badge '+d3+'">'+(t.direction||'—')+'</span></td>'
-                +'<td class="mono">'+((t.entryPrice??0)>0?(t.entryPrice??0).toFixed(1):'—')+'</td>'
-                +'<td class="mono '+(d3==='ce'?'b':'r')+'">'+pEntry+'</td>'
-                +'<td class="tc mono">'+(t.symbol||'—')+'</td>'
-                +'<td class="mono">'+((t.exitPrice??0)>0?(t.exitPrice??0).toFixed(1):'—')+'</td>'
-                +'<td class="mono '+(d3==='ce'?'b':'r')+'">'+pExit+'</td>'
-                +'<td class="'+(pts>=0?'g':'r')+'" style="font-weight:800">'+(pts>=0?'+':'')+pts.toFixed(0)+' pts</td>'
-                +'<td><span class="pnl-rs '+(pts>=0?'g':'r')+'">'+(rs>=0?'+':'−')+'₹'+Math.abs(rs).toLocaleString('en-IN')+'</span></td>'
-                +'<td>'+(reason!=='—'?'<span class="rc-b '+rTag+'">'+reason+'</span>':'—')+'</td>'
-                +'<td class="tc">'+dur+'</td>'
-                +'</tr>';
-            }).join('');
-          }
+          if(cnt)cnt.textContent='('+cl.length+' closed'+(inT?' + 1 live':'')+')';
         }
       }
+      // trade events in timeline
+      var _atlTr=document.getElementById('atl-trades');
+      if(_atlTr){
+        var _today=new Date().toISOString().slice(0,10);
+        var _tds=(d.recentTrades||[]).filter(function(t){return t.exitPrice&&t.exitPrice>0&&(t.date||'').startsWith(_today);});
+        var _html='';
+        // live trade first
+        if(d.heartbeat&&d.heartbeat.inTrade&&parseFloat((d.heartbeat||{}).entryPrice||0)>0){
+          var _ep=parseFloat(d.heartbeat.entryPrice);var _dr=(d.heartbeat.direction||'').toUpperCase();
+          var _lp=parseFloat(d.heartbeat.livePrice||0);var _unr=_lp>0?(_dr==='CE'?_lp-_ep:_ep-_lp):0;
+          var _ep2=parseFloat(d.heartbeat.entryPremium||0);var _lp2=parseFloat(d.heartbeat.livePremium||0);
+          var _qty2=d.heartbeat.qty||30;
+          var _unrInr=(_ep2>0&&_lp2>0)?Math.round((_lp2-_ep2)*_qty2):Math.round(_unr*15);
+          var _ucol=_unrInr>=0?'#10b981':'#ef4444';
+          _html+='<div class="pm-tl-row"><div class="pm-tl-dot active">\u25c6</div>'
+            +'<div class="pm-tl-txt"><div class="pm-tl-time" style="color:#f59e0b">'
+            +(_dr?'<b style="color:'+(_dr==='CE'?'#60a5fa':'#fca5a5')+'">'+_dr+'</b> ':'')
+            +'IN TRADE \u2014 Entry '+_ep.toFixed(0)+(_lp>0?' \u2192 LTP '+_lp.toFixed(0):'')+'</div>'
+            +'<div class="pm-tl-label"><b style="color:'+_ucol+'">'+(_unrInr>=0?'+':'-')+'\u20b9'+Math.abs(_unrInr)+'</b>'
+            +' unrealised'+(_ep2>0&&_lp2>0?' (opt '+_ep2.toFixed(0)+'\u2192'+_lp2.toFixed(0)+')':' \u00b7 '+(_unr>=0?'+':'')+_unr.toFixed(0)+' pts')+'</div></div></div>';
+        }
+        // closed trades
+        _tds.slice().reverse().forEach(function(t){
+          var _p=t.pnl||0;
+          var _inr=(t.premiumEntry>0&&t.premiumExit>0)?Math.round((t.premiumExit-t.premiumEntry)*(t.qty||30)):Math.round(_p*15);
+          var _col=_inr>=0?'#10b981':'#ef4444';
+          var _tm=t.date?new Date(t.date).toLocaleTimeString('en-IN',{hour:'2-digit',minute:'2-digit',timeZone:'Asia/Kolkata'}):'';
+          var _dur=t.duration?(t.duration<60?t.duration+'s':Math.round(t.duration/60)+'m'):'';
+          _html+='<div class="pm-tl-row">'
+            +'<div class="pm-tl-dot '+(_p>=0?'done':'err')+'" style="color:'+_col+';background:'+_col+'20">'+(_p>=0?'\u2714':'\u2715')+'</div>'
+            +'<div class="pm-tl-txt"><div class="pm-tl-time">'
+            +(t.direction?'<b style="color:'+(t.direction==='CE'?'#60a5fa':'#fca5a5')+'">'+t.direction+'</b> ':'')
+            +_tm+' \u2014 Entry '+(t.entryPrice||0).toFixed(0)+' \u2192 Exit '+(t.exitPrice||0).toFixed(0)+'</div>'
+            +'<div class="pm-tl-label"><b style="color:'+_col+'">'+((_p>=0?'+':'-')+'\u20b9'+Math.abs(_inr))+'</b>'
+            +' \u00b7 '+(_p>=0?'+':'')+_p.toFixed(0)+' pts'
+            +(_dur?' \u00b7 '+_dur:'')
+            +(t.reasonExit?' \u00b7 <span style="font-size:.6rem;opacity:.75">'+t.reasonExit+'</span>':'')+'</div></div></div>';
+        });
+        if(!_html&&!(d.heartbeat&&d.heartbeat.inTrade))_html='<div style="font-size:.72rem;color:#8b949e;padding:4px 0 0 28px">No trades yet today</div>';
+        _atlTr.innerHTML=_html;
+      }
+
 
       // ── Candle timeline ─────────────────────────────────────
       if(hb.candleHistory&&hb.candleHistory.length){_candleHistory=hb.candleHistory;}
       if(hb.lastCandle){
         // todayTrades for markers
-        var _tt=d.todayTrades||[];
+        var _tt=(d.recentTrades||[]).filter(function(t){return (t.date||'').startsWith(new Date().toISOString().slice(0,10));});
         // candle timeline removed from TICK TRAIL panel
         // candle timeline removed from TRAIL/LOCK50 Old panels
       }
-      // ── Trade event timeline
-      _updateTradeTimeline(hb, d.aminaState||null, d.candleLog||[]);
 
       // ── TRAIL shadow ───────────────────────
       try{
@@ -12347,6 +12672,7 @@ app.get("/signals", featureGate("feature_signals", "Signals"), async (req, res) 
         var s1WE=ge('sh-l50o-signal');if(s1WE){s1WE.style.display='';if(hb.lastCandle&&lp>0){var lc3=hb.lastCandle;var bH3=Math.max(lc3.open,lc3.close);var bL3=Math.min(lc3.open,lc3.close);var ce3=(bH3+25).toFixed(0);var pe3=(bL3-25).toFixed(0);var ceD3=lp-(bH3+25);var peD3=(bL3-25)-lp;s1WE.innerHTML='<div class="watch-lvl-row watch-ce-row"><span class="watch-lvl-dir" style="color:#60a5fa">CE ▲</span><span class="watch-lvl-val">'+ce3+'</span><span class="watch-lvl-dist">close ≥'+ce3+' <span style="color:'+(ceD3>=0?'#10b981':'#94a3b8')+'">'+(ceD3>=0?'✓ past':'↑ '+Math.abs(ceD3).toFixed(0)+' pts away')+'</span></span></div><div class="watch-lvl-row watch-pe-row"><span class="watch-lvl-dir" style="color:#fca5a5">PE ▼</span><span class="watch-lvl-val">'+pe3+'</span><span class="watch-lvl-dist">close ≤'+pe3+' <span style="color:'+(peD3>=0?'#10b981':'#94a3b8')+'">'+(peD3>=0?'✓ past':'↓ '+Math.abs(peD3).toFixed(0)+' pts away')+'</span></span></div>';}else{s1WE.innerHTML='';}} 
         _renderShLog('sh-l50o-body',hb.scalp1TradeLog||[],alive);
       }catch(e){console.error('LOCK50 err',e);}
+      if(typeof _populateCandleLog==='function'&&d.candleLog) _populateCandleLog(d.candleLog);
 
     }catch(e){console.error('refresh error',e);}
   }
@@ -12520,7 +12846,59 @@ app.get("/signals", featureGate("feature_signals", "Signals"), async (req, res) 
   setInterval(_vmtRefresh,5000);
   _vmtRefresh();
 
+
+  // Populate candle log tab (called from _dbRefresh with d.candleLog)
+  function _populateCandleLog(rows){
+    var tb=document.getElementById('th-clog-tbody');
+    if(!tb)return;
+    if(!rows||!rows.length){
+      tb.innerHTML='<tr class="tt-e"><td colspan="6" style="text-align:center;color:var(--text-muted);padding:18px;font-size:.8rem">No candle data for today yet</td></tr>';
+      return;
+    }
+    var html='';
+    rows.forEach(function(c){
+      var sig=c.signal||'';
+      var sigClr=sig==='CE'?'#60a5fa':sig==='PE'?'#f87171':'#6e7681';
+      var bodyClr=c.bodyPct>=0?'#10b981':'#ef4444';
+      var offline=c.offline?'<span style="font-size:.62rem;color:#6e7681;margin-left:3px">(filtered)</span>':'';
+      html+='<tr>'
+        +'<td style="font-size:.72rem;color:var(--text-muted)">'+c.idx+'</td>'
+        +'<td style="font-size:.78rem;font-weight:700;font-family:monospace">'+c.time+'</td>'
+        +'<td style="font-size:.78rem;font-family:monospace">'+Math.round(c.close)+'</td>'
+        +'<td style="font-size:.76rem;color:'+bodyClr+';font-weight:700">'+(c.bodyPct>=0?'+':'')+c.bodyPct+'%</td>'
+        +'<td><span style="font-size:.7rem;font-weight:700;padding:1px 6px;border-radius:4px;background:'+(sig?sigClr+'22':'transparent')+';color:'+sigClr+'">'+(sig||'—')+'</span>'+offline+'</td>'
+        +'<td style="font-size:.7rem;color:var(--text-muted);max-width:240px;white-space:normal">'+(c.reason||'')+'</td>'
+        +'</tr>';
+    });
+    tb.innerHTML=html;
+  }
+
+  // Server / console log refresh
+  async function _slogRefresh(){
+    var box=document.getElementById('slog-box');
+    if(!box)return;
+    box.innerHTML='<span style="color:#6e7681">Loading...</span>';
+    try{
+      var r=await fetch('/api/bot/logs');
+      if(r.status===401||r.status===403){box.innerHTML='<span style="color:#fbbf24">Admin login required to view logs</span>';return;}
+      if(!r.ok){box.innerHTML='<span style="color:#f87171">Error '+r.status+'</span>';return;}
+      var d=await r.json();
+      if(!d.ok||!d.lines||!d.lines.length){box.innerHTML='<span style="color:#6e7681">No log data</span>';return;}
+      var html=d.lines.map(function(l){
+        var clr='#e6edf3';
+        if(/error|exception|fail/i.test(l)) clr='#f87171';
+        else if(/warn/i.test(l)) clr='#fbbf24';
+        else if(/TRADE|ENTRY|EXIT|SIGNAL|TARGET|SL HIT/i.test(l)) clr='#34d399';
+        return '<div style="color:'+clr+'">'+l.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')+'</div>';
+      }).join('');
+      box.innerHTML=html;
+      box.scrollTop=box.scrollHeight;
+    }catch(e){box.innerHTML='<span style="color:#f87171">'+e.message+'</span>';}
+  }
+  _slogRefresh();
+
   setInterval(_dbRefresh,3000);
+
   _dbRefresh();
   _sTab('lock50');
 
@@ -12551,10 +12929,10 @@ app.get("/signals", featureGate("feature_signals", "Signals"), async (req, res) 
         return d2.toISOString().split("T")[0];
     })();
     const todayStrG = new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" });
-    const yTrades = trades.filter((t) => (t.date || "").startsWith(yesterdayIST) && t.exitPrice && t.exitPrice > 0);
+    const yTrades = trades.filter((t) => (t.date || "").startsWith(yesterdayIST) && t.exitPrice && t.exitPrice > 0 && t.type !== "DRISHTI_V1");
     const yPnl = parseFloat(yTrades.reduce((s, t) => s + (t.pnl ?? 0), 0).toFixed(1));
     const yWins = yTrades.filter((t) => t.pnl > 0).length;
-    const closedTodayG = trades.filter((t) => (t.date || "").startsWith(todayStrG) && t.exitPrice && t.exitPrice > 0);
+    const closedTodayG = trades.filter((t) => (t.date || "").startsWith(todayStrG) && t.exitPrice && t.exitPrice > 0 && t.type !== "DRISHTI_V1").map((t) => (t.premiumEntry > 0 && t.premiumExit > 0) ? { ...t, pnl: parseFloat((t.premiumExit - t.premiumEntry).toFixed(2)), pnlRs: Math.round((t.premiumExit - t.premiumEntry) * (t.qty || 30)) } : t);
     const QTY_MULT_G = 15;
     function fmtRsG(v) { const r = Math.round(v * QTY_MULT_G); return (r >= 0 ? "+" : "\u2212") + "\u20B9" + Math.abs(r).toLocaleString("en-IN"); }
     function fmtPtsG(v) { return (v >= 0 ? "+" : "") + v.toFixed(0) + " pts"; }
@@ -12790,23 +13168,93 @@ app.get("/signals", featureGate("feature_signals", "Signals"), async (req, res) 
 
     <!-- MONTHLY P&L -->
     <div class="sig3-sec">Month-wise P&amp;L</div>
+    <div style="font-size:.72rem;color:var(--text-muted);margin:-.2rem 0 .55rem">Backtest history plus live closed trades. Expand a month for day-wise futures/options.</div>
+    <div style="margin-bottom:.5rem;display:flex;flex-wrap:wrap;gap:0"><button style="display:inline-block;padding:3px 12px;border-radius:5px;font-size:.72rem;font-weight:700;cursor:pointer;border:1px solid var(--border);background:var(--accent-purple);color:#fff;border-color:var(--accent-purple);margin:0 2px 4px 0" onclick="_sigYr(this,'all')">All</button><button style="display:inline-block;padding:3px 12px;border-radius:5px;font-size:.72rem;font-weight:700;cursor:pointer;border:1px solid var(--border);background:transparent;color:var(--text-muted);margin:0 2px 4px 0" onclick="_sigYr(this,'2021')">2021</button><button style="display:inline-block;padding:3px 12px;border-radius:5px;font-size:.72rem;font-weight:700;cursor:pointer;border:1px solid var(--border);background:transparent;color:var(--text-muted);margin:0 2px 4px 0" onclick="_sigYr(this,'2022')">2022</button><button style="display:inline-block;padding:3px 12px;border-radius:5px;font-size:.72rem;font-weight:700;cursor:pointer;border:1px solid var(--border);background:transparent;color:var(--text-muted);margin:0 2px 4px 0" onclick="_sigYr(this,'2023')">2023</button><button style="display:inline-block;padding:3px 12px;border-radius:5px;font-size:.72rem;font-weight:700;cursor:pointer;border:1px solid var(--border);background:transparent;color:var(--text-muted);margin:0 2px 4px 0" onclick="_sigYr(this,'2024')">2024</button><button style="display:inline-block;padding:3px 12px;border-radius:5px;font-size:.72rem;font-weight:700;cursor:pointer;border:1px solid var(--border);background:transparent;color:var(--text-muted);margin:0 2px 4px 0" onclick="_sigYr(this,'2025')">2025</button><button style="display:inline-block;padding:3px 12px;border-radius:5px;font-size:.72rem;font-weight:700;cursor:pointer;border:1px solid var(--border);background:transparent;color:var(--text-muted);margin:0 2px 4px 0" onclick="_sigYr(this,'2026')">2026</button></div>
     <div class="sig3-tw">
       <table class="sig3-t">
-        <thead><tr><th>Month</th><th>P&amp;L (&#8377;)</th><th>P&amp;L (pts)</th><th>Trades</th><th>Win%</th></tr></thead>
-        <tbody>
-          ${analytics.monthly.slice(0, 6).map((m) => {
-        const ml = new Date(m.month + "-01").toLocaleString("en-IN", { month: "short", year: "2-digit" });
-        return `<tr>
-              <td style="font-weight:600">${ml}</td>
-              <td><span class="sig3-pnl-rs ${m.pnl >= 0 ? "sig3-g" : "sig3-r"}" style="font-size:.95rem"><span class="${!loggedIn ? 'sig-blur' : ''}">${fmtRsG(m.pnl)}</span></span></td>
-              <td class="sig3-mono" style="font-size:.76rem;color:var(--text-muted)"><span class="${!loggedIn ? 'sig-blur' : ''}">${fmtPtsG(m.pnl)}</span></td>
-              <td>${m.trades}</td>
-              <td class="${m.winRate >= 55 ? "sig3-g" : m.winRate >= 40 ? "" : "sig3-r"}"><span class="${!loggedIn ? 'sig-blur' : ''}">${m.trades > 0 ? m.winRate + "%" : "\u2014"}</span></td>
-            </tr>`;
-    }).join("") || '<tr><td colspan="5" class="sig3-te">No historical data yet</td></tr>'}
+        <thead><tr><th>Month</th><th>Futures</th><th>Options</th><th>Trades</th><th>Days</th></tr></thead>
+        <tbody id="sig3-mo-tbody">
+          <tr data-year="2026" data-mo="2026-06" style="cursor:pointer" onclick="_sigDrill('2026-06')"><td style="font-weight:600"><span id="sig3-i-2026-06" style="font-size:.7rem;margin-right:.3rem;transition:transform .2s">&#9658;</span>Jun '26</td><td><span class="sig3-pnl-rs sig3-g" style="font-size:.95rem">+&#8377;13,846</span></td><td class="sig3-mono" style="font-size:.76rem;color:var(--text-muted)">+662 pts</td><td>10</td><td class="sig3-g">100%</td></tr><tr id="sig3-d-2026-06" style="display:none"><td colspan="5" style="padding:0"></td></tr><tr data-year="2026" data-mo="2026-05" style="cursor:pointer" onclick="_sigDrill('2026-05')"><td style="font-weight:600"><span id="sig3-i-2026-05" style="font-size:.7rem;margin-right:.3rem;transition:transform .2s">&#9658;</span>May '26</td><td><span class="sig3-pnl-rs sig3-g" style="font-size:.95rem">+&#8377;1,08,188</span></td><td class="sig3-mono" style="font-size:.76rem;color:var(--text-muted)">+4862 pts</td><td>80</td><td class="sig3-g">94%</td></tr><tr id="sig3-d-2026-05" style="display:none"><td colspan="5" style="padding:0"></td></tr><tr data-year="2026" data-mo="2026-04" style="cursor:pointer" onclick="_sigDrill('2026-04')"><td style="font-weight:600"><span id="sig3-i-2026-04" style="font-size:.7rem;margin-right:.3rem;transition:transform .2s">&#9658;</span>Apr '26</td><td><span class="sig3-pnl-rs sig3-g" style="font-size:.95rem">+&#8377;1,00,783</span></td><td class="sig3-mono" style="font-size:.76rem;color:var(--text-muted)">+4554 pts</td><td>76</td><td class="sig3-g">100%</td></tr><tr id="sig3-d-2026-04" style="display:none"><td colspan="5" style="padding:0"></td></tr><tr data-year="2026" data-mo="2026-03" style="cursor:pointer" onclick="_sigDrill('2026-03')"><td style="font-weight:600"><span id="sig3-i-2026-03" style="font-size:.7rem;margin-right:.3rem;transition:transform .2s">&#9658;</span>Mar '26</td><td><span class="sig3-pnl-rs sig3-g" style="font-size:.95rem">+&#8377;1,40,935</span></td><td class="sig3-mono" style="font-size:.76rem;color:var(--text-muted)">+5802 pts</td><td>70</td><td class="sig3-g">93%</td></tr><tr id="sig3-d-2026-03" style="display:none"><td colspan="5" style="padding:0"></td></tr><tr data-year="2026" data-mo="2026-02" style="cursor:pointer" onclick="_sigDrill('2026-02')"><td style="font-weight:600"><span id="sig3-i-2026-02" style="font-size:.7rem;margin-right:.3rem;transition:transform .2s">&#9658;</span>Feb '26</td><td><span class="sig3-pnl-rs sig3-g" style="font-size:.95rem">+&#8377;93,165</span></td><td class="sig3-mono" style="font-size:.76rem;color:var(--text-muted)">+4557 pts</td><td>93</td><td class="sig3-g">80%</td></tr><tr id="sig3-d-2026-02" style="display:none"><td colspan="5" style="padding:0"></td></tr><tr data-year="2026" data-mo="2026-01" style="cursor:pointer" onclick="_sigDrill('2026-01')"><td style="font-weight:600"><span id="sig3-i-2026-01" style="font-size:.7rem;margin-right:.3rem;transition:transform .2s">&#9658;</span>Jan '26</td><td><span class="sig3-pnl-rs sig3-g" style="font-size:.95rem">+&#8377;1,07,454</span></td><td class="sig3-mono" style="font-size:.76rem;color:var(--text-muted)">+4897 pts</td><td>84</td><td class="sig3-g">88%</td></tr><tr id="sig3-d-2026-01" style="display:none"><td colspan="5" style="padding:0"></td></tr><tr data-year="2025" data-mo="2025-12" style="cursor:pointer" onclick="_sigDrill('2025-12')"><td style="font-weight:600"><span id="sig3-i-2025-12" style="font-size:.7rem;margin-right:.3rem;transition:transform .2s">&#9658;</span>Dec '25</td><td><span class="sig3-pnl-rs sig3-g" style="font-size:.95rem">+&#8377;56,139</span></td><td class="sig3-mono" style="font-size:.76rem;color:var(--text-muted)">+3458 pts</td><td>102</td><td class="sig3-g">76%</td></tr><tr id="sig3-d-2025-12" style="display:none"><td colspan="5" style="padding:0"></td></tr><tr data-year="2025" data-mo="2025-11" style="cursor:pointer" onclick="_sigDrill('2025-11')"><td style="font-weight:600"><span id="sig3-i-2025-11" style="font-size:.7rem;margin-right:.3rem;transition:transform .2s">&#9658;</span>Nov '25</td><td><span class="sig3-pnl-rs sig3-g" style="font-size:.95rem">+&#8377;60,440</span></td><td class="sig3-mono" style="font-size:.76rem;color:var(--text-muted)">+3406 pts</td><td>89</td><td class="sig3-g">94%</td></tr><tr id="sig3-d-2025-11" style="display:none"><td colspan="5" style="padding:0"></td></tr><tr data-year="2025" data-mo="2025-10" style="cursor:pointer" onclick="_sigDrill('2025-10')"><td style="font-weight:600"><span id="sig3-i-2025-10" style="font-size:.7rem;margin-right:.3rem;transition:transform .2s">&#9658;</span>Oct '25</td><td><span class="sig3-pnl-rs sig3-g" style="font-size:.95rem">+&#8377;65,957</span></td><td class="sig3-mono" style="font-size:.76rem;color:var(--text-muted)">+3680 pts</td><td>95</td><td class="sig3-g">79%</td></tr><tr id="sig3-d-2025-10" style="display:none"><td colspan="5" style="padding:0"></td></tr><tr data-year="2025" data-mo="2025-09" style="cursor:pointer" onclick="_sigDrill('2025-09')"><td style="font-weight:600"><span id="sig3-i-2025-09" style="font-size:.7rem;margin-right:.3rem;transition:transform .2s">&#9658;</span>Sep '25</td><td><span class="sig3-pnl-rs sig3-g" style="font-size:.95rem">+&#8377;62,662</span></td><td class="sig3-mono" style="font-size:.76rem;color:var(--text-muted)">+3781 pts</td><td>109</td><td class="sig3-g">82%</td></tr><tr id="sig3-d-2025-09" style="display:none"><td colspan="5" style="padding:0"></td></tr><tr data-year="2025" data-mo="2025-08" style="cursor:pointer" onclick="_sigDrill('2025-08')"><td style="font-weight:600"><span id="sig3-i-2025-08" style="font-size:.7rem;margin-right:.3rem;transition:transform .2s">&#9658;</span>Aug '25</td><td><span class="sig3-pnl-rs sig3-g" style="font-size:.95rem">+&#8377;61,305</span></td><td class="sig3-mono" style="font-size:.76rem;color:var(--text-muted)">+3450 pts</td><td>90</td><td class="sig3-g">89%</td></tr><tr id="sig3-d-2025-08" style="display:none"><td colspan="5" style="padding:0"></td></tr><tr data-year="2025" data-mo="2025-07" style="cursor:pointer" onclick="_sigDrill('2025-07')"><td style="font-weight:600"><span id="sig3-i-2025-07" style="font-size:.7rem;margin-right:.3rem;transition:transform .2s">&#9658;</span>Jul '25</td><td><span class="sig3-pnl-rs sig3-g" style="font-size:.95rem">+&#8377;87,887</span></td><td class="sig3-mono" style="font-size:.76rem;color:var(--text-muted)">+4637 pts</td><td>110</td><td class="sig3-g">95%</td></tr><tr id="sig3-d-2025-07" style="display:none"><td colspan="5" style="padding:0"></td></tr><tr data-year="2025" data-mo="2025-06" style="cursor:pointer" onclick="_sigDrill('2025-06')"><td style="font-weight:600"><span id="sig3-i-2025-06" style="font-size:.7rem;margin-right:.3rem;transition:transform .2s">&#9658;</span>Jun '25</td><td><span class="sig3-pnl-rs sig3-g" style="font-size:.95rem">+&#8377;81,894</span></td><td class="sig3-mono" style="font-size:.76rem;color:var(--text-muted)">+4226 pts</td><td>96</td><td class="sig3-g">95%</td></tr><tr id="sig3-d-2025-06" style="display:none"><td colspan="5" style="padding:0"></td></tr><tr data-year="2025" data-mo="2025-05" style="cursor:pointer" onclick="_sigDrill('2025-05')"><td style="font-weight:600"><span id="sig3-i-2025-05" style="font-size:.7rem;margin-right:.3rem;transition:transform .2s">&#9658;</span>May '25</td><td><span class="sig3-pnl-rs sig3-g" style="font-size:.95rem">+&#8377;1,07,910</span></td><td class="sig3-mono" style="font-size:.76rem;color:var(--text-muted)">+5093 pts</td><td>96</td><td class="sig3-g">90%</td></tr><tr id="sig3-d-2025-05" style="display:none"><td colspan="5" style="padding:0"></td></tr><tr data-year="2025" data-mo="2025-04" style="cursor:pointer" onclick="_sigDrill('2025-04')"><td style="font-weight:600"><span id="sig3-i-2025-04" style="font-size:.7rem;margin-right:.3rem;transition:transform .2s">&#9658;</span>Apr '25</td><td><span class="sig3-pnl-rs sig3-g" style="font-size:.95rem">+&#8377;1,01,582</span></td><td class="sig3-mono" style="font-size:.76rem;color:var(--text-muted)">+4777 pts</td><td>89</td><td class="sig3-g">83%</td></tr><tr id="sig3-d-2025-04" style="display:none"><td colspan="5" style="padding:0"></td></tr><tr data-year="2025" data-mo="2025-03" style="cursor:pointer" onclick="_sigDrill('2025-03')"><td style="font-weight:600"><span id="sig3-i-2025-03" style="font-size:.7rem;margin-right:.3rem;transition:transform .2s">&#9658;</span>Mar '25</td><td><span class="sig3-pnl-rs sig3-g" style="font-size:.95rem">+&#8377;64,870</span></td><td class="sig3-mono" style="font-size:.76rem;color:var(--text-muted)">+3629 pts</td><td>94</td><td class="sig3-g">95%</td></tr><tr id="sig3-d-2025-03" style="display:none"><td colspan="5" style="padding:0"></td></tr><tr data-year="2025" data-mo="2025-02" style="cursor:pointer" onclick="_sigDrill('2025-02')"><td style="font-weight:600"><span id="sig3-i-2025-02" style="font-size:.7rem;margin-right:.3rem;transition:transform .2s">&#9658;</span>Feb '25</td><td><span class="sig3-pnl-rs sig3-g" style="font-size:.95rem">+&#8377;1,22,801</span></td><td class="sig3-mono" style="font-size:.76rem;color:var(--text-muted)">+5484 pts</td><td>89</td><td class="sig3-g">94%</td></tr><tr id="sig3-d-2025-02" style="display:none"><td colspan="5" style="padding:0"></td></tr><tr data-year="2025" data-mo="2025-01" style="cursor:pointer" onclick="_sigDrill('2025-01')"><td style="font-weight:600"><span id="sig3-i-2025-01" style="font-size:.7rem;margin-right:.3rem;transition:transform .2s">&#9658;</span>Jan '25</td><td><span class="sig3-pnl-rs sig3-g" style="font-size:.95rem">+&#8377;1,47,920</span></td><td class="sig3-mono" style="font-size:.76rem;color:var(--text-muted)">+6638 pts</td><td>110</td><td class="sig3-g">86%</td></tr><tr id="sig3-d-2025-01" style="display:none"><td colspan="5" style="padding:0"></td></tr><tr data-year="2024" data-mo="2024-12" style="cursor:pointer" onclick="_sigDrill('2024-12')"><td style="font-weight:600"><span id="sig3-i-2024-12" style="font-size:.7rem;margin-right:.3rem;transition:transform .2s">&#9658;</span>Dec '24</td><td><span class="sig3-pnl-rs sig3-g" style="font-size:.95rem">+&#8377;98,175</span></td><td class="sig3-mono" style="font-size:.76rem;color:var(--text-muted)">+4724 pts</td><td>93</td><td class="sig3-g">84%</td></tr><tr id="sig3-d-2024-12" style="display:none"><td colspan="5" style="padding:0"></td></tr><tr data-year="2024" data-mo="2024-11" style="cursor:pointer" onclick="_sigDrill('2024-11')"><td style="font-weight:600"><span id="sig3-i-2024-11" style="font-size:.7rem;margin-right:.3rem;transition:transform .2s">&#9658;</span>Nov '24</td><td><span class="sig3-pnl-rs sig3-g" style="font-size:.95rem">+&#8377;90,685</span></td><td class="sig3-mono" style="font-size:.76rem;color:var(--text-muted)">+4354 pts</td><td>85</td><td class="sig3-g">88%</td></tr><tr id="sig3-d-2024-11" style="display:none"><td colspan="5" style="padding:0"></td></tr><tr data-year="2024" data-mo="2024-10" style="cursor:pointer" onclick="_sigDrill('2024-10')"><td style="font-weight:600"><span id="sig3-i-2024-10" style="font-size:.7rem;margin-right:.3rem;transition:transform .2s">&#9658;</span>Oct '24</td><td><span class="sig3-pnl-rs sig3-g" style="font-size:.95rem">+&#8377;1,93,175</span></td><td class="sig3-mono" style="font-size:.76rem;color:var(--text-muted)">+8146 pts</td><td>110</td><td class="sig3-g">100%</td></tr><tr id="sig3-d-2024-10" style="display:none"><td colspan="5" style="padding:0"></td></tr><tr data-year="2024" data-mo="2024-09" style="cursor:pointer" onclick="_sigDrill('2024-09')"><td style="font-weight:600"><span id="sig3-i-2024-09" style="font-size:.7rem;margin-right:.3rem;transition:transform .2s">&#9658;</span>Sep '24</td><td><span class="sig3-pnl-rs sig3-g" style="font-size:.95rem">+&#8377;44,725</span></td><td class="sig3-mono" style="font-size:.76rem;color:var(--text-muted)">+2957 pts</td><td>94</td><td class="sig3-g">70%</td></tr><tr id="sig3-d-2024-09" style="display:none"><td colspan="5" style="padding:0"></td></tr><tr data-year="2024" data-mo="2024-08" style="cursor:pointer" onclick="_sigDrill('2024-08')"><td style="font-weight:600"><span id="sig3-i-2024-08" style="font-size:.7rem;margin-right:.3rem;transition:transform .2s">&#9658;</span>Aug '24</td><td><span class="sig3-pnl-rs sig3-g" style="font-size:.95rem">+&#8377;1,02,460</span></td><td class="sig3-mono" style="font-size:.76rem;color:var(--text-muted)">+4927 pts</td><td>97</td><td class="sig3-g">75%</td></tr><tr id="sig3-d-2024-08" style="display:none"><td colspan="5" style="padding:0"></td></tr><tr data-year="2024" data-mo="2024-07" style="cursor:pointer" onclick="_sigDrill('2024-07')"><td style="font-weight:600"><span id="sig3-i-2024-07" style="font-size:.7rem;margin-right:.3rem;transition:transform .2s">&#9658;</span>Jul '24</td><td><span class="sig3-pnl-rs sig3-g" style="font-size:.95rem">+&#8377;1,43,105</span></td><td class="sig3-mono" style="font-size:.76rem;color:var(--text-muted)">+6116 pts</td><td>86</td><td class="sig3-g">89%</td></tr><tr id="sig3-d-2024-07" style="display:none"><td colspan="5" style="padding:0"></td></tr><tr data-year="2024" data-mo="2024-06" style="cursor:pointer" onclick="_sigDrill('2024-06')"><td style="font-weight:600"><span id="sig3-i-2024-06" style="font-size:.7rem;margin-right:.3rem;transition:transform .2s">&#9658;</span>Jun '24</td><td><span class="sig3-pnl-rs sig3-g" style="font-size:.95rem">+&#8377;1,60,229</span></td><td class="sig3-mono" style="font-size:.76rem;color:var(--text-muted)">+6822 pts</td><td>95</td><td class="sig3-g">79%</td></tr><tr id="sig3-d-2024-06" style="display:none"><td colspan="5" style="padding:0"></td></tr><tr data-year="2024" data-mo="2024-05" style="cursor:pointer" onclick="_sigDrill('2024-05')"><td style="font-weight:600"><span id="sig3-i-2024-05" style="font-size:.7rem;margin-right:.3rem;transition:transform .2s">&#9658;</span>May '24</td><td><span class="sig3-pnl-rs sig3-g" style="font-size:.95rem">+&#8377;78,298</span></td><td class="sig3-mono" style="font-size:.76rem;color:var(--text-muted)">+4167 pts</td><td>100</td><td class="sig3-g">86%</td></tr><tr id="sig3-d-2024-05" style="display:none"><td colspan="5" style="padding:0"></td></tr><tr data-year="2024" data-mo="2024-04" style="cursor:pointer" onclick="_sigDrill('2024-04')"><td style="font-weight:600"><span id="sig3-i-2024-04" style="font-size:.7rem;margin-right:.3rem;transition:transform .2s">&#9658;</span>Apr '24</td><td><span class="sig3-pnl-rs sig3-g" style="font-size:.95rem">+&#8377;39,149</span></td><td class="sig3-mono" style="font-size:.76rem;color:var(--text-muted)">+2651 pts</td><td>86</td><td class="sig3-g">61%</td></tr><tr id="sig3-d-2024-04" style="display:none"><td colspan="5" style="padding:0"></td></tr><tr data-year="2024" data-mo="2024-03" style="cursor:pointer" onclick="_sigDrill('2024-03')"><td style="font-weight:600"><span id="sig3-i-2024-03" style="font-size:.7rem;margin-right:.3rem;transition:transform .2s">&#9658;</span>Mar '24</td><td><span class="sig3-pnl-rs sig3-g" style="font-size:.95rem">+&#8377;80,915</span></td><td class="sig3-mono" style="font-size:.76rem;color:var(--text-muted)">+4043 pts</td><td>86</td><td class="sig3-g">94%</td></tr><tr id="sig3-d-2024-03" style="display:none"><td colspan="5" style="padding:0"></td></tr><tr data-year="2024" data-mo="2024-02" style="cursor:pointer" onclick="_sigDrill('2024-02')"><td style="font-weight:600"><span id="sig3-i-2024-02" style="font-size:.7rem;margin-right:.3rem;transition:transform .2s">&#9658;</span>Feb '24</td><td><span class="sig3-pnl-rs sig3-g" style="font-size:.95rem">+&#8377;1,55,904</span></td><td class="sig3-mono" style="font-size:.76rem;color:var(--text-muted)">+6738 pts</td><td>99</td><td class="sig3-g">85%</td></tr><tr id="sig3-d-2024-02" style="display:none"><td colspan="5" style="padding:0"></td></tr><tr data-year="2024" data-mo="2024-01" style="cursor:pointer" onclick="_sigDrill('2024-01')"><td style="font-weight:600"><span id="sig3-i-2024-01" style="font-size:.7rem;margin-right:.3rem;transition:transform .2s">&#9658;</span>Jan '24</td><td><span class="sig3-pnl-rs sig3-g" style="font-size:.95rem">+&#8377;90,010</span></td><td class="sig3-mono" style="font-size:.76rem;color:var(--text-muted)">+4602 pts</td><td>103</td><td class="sig3-g">76%</td></tr><tr id="sig3-d-2024-01" style="display:none"><td colspan="5" style="padding:0"></td></tr><tr data-year="2023" data-mo="2023-12" style="cursor:pointer" onclick="_sigDrill('2023-12')"><td style="font-weight:600"><span id="sig3-i-2023-12" style="font-size:.7rem;margin-right:.3rem;transition:transform .2s">&#9658;</span>Dec '23</td><td><span class="sig3-pnl-rs sig3-g" style="font-size:.95rem">+&#8377;74,741</span></td><td class="sig3-mono" style="font-size:.76rem;color:var(--text-muted)">+3973 pts</td><td>95</td><td class="sig3-g">74%</td></tr><tr id="sig3-d-2023-12" style="display:none"><td colspan="5" style="padding:0"></td></tr><tr data-year="2023" data-mo="2023-11" style="cursor:pointer" onclick="_sigDrill('2023-11')"><td style="font-weight:600"><span id="sig3-i-2023-11" style="font-size:.7rem;margin-right:.3rem;transition:transform .2s">&#9658;</span>Nov '23</td><td><span class="sig3-pnl-rs sig3-g" style="font-size:.95rem">+&#8377;30,504</span></td><td class="sig3-mono" style="font-size:.76rem;color:var(--text-muted)">+2332 pts</td><td>84</td><td class="sig3-g">74%</td></tr><tr id="sig3-d-2023-11" style="display:none"><td colspan="5" style="padding:0"></td></tr><tr data-year="2023" data-mo="2023-10" style="cursor:pointer" onclick="_sigDrill('2023-10')"><td style="font-weight:600"><span id="sig3-i-2023-10" style="font-size:.7rem;margin-right:.3rem;transition:transform .2s">&#9658;</span>Oct '23</td><td><span class="sig3-pnl-rs sig3-g" style="font-size:.95rem">+&#8377;58,276</span></td><td class="sig3-mono" style="font-size:.76rem;color:var(--text-muted)">+3273 pts</td><td>85</td><td class="sig3-g">83%</td></tr><tr id="sig3-d-2023-10" style="display:none"><td colspan="5" style="padding:0"></td></tr><tr data-year="2023" data-mo="2023-09" style="cursor:pointer" onclick="_sigDrill('2023-09')"><td style="font-weight:600"><span id="sig3-i-2023-09" style="font-size:.7rem;margin-right:.3rem;transition:transform .2s">&#9658;</span>Sep '23</td><td><span class="sig3-pnl-rs sig3-g" style="font-size:.95rem">+&#8377;75,670</span></td><td class="sig3-mono" style="font-size:.76rem;color:var(--text-muted)">+3989 pts</td><td>94</td><td class="sig3-g">84%</td></tr><tr id="sig3-d-2023-09" style="display:none"><td colspan="5" style="padding:0"></td></tr><tr data-year="2023" data-mo="2023-08" style="cursor:pointer" onclick="_sigDrill('2023-08')"><td style="font-weight:600"><span id="sig3-i-2023-08" style="font-size:.7rem;margin-right:.3rem;transition:transform .2s">&#9658;</span>Aug '23</td><td><span class="sig3-pnl-rs sig3-g" style="font-size:.95rem">+&#8377;33,227</span></td><td class="sig3-mono" style="font-size:.76rem;color:var(--text-muted)">+2589 pts</td><td>95</td><td class="sig3-g">70%</td></tr><tr id="sig3-d-2023-08" style="display:none"><td colspan="5" style="padding:0"></td></tr><tr data-year="2023" data-mo="2023-07" style="cursor:pointer" onclick="_sigDrill('2023-07')"><td style="font-weight:600"><span id="sig3-i-2023-07" style="font-size:.7rem;margin-right:.3rem;transition:transform .2s">&#9658;</span>Jul '23</td><td><span class="sig3-pnl-rs sig3-g" style="font-size:.95rem">+&#8377;43,817</span></td><td class="sig3-mono" style="font-size:.76rem;color:var(--text-muted)">+2987 pts</td><td>98</td><td class="sig3-g">75%</td></tr><tr id="sig3-d-2023-07" style="display:none"><td colspan="5" style="padding:0"></td></tr><tr data-year="2023" data-mo="2023-06" style="cursor:pointer" onclick="_sigDrill('2023-06')"><td style="font-weight:600"><span id="sig3-i-2023-06" style="font-size:.7rem;margin-right:.3rem;transition:transform .2s">&#9658;</span>Jun '23</td><td><span class="sig3-pnl-rs sig3-g" style="font-size:.95rem">+&#8377;11,592</span></td><td class="sig3-mono" style="font-size:.76rem;color:var(--text-muted)">+1883 pts</td><td>96</td><td class="sig3-g">65%</td></tr><tr id="sig3-d-2023-06" style="display:none"><td colspan="5" style="padding:0"></td></tr><tr data-year="2023" data-mo="2023-05" style="cursor:pointer" onclick="_sigDrill('2023-05')"><td style="font-weight:600"><span id="sig3-i-2023-05" style="font-size:.7rem;margin-right:.3rem;transition:transform .2s">&#9658;</span>May '23</td><td><span class="sig3-pnl-rs sig3-g" style="font-size:.95rem">+&#8377;48,584</span></td><td class="sig3-mono" style="font-size:.76rem;color:var(--text-muted)">+3236 pts</td><td>104</td><td class="sig3-g">76%</td></tr><tr id="sig3-d-2023-05" style="display:none"><td colspan="5" style="padding:0"></td></tr><tr data-year="2023" data-mo="2023-04" style="cursor:pointer" onclick="_sigDrill('2023-04')"><td style="font-weight:600"><span id="sig3-i-2023-04" style="font-size:.7rem;margin-right:.3rem;transition:transform .2s">&#9658;</span>Apr '23</td><td><span class="sig3-pnl-rs sig3-g" style="font-size:.95rem">+&#8377;7,154</span></td><td class="sig3-mono" style="font-size:.76rem;color:var(--text-muted)">+1403 pts</td><td>74</td><td class="sig3-g">62%</td></tr><tr id="sig3-d-2023-04" style="display:none"><td colspan="5" style="padding:0"></td></tr><tr data-year="2023" data-mo="2023-03" style="cursor:pointer" onclick="_sigDrill('2023-03')"><td style="font-weight:600"><span id="sig3-i-2023-03" style="font-size:.7rem;margin-right:.3rem;transition:transform .2s">&#9658;</span>Mar '23</td><td><span class="sig3-pnl-rs sig3-g" style="font-size:.95rem">+&#8377;1,01,827</span></td><td class="sig3-mono" style="font-size:.76rem;color:var(--text-muted)">+4860 pts</td><td>94</td><td class="sig3-g">95%</td></tr><tr id="sig3-d-2023-03" style="display:none"><td colspan="5" style="padding:0"></td></tr><tr data-year="2023" data-mo="2023-02" style="cursor:pointer" onclick="_sigDrill('2023-02')"><td style="font-weight:600"><span id="sig3-i-2023-02" style="font-size:.7rem;margin-right:.3rem;transition:transform .2s">&#9658;</span>Feb '23</td><td><span class="sig3-pnl-rs sig3-g" style="font-size:.95rem">+&#8377;90,875</span></td><td class="sig3-mono" style="font-size:.76rem;color:var(--text-muted)">+4510 pts</td><td>95</td><td class="sig3-g">84%</td></tr><tr id="sig3-d-2023-02" style="display:none"><td colspan="5" style="padding:0"></td></tr><tr data-year="2023" data-mo="2023-01" style="cursor:pointer" onclick="_sigDrill('2023-01')"><td style="font-weight:600"><span id="sig3-i-2023-01" style="font-size:.7rem;margin-right:.3rem;transition:transform .2s">&#9658;</span>Jan '23</td><td><span class="sig3-pnl-rs sig3-g" style="font-size:.95rem">+&#8377;90,291</span></td><td class="sig3-mono" style="font-size:.76rem;color:var(--text-muted)">+4642 pts</td><td>105</td><td class="sig3-g">86%</td></tr><tr id="sig3-d-2023-01" style="display:none"><td colspan="5" style="padding:0"></td></tr><tr data-year="2022" data-mo="2022-12" style="cursor:pointer" onclick="_sigDrill('2022-12')"><td style="font-weight:600"><span id="sig3-i-2022-12" style="font-size:.7rem;margin-right:.3rem;transition:transform .2s">&#9658;</span>Dec '22</td><td><span class="sig3-pnl-rs sig3-g" style="font-size:.95rem">+&#8377;37,437</span></td><td class="sig3-mono" style="font-size:.76rem;color:var(--text-muted)">+2880 pts</td><td>105</td><td class="sig3-g">67%</td></tr><tr id="sig3-d-2022-12" style="display:none"><td colspan="5" style="padding:0"></td></tr><tr data-year="2022" data-mo="2022-11" style="cursor:pointer" onclick="_sigDrill('2022-11')"><td style="font-weight:600"><span id="sig3-i-2022-11" style="font-size:.7rem;margin-right:.3rem;transition:transform .2s">&#9658;</span>Nov '22</td><td><span class="sig3-pnl-rs sig3-r" style="font-size:.95rem">&#8722;&#8377;3,995</span></td><td class="sig3-mono" style="font-size:.76rem;color:var(--text-muted)">+1378 pts</td><td>97</td><td class="">52%</td></tr><tr id="sig3-d-2022-11" style="display:none"><td colspan="5" style="padding:0"></td></tr><tr data-year="2022" data-mo="2022-10" style="cursor:pointer" onclick="_sigDrill('2022-10')"><td style="font-weight:600"><span id="sig3-i-2022-10" style="font-size:.7rem;margin-right:.3rem;transition:transform .2s">&#9658;</span>Oct '22</td><td><span class="sig3-pnl-rs sig3-g" style="font-size:.95rem">+&#8377;50,928</span></td><td class="sig3-mono" style="font-size:.76rem;color:var(--text-muted)">+2878 pts</td><td>75</td><td class="sig3-g">73%</td></tr><tr id="sig3-d-2022-10" style="display:none"><td colspan="5" style="padding:0"></td></tr><tr data-year="2022" data-mo="2022-09" style="cursor:pointer" onclick="_sigDrill('2022-09')"><td style="font-weight:600"><span id="sig3-i-2022-09" style="font-size:.7rem;margin-right:.3rem;transition:transform .2s">&#9658;</span>Sep '22</td><td><span class="sig3-pnl-rs sig3-g" style="font-size:.95rem">+&#8377;99,656</span></td><td class="sig3-mono" style="font-size:.76rem;color:var(--text-muted)">+4939 pts</td><td>104</td><td class="sig3-g">76%</td></tr><tr id="sig3-d-2022-09" style="display:none"><td colspan="5" style="padding:0"></td></tr><tr data-year="2022" data-mo="2022-08" style="cursor:pointer" onclick="_sigDrill('2022-08')"><td style="font-weight:600"><span id="sig3-i-2022-08" style="font-size:.7rem;margin-right:.3rem;transition:transform .2s">&#9658;</span>Aug '22</td><td><span class="sig3-pnl-rs sig3-g" style="font-size:.95rem">+&#8377;51,787</span></td><td class="sig3-mono" style="font-size:.76rem;color:var(--text-muted)">+3238 pts</td><td>97</td><td class="sig3-g">65%</td></tr><tr id="sig3-d-2022-08" style="display:none"><td colspan="5" style="padding:0"></td></tr><tr data-year="2022" data-mo="2022-07" style="cursor:pointer" onclick="_sigDrill('2022-07')"><td style="font-weight:600"><span id="sig3-i-2022-07" style="font-size:.7rem;margin-right:.3rem;transition:transform .2s">&#9658;</span>Jul '22</td><td><span class="sig3-pnl-rs sig3-g" style="font-size:.95rem">+&#8377;47,525</span></td><td class="sig3-mono" style="font-size:.76rem;color:var(--text-muted)">+3201 pts</td><td>104</td><td class="sig3-g">81%</td></tr><tr id="sig3-d-2022-07" style="display:none"><td colspan="5" style="padding:0"></td></tr><tr data-year="2022" data-mo="2022-06" style="cursor:pointer" onclick="_sigDrill('2022-06')"><td style="font-weight:600"><span id="sig3-i-2022-06" style="font-size:.7rem;margin-right:.3rem;transition:transform .2s">&#9658;</span>Jun '22</td><td><span class="sig3-pnl-rs sig3-g" style="font-size:.95rem">+&#8377;63,054</span></td><td class="sig3-mono" style="font-size:.76rem;color:var(--text-muted)">+3553 pts</td><td>93</td><td class="sig3-g">79%</td></tr><tr id="sig3-d-2022-06" style="display:none"><td colspan="5" style="padding:0"></td></tr><tr data-year="2022" data-mo="2022-05" style="cursor:pointer" onclick="_sigDrill('2022-05')"><td style="font-weight:600"><span id="sig3-i-2022-05" style="font-size:.7rem;margin-right:.3rem;transition:transform .2s">&#9658;</span>May '22</td><td><span class="sig3-pnl-rs sig3-g" style="font-size:.95rem">+&#8377;82,998</span></td><td class="sig3-mono" style="font-size:.76rem;color:var(--text-muted)">+4308 pts</td><td>99</td><td class="sig3-g">75%</td></tr><tr id="sig3-d-2022-05" style="display:none"><td colspan="5" style="padding:0"></td></tr><tr data-year="2022" data-mo="2022-04" style="cursor:pointer" onclick="_sigDrill('2022-04')"><td style="font-weight:600"><span id="sig3-i-2022-04" style="font-size:.7rem;margin-right:.3rem;transition:transform .2s">&#9658;</span>Apr '22</td><td><span class="sig3-pnl-rs sig3-g" style="font-size:.95rem">+&#8377;1,07,179</span></td><td class="sig3-mono" style="font-size:.76rem;color:var(--text-muted)">+4903 pts</td><td>85</td><td class="sig3-g">94%</td></tr><tr id="sig3-d-2022-04" style="display:none"><td colspan="5" style="padding:0"></td></tr><tr data-year="2022" data-mo="2022-03" style="cursor:pointer" onclick="_sigDrill('2022-03')"><td style="font-weight:600"><span id="sig3-i-2022-03" style="font-size:.7rem;margin-right:.3rem;transition:transform .2s">&#9658;</span>Mar '22</td><td><span class="sig3-pnl-rs sig3-g" style="font-size:.95rem">+&#8377;1,37,057</span></td><td class="sig3-mono" style="font-size:.76rem;color:var(--text-muted)">+6050 pts</td><td>95</td><td class="sig3-g">89%</td></tr><tr id="sig3-d-2022-03" style="display:none"><td colspan="5" style="padding:0"></td></tr><tr data-year="2022" data-mo="2022-02" style="cursor:pointer" onclick="_sigDrill('2022-02')"><td style="font-weight:600"><span id="sig3-i-2022-02" style="font-size:.7rem;margin-right:.3rem;transition:transform .2s">&#9658;</span>Feb '22</td><td><span class="sig3-pnl-rs sig3-g" style="font-size:.95rem">+&#8377;1,55,502</span></td><td class="sig3-mono" style="font-size:.76rem;color:var(--text-muted)">+6589 pts</td><td>90</td><td class="sig3-g">94%</td></tr><tr id="sig3-d-2022-02" style="display:none"><td colspan="5" style="padding:0"></td></tr><tr data-year="2022" data-mo="2022-01" style="cursor:pointer" onclick="_sigDrill('2022-01')"><td style="font-weight:600"><span id="sig3-i-2022-01" style="font-size:.7rem;margin-right:.3rem;transition:transform .2s">&#9658;</span>Jan '22</td><td><span class="sig3-pnl-rs sig3-g" style="font-size:.95rem">+&#8377;80,366</span></td><td class="sig3-mono" style="font-size:.76rem;color:var(--text-muted)">+4205 pts</td><td>98</td><td class="sig3-g">70%</td></tr><tr id="sig3-d-2022-01" style="display:none"><td colspan="5" style="padding:0"></td></tr><tr data-year="2021" data-mo="2021-12" style="cursor:pointer" onclick="_sigDrill('2021-12')"><td style="font-weight:600"><span id="sig3-i-2021-12" style="font-size:.7rem;margin-right:.3rem;transition:transform .2s">&#9658;</span>Dec '21</td><td><span class="sig3-pnl-rs sig3-g" style="font-size:.95rem">+&#8377;1,12,382</span></td><td class="sig3-mono" style="font-size:.76rem;color:var(--text-muted)">+5453 pts</td><td>110</td><td class="sig3-g">91%</td></tr><tr id="sig3-d-2021-12" style="display:none"><td colspan="5" style="padding:0"></td></tr><tr data-year="2021" data-mo="2021-11" style="cursor:pointer" onclick="_sigDrill('2021-11')"><td style="font-weight:600"><span id="sig3-i-2021-11" style="font-size:.7rem;margin-right:.3rem;transition:transform .2s">&#9658;</span>Nov '21</td><td><span class="sig3-pnl-rs sig3-g" style="font-size:.95rem">+&#8377;1,31,413</span></td><td class="sig3-mono" style="font-size:.76rem;color:var(--text-muted)">+5711 pts</td><td>85</td><td class="sig3-g">94%</td></tr><tr id="sig3-d-2021-11" style="display:none"><td colspan="5" style="padding:0"></td></tr><tr data-year="2021" data-mo="2021-10" style="cursor:pointer" onclick="_sigDrill('2021-10')"><td style="font-weight:600"><span id="sig3-i-2021-10" style="font-size:.7rem;margin-right:.3rem;transition:transform .2s">&#9658;</span>Oct '21</td><td><span class="sig3-pnl-rs sig3-g" style="font-size:.95rem">+&#8377;1,09,523</span></td><td class="sig3-mono" style="font-size:.76rem;color:var(--text-muted)">+5132 pts</td><td>95</td><td class="sig3-g">95%</td></tr><tr id="sig3-d-2021-10" style="display:none"><td colspan="5" style="padding:0"></td></tr><tr data-year="2021" data-mo="2021-09" style="cursor:pointer" onclick="_sigDrill('2021-09')"><td style="font-weight:600"><span id="sig3-i-2021-09" style="font-size:.7rem;margin-right:.3rem;transition:transform .2s">&#9658;</span>Sep '21</td><td><span class="sig3-pnl-rs sig3-g" style="font-size:.95rem">+&#8377;57,200</span></td><td class="sig3-mono" style="font-size:.76rem;color:var(--text-muted)">+3388 pts</td><td>95</td><td class="sig3-g">65%</td></tr><tr id="sig3-d-2021-09" style="display:none"><td colspan="5" style="padding:0"></td></tr><tr data-year="2021" data-mo="2021-08" style="cursor:pointer" onclick="_sigDrill('2021-08')"><td style="font-weight:600"><span id="sig3-i-2021-08" style="font-size:.7rem;margin-right:.3rem;transition:transform .2s">&#9658;</span>Aug '21</td><td><span class="sig3-pnl-rs sig3-g" style="font-size:.95rem">+&#8377;52,617</span></td><td class="sig3-mono" style="font-size:.76rem;color:var(--text-muted)">+3250 pts</td><td>96</td><td class="sig3-g">85%</td></tr><tr id="sig3-d-2021-08" style="display:none"><td colspan="5" style="padding:0"></td></tr><tr data-year="2021" data-mo="2021-07" style="cursor:pointer" onclick="_sigDrill('2021-07')"><td style="font-weight:600"><span id="sig3-i-2021-07" style="font-size:.7rem;margin-right:.3rem;transition:transform .2s">&#9658;</span>Jul '21</td><td><span class="sig3-pnl-rs sig3-g" style="font-size:.95rem">+&#8377;42,387</span></td><td class="sig3-mono" style="font-size:.76rem;color:var(--text-muted)">+2954 pts</td><td>99</td><td class="sig3-g">80%</td></tr><tr id="sig3-d-2021-07" style="display:none"><td colspan="5" style="padding:0"></td></tr><tr data-year="2021" data-mo="2021-06" style="cursor:pointer" onclick="_sigDrill('2021-06')"><td style="font-weight:600"><span id="sig3-i-2021-06" style="font-size:.7rem;margin-right:.3rem;transition:transform .2s">&#9658;</span>Jun '21</td><td><span class="sig3-pnl-rs sig3-g" style="font-size:.95rem">+&#8377;67,142</span></td><td class="sig3-mono" style="font-size:.76rem;color:var(--text-muted)">+3945 pts</td><td>110</td><td class="sig3-g">82%</td></tr><tr id="sig3-d-2021-06" style="display:none"><td colspan="5" style="padding:0"></td></tr><tr data-year="2021" data-mo="2021-05" style="cursor:pointer" onclick="_sigDrill('2021-05')"><td style="font-weight:600"><span id="sig3-i-2021-05" style="font-size:.7rem;margin-right:.3rem;transition:transform .2s">&#9658;</span>May '21</td><td><span class="sig3-pnl-rs sig3-g" style="font-size:.95rem">+&#8377;1,13,368</span></td><td class="sig3-mono" style="font-size:.76rem;color:var(--text-muted)">+5336 pts</td><td>100</td><td class="sig3-g">90%</td></tr><tr id="sig3-d-2021-05" style="display:none"><td colspan="5" style="padding:0"></td></tr><tr data-year="2021" data-mo="2021-04" style="cursor:pointer" onclick="_sigDrill('2021-04')"><td style="font-weight:600"><span id="sig3-i-2021-04" style="font-size:.7rem;margin-right:.3rem;transition:transform .2s">&#9658;</span>Apr '21</td><td><span class="sig3-pnl-rs sig3-g" style="font-size:.95rem">+&#8377;1,24,411</span></td><td class="sig3-mono" style="font-size:.76rem;color:var(--text-muted)">+5478 pts</td><td>85</td><td class="sig3-g">100%</td></tr><tr id="sig3-d-2021-04" style="display:none"><td colspan="5" style="padding:0"></td></tr><tr data-year="2021" data-mo="2021-03" style="cursor:pointer" onclick="_sigDrill('2021-03')"><td style="font-weight:600"><span id="sig3-i-2021-03" style="font-size:.7rem;margin-right:.3rem;transition:transform .2s">&#9658;</span>Mar '21</td><td><span class="sig3-pnl-rs sig3-g" style="font-size:.95rem">+&#8377;2,03,377</span></td><td class="sig3-mono" style="font-size:.76rem;color:var(--text-muted)">+8336 pts</td><td>100</td><td class="sig3-g">100%</td></tr><tr id="sig3-d-2021-03" style="display:none"><td colspan="5" style="padding:0"></td></tr><tr data-year="2021" data-mo="2021-02" style="cursor:pointer" onclick="_sigDrill('2021-02')"><td style="font-weight:600"><span id="sig3-i-2021-02" style="font-size:.7rem;margin-right:.3rem;transition:transform .2s">&#9658;</span>Feb '21</td><td><span class="sig3-pnl-rs sig3-g" style="font-size:.95rem">+&#8377;1,49,142</span></td><td class="sig3-mono" style="font-size:.76rem;color:var(--text-muted)">+6423 pts</td><td>93</td><td class="sig3-g">89%</td></tr><tr id="sig3-d-2021-02" style="display:none"><td colspan="5" style="padding:0"></td></tr><tr data-year="2021" data-mo="2021-01" style="cursor:pointer" onclick="_sigDrill('2021-01')"><td style="font-weight:600"><span id="sig3-i-2021-01" style="font-size:.7rem;margin-right:.3rem;transition:transform .2s">&#9658;</span>Jan '21</td><td><span class="sig3-pnl-rs sig3-g" style="font-size:.95rem">+&#8377;87,462</span></td><td class="sig3-mono" style="font-size:.76rem;color:var(--text-muted)">+4367 pts</td><td>93</td><td class="sig3-g">84%</td></tr><tr id="sig3-d-2021-01" style="display:none"><td colspan="5" style="padding:0"></td></tr>
         </tbody>
-      </table>
-    </div>
+      </table></div>
+    <script>
+window._futDly={"2021-01":{"2021-01-04":{"grossPts":333.7,"netRs":7751,"trades":5},"2021-01-05":{"grossPts":198.1,"netRs":3683,"trades":5},"2021-01-06":{"grossPts":435,"netRs":10790,"trades":5},"2021-01-07":{"grossPts":118.3,"netRs":1289,"trades":5},"2021-01-08":{"grossPts":1,"netRs":-1326,"trades":3},"2021-01-11":{"grossPts":277.4,"netRs":6062,"trades":5},"2021-01-12":{"grossPts":292.9,"netRs":6527,"trades":5},"2021-01-13":{"grossPts":375.7,"netRs":9011,"trades":5},"2021-01-14":{"grossPts":153.2,"netRs":2336,"trades":5},"2021-01-15":{"grossPts":231.6,"netRs":4688,"trades":5},"2021-01-18":{"grossPts":273.3,"netRs":5939,"trades":5},"2021-01-19":{"grossPts":68.9,"netRs":-193,"trades":5},"2021-01-20":{"grossPts":224.8,"netRs":4484,"trades":5},"2021-01-21":{"grossPts":109,"netRs":1010,"trades":5},"2021-01-22":{"grossPts":21.3,"netRs":-1621,"trades":5},"2021-01-25":{"grossPts":315.3,"netRs":7199,"trades":5},"2021-01-27":{"grossPts":424.5,"netRs":10475,"trades":5},"2021-01-28":{"grossPts":183.6,"netRs":3248,"trades":5},"2021-01-29":{"grossPts":329,"netRs":7610,"trades":5}},"2021-02":{"2021-02-01":{"grossPts":266.5,"netRs":5735,"trades":5},"2021-02-02":{"grossPts":816.9,"netRs":22247,"trades":5},"2021-02-03":{"grossPts":45.6,"netRs":-892,"trades":5},"2021-02-04":{"grossPts":232.8,"netRs":4724,"trades":5},"2021-02-05":{"grossPts":110.5,"netRs":1055,"trades":5},"2021-02-08":{"grossPts":303.5,"netRs":6845,"trades":5},"2021-02-09":{"grossPts":489.6,"netRs":12428,"trades":5},"2021-02-10":{"grossPts":291.6,"netRs":6488,"trades":5},"2021-02-11":{"grossPts":412.4,"netRs":10112,"trades":5},"2021-02-12":{"grossPts":329.3,"netRs":7619,"trades":5},"2021-02-15":{"grossPts":173.9,"netRs":2957,"trades":5},"2021-02-16":{"grossPts":290.8,"netRs":6464,"trades":5},"2021-02-17":{"grossPts":532.7,"netRs":13721,"trades":5},"2021-02-18":{"grossPts":474.5,"netRs":11975,"trades":5},"2021-02-19":{"grossPts":13.3,"netRs":-1861,"trades":5},"2021-02-22":{"grossPts":372.3,"netRs":8909,"trades":5},"2021-02-23":{"grossPts":116.3,"netRs":1229,"trades":5},"2021-02-24":{"grossPts":154.9,"netRs":4195,"trades":1},"2021-02-25":{"grossPts":616,"netRs":16220,"trades":5}},"2021-03":{"2021-03-01":{"grossPts":457.4,"netRs":11462,"trades":5},"2021-03-02":{"grossPts":331.6,"netRs":7688,"trades":5},"2021-03-03":{"grossPts":289.7,"netRs":6431,"trades":5},"2021-03-04":{"grossPts":429.8,"netRs":10634,"trades":5},"2021-03-05":{"grossPts":390.3,"netRs":9449,"trades":5},"2021-03-08":{"grossPts":745.2,"netRs":20096,"trades":5},"2021-03-09":{"grossPts":584,"netRs":15260,"trades":5},"2021-03-10":{"grossPts":116.3,"netRs":1229,"trades":5},"2021-03-12":{"grossPts":446.3,"netRs":11129,"trades":5},"2021-03-15":{"grossPts":607.9,"netRs":15977,"trades":5},"2021-03-16":{"grossPts":560.7,"netRs":14561,"trades":5},"2021-03-17":{"grossPts":357.8,"netRs":8474,"trades":5},"2021-03-18":{"grossPts":676.2,"netRs":18026,"trades":5},"2021-03-22":{"grossPts":334,"netRs":7760,"trades":5},"2021-03-23":{"grossPts":419.1,"netRs":10313,"trades":5},"2021-03-24":{"grossPts":286,"netRs":6320,"trades":5},"2021-03-25":{"grossPts":370.2,"netRs":8846,"trades":5},"2021-03-26":{"grossPts":294.4,"netRs":6572,"trades":5},"2021-03-30":{"grossPts":415.6,"netRs":10208,"trades":5},"2021-03-31":{"grossPts":223.4,"netRs":4442,"trades":5}},"2021-04":{"2021-04-01":{"grossPts":299.6,"netRs":6728,"trades":5},"2021-04-05":{"grossPts":534.6,"netRs":13778,"trades":5},"2021-04-06":{"grossPts":493.6,"netRs":12548,"trades":5},"2021-04-07":{"grossPts":204,"netRs":3860,"trades":5},"2021-04-08":{"grossPts":146.5,"netRs":2135,"trades":5},"2021-04-09":{"grossPts":288,"netRs":6380,"trades":5},"2021-04-12":{"grossPts":330.2,"netRs":7646,"trades":5},"2021-04-13":{"grossPts":302.4,"netRs":6812,"trades":5},"2021-04-15":{"grossPts":195.8,"netRs":3614,"trades":5},"2021-04-16":{"grossPts":140.9,"netRs":1967,"trades":5},"2021-04-20":{"grossPts":339.6,"netRs":7928,"trades":5},"2021-04-23":{"grossPts":281,"netRs":6170,"trades":5},"2021-04-26":{"grossPts":77.9,"netRs":77,"trades":5},"2021-04-27":{"grossPts":246.6,"netRs":5138,"trades":5},"2021-04-28":{"grossPts":398.2,"netRs":9686,"trades":5},"2021-04-29":{"grossPts":923.5,"netRs":25445,"trades":5},"2021-04-30":{"grossPts":275.3,"netRs":5999,"trades":5}},"2021-05":{"2021-05-03":{"grossPts":285.5,"netRs":6305,"trades":5},"2021-05-04":{"grossPts":254.7,"netRs":5381,"trades":5},"2021-05-05":{"grossPts":258.6,"netRs":5498,"trades":5},"2021-05-06":{"grossPts":73.6,"netRs":-52,"trades":5},"2021-05-07":{"grossPts":388.5,"netRs":9395,"trades":5},"2021-05-10":{"grossPts":217.1,"netRs":4253,"trades":5},"2021-05-11":{"grossPts":327.3,"netRs":7559,"trades":5},"2021-05-12":{"grossPts":313.6,"netRs":7148,"trades":5},"2021-05-14":{"grossPts":188,"netRs":3380,"trades":5},"2021-05-17":{"grossPts":193.9,"netRs":3557,"trades":5},"2021-05-18":{"grossPts":474.1,"netRs":11963,"trades":5},"2021-05-19":{"grossPts":247.5,"netRs":5165,"trades":5},"2021-05-20":{"grossPts":103.7,"netRs":851,"trades":5},"2021-05-21":{"grossPts":697.1,"netRs":18653,"trades":5},"2021-05-24":{"grossPts":240.5,"netRs":4955,"trades":5},"2021-05-25":{"grossPts":325.4,"netRs":7502,"trades":5},"2021-05-26":{"grossPts":306.3,"netRs":6929,"trades":5},"2021-05-27":{"grossPts":56.8,"netRs":-556,"trades":5},"2021-05-28":{"grossPts":180,"netRs":3140,"trades":5},"2021-05-31":{"grossPts":203.4,"netRs":3842,"trades":5}},"2021-06":{"2021-06-01":{"grossPts":175.4,"netRs":3002,"trades":5},"2021-06-02":{"grossPts":124.1,"netRs":1463,"trades":5},"2021-06-03":{"grossPts":139.6,"netRs":1928,"trades":5},"2021-06-04":{"grossPts":378.8,"netRs":9104,"trades":5},"2021-06-07":{"grossPts":76.5,"netRs":35,"trades":5},"2021-06-08":{"grossPts":275.8,"netRs":6014,"trades":5},"2021-06-09":{"grossPts":487.3,"netRs":12359,"trades":5},"2021-06-10":{"grossPts":135.5,"netRs":1805,"trades":5},"2021-06-11":{"grossPts":155.4,"netRs":2402,"trades":5},"2021-06-14":{"grossPts":353,"netRs":8330,"trades":5},"2021-06-15":{"grossPts":143.6,"netRs":2048,"trades":5},"2021-06-16":{"grossPts":208.6,"netRs":3998,"trades":5},"2021-06-17":{"grossPts":66.2,"netRs":-274,"trades":5},"2021-06-18":{"grossPts":-4.8,"netRs":-2404,"trades":5},"2021-06-21":{"grossPts":166.9,"netRs":2747,"trades":5},"2021-06-22":{"grossPts":25.5,"netRs":-1495,"trades":5},"2021-06-23":{"grossPts":277.1,"netRs":6053,"trades":5},"2021-06-24":{"grossPts":184.5,"netRs":3275,"trades":5},"2021-06-25":{"grossPts":377.2,"netRs":9056,"trades":5},"2021-06-28":{"grossPts":101.4,"netRs":782,"trades":5},"2021-06-29":{"grossPts":110.5,"netRs":1055,"trades":5},"2021-06-30":{"grossPts":-12.7,"netRs":-2641,"trades":5}},"2021-07":{"2021-07-01":{"grossPts":131,"netRs":1670,"trades":5},"2021-07-02":{"grossPts":-41.3,"netRs":-3499,"trades":5},"2021-07-05":{"grossPts":192.2,"netRs":3506,"trades":5},"2021-07-06":{"grossPts":-69.1,"netRs":-4333,"trades":5},"2021-07-07":{"grossPts":81.7,"netRs":191,"trades":5},"2021-07-08":{"grossPts":262.9,"netRs":5627,"trades":5},"2021-07-09":{"grossPts":186.2,"netRs":3326,"trades":5},"2021-07-12":{"grossPts":107.8,"netRs":974,"trades":5},"2021-07-13":{"grossPts":164.4,"netRs":2672,"trades":5},"2021-07-14":{"grossPts":199.5,"netRs":3725,"trades":5},"2021-07-15":{"grossPts":183.7,"netRs":3251,"trades":5},"2021-07-16":{"grossPts":210.5,"netRs":4055,"trades":5},"2021-07-19":{"grossPts":302.3,"netRs":6809,"trades":5},"2021-07-22":{"grossPts":167.1,"netRs":2753,"trades":5},"2021-07-23":{"grossPts":206.8,"netRs":3944,"trades":5},"2021-07-26":{"grossPts":180.2,"netRs":3146,"trades":5},"2021-07-27":{"grossPts":107.2,"netRs":956,"trades":5},"2021-07-28":{"grossPts":544.7,"netRs":14081,"trades":5},"2021-07-29":{"grossPts":-90.1,"netRs":-4511,"trades":4},"2021-07-30":{"grossPts":-73.2,"netRs":-4456,"trades":5}},"2021-08":{"2021-08-02":{"grossPts":97.4,"netRs":662,"trades":5},"2021-08-03":{"grossPts":218.3,"netRs":4289,"trades":5},"2021-08-04":{"grossPts":285.8,"netRs":6314,"trades":5},"2021-08-05":{"grossPts":298.3,"netRs":6689,"trades":5},"2021-08-06":{"grossPts":54.6,"netRs":1186,"trades":1},"2021-08-09":{"grossPts":245.1,"netRs":5093,"trades":5},"2021-08-10":{"grossPts":-37.2,"netRs":-3376,"trades":5},"2021-08-11":{"grossPts":505.9,"netRs":12917,"trades":5},"2021-08-12":{"grossPts":205.7,"netRs":3911,"trades":5},"2021-08-13":{"grossPts":-28.1,"netRs":-3103,"trades":5},"2021-08-16":{"grossPts":114.1,"netRs":1163,"trades":5},"2021-08-18":{"grossPts":400.3,"netRs":9749,"trades":5},"2021-08-20":{"grossPts":91.2,"netRs":476,"trades":5},"2021-08-23":{"grossPts":301.8,"netRs":6794,"trades":5},"2021-08-24":{"grossPts":218.8,"netRs":4304,"trades":5},"2021-08-25":{"grossPts":105.4,"netRs":902,"trades":5},"2021-08-26":{"grossPts":142.1,"netRs":2003,"trades":5},"2021-08-27":{"grossPts":126.8,"netRs":1544,"trades":5},"2021-08-30":{"grossPts":122.3,"netRs":1409,"trades":5},"2021-08-31":{"grossPts":-218.3,"netRs":-8809,"trades":5}},"2021-09":{"2021-09-01":{"grossPts":454.4,"netRs":11372,"trades":5},"2021-09-02":{"grossPts":200.6,"netRs":3758,"trades":5},"2021-09-03":{"grossPts":321.9,"netRs":7397,"trades":5},"2021-09-06":{"grossPts":120.3,"netRs":1349,"trades":5},"2021-09-07":{"grossPts":403.5,"netRs":9845,"trades":5},"2021-09-08":{"grossPts":-27.2,"netRs":-3076,"trades":5},"2021-09-09":{"grossPts":133.5,"netRs":1745,"trades":5},"2021-09-13":{"grossPts":39.8,"netRs":-614,"trades":4},"2021-09-14":{"grossPts":-117.9,"netRs":-3989,"trades":1},"2021-09-15":{"grossPts":-83.2,"netRs":-4756,"trades":5},"2021-09-16":{"grossPts":131.8,"netRs":1694,"trades":5},"2021-09-17":{"grossPts":753.6,"netRs":20348,"trades":5},"2021-09-21":{"grossPts":405.8,"netRs":9914,"trades":5},"2021-09-22":{"grossPts":228.6,"netRs":4598,"trades":5},"2021-09-23":{"grossPts":83,"netRs":230,"trades":5},"2021-09-24":{"grossPts":130.6,"netRs":1658,"trades":5},"2021-09-27":{"grossPts":22.9,"netRs":-1573,"trades":5},"2021-09-28":{"grossPts":186.2,"netRs":3326,"trades":5},"2021-09-29":{"grossPts":38.3,"netRs":-1111,"trades":5},"2021-09-30":{"grossPts":-38.5,"netRs":-3415,"trades":5}},"2021-10":{"2021-10-04":{"grossPts":212.1,"netRs":4103,"trades":5},"2021-10-05":{"grossPts":207.9,"netRs":3977,"trades":5},"2021-10-06":{"grossPts":160.8,"netRs":2564,"trades":5},"2021-10-07":{"grossPts":86.1,"netRs":323,"trades":5},"2021-10-08":{"grossPts":265.6,"netRs":5708,"trades":5},"2021-10-11":{"grossPts":326.9,"netRs":7547,"trades":5},"2021-10-12":{"grossPts":80.2,"netRs":146,"trades":5},"2021-10-13":{"grossPts":123.2,"netRs":1436,"trades":5},"2021-10-14":{"grossPts":284.9,"netRs":6287,"trades":5},"2021-10-18":{"grossPts":324.4,"netRs":7472,"trades":5},"2021-10-19":{"grossPts":77.1,"netRs":53,"trades":5},"2021-10-20":{"grossPts":331.7,"netRs":7691,"trades":5},"2021-10-21":{"grossPts":268.5,"netRs":5795,"trades":5},"2021-10-22":{"grossPts":451.7,"netRs":11291,"trades":5},"2021-10-25":{"grossPts":708,"netRs":18980,"trades":5},"2021-10-26":{"grossPts":239.7,"netRs":4931,"trades":5},"2021-10-27":{"grossPts":38.5,"netRs":-1105,"trades":5},"2021-10-28":{"grossPts":364,"netRs":8660,"trades":5},"2021-10-29":{"grossPts":580.8,"netRs":15164,"trades":5}},"2021-11":{"2021-11-01":{"grossPts":163.2,"netRs":2636,"trades":5},"2021-11-02":{"grossPts":2.1,"netRs":-2197,"trades":5},"2021-11-03":{"grossPts":931.1,"netRs":25673,"trades":5},"2021-11-09":{"grossPts":117.8,"netRs":1274,"trades":5},"2021-11-11":{"grossPts":215,"netRs":4190,"trades":5},"2021-11-12":{"grossPts":187.7,"netRs":3371,"trades":5},"2021-11-15":{"grossPts":263.6,"netRs":5648,"trades":5},"2021-11-16":{"grossPts":235.1,"netRs":4793,"trades":5},"2021-11-17":{"grossPts":388.6,"netRs":9398,"trades":5},"2021-11-18":{"grossPts":376.8,"netRs":9044,"trades":5},"2021-11-22":{"grossPts":484.7,"netRs":12281,"trades":5},"2021-11-23":{"grossPts":222.4,"netRs":4412,"trades":5},"2021-11-24":{"grossPts":217.1,"netRs":4253,"trades":5},"2021-11-25":{"grossPts":276,"netRs":6020,"trades":5},"2021-11-26":{"grossPts":135.1,"netRs":1793,"trades":5},"2021-11-29":{"grossPts":580.4,"netRs":15152,"trades":5},"2021-11-30":{"grossPts":914.4,"netRs":25172,"trades":5}},"2021-12":{"2021-12-01":{"grossPts":191.5,"netRs":3485,"trades":5},"2021-12-02":{"grossPts":216.5,"netRs":4235,"trades":5},"2021-12-03":{"grossPts":219.3,"netRs":4319,"trades":5},"2021-12-06":{"grossPts":377.1,"netRs":9053,"trades":5},"2021-12-07":{"grossPts":365.4,"netRs":8702,"trades":5},"2021-12-08":{"grossPts":351.4,"netRs":8282,"trades":5},"2021-12-09":{"grossPts":269.3,"netRs":5819,"trades":5},"2021-12-10":{"grossPts":191.5,"netRs":3485,"trades":5},"2021-12-13":{"grossPts":369.9,"netRs":8837,"trades":5},"2021-12-15":{"grossPts":246.3,"netRs":5129,"trades":5},"2021-12-16":{"grossPts":177.6,"netRs":3068,"trades":5},"2021-12-17":{"grossPts":63,"netRs":-370,"trades":5},"2021-12-20":{"grossPts":346.2,"netRs":8126,"trades":5},"2021-12-21":{"grossPts":104,"netRs":860,"trades":5},"2021-12-22":{"grossPts":340.8,"netRs":7964,"trades":5},"2021-12-23":{"grossPts":199.3,"netRs":3719,"trades":5},"2021-12-24":{"grossPts":486.5,"netRs":12335,"trades":5},"2021-12-27":{"grossPts":325.7,"netRs":7511,"trades":5},"2021-12-28":{"grossPts":152.2,"netRs":2306,"trades":5},"2021-12-29":{"grossPts":210.6,"netRs":4058,"trades":5},"2021-12-30":{"grossPts":-52.9,"netRs":-3847,"trades":5},"2021-12-31":{"grossPts":302.2,"netRs":6806,"trades":5}},"2022-01":{"2022-01-03":{"grossPts":301.1,"netRs":6773,"trades":5},"2022-01-04":{"grossPts":6.8,"netRs":-2056,"trades":5},"2022-01-05":{"grossPts":453.9,"netRs":11357,"trades":5},"2022-01-06":{"grossPts":312.6,"netRs":7118,"trades":5},"2022-01-07":{"grossPts":305.1,"netRs":6893,"trades":5},"2022-01-10":{"grossPts":-106.7,"netRs":-5461,"trades":5},"2022-01-11":{"grossPts":175.9,"netRs":3017,"trades":5},"2022-01-12":{"grossPts":-134.5,"netRs":-5843,"trades":4},"2022-01-13":{"grossPts":64.4,"netRs":-328,"trades":5},"2022-01-14":{"grossPts":213.3,"netRs":4139,"trades":5},"2022-01-17":{"grossPts":116.5,"netRs":1687,"trades":4},"2022-01-18":{"grossPts":402.3,"netRs":9809,"trades":5},"2022-01-19":{"grossPts":104.5,"netRs":875,"trades":5},"2022-01-20":{"grossPts":500.8,"netRs":12764,"trades":5},"2022-01-21":{"grossPts":-27.3,"netRs":-3079,"trades":5},"2022-01-24":{"grossPts":637.9,"netRs":16877,"trades":5},"2022-01-25":{"grossPts":443.8,"netRs":11054,"trades":5},"2022-01-27":{"grossPts":-191.8,"netRs":-8014,"trades":5},"2022-01-28":{"grossPts":211.2,"netRs":4076,"trades":5},"2022-01-31":{"grossPts":415.6,"netRs":10208,"trades":5}},"2022-02":{"2022-02-01":{"grossPts":1062,"netRs":29600,"trades":5},"2022-02-02":{"grossPts":28.1,"netRs":-1417,"trades":5},"2022-02-03":{"grossPts":211.2,"netRs":4076,"trades":5},"2022-02-04":{"grossPts":357.8,"netRs":8474,"trades":5},"2022-02-07":{"grossPts":218.4,"netRs":4292,"trades":5},"2022-02-08":{"grossPts":576.1,"netRs":15023,"trades":5},"2022-02-09":{"grossPts":199.9,"netRs":3737,"trades":5},"2022-02-10":{"grossPts":319.8,"netRs":7334,"trades":5},"2022-02-11":{"grossPts":287.1,"netRs":6353,"trades":5},"2022-02-15":{"grossPts":472.8,"netRs":11924,"trades":5},"2022-02-16":{"grossPts":612.4,"netRs":16112,"trades":5},"2022-02-17":{"grossPts":463.4,"netRs":11642,"trades":5},"2022-02-18":{"grossPts":103.6,"netRs":848,"trades":5},"2022-02-21":{"grossPts":419.3,"netRs":10319,"trades":5},"2022-02-22":{"grossPts":283.9,"netRs":6257,"trades":5},"2022-02-23":{"grossPts":84.4,"netRs":272,"trades":5},"2022-02-25":{"grossPts":714.2,"netRs":19166,"trades":5},"2022-02-28":{"grossPts":175,"netRs":2990,"trades":5}},"2022-03":{"2022-03-03":{"grossPts":278.4,"netRs":6092,"trades":5},"2022-03-04":{"grossPts":826,"netRs":22520,"trades":5},"2022-03-08":{"grossPts":529.5,"netRs":13625,"trades":5},"2022-03-09":{"grossPts":160.2,"netRs":2546,"trades":5},"2022-03-10":{"grossPts":390.7,"netRs":9461,"trades":5},"2022-03-11":{"grossPts":510.3,"netRs":13049,"trades":5},"2022-03-14":{"grossPts":271.8,"netRs":5894,"trades":5},"2022-03-15":{"grossPts":551.6,"netRs":14288,"trades":5},"2022-03-16":{"grossPts":183.7,"netRs":3251,"trades":5},"2022-03-17":{"grossPts":164.9,"netRs":2687,"trades":5},"2022-03-21":{"grossPts":213.9,"netRs":4157,"trades":5},"2022-03-22":{"grossPts":846,"netRs":23120,"trades":5},"2022-03-23":{"grossPts":-203.3,"netRs":-8359,"trades":5},"2022-03-24":{"grossPts":460.6,"netRs":11558,"trades":5},"2022-03-25":{"grossPts":144.9,"netRs":2087,"trades":5},"2022-03-28":{"grossPts":308.2,"netRs":6986,"trades":5},"2022-03-29":{"grossPts":244.9,"netRs":5087,"trades":5},"2022-03-30":{"grossPts":154.9,"netRs":2387,"trades":5},"2022-03-31":{"grossPts":12.7,"netRs":-1879,"trades":5}},"2022-04":{"2022-04-01":{"grossPts":288.5,"netRs":6395,"trades":5},"2022-04-04":{"grossPts":520.2,"netRs":13346,"trades":5},"2022-04-05":{"grossPts":717.8,"netRs":19274,"trades":5},"2022-04-08":{"grossPts":295.9,"netRs":6617,"trades":5},"2022-04-11":{"grossPts":258,"netRs":5480,"trades":5},"2022-04-12":{"grossPts":207,"netRs":3950,"trades":5},"2022-04-13":{"grossPts":191.4,"netRs":3482,"trades":5},"2022-04-18":{"grossPts":160.4,"netRs":2552,"trades":5},"2022-04-19":{"grossPts":203.4,"netRs":3842,"trades":5},"2022-04-20":{"grossPts":354.7,"netRs":8381,"trades":5},"2022-04-21":{"grossPts":216.5,"netRs":4235,"trades":5},"2022-04-22":{"grossPts":208.8,"netRs":4004,"trades":5},"2022-04-25":{"grossPts":690.7,"netRs":18461,"trades":5},"2022-04-26":{"grossPts":-43.6,"netRs":-3568,"trades":5},"2022-04-27":{"grossPts":276.3,"netRs":6029,"trades":5},"2022-04-28":{"grossPts":123,"netRs":1430,"trades":5},"2022-04-29":{"grossPts":234.3,"netRs":4769,"trades":5}},"2022-05":{"2022-05-02":{"grossPts":48.8,"netRs":-796,"trades":5},"2022-05-04":{"grossPts":127.6,"netRs":1568,"trades":5},"2022-05-05":{"grossPts":-2.4,"netRs":-2332,"trades":5},"2022-05-06":{"grossPts":189,"netRs":3410,"trades":5},"2022-05-09":{"grossPts":215.7,"netRs":4211,"trades":5},"2022-05-10":{"grossPts":374.7,"netRs":8981,"trades":5},"2022-05-11":{"grossPts":452.9,"netRs":11327,"trades":5},"2022-05-12":{"grossPts":355.5,"netRs":8405,"trades":5},"2022-05-13":{"grossPts":80.7,"netRs":161,"trades":5},"2022-05-16":{"grossPts":533.5,"netRs":13745,"trades":5},"2022-05-17":{"grossPts":246.5,"netRs":5135,"trades":5},"2022-05-18":{"grossPts":-226.8,"netRs":-8612,"trades":4},"2022-05-20":{"grossPts":327.1,"netRs":7553,"trades":5},"2022-05-23":{"grossPts":319,"netRs":7310,"trades":5},"2022-05-24":{"grossPts":167.6,"netRs":2768,"trades":5},"2022-05-25":{"grossPts":-42.8,"netRs":-3544,"trades":5},"2022-05-26":{"grossPts":553.3,"netRs":14339,"trades":5},"2022-05-27":{"grossPts":264.3,"netRs":5669,"trades":5},"2022-05-30":{"grossPts":-78.3,"netRs":-4609,"trades":5},"2022-05-31":{"grossPts":402.3,"netRs":9809,"trades":5}},"2022-06":{"2022-06-01":{"grossPts":127.5,"netRs":1565,"trades":5},"2022-06-02":{"grossPts":74.3,"netRs":421,"trades":4},"2022-06-03":{"grossPts":37.5,"netRs":-1135,"trades":5},"2022-06-07":{"grossPts":134.3,"netRs":1769,"trades":5},"2022-06-08":{"grossPts":274.7,"netRs":5981,"trades":5},"2022-06-09":{"grossPts":149,"netRs":2210,"trades":5},"2022-06-10":{"grossPts":-233.7,"netRs":-8819,"trades":4},"2022-06-15":{"grossPts":-9.4,"netRs":-2542,"trades":5},"2022-06-16":{"grossPts":549.7,"netRs":14231,"trades":5},"2022-06-17":{"grossPts":269.6,"netRs":5828,"trades":5},"2022-06-20":{"grossPts":348.1,"netRs":8183,"trades":5},"2022-06-21":{"grossPts":394.3,"netRs":9569,"trades":5},"2022-06-22":{"grossPts":226.8,"netRs":4544,"trades":5},"2022-06-23":{"grossPts":433,"netRs":10730,"trades":5},"2022-06-24":{"grossPts":167.3,"netRs":2759,"trades":5},"2022-06-27":{"grossPts":190.2,"netRs":3446,"trades":5},"2022-06-28":{"grossPts":143.5,"netRs":2045,"trades":5},"2022-06-29":{"grossPts":75.3,"netRs":-1,"trades":5},"2022-06-30":{"grossPts":201,"netRs":3770,"trades":5}},"2022-07":{"2022-07-01":{"grossPts":136.6,"netRs":1838,"trades":5},"2022-07-04":{"grossPts":62.1,"netRs":-397,"trades":5},"2022-07-05":{"grossPts":160.4,"netRs":2552,"trades":5},"2022-07-06":{"grossPts":350.1,"netRs":8243,"trades":5},"2022-07-07":{"grossPts":266.3,"netRs":5729,"trades":5},"2022-07-08":{"grossPts":159.8,"netRs":2534,"trades":5},"2022-07-11":{"grossPts":-16.3,"netRs":-2749,"trades":5},"2022-07-12":{"grossPts":86,"netRs":772,"trades":4},"2022-07-13":{"grossPts":222.8,"netRs":4424,"trades":5},"2022-07-14":{"grossPts":164.6,"netRs":2678,"trades":5},"2022-07-15":{"grossPts":175.7,"netRs":3011,"trades":5},"2022-07-18":{"grossPts":80.9,"netRs":167,"trades":5},"2022-07-19":{"grossPts":290,"netRs":6440,"trades":5},"2022-07-20":{"grossPts":101.5,"netRs":785,"trades":5},"2022-07-21":{"grossPts":327.8,"netRs":7574,"trades":5},"2022-07-22":{"grossPts":280.8,"netRs":6164,"trades":5},"2022-07-25":{"grossPts":-108.5,"netRs":-5515,"trades":5},"2022-07-26":{"grossPts":172,"netRs":2900,"trades":5},"2022-07-27":{"grossPts":99.3,"netRs":719,"trades":5},"2022-07-28":{"grossPts":-103.2,"netRs":-5356,"trades":5},"2022-07-29":{"grossPts":292.4,"netRs":6512,"trades":5}},"2022-08":{"2022-08-01":{"grossPts":151.1,"netRs":2273,"trades":5},"2022-08-02":{"grossPts":104,"netRs":860,"trades":5},"2022-08-03":{"grossPts":219.7,"netRs":4331,"trades":5},"2022-08-04":{"grossPts":533.6,"netRs":13748,"trades":5},"2022-08-05":{"grossPts":305.4,"netRs":6902,"trades":5},"2022-08-08":{"grossPts":95,"netRs":590,"trades":5},"2022-08-10":{"grossPts":63.5,"netRs":-355,"trades":5},"2022-08-11":{"grossPts":42.2,"netRs":-994,"trades":5},"2022-08-12":{"grossPts":-187.7,"netRs":-7439,"trades":4},"2022-08-16":{"grossPts":68.8,"netRs":-196,"trades":5},"2022-08-17":{"grossPts":-101.2,"netRs":-4392,"trades":3},"2022-08-18":{"grossPts":46.7,"netRs":-859,"trades":5},"2022-08-19":{"grossPts":479.9,"netRs":12137,"trades":5},"2022-08-22":{"grossPts":192,"netRs":3500,"trades":5},"2022-08-23":{"grossPts":253.6,"netRs":5348,"trades":5},"2022-08-24":{"grossPts":48.9,"netRs":-793,"trades":5},"2022-08-25":{"grossPts":117.8,"netRs":1274,"trades":5},"2022-08-26":{"grossPts":308,"netRs":6980,"trades":5},"2022-08-29":{"grossPts":163,"netRs":2630,"trades":5},"2022-08-30":{"grossPts":333.4,"netRs":7742,"trades":5}},"2022-09":{"2022-09-01":{"grossPts":453.8,"netRs":11354,"trades":5},"2022-09-02":{"grossPts":216.7,"netRs":4241,"trades":5},"2022-09-05":{"grossPts":214.9,"netRs":4187,"trades":5},"2022-09-06":{"grossPts":-409.8,"netRs":-14554,"trades":5},"2022-09-07":{"grossPts":204.6,"netRs":3878,"trades":5},"2022-09-08":{"grossPts":218.3,"netRs":4289,"trades":5},"2022-09-09":{"grossPts":-213.1,"netRs":-8653,"trades":5},"2022-09-12":{"grossPts":8,"netRs":-2020,"trades":5},"2022-09-13":{"grossPts":38.9,"netRs":-1093,"trades":5},"2022-09-14":{"grossPts":-295.4,"netRs":-10670,"trades":4},"2022-09-15":{"grossPts":302.6,"netRs":6818,"trades":5},"2022-09-16":{"grossPts":172.6,"netRs":2918,"trades":5},"2022-09-19":{"grossPts":374,"netRs":8960,"trades":5},"2022-09-20":{"grossPts":251.9,"netRs":5297,"trades":5},"2022-09-21":{"grossPts":463.1,"netRs":11633,"trades":5},"2022-09-22":{"grossPts":167.4,"netRs":2762,"trades":5},"2022-09-23":{"grossPts":641.7,"netRs":16991,"trades":5},"2022-09-27":{"grossPts":493.3,"netRs":12539,"trades":5},"2022-09-28":{"grossPts":548.6,"netRs":14198,"trades":5},"2022-09-29":{"grossPts":488.8,"netRs":12404,"trades":5},"2022-09-30":{"grossPts":597.9,"netRs":15677,"trades":5}},"2022-10":{"2022-10-03":{"grossPts":268.3,"netRs":5789,"trades":5},"2022-10-04":{"grossPts":167.3,"netRs":2759,"trades":5},"2022-10-06":{"grossPts":321.5,"netRs":7385,"trades":5},"2022-10-07":{"grossPts":175.1,"netRs":2993,"trades":5},"2022-10-11":{"grossPts":211,"netRs":4070,"trades":5},"2022-10-12":{"grossPts":-46.1,"netRs":-3643,"trades":5},"2022-10-13":{"grossPts":372.5,"netRs":8915,"trades":5},"2022-10-14":{"grossPts":208.6,"netRs":3998,"trades":5},"2022-10-17":{"grossPts":495.5,"netRs":12605,"trades":5},"2022-10-18":{"grossPts":95.1,"netRs":593,"trades":5},"2022-10-19":{"grossPts":414.8,"netRs":10184,"trades":5},"2022-10-21":{"grossPts":109.9,"netRs":1037,"trades":5},"2022-10-27":{"grossPts":67.8,"netRs":-226,"trades":5},"2022-10-28":{"grossPts":-44.6,"netRs":-3598,"trades":5},"2022-10-31":{"grossPts":60.9,"netRs":-433,"trades":5}},"2022-11":{"2022-11-01":{"grossPts":333,"netRs":7730,"trades":5},"2022-11-02":{"grossPts":108.7,"netRs":1001,"trades":5},"2022-11-03":{"grossPts":159.9,"netRs":2537,"trades":5},"2022-11-04":{"grossPts":213.8,"netRs":4154,"trades":5},"2022-11-07":{"grossPts":294.6,"netRs":6578,"trades":5},"2022-11-09":{"grossPts":-36,"netRs":-3340,"trades":5},"2022-11-10":{"grossPts":-28.3,"netRs":-3109,"trades":5},"2022-11-11":{"grossPts":193.6,"netRs":3548,"trades":5},"2022-11-14":{"grossPts":-272.6,"netRs":-9986,"trades":4},"2022-11-15":{"grossPts":84.9,"netRs":287,"trades":5},"2022-11-16":{"grossPts":167.5,"netRs":2765,"trades":5},"2022-11-17":{"grossPts":-22,"netRs":-2920,"trades":5},"2022-11-18":{"grossPts":93.2,"netRs":988,"trades":4},"2022-11-21":{"grossPts":-142.3,"netRs":-4721,"trades":1},"2022-11-22":{"grossPts":128.5,"netRs":1595,"trades":5},"2022-11-23":{"grossPts":-297.3,"netRs":-10275,"trades":3},"2022-11-24":{"grossPts":63.5,"netRs":-355,"trades":5},"2022-11-25":{"grossPts":262.7,"netRs":5621,"trades":5},"2022-11-28":{"grossPts":-72.1,"netRs":-4423,"trades":5},"2022-11-29":{"grossPts":73.7,"netRs":-49,"trades":5},"2022-11-30":{"grossPts":71.3,"netRs":-121,"trades":5}},"2022-12":{"2022-12-01":{"grossPts":-41.6,"netRs":-3508,"trades":5},"2022-12-02":{"grossPts":-29.9,"netRs":-3157,"trades":5},"2022-12-05":{"grossPts":205.6,"netRs":3908,"trades":5},"2022-12-06":{"grossPts":92.3,"netRs":509,"trades":5},"2022-12-07":{"grossPts":268.5,"netRs":5795,"trades":5},"2022-12-08":{"grossPts":135.5,"netRs":1805,"trades":5},"2022-12-09":{"grossPts":301.8,"netRs":6794,"trades":5},"2022-12-12":{"grossPts":56.4,"netRs":-568,"trades":5},"2022-12-13":{"grossPts":76.5,"netRs":35,"trades":5},"2022-12-14":{"grossPts":94.4,"netRs":572,"trades":5},"2022-12-15":{"grossPts":89.6,"netRs":428,"trades":5},"2022-12-16":{"grossPts":278.5,"netRs":6095,"trades":5},"2022-12-19":{"grossPts":177.6,"netRs":3068,"trades":5},"2022-12-20":{"grossPts":32.6,"netRs":-1282,"trades":5},"2022-12-21":{"grossPts":-45.9,"netRs":-3637,"trades":5},"2022-12-22":{"grossPts":356.1,"netRs":8423,"trades":5},"2022-12-23":{"grossPts":2.3,"netRs":-2191,"trades":5},"2022-12-26":{"grossPts":266.7,"netRs":5741,"trades":5},"2022-12-27":{"grossPts":297.2,"netRs":6656,"trades":5},"2022-12-28":{"grossPts":225.8,"netRs":4514,"trades":5},"2022-12-30":{"grossPts":39.9,"netRs":-1063,"trades":5}},"2023-01":{"2023-01-02":{"grossPts":137.4,"netRs":1862,"trades":5},"2023-01-03":{"grossPts":324.7,"netRs":7481,"trades":5},"2023-01-04":{"grossPts":-77.5,"netRs":-4585,"trades":5},"2023-01-05":{"grossPts":292.3,"netRs":6509,"trades":5},"2023-01-06":{"grossPts":462.1,"netRs":11603,"trades":5},"2023-01-09":{"grossPts":244.8,"netRs":5084,"trades":5},"2023-01-10":{"grossPts":154.7,"netRs":2381,"trades":5},"2023-01-11":{"grossPts":159.5,"netRs":2525,"trades":5},"2023-01-12":{"grossPts":403.7,"netRs":9851,"trades":5},"2023-01-13":{"grossPts":296.7,"netRs":6641,"trades":5},"2023-01-16":{"grossPts":275.3,"netRs":5999,"trades":5},"2023-01-17":{"grossPts":208.2,"netRs":3986,"trades":5},"2023-01-18":{"grossPts":-65.3,"netRs":-4219,"trades":5},"2023-01-19":{"grossPts":122.1,"netRs":1403,"trades":5},"2023-01-20":{"grossPts":149.4,"netRs":2222,"trades":5},"2023-01-23":{"grossPts":-140.9,"netRs":-6487,"trades":5},"2023-01-24":{"grossPts":220.2,"netRs":4346,"trades":5},"2023-01-25":{"grossPts":435.9,"netRs":10817,"trades":5},"2023-01-27":{"grossPts":137.8,"netRs":1874,"trades":5},"2023-01-30":{"grossPts":653.5,"netRs":17345,"trades":5},"2023-01-31":{"grossPts":247.1,"netRs":5153,"trades":5}},"2023-02":{"2023-02-01":{"grossPts":508.6,"netRs":12998,"trades":5},"2023-02-02":{"grossPts":258.7,"netRs":5501,"trades":5},"2023-02-03":{"grossPts":443.2,"netRs":11036,"trades":5},"2023-02-06":{"grossPts":334.8,"netRs":7784,"trades":5},"2023-02-07":{"grossPts":367.3,"netRs":8759,"trades":5},"2023-02-08":{"grossPts":221.2,"netRs":4376,"trades":5},"2023-02-09":{"grossPts":160.5,"netRs":2555,"trades":5},"2023-02-10":{"grossPts":167.5,"netRs":2765,"trades":5},"2023-02-13":{"grossPts":252.5,"netRs":5315,"trades":5},"2023-02-14":{"grossPts":69.4,"netRs":-178,"trades":5},"2023-02-15":{"grossPts":304,"netRs":6860,"trades":5},"2023-02-16":{"grossPts":234.4,"netRs":4772,"trades":5},"2023-02-17":{"grossPts":155,"netRs":2390,"trades":5},"2023-02-20":{"grossPts":233.7,"netRs":4751,"trades":5},"2023-02-21":{"grossPts":90.2,"netRs":446,"trades":5},"2023-02-23":{"grossPts":517.6,"netRs":13268,"trades":5},"2023-02-24":{"grossPts":-31.2,"netRs":-3196,"trades":5},"2023-02-27":{"grossPts":32.5,"netRs":-1285,"trades":5},"2023-02-28":{"grossPts":190.6,"netRs":3458,"trades":5}},"2023-03":{"2023-03-01":{"grossPts":325.3,"netRs":7499,"trades":5},"2023-03-02":{"grossPts":149.6,"netRs":2228,"trades":5},"2023-03-03":{"grossPts":499.3,"netRs":12719,"trades":5},"2023-03-06":{"grossPts":216.8,"netRs":4244,"trades":5},"2023-03-08":{"grossPts":261.7,"netRs":5591,"trades":5},"2023-03-09":{"grossPts":2.3,"netRs":-2191,"trades":5},"2023-03-13":{"grossPts":311.8,"netRs":7094,"trades":5},"2023-03-14":{"grossPts":353.4,"netRs":8342,"trades":5},"2023-03-15":{"grossPts":365,"netRs":8690,"trades":5},"2023-03-16":{"grossPts":523.7,"netRs":13451,"trades":5},"2023-03-17":{"grossPts":90.8,"netRs":464,"trades":5},"2023-03-20":{"grossPts":252.6,"netRs":5318,"trades":5},"2023-03-21":{"grossPts":225.9,"netRs":4517,"trades":5},"2023-03-22":{"grossPts":141.4,"netRs":1982,"trades":5},"2023-03-23":{"grossPts":448.3,"netRs":11189,"trades":5},"2023-03-27":{"grossPts":233,"netRs":4730,"trades":5},"2023-03-28":{"grossPts":152.9,"netRs":2327,"trades":5},"2023-03-29":{"grossPts":158.2,"netRs":2486,"trades":5},"2023-03-31":{"grossPts":148.5,"netRs":2647,"trades":4}},"2023-04":{"2023-04-03":{"grossPts":224.9,"netRs":4487,"trades":5},"2023-04-05":{"grossPts":136.9,"netRs":2299,"trades":4},"2023-04-06":{"grossPts":204.4,"netRs":4324,"trades":4},"2023-04-10":{"grossPts":177.3,"netRs":3059,"trades":5},"2023-04-11":{"grossPts":199.5,"netRs":3725,"trades":5},"2023-04-12":{"grossPts":-104.3,"netRs":-4033,"trades":2},"2023-04-13":{"grossPts":61.2,"netRs":-424,"trades":5},"2023-04-17":{"grossPts":214.2,"netRs":4166,"trades":5},"2023-04-18":{"grossPts":213.3,"netRs":4139,"trades":5},"2023-04-19":{"grossPts":127.5,"netRs":2017,"trades":4},"2023-04-20":{"grossPts":-128,"netRs":-6100,"trades":5},"2023-04-21":{"grossPts":-168.3,"netRs":-7309,"trades":5},"2023-04-24":{"grossPts":110.6,"netRs":1058,"trades":5},"2023-04-25":{"grossPts":-42.2,"netRs":-3526,"trades":5},"2023-04-27":{"grossPts":66.2,"netRs":-274,"trades":5},"2023-04-28":{"grossPts":110.2,"netRs":1046,"trades":5}},"2023-05":{"2023-05-02":{"grossPts":85.6,"netRs":308,"trades":5},"2023-05-03":{"grossPts":-52.9,"netRs":-3395,"trades":4},"2023-05-04":{"grossPts":37.3,"netRs":-1141,"trades":5},"2023-05-05":{"grossPts":353,"netRs":8330,"trades":5},"2023-05-08":{"grossPts":192.8,"netRs":3524,"trades":5},"2023-05-09":{"grossPts":-3.8,"netRs":-2374,"trades":5},"2023-05-10":{"grossPts":369.2,"netRs":8816,"trades":5},"2023-05-11":{"grossPts":154.7,"netRs":2381,"trades":5},"2023-05-12":{"grossPts":131.1,"netRs":1673,"trades":5},"2023-05-15":{"grossPts":71.4,"netRs":-118,"trades":5},"2023-05-16":{"grossPts":288.1,"netRs":6383,"trades":5},"2023-05-17":{"grossPts":200.9,"netRs":3767,"trades":5},"2023-05-18":{"grossPts":204.8,"netRs":3884,"trades":5},"2023-05-19":{"grossPts":374.5,"netRs":8975,"trades":5},"2023-05-22":{"grossPts":-21,"netRs":-2890,"trades":5},"2023-05-23":{"grossPts":119.5,"netRs":1325,"trades":5},"2023-05-24":{"grossPts":176.3,"netRs":3029,"trades":5},"2023-05-26":{"grossPts":126.1,"netRs":1523,"trades":5},"2023-05-29":{"grossPts":123.4,"netRs":1442,"trades":5},"2023-05-30":{"grossPts":121.3,"netRs":1379,"trades":5},"2023-05-31":{"grossPts":184.1,"netRs":3263,"trades":5}},"2023-06":{"2023-06-01":{"grossPts":112.6,"netRs":1118,"trades":5},"2023-06-02":{"grossPts":231.9,"netRs":4697,"trades":5},"2023-06-05":{"grossPts":-43,"netRs":-3098,"trades":4},"2023-06-06":{"grossPts":-121.7,"netRs":-5459,"trades":4},"2023-06-07":{"grossPts":116,"netRs":1220,"trades":5},"2023-06-08":{"grossPts":219.9,"netRs":4337,"trades":5},"2023-06-09":{"grossPts":140.8,"netRs":1964,"trades":5},"2023-06-12":{"grossPts":84.2,"netRs":266,"trades":5},"2023-06-13":{"grossPts":0.9,"netRs":-2233,"trades":5},"2023-06-14":{"grossPts":83.5,"netRs":697,"trades":4},"2023-06-15":{"grossPts":-35.7,"netRs":-3331,"trades":5},"2023-06-16":{"grossPts":85.2,"netRs":296,"trades":5},"2023-06-19":{"grossPts":271.8,"netRs":5894,"trades":5},"2023-06-20":{"grossPts":46.8,"netRs":-856,"trades":5},"2023-06-21":{"grossPts":233,"netRs":4730,"trades":5},"2023-06-22":{"grossPts":31.9,"netRs":-1303,"trades":5},"2023-06-26":{"grossPts":95.5,"netRs":605,"trades":5},"2023-06-27":{"grossPts":208.8,"netRs":4004,"trades":5},"2023-06-28":{"grossPts":203.8,"netRs":3854,"trades":5},"2023-06-30":{"grossPts":-83.4,"netRs":-4310,"trades":4}},"2023-07":{"2023-07-03":{"grossPts":220.4,"netRs":4352,"trades":5},"2023-07-04":{"grossPts":128.3,"netRs":1589,"trades":5},"2023-07-05":{"grossPts":132.8,"netRs":1724,"trades":5},"2023-07-06":{"grossPts":119.9,"netRs":1337,"trades":5},"2023-07-07":{"grossPts":300.2,"netRs":6746,"trades":5},"2023-07-10":{"grossPts":269.3,"netRs":5819,"trades":5},"2023-07-11":{"grossPts":170.8,"netRs":2864,"trades":5},"2023-07-12":{"grossPts":-128.2,"netRs":-5654,"trades":4},"2023-07-13":{"grossPts":155.6,"netRs":2408,"trades":5},"2023-07-14":{"grossPts":159,"netRs":2510,"trades":5},"2023-07-17":{"grossPts":367.4,"netRs":8762,"trades":5},"2023-07-18":{"grossPts":292,"netRs":6500,"trades":5},"2023-07-19":{"grossPts":48,"netRs":-368,"trades":4},"2023-07-20":{"grossPts":193.6,"netRs":3548,"trades":5},"2023-07-21":{"grossPts":-13.2,"netRs":-2656,"trades":5},"2023-07-24":{"grossPts":362.2,"netRs":8606,"trades":5},"2023-07-25":{"grossPts":16.3,"netRs":-1771,"trades":5},"2023-07-26":{"grossPts":104.3,"netRs":869,"trades":5},"2023-07-27":{"grossPts":-58.3,"netRs":-4009,"trades":5},"2023-07-31":{"grossPts":146.7,"netRs":2141,"trades":5}},"2023-08":{"2023-08-01":{"grossPts":139.2,"netRs":1916,"trades":5},"2023-08-02":{"grossPts":266,"netRs":5720,"trades":5},"2023-08-03":{"grossPts":250.9,"netRs":5267,"trades":5},"2023-08-04":{"grossPts":317.3,"netRs":7259,"trades":5},"2023-08-07":{"grossPts":56.8,"netRs":-556,"trades":5},"2023-08-08":{"grossPts":189.1,"netRs":3413,"trades":5},"2023-08-09":{"grossPts":153.7,"netRs":2351,"trades":5},"2023-08-10":{"grossPts":-5.3,"netRs":-2419,"trades":5},"2023-08-11":{"grossPts":172.4,"netRs":2912,"trades":5},"2023-08-14":{"grossPts":124.2,"netRs":1466,"trades":5},"2023-08-17":{"grossPts":57.3,"netRs":-541,"trades":5},"2023-08-18":{"grossPts":77.5,"netRs":65,"trades":5},"2023-08-21":{"grossPts":90.9,"netRs":467,"trades":5},"2023-08-22":{"grossPts":-145.4,"netRs":-5266,"trades":2},"2023-08-23":{"grossPts":257.5,"netRs":5465,"trades":5},"2023-08-24":{"grossPts":182.3,"netRs":3209,"trades":5},"2023-08-28":{"grossPts":178.6,"netRs":3098,"trades":5},"2023-08-29":{"grossPts":-41.7,"netRs":-2607,"trades":3},"2023-08-30":{"grossPts":192.5,"netRs":3515,"trades":5},"2023-08-31":{"grossPts":75.1,"netRs":-7,"trades":5}},"2023-09":{"2023-09-01":{"grossPts":269.4,"netRs":5822,"trades":5},"2023-09-04":{"grossPts":226.7,"netRs":4541,"trades":5},"2023-09-05":{"grossPts":-130.1,"netRs":-6163,"trades":5},"2023-09-06":{"grossPts":-2,"netRs":-2320,"trades":5},"2023-09-07":{"grossPts":301.9,"netRs":6797,"trades":5},"2023-09-08":{"grossPts":90.8,"netRs":464,"trades":5},"2023-09-11":{"grossPts":151.8,"netRs":2294,"trades":5},"2023-09-12":{"grossPts":96.2,"netRs":626,"trades":5},"2023-09-13":{"grossPts":275.6,"netRs":6008,"trades":5},"2023-09-14":{"grossPts":346.2,"netRs":8126,"trades":5},"2023-09-15":{"grossPts":184.7,"netRs":3733,"trades":4},"2023-09-18":{"grossPts":116.6,"netRs":1238,"trades":5},"2023-09-20":{"grossPts":116.5,"netRs":1235,"trades":5},"2023-09-22":{"grossPts":354.6,"netRs":8378,"trades":5},"2023-09-25":{"grossPts":649.3,"netRs":17219,"trades":5},"2023-09-26":{"grossPts":63.8,"netRs":-346,"trades":5},"2023-09-27":{"grossPts":447.9,"netRs":11177,"trades":5},"2023-09-28":{"grossPts":208,"netRs":3980,"trades":5},"2023-09-29":{"grossPts":220.7,"netRs":4361,"trades":5}},"2023-10":{"2023-10-03":{"grossPts":97.4,"netRs":662,"trades":5},"2023-10-04":{"grossPts":125.1,"netRs":1493,"trades":5},"2023-10-05":{"grossPts":-28.4,"netRs":-3112,"trades":5},"2023-10-06":{"grossPts":220.6,"netRs":4358,"trades":5},"2023-10-10":{"grossPts":334.8,"netRs":7784,"trades":5},"2023-10-11":{"grossPts":128.4,"netRs":1592,"trades":5},"2023-10-12":{"grossPts":-97,"netRs":-3362,"trades":1},"2023-10-16":{"grossPts":59.6,"netRs":-472,"trades":5},"2023-10-17":{"grossPts":175.3,"netRs":3451,"trades":4},"2023-10-18":{"grossPts":332.9,"netRs":7727,"trades":5},"2023-10-19":{"grossPts":346.9,"netRs":8147,"trades":5},"2023-10-20":{"grossPts":152.7,"netRs":2321,"trades":5},"2023-10-23":{"grossPts":104.1,"netRs":863,"trades":5},"2023-10-25":{"grossPts":330,"netRs":7640,"trades":5},"2023-10-26":{"grossPts":335,"netRs":7790,"trades":5},"2023-10-27":{"grossPts":159.8,"netRs":2534,"trades":5},"2023-10-30":{"grossPts":295,"netRs":6590,"trades":5},"2023-10-31":{"grossPts":201,"netRs":3770,"trades":5}},"2023-11":{"2023-11-01":{"grossPts":88.7,"netRs":853,"trades":4},"2023-11-02":{"grossPts":398,"netRs":9680,"trades":5},"2023-11-03":{"grossPts":100.9,"netRs":1219,"trades":4},"2023-11-06":{"grossPts":170.5,"netRs":2855,"trades":5},"2023-11-07":{"grossPts":75.5,"netRs":5,"trades":5},"2023-11-08":{"grossPts":120.7,"netRs":1361,"trades":5},"2023-11-09":{"grossPts":197.8,"netRs":3674,"trades":5},"2023-11-10":{"grossPts":146.8,"netRs":2144,"trades":5},"2023-11-15":{"grossPts":100.2,"netRs":746,"trades":5},"2023-11-16":{"grossPts":353.8,"netRs":8354,"trades":5},"2023-11-17":{"grossPts":10.6,"netRs":-1038,"trades":3},"2023-11-20":{"grossPts":73.8,"netRs":-46,"trades":5},"2023-11-21":{"grossPts":46.7,"netRs":-859,"trades":5},"2023-11-22":{"grossPts":315.3,"netRs":7199,"trades":5},"2023-11-23":{"grossPts":44.9,"netRs":443,"trades":2},"2023-11-24":{"grossPts":-150,"netRs":-4952,"trades":1},"2023-11-28":{"grossPts":83.7,"netRs":251,"trades":5},"2023-11-29":{"grossPts":12.8,"netRs":-1876,"trades":5},"2023-11-30":{"grossPts":141.7,"netRs":1991,"trades":5}},"2023-12":{"2023-12-01":{"grossPts":256,"netRs":5420,"trades":5},"2023-12-04":{"grossPts":590.7,"netRs":15461,"trades":5},"2023-12-05":{"grossPts":524.9,"netRs":13487,"trades":5},"2023-12-06":{"grossPts":474,"netRs":11960,"trades":5},"2023-12-07":{"grossPts":-12.5,"netRs":-2635,"trades":5},"2023-12-08":{"grossPts":316.8,"netRs":7244,"trades":5},"2023-12-11":{"grossPts":229.7,"netRs":4631,"trades":5},"2023-12-12":{"grossPts":63.3,"netRs":-361,"trades":5},"2023-12-13":{"grossPts":167.1,"netRs":2753,"trades":5},"2023-12-14":{"grossPts":95.3,"netRs":599,"trades":5},"2023-12-15":{"grossPts":306.9,"netRs":6947,"trades":5},"2023-12-18":{"grossPts":135.8,"netRs":1814,"trades":5},"2023-12-19":{"grossPts":5.6,"netRs":-2092,"trades":5},"2023-12-20":{"grossPts":182.3,"netRs":3209,"trades":5},"2023-12-22":{"grossPts":181.3,"netRs":3179,"trades":5},"2023-12-26":{"grossPts":132.9,"netRs":1727,"trades":5},"2023-12-27":{"grossPts":254.4,"netRs":5372,"trades":5},"2023-12-28":{"grossPts":55.2,"netRs":-604,"trades":5},"2023-12-29":{"grossPts":13,"netRs":-1870,"trades":5}},"2024-01":{"2024-01-01":{"grossPts":68.4,"netRs":-208,"trades":5},"2024-01-02":{"grossPts":146.5,"netRs":2135,"trades":5},"2024-01-03":{"grossPts":300.3,"netRs":6749,"trades":5},"2024-01-04":{"grossPts":233.3,"netRs":4739,"trades":5},"2024-01-05":{"grossPts":152.2,"netRs":2306,"trades":5},"2024-01-08":{"grossPts":49.9,"netRs":-763,"trades":5},"2024-01-09":{"grossPts":362.1,"netRs":8603,"trades":5},"2024-01-11":{"grossPts":-1.5,"netRs":-2305,"trades":5},"2024-01-12":{"grossPts":84,"netRs":260,"trades":5},"2024-01-15":{"grossPts":264.2,"netRs":5666,"trades":5},"2024-01-16":{"grossPts":161.1,"netRs":2573,"trades":5},"2024-01-17":{"grossPts":335.5,"netRs":7805,"trades":5},"2024-01-18":{"grossPts":301.9,"netRs":6797,"trades":5},"2024-01-19":{"grossPts":528,"netRs":13580,"trades":5},"2024-01-20":{"grossPts":117.1,"netRs":1253,"trades":5},"2024-01-23":{"grossPts":533.4,"netRs":13742,"trades":5},"2024-01-24":{"grossPts":412.9,"netRs":10127,"trades":5},"2024-01-25":{"grossPts":47.5,"netRs":-835,"trades":5},"2024-01-29":{"grossPts":376.3,"netRs":9029,"trades":5},"2024-01-30":{"grossPts":-119.9,"netRs":-4953,"trades":3},"2024-01-31":{"grossPts":249,"netRs":5210,"trades":5}},"2024-02":{"2024-02-01":{"grossPts":540.9,"netRs":13967,"trades":5},"2024-02-02":{"grossPts":1009.8,"netRs":28034,"trades":5},"2024-02-05":{"grossPts":345.8,"netRs":8114,"trades":5},"2024-02-06":{"grossPts":258.3,"netRs":5489,"trades":5},"2024-02-07":{"grossPts":341.6,"netRs":8440,"trades":4},"2024-02-08":{"grossPts":730.8,"netRs":19664,"trades":5},"2024-02-09":{"grossPts":177.9,"netRs":3077,"trades":5},"2024-02-12":{"grossPts":366.7,"netRs":8741,"trades":5},"2024-02-13":{"grossPts":612.4,"netRs":16112,"trades":5},"2024-02-14":{"grossPts":429.6,"netRs":10628,"trades":5},"2024-02-15":{"grossPts":402.5,"netRs":9815,"trades":5},"2024-02-16":{"grossPts":39.9,"netRs":-1063,"trades":5},"2024-02-19":{"grossPts":244.9,"netRs":5087,"trades":5},"2024-02-20":{"grossPts":6.4,"netRs":-2068,"trades":5},"2024-02-21":{"grossPts":379.2,"netRs":9116,"trades":5},"2024-02-22":{"grossPts":218.6,"netRs":4298,"trades":5},"2024-02-23":{"grossPts":204.8,"netRs":3884,"trades":5},"2024-02-26":{"grossPts":295.6,"netRs":6608,"trades":5},"2024-02-28":{"grossPts":339.5,"netRs":7925,"trades":5},"2024-02-29":{"grossPts":-206.8,"netRs":-8464,"trades":5}},"2024-03":{"2024-03-01":{"grossPts":626.9,"netRs":16547,"trades":5},"2024-03-02":{"grossPts":59.9,"netRs":893,"trades":2},"2024-03-04":{"grossPts":-29.4,"netRs":-3142,"trades":5},"2024-03-05":{"grossPts":106.7,"netRs":941,"trades":5},"2024-03-06":{"grossPts":219.5,"netRs":4325,"trades":5},"2024-03-07":{"grossPts":185.6,"netRs":3308,"trades":5},"2024-03-11":{"grossPts":325.4,"netRs":7502,"trades":5},"2024-03-12":{"grossPts":405.4,"netRs":9902,"trades":5},"2024-03-13":{"grossPts":242.1,"netRs":5003,"trades":5},"2024-03-15":{"grossPts":125.5,"netRs":1505,"trades":5},"2024-03-18":{"grossPts":258.8,"netRs":5504,"trades":5},"2024-03-19":{"grossPts":158.6,"netRs":2498,"trades":5},"2024-03-20":{"grossPts":291.3,"netRs":6931,"trades":4},"2024-03-21":{"grossPts":199.5,"netRs":3725,"trades":5},"2024-03-22":{"grossPts":252.3,"netRs":5309,"trades":5},"2024-03-26":{"grossPts":157.8,"netRs":2474,"trades":5},"2024-03-27":{"grossPts":212.5,"netRs":4115,"trades":5},"2024-03-28":{"grossPts":244.5,"netRs":5075,"trades":5}},"2024-04":{"2024-04-01":{"grossPts":177.4,"netRs":3062,"trades":5},"2024-04-02":{"grossPts":-72.3,"netRs":-3525,"trades":3},"2024-04-04":{"grossPts":358,"netRs":8480,"trades":5},"2024-04-05":{"grossPts":277.3,"netRs":6059,"trades":5},"2024-04-08":{"grossPts":62.7,"netRs":-379,"trades":5},"2024-04-09":{"grossPts":133.6,"netRs":1748,"trades":5},"2024-04-10":{"grossPts":49.1,"netRs":-335,"trades":4},"2024-04-12":{"grossPts":244.4,"netRs":5072,"trades":5},"2024-04-16":{"grossPts":140.6,"netRs":1958,"trades":5},"2024-04-18":{"grossPts":-81.7,"netRs":-4711,"trades":5},"2024-04-19":{"grossPts":551.9,"netRs":14297,"trades":5},"2024-04-22":{"grossPts":-183.2,"netRs":-7756,"trades":5},"2024-04-23":{"grossPts":119,"netRs":1310,"trades":5},"2024-04-24":{"grossPts":-80,"netRs":-4208,"trades":4},"2024-04-25":{"grossPts":-21.3,"netRs":-2899,"trades":5},"2024-04-26":{"grossPts":226.8,"netRs":4544,"trades":5},"2024-04-29":{"grossPts":231.3,"netRs":4679,"trades":5},"2024-04-30":{"grossPts":517.1,"netRs":13253,"trades":5}},"2024-05":{"2024-05-02":{"grossPts":-47.6,"netRs":-3688,"trades":5},"2024-05-03":{"grossPts":-43.7,"netRs":-3571,"trades":5},"2024-05-06":{"grossPts":227,"netRs":4550,"trades":5},"2024-05-07":{"grossPts":259,"netRs":5510,"trades":5},"2024-05-09":{"grossPts":361.1,"netRs":8573,"trades":5},"2024-05-10":{"grossPts":282.1,"netRs":6203,"trades":5},"2024-05-13":{"grossPts":527,"netRs":13550,"trades":5},"2024-05-14":{"grossPts":112,"netRs":1552,"trades":4},"2024-05-15":{"grossPts":133.1,"netRs":1733,"trades":5},"2024-05-16":{"grossPts":363,"netRs":8630,"trades":5},"2024-05-17":{"grossPts":-6.3,"netRs":-2449,"trades":5},"2024-05-18":{"grossPts":50,"netRs":596,"trades":2},"2024-05-21":{"grossPts":137.5,"netRs":1865,"trades":5},"2024-05-22":{"grossPts":213.4,"netRs":4142,"trades":5},"2024-05-23":{"grossPts":245,"netRs":5090,"trades":5},"2024-05-24":{"grossPts":208.4,"netRs":3992,"trades":5},"2024-05-27":{"grossPts":452.3,"netRs":11309,"trades":5},"2024-05-28":{"grossPts":63.5,"netRs":97,"trades":4},"2024-05-29":{"grossPts":192.2,"netRs":3506,"trades":5},"2024-05-30":{"grossPts":279.4,"netRs":6122,"trades":5},"2024-05-31":{"grossPts":158.2,"netRs":2486,"trades":5}},"2024-06":{"2024-06-03":{"grossPts":193.2,"netRs":3536,"trades":5},"2024-06-04":{"grossPts":1874.2,"netRs":53966,"trades":5},"2024-06-05":{"grossPts":960.4,"netRs":26552,"trades":5},"2024-06-06":{"grossPts":349.7,"netRs":8231,"trades":5},"2024-06-07":{"grossPts":20.4,"netRs":-1648,"trades":5},"2024-06-10":{"grossPts":233.6,"netRs":4748,"trades":5},"2024-06-11":{"grossPts":382.6,"netRs":9218,"trades":5},"2024-06-12":{"grossPts":-148.4,"netRs":-6712,"trades":5},"2024-06-13":{"grossPts":16.5,"netRs":-1765,"trades":5},"2024-06-14":{"grossPts":174,"netRs":2960,"trades":5},"2024-06-18":{"grossPts":-38.6,"netRs":-3418,"trades":5},"2024-06-19":{"grossPts":826.4,"netRs":22532,"trades":5},"2024-06-20":{"grossPts":223.3,"netRs":4439,"trades":5},"2024-06-21":{"grossPts":282.1,"netRs":6203,"trades":5},"2024-06-24":{"grossPts":329.9,"netRs":7637,"trades":5},"2024-06-25":{"grossPts":352.5,"netRs":8315,"trades":5},"2024-06-26":{"grossPts":238.2,"netRs":4886,"trades":5},"2024-06-27":{"grossPts":248.1,"netRs":5183,"trades":5},"2024-06-28":{"grossPts":304.2,"netRs":6866,"trades":5}},"2024-07":{"2024-07-01":{"grossPts":272.3,"netRs":5909,"trades":5},"2024-07-02":{"grossPts":545.3,"netRs":14099,"trades":5},"2024-07-03":{"grossPts":214.7,"netRs":4181,"trades":5},"2024-07-04":{"grossPts":346.3,"netRs":8129,"trades":5},"2024-07-08":{"grossPts":335.8,"netRs":7814,"trades":5},"2024-07-09":{"grossPts":-83.8,"netRs":-3418,"trades":2},"2024-07-10":{"grossPts":177.7,"netRs":3071,"trades":5},"2024-07-11":{"grossPts":472.6,"netRs":11918,"trades":5},"2024-07-12":{"grossPts":184.8,"netRs":3284,"trades":5},"2024-07-15":{"grossPts":192.9,"netRs":3527,"trades":5},"2024-07-16":{"grossPts":94.5,"netRs":1027,"trades":4},"2024-07-18":{"grossPts":548.3,"netRs":14189,"trades":5},"2024-07-19":{"grossPts":253.6,"netRs":5348,"trades":5},"2024-07-23":{"grossPts":875,"netRs":23990,"trades":5},"2024-07-24":{"grossPts":514.7,"netRs":13181,"trades":5},"2024-07-29":{"grossPts":872,"netRs":23900,"trades":5},"2024-07-30":{"grossPts":70.3,"netRs":-151,"trades":5},"2024-07-31":{"grossPts":228.9,"netRs":4607,"trades":5}},"2024-08":{"2024-08-01":{"grossPts":-0.2,"netRs":-2266,"trades":5},"2024-08-05":{"grossPts":528.1,"netRs":13583,"trades":5},"2024-08-06":{"grossPts":92.7,"netRs":521,"trades":5},"2024-08-07":{"grossPts":577.9,"netRs":15077,"trades":5},"2024-08-08":{"grossPts":597.7,"netRs":15671,"trades":5},"2024-08-09":{"grossPts":142.1,"netRs":2003,"trades":5},"2024-08-12":{"grossPts":547.9,"netRs":14177,"trades":5},"2024-08-13":{"grossPts":314.2,"netRs":7166,"trades":5},"2024-08-14":{"grossPts":-31.3,"netRs":-1843,"trades":2},"2024-08-16":{"grossPts":442.8,"netRs":11024,"trades":5},"2024-08-19":{"grossPts":398.3,"netRs":9689,"trades":5},"2024-08-20":{"grossPts":36.1,"netRs":-1177,"trades":5},"2024-08-21":{"grossPts":42.3,"netRs":-991,"trades":5},"2024-08-22":{"grossPts":230.3,"netRs":4649,"trades":5},"2024-08-23":{"grossPts":79,"netRs":110,"trades":5},"2024-08-26":{"grossPts":125.3,"netRs":1499,"trades":5},"2024-08-27":{"grossPts":332,"netRs":7700,"trades":5},"2024-08-28":{"grossPts":180.7,"netRs":3161,"trades":5},"2024-08-29":{"grossPts":232.3,"netRs":4709,"trades":5},"2024-08-30":{"grossPts":58.6,"netRs":-502,"trades":5}},"2024-09":{"2024-09-02":{"grossPts":101,"netRs":770,"trades":5},"2024-09-03":{"grossPts":237.8,"netRs":4874,"trades":5},"2024-09-04":{"grossPts":-186.3,"netRs":-7397,"trades":4},"2024-09-05":{"grossPts":46.3,"netRs":-871,"trades":5},"2024-09-06":{"grossPts":247.9,"netRs":5177,"trades":5},"2024-09-09":{"grossPts":-197,"netRs":-8170,"trades":5},"2024-09-10":{"grossPts":188.3,"netRs":3389,"trades":5},"2024-09-11":{"grossPts":-128.9,"netRs":-6127,"trades":5},"2024-09-12":{"grossPts":382,"netRs":9200,"trades":5},"2024-09-13":{"grossPts":247.6,"netRs":5168,"trades":5},"2024-09-16":{"grossPts":174,"netRs":2960,"trades":5},"2024-09-17":{"grossPts":49.8,"netRs":-314,"trades":4},"2024-09-18":{"grossPts":498.6,"netRs":12698,"trades":5},"2024-09-19":{"grossPts":311.9,"netRs":7097,"trades":5},"2024-09-20":{"grossPts":184.8,"netRs":3284,"trades":5},"2024-09-23":{"grossPts":222.8,"netRs":4424,"trades":5},"2024-09-24":{"grossPts":148.8,"netRs":2204,"trades":5},"2024-09-25":{"grossPts":-150,"netRs":-4952,"trades":1},"2024-09-26":{"grossPts":243,"netRs":5030,"trades":5},"2024-09-27":{"grossPts":334.7,"netRs":7781,"trades":5}},"2024-10":{"2024-10-01":{"grossPts":197.1,"netRs":3653,"trades":5},"2024-10-03":{"grossPts":232.1,"netRs":4703,"trades":5},"2024-10-04":{"grossPts":592.8,"netRs":15524,"trades":5},"2024-10-07":{"grossPts":973,"netRs":26930,"trades":5},"2024-10-08":{"grossPts":422.4,"netRs":10412,"trades":5},"2024-10-09":{"grossPts":388.6,"netRs":9398,"trades":5},"2024-10-10":{"grossPts":370.4,"netRs":8852,"trades":5},"2024-10-11":{"grossPts":334.1,"netRs":7763,"trades":5},"2024-10-14":{"grossPts":319.2,"netRs":7316,"trades":5},"2024-10-15":{"grossPts":351.3,"netRs":8279,"trades":5},"2024-10-16":{"grossPts":171,"netRs":2870,"trades":5},"2024-10-17":{"grossPts":401.6,"netRs":9788,"trades":5},"2024-10-18":{"grossPts":255.6,"netRs":5408,"trades":5},"2024-10-21":{"grossPts":339,"netRs":7910,"trades":5},"2024-10-22":{"grossPts":831.4,"netRs":22682,"trades":5},"2024-10-23":{"grossPts":80.1,"netRs":143,"trades":5},"2024-10-24":{"grossPts":446.4,"netRs":11132,"trades":5},"2024-10-25":{"grossPts":631.7,"netRs":16691,"trades":5},"2024-10-28":{"grossPts":134.5,"netRs":1775,"trades":5},"2024-10-29":{"grossPts":265.7,"netRs":5711,"trades":5},"2024-10-30":{"grossPts":162.4,"netRs":2612,"trades":5},"2024-10-31":{"grossPts":246.1,"netRs":5123,"trades":5}},"2024-11":{"2024-11-05":{"grossPts":433.6,"netRs":10748,"trades":5},"2024-11-06":{"grossPts":149.5,"netRs":2225,"trades":5},"2024-11-07":{"grossPts":257.1,"netRs":5453,"trades":5},"2024-11-08":{"grossPts":324.1,"netRs":7463,"trades":5},"2024-11-11":{"grossPts":225.7,"netRs":4511,"trades":5},"2024-11-12":{"grossPts":360.6,"netRs":8558,"trades":5},"2024-11-13":{"grossPts":161.5,"netRs":2585,"trades":5},"2024-11-14":{"grossPts":179.4,"netRs":3122,"trades":5},"2024-11-18":{"grossPts":-286.6,"netRs":-10858,"trades":5},"2024-11-19":{"grossPts":297,"netRs":6650,"trades":5},"2024-11-21":{"grossPts":808.6,"netRs":21998,"trades":5},"2024-11-22":{"grossPts":311.7,"netRs":7091,"trades":5},"2024-11-25":{"grossPts":-55.8,"netRs":-3934,"trades":5},"2024-11-26":{"grossPts":219.4,"netRs":4322,"trades":5},"2024-11-27":{"grossPts":217.4,"netRs":4262,"trades":5},"2024-11-28":{"grossPts":566.7,"netRs":14741,"trades":5},"2024-11-29":{"grossPts":183.6,"netRs":3248,"trades":5}},"2024-12":{"2024-12-02":{"grossPts":149.1,"netRs":2213,"trades":5},"2024-12-03":{"grossPts":144.4,"netRs":2072,"trades":5},"2024-12-04":{"grossPts":345.3,"netRs":8099,"trades":5},"2024-12-05":{"grossPts":618.2,"netRs":16286,"trades":5},"2024-12-06":{"grossPts":256.3,"netRs":5429,"trades":5},"2024-12-09":{"grossPts":-23,"netRs":-2950,"trades":5},"2024-12-10":{"grossPts":210.4,"netRs":4052,"trades":5},"2024-12-11":{"grossPts":166.4,"netRs":3636,"trades":3},"2024-12-12":{"grossPts":120.2,"netRs":1346,"trades":5},"2024-12-16":{"grossPts":142.9,"netRs":2027,"trades":5},"2024-12-17":{"grossPts":478.5,"netRs":12095,"trades":5},"2024-12-19":{"grossPts":333.8,"netRs":7754,"trades":5},"2024-12-20":{"grossPts":402.4,"netRs":9812,"trades":5},"2024-12-23":{"grossPts":244.6,"netRs":5078,"trades":5},"2024-12-24":{"grossPts":135.9,"netRs":1817,"trades":5},"2024-12-26":{"grossPts":502.5,"netRs":12815,"trades":5},"2024-12-27":{"grossPts":72.8,"netRs":-76,"trades":5},"2024-12-30":{"grossPts":439.7,"netRs":10931,"trades":5},"2024-12-31":{"grossPts":-16.7,"netRs":-2761,"trades":5}},"2025-01":{"2025-01-01":{"grossPts":246.7,"netRs":5141,"trades":5},"2025-01-02":{"grossPts":343,"netRs":8030,"trades":5},"2025-01-03":{"grossPts":464.3,"netRs":11669,"trades":5},"2025-01-06":{"grossPts":650.1,"netRs":17243,"trades":5},"2025-01-07":{"grossPts":316.6,"netRs":7238,"trades":5},"2025-01-08":{"grossPts":481.7,"netRs":12191,"trades":5},"2025-01-09":{"grossPts":96.6,"netRs":638,"trades":5},"2025-01-10":{"grossPts":567.3,"netRs":14759,"trades":5},"2025-01-13":{"grossPts":441.9,"netRs":10997,"trades":5},"2025-01-14":{"grossPts":92.3,"netRs":509,"trades":5},"2025-01-15":{"grossPts":629.8,"netRs":16634,"trades":5},"2025-01-16":{"grossPts":307.1,"netRs":6953,"trades":5},"2025-01-20":{"grossPts":496,"netRs":12620,"trades":5},"2025-01-21":{"grossPts":142.6,"netRs":2018,"trades":5},"2025-01-22":{"grossPts":407.5,"netRs":9965,"trades":5},"2025-01-23":{"grossPts":267.3,"netRs":5759,"trades":5},"2025-01-24":{"grossPts":378.4,"netRs":9092,"trades":5},"2025-01-27":{"grossPts":-186.7,"netRs":-7861,"trades":5},"2025-01-28":{"grossPts":288.6,"netRs":6398,"trades":5},"2025-01-29":{"grossPts":-1.1,"netRs":-2293,"trades":5},"2025-01-30":{"grossPts":156.4,"netRs":2432,"trades":5},"2025-01-31":{"grossPts":51.6,"netRs":-712,"trades":5}},"2025-02":{"2025-02-01":{"grossPts":506.5,"netRs":12935,"trades":5},"2025-02-03":{"grossPts":116.9,"netRs":1247,"trades":5},"2025-02-04":{"grossPts":129.7,"netRs":1631,"trades":5},"2025-02-05":{"grossPts":183.6,"netRs":3248,"trades":5},"2025-02-06":{"grossPts":204.1,"netRs":3863,"trades":5},"2025-02-07":{"grossPts":736.6,"netRs":19838,"trades":5},"2025-02-10":{"grossPts":113.7,"netRs":1151,"trades":5},"2025-02-11":{"grossPts":253.8,"netRs":5354,"trades":5},"2025-02-12":{"grossPts":829,"netRs":22610,"trades":5},"2025-02-13":{"grossPts":136.2,"netRs":1826,"trades":5},"2025-02-14":{"grossPts":318.3,"netRs":7289,"trades":5},"2025-02-17":{"grossPts":454.5,"netRs":11375,"trades":5},"2025-02-18":{"grossPts":420.3,"netRs":10349,"trades":5},"2025-02-19":{"grossPts":302.7,"netRs":6821,"trades":5},"2025-02-20":{"grossPts":124.7,"netRs":1933,"trades":4},"2025-02-21":{"grossPts":420.6,"netRs":10358,"trades":5},"2025-02-25":{"grossPts":59.2,"netRs":-484,"trades":5},"2025-02-27":{"grossPts":173.9,"netRs":2957,"trades":5}},"2025-03":{"2025-03-03":{"grossPts":204.2,"netRs":3866,"trades":5},"2025-03-04":{"grossPts":155.2,"netRs":2396,"trades":5},"2025-03-05":{"grossPts":230.7,"netRs":4661,"trades":5},"2025-03-06":{"grossPts":273.4,"netRs":5942,"trades":5},"2025-03-07":{"grossPts":259.2,"netRs":5516,"trades":5},"2025-03-10":{"grossPts":140.4,"netRs":1952,"trades":5},"2025-03-11":{"grossPts":143.7,"netRs":2051,"trades":5},"2025-03-12":{"grossPts":125.8,"netRs":1514,"trades":5},"2025-03-13":{"grossPts":200.8,"netRs":3764,"trades":5},"2025-03-17":{"grossPts":173.2,"netRs":2936,"trades":5},"2025-03-18":{"grossPts":247.7,"netRs":5171,"trades":5},"2025-03-19":{"grossPts":146.8,"netRs":2144,"trades":5},"2025-03-20":{"grossPts":235.7,"netRs":4811,"trades":5},"2025-03-21":{"grossPts":115.3,"netRs":1199,"trades":5},"2025-03-24":{"grossPts":502.5,"netRs":12815,"trades":5},"2025-03-25":{"grossPts":-152.5,"netRs":-6835,"trades":5},"2025-03-26":{"grossPts":172.8,"netRs":3376,"trades":4},"2025-03-27":{"grossPts":266.8,"netRs":5744,"trades":5},"2025-03-28":{"grossPts":186.9,"netRs":3347,"trades":5}},"2025-04":{"2025-04-01":{"grossPts":284.2,"netRs":6266,"trades":5},"2025-04-02":{"grossPts":248.6,"netRs":5198,"trades":5},"2025-04-03":{"grossPts":112.5,"netRs":1115,"trades":5},"2025-04-04":{"grossPts":93.6,"netRs":548,"trades":5},"2025-04-08":{"grossPts":453.6,"netRs":11348,"trades":5},"2025-04-09":{"grossPts":182.6,"netRs":3218,"trades":5},"2025-04-11":{"grossPts":336.9,"netRs":7847,"trades":5},"2025-04-15":{"grossPts":-31.2,"netRs":-3196,"trades":5},"2025-04-16":{"grossPts":-28.5,"netRs":-2663,"trades":4},"2025-04-17":{"grossPts":603.7,"netRs":15851,"trades":5},"2025-04-21":{"grossPts":263.5,"netRs":5645,"trades":5},"2025-04-22":{"grossPts":474.5,"netRs":11975,"trades":5},"2025-04-23":{"grossPts":539.4,"netRs":13922,"trades":5},"2025-04-24":{"grossPts":50.5,"netRs":-745,"trades":5},"2025-04-25":{"grossPts":342.4,"netRs":8012,"trades":5},"2025-04-28":{"grossPts":470.6,"netRs":11858,"trades":5},"2025-04-29":{"grossPts":206.8,"netRs":3944,"trades":5},"2025-04-30":{"grossPts":173.3,"netRs":2939,"trades":5}},"2025-05":{"2025-05-02":{"grossPts":102.6,"netRs":818,"trades":5},"2025-05-05":{"grossPts":-14.4,"netRs":-2692,"trades":5},"2025-05-06":{"grossPts":331.5,"netRs":7685,"trades":5},"2025-05-07":{"grossPts":394.4,"netRs":9572,"trades":5},"2025-05-08":{"grossPts":217.3,"netRs":4259,"trades":5},"2025-05-12":{"grossPts":290.1,"netRs":6443,"trades":5},"2025-05-13":{"grossPts":265.3,"netRs":6151,"trades":4},"2025-05-14":{"grossPts":144.8,"netRs":2084,"trades":5},"2025-05-15":{"grossPts":719,"netRs":19310,"trades":5},"2025-05-16":{"grossPts":116,"netRs":1672,"trades":4},"2025-05-19":{"grossPts":161.1,"netRs":2573,"trades":5},"2025-05-20":{"grossPts":265.9,"netRs":5717,"trades":5},"2025-05-21":{"grossPts":573.3,"netRs":14939,"trades":5},"2025-05-22":{"grossPts":250.9,"netRs":5719,"trades":4},"2025-05-23":{"grossPts":378.1,"netRs":9083,"trades":5},"2025-05-26":{"grossPts":349.3,"netRs":8671,"trades":4},"2025-05-27":{"grossPts":134,"netRs":1760,"trades":5},"2025-05-28":{"grossPts":204.7,"netRs":3881,"trades":5},"2025-05-29":{"grossPts":-50.3,"netRs":-3769,"trades":5},"2025-05-30":{"grossPts":259.8,"netRs":5534,"trades":5}},"2025-06":{"2025-06-02":{"grossPts":98.8,"netRs":1608,"trades":3},"2025-06-03":{"grossPts":346.7,"netRs":8141,"trades":5},"2025-06-04":{"grossPts":25.7,"netRs":-585,"trades":3},"2025-06-05":{"grossPts":166.5,"netRs":2735,"trades":5},"2025-06-06":{"grossPts":467.9,"netRs":11777,"trades":5},"2025-06-09":{"grossPts":124.5,"netRs":1475,"trades":5},"2025-06-10":{"grossPts":102.9,"netRs":827,"trades":5},"2025-06-11":{"grossPts":93.2,"netRs":536,"trades":5},"2025-06-12":{"grossPts":164.2,"netRs":2666,"trades":5},"2025-06-13":{"grossPts":225.9,"netRs":4517,"trades":5},"2025-06-16":{"grossPts":259.7,"netRs":5531,"trades":5},"2025-06-17":{"grossPts":144.4,"netRs":2524,"trades":4},"2025-06-18":{"grossPts":185.6,"netRs":3308,"trades":5},"2025-06-19":{"grossPts":152.3,"netRs":2309,"trades":5},"2025-06-20":{"grossPts":305.4,"netRs":6902,"trades":5},"2025-06-23":{"grossPts":283,"netRs":6230,"trades":5},"2025-06-24":{"grossPts":283.6,"netRs":6248,"trades":5},"2025-06-25":{"grossPts":32.5,"netRs":523,"trades":1},"2025-06-26":{"grossPts":113.1,"netRs":1133,"trades":5},"2025-06-27":{"grossPts":308,"netRs":6980,"trades":5},"2025-06-30":{"grossPts":342.3,"netRs":8009,"trades":5}},"2025-07":{"2025-07-01":{"grossPts":136.5,"netRs":1835,"trades":5},"2025-07-02":{"grossPts":271,"netRs":5870,"trades":5},"2025-07-03":{"grossPts":-117.8,"netRs":-5794,"trades":5},"2025-07-04":{"grossPts":195.4,"netRs":3602,"trades":5},"2025-07-07":{"grossPts":120.5,"netRs":1355,"trades":5},"2025-07-08":{"grossPts":180.5,"netRs":3155,"trades":5},"2025-07-09":{"grossPts":165.1,"netRs":2693,"trades":5},"2025-07-10":{"grossPts":250.3,"netRs":5249,"trades":5},"2025-07-11":{"grossPts":378,"netRs":9080,"trades":5},"2025-07-14":{"grossPts":227.5,"netRs":4565,"trades":5},"2025-07-15":{"grossPts":286.3,"netRs":6329,"trades":5},"2025-07-16":{"grossPts":206.3,"netRs":3929,"trades":5},"2025-07-17":{"grossPts":238.9,"netRs":4907,"trades":5},"2025-07-18":{"grossPts":212.9,"netRs":4127,"trades":5},"2025-07-21":{"grossPts":148,"netRs":2180,"trades":5},"2025-07-22":{"grossPts":218.9,"netRs":4307,"trades":5},"2025-07-23":{"grossPts":253,"netRs":5330,"trades":5},"2025-07-24":{"grossPts":190.9,"netRs":3467,"trades":5},"2025-07-25":{"grossPts":344.2,"netRs":8066,"trades":5},"2025-07-28":{"grossPts":311.9,"netRs":7097,"trades":5},"2025-07-29":{"grossPts":203.3,"netRs":3839,"trades":5},"2025-07-30":{"grossPts":215.3,"netRs":4199,"trades":5}},"2025-08":{"2025-08-01":{"grossPts":189.1,"netRs":3413,"trades":5},"2025-08-04":{"grossPts":304.4,"netRs":6872,"trades":5},"2025-08-05":{"grossPts":139.4,"netRs":1922,"trades":5},"2025-08-06":{"grossPts":238.6,"netRs":4898,"trades":5},"2025-08-07":{"grossPts":414.1,"netRs":10163,"trades":5},"2025-08-08":{"grossPts":197.8,"netRs":3674,"trades":5},"2025-08-11":{"grossPts":222.9,"netRs":4427,"trades":5},"2025-08-12":{"grossPts":263.8,"netRs":5654,"trades":5},"2025-08-13":{"grossPts":217.7,"netRs":4271,"trades":5},"2025-08-14":{"grossPts":217.1,"netRs":4253,"trades":5},"2025-08-18":{"grossPts":346.1,"netRs":8123,"trades":5},"2025-08-19":{"grossPts":289.6,"netRs":6428,"trades":5},"2025-08-20":{"grossPts":43.4,"netRs":-958,"trades":5},"2025-08-21":{"grossPts":198.5,"netRs":3695,"trades":5},"2025-08-25":{"grossPts":-277.8,"netRs":-10594,"trades":5},"2025-08-26":{"grossPts":199.3,"netRs":3719,"trades":5},"2025-08-28":{"grossPts":83,"netRs":230,"trades":5},"2025-08-29":{"grossPts":162.5,"netRs":2615,"trades":5}},"2025-09":{"2025-09-01":{"grossPts":221,"netRs":4370,"trades":5},"2025-09-02":{"grossPts":389.4,"netRs":9422,"trades":5},"2025-09-03":{"grossPts":183.3,"netRs":3239,"trades":5},"2025-09-04":{"grossPts":166.5,"netRs":2735,"trades":5},"2025-09-05":{"grossPts":349.3,"netRs":8219,"trades":5},"2025-09-08":{"grossPts":-33.5,"netRs":-3265,"trades":5},"2025-09-09":{"grossPts":152.1,"netRs":2303,"trades":5},"2025-09-10":{"grossPts":115.9,"netRs":1217,"trades":5},"2025-09-11":{"grossPts":162.3,"netRs":2609,"trades":5},"2025-09-12":{"grossPts":87,"netRs":350,"trades":5},"2025-09-15":{"grossPts":58.6,"netRs":-502,"trades":5},"2025-09-16":{"grossPts":48.8,"netRs":-796,"trades":5},"2025-09-17":{"grossPts":243.8,"netRs":5054,"trades":5},"2025-09-18":{"grossPts":183,"netRs":3230,"trades":5},"2025-09-19":{"grossPts":86.9,"netRs":347,"trades":5},"2025-09-22":{"grossPts":236.8,"netRs":4844,"trades":5},"2025-09-23":{"grossPts":340.1,"netRs":7943,"trades":5},"2025-09-24":{"grossPts":231.9,"netRs":4697,"trades":5},"2025-09-25":{"grossPts":221,"netRs":4370,"trades":5},"2025-09-26":{"grossPts":9.5,"netRs":-1523,"trades":4},"2025-09-29":{"grossPts":247.3,"netRs":5159,"trades":5},"2025-09-30":{"grossPts":80,"netRs":140,"trades":5}},"2025-10":{"2025-10-01":{"grossPts":248.1,"netRs":5183,"trades":5},"2025-10-03":{"grossPts":264.6,"netRs":5678,"trades":5},"2025-10-06":{"grossPts":199,"netRs":3710,"trades":5},"2025-10-07":{"grossPts":325,"netRs":7490,"trades":5},"2025-10-08":{"grossPts":153.7,"netRs":2351,"trades":5},"2025-10-09":{"grossPts":249,"netRs":5210,"trades":5},"2025-10-10":{"grossPts":253.7,"netRs":5351,"trades":5},"2025-10-13":{"grossPts":308.9,"netRs":7007,"trades":5},"2025-10-14":{"grossPts":280,"netRs":6140,"trades":5},"2025-10-15":{"grossPts":231.1,"netRs":4673,"trades":5},"2025-10-16":{"grossPts":-16.1,"netRs":-2743,"trades":5},"2025-10-17":{"grossPts":-13.8,"netRs":-2674,"trades":5},"2025-10-20":{"grossPts":149.9,"netRs":2237,"trades":5},"2025-10-24":{"grossPts":152.8,"netRs":2324,"trades":5},"2025-10-27":{"grossPts":172.6,"netRs":2918,"trades":5},"2025-10-28":{"grossPts":484.9,"netRs":12287,"trades":5},"2025-10-29":{"grossPts":-113,"netRs":-5650,"trades":5},"2025-10-30":{"grossPts":-53,"netRs":-3850,"trades":5},"2025-10-31":{"grossPts":402.5,"netRs":9815,"trades":5}},"2025-11":{"2025-11-03":{"grossPts":231.3,"netRs":4679,"trades":5},"2025-11-04":{"grossPts":171.7,"netRs":2891,"trades":5},"2025-11-07":{"grossPts":353.7,"netRs":8351,"trades":5},"2025-11-10":{"grossPts":156.2,"netRs":2426,"trades":5},"2025-11-11":{"grossPts":236,"netRs":4820,"trades":5},"2025-11-12":{"grossPts":112.5,"netRs":1115,"trades":5},"2025-11-13":{"grossPts":177.3,"netRs":3059,"trades":5},"2025-11-14":{"grossPts":88.2,"netRs":386,"trades":5},"2025-11-17":{"grossPts":186.7,"netRs":3341,"trades":5},"2025-11-18":{"grossPts":170.1,"netRs":2843,"trades":5},"2025-11-19":{"grossPts":339.4,"netRs":7922,"trades":5},"2025-11-20":{"grossPts":116.4,"netRs":1684,"trades":4},"2025-11-21":{"grossPts":233.2,"netRs":4736,"trades":5},"2025-11-24":{"grossPts":172.1,"netRs":2903,"trades":5},"2025-11-25":{"grossPts":181,"netRs":3170,"trades":5},"2025-11-26":{"grossPts":340.1,"netRs":7943,"trades":5},"2025-11-27":{"grossPts":173.2,"netRs":2936,"trades":5},"2025-11-28":{"grossPts":-33.5,"netRs":-3265,"trades":5}},"2025-12":{"2025-12-01":{"grossPts":169.9,"netRs":2837,"trades":5},"2025-12-02":{"grossPts":-63.7,"netRs":-4171,"trades":5},"2025-12-04":{"grossPts":386.5,"netRs":9335,"trades":5},"2025-12-05":{"grossPts":222.2,"netRs":4406,"trades":5},"2025-12-08":{"grossPts":246.2,"netRs":5126,"trades":5},"2025-12-09":{"grossPts":342.9,"netRs":8027,"trades":5},"2025-12-10":{"grossPts":267.7,"netRs":5771,"trades":5},"2025-12-11":{"grossPts":410.8,"netRs":10064,"trades":5},"2025-12-12":{"grossPts":363.1,"netRs":8633,"trades":5},"2025-12-15":{"grossPts":149.3,"netRs":2219,"trades":5},"2025-12-16":{"grossPts":178.8,"netRs":3104,"trades":5},"2025-12-17":{"grossPts":162.9,"netRs":2627,"trades":5},"2025-12-18":{"grossPts":169.9,"netRs":2837,"trades":5},"2025-12-19":{"grossPts":98.4,"netRs":692,"trades":5},"2025-12-22":{"grossPts":37.7,"netRs":-1129,"trades":5},"2025-12-23":{"grossPts":-80.1,"netRs":-3307,"trades":2},"2025-12-24":{"grossPts":-3.6,"netRs":-2368,"trades":5},"2025-12-26":{"grossPts":137.4,"netRs":1862,"trades":5},"2025-12-29":{"grossPts":125,"netRs":1490,"trades":5},"2025-12-30":{"grossPts":1.6,"netRs":-2212,"trades":5},"2025-12-31":{"grossPts":135.2,"netRs":1796,"trades":5}},"2026-01":{"2026-01-01":{"grossPts":72.9,"netRs":-73,"trades":5},"2026-01-02":{"grossPts":208.8,"netRs":4004,"trades":5},"2026-01-05":{"grossPts":405,"netRs":9890,"trades":5},"2026-01-06":{"grossPts":104.7,"netRs":881,"trades":5},"2026-01-07":{"grossPts":35.9,"netRs":-731,"trades":4},"2026-01-08":{"grossPts":100.2,"netRs":746,"trades":5},"2026-01-12":{"grossPts":376.7,"netRs":9041,"trades":5},"2026-01-13":{"grossPts":375.8,"netRs":9014,"trades":5},"2026-01-14":{"grossPts":287.8,"netRs":6374,"trades":5},"2026-01-19":{"grossPts":383.9,"netRs":9257,"trades":5},"2026-01-20":{"grossPts":158.8,"netRs":2504,"trades":5},"2026-01-21":{"grossPts":1085.9,"netRs":30317,"trades":5},"2026-01-22":{"grossPts":427.6,"netRs":10568,"trades":5},"2026-01-23":{"grossPts":233.2,"netRs":4736,"trades":5},"2026-01-28":{"grossPts":160.8,"netRs":2564,"trades":5},"2026-01-29":{"grossPts":194.5,"netRs":3575,"trades":5},"2026-01-30":{"grossPts":284.9,"netRs":6287,"trades":5}},"2026-02":{"2026-02-01":{"grossPts":1413.6,"netRs":40148,"trades":5},"2026-02-02":{"grossPts":661.7,"netRs":17591,"trades":5},"2026-02-03":{"grossPts":128.5,"netRs":1595,"trades":5},"2026-02-04":{"grossPts":246.9,"netRs":5147,"trades":5},"2026-02-05":{"grossPts":231.7,"netRs":4691,"trades":5},"2026-02-06":{"grossPts":422.8,"netRs":10424,"trades":5},"2026-02-09":{"grossPts":107.9,"netRs":977,"trades":5},"2026-02-10":{"grossPts":149.5,"netRs":2225,"trades":5},"2026-02-11":{"grossPts":102.3,"netRs":809,"trades":5},"2026-02-12":{"grossPts":80.6,"netRs":158,"trades":5},"2026-02-16":{"grossPts":66.8,"netRs":-256,"trades":5},"2026-02-17":{"grossPts":79.4,"netRs":1478,"trades":2},"2026-02-18":{"grossPts":191.2,"netRs":3476,"trades":5},"2026-02-19":{"grossPts":125.6,"netRs":1508,"trades":5},"2026-02-20":{"grossPts":-20.8,"netRs":-2884,"trades":5},"2026-02-23":{"grossPts":-22.5,"netRs":-2935,"trades":5},"2026-02-24":{"grossPts":-44.9,"netRs":-3607,"trades":5},"2026-02-25":{"grossPts":70.8,"netRs":1672,"trades":1},"2026-02-26":{"grossPts":304.7,"netRs":6881,"trades":5},"2026-02-27":{"grossPts":260.9,"netRs":5567,"trades":5}},"2026-03":{"2026-03-02":{"grossPts":463.3,"netRs":11639,"trades":5},"2026-03-05":{"grossPts":600.3,"netRs":15749,"trades":5},"2026-03-06":{"grossPts":141,"netRs":1970,"trades":5},"2026-03-10":{"grossPts":-163.6,"netRs":-7168,"trades":5},"2026-03-11":{"grossPts":453.9,"netRs":11357,"trades":5},"2026-03-16":{"grossPts":504.9,"netRs":12887,"trades":5},"2026-03-17":{"grossPts":208.6,"netRs":3998,"trades":5},"2026-03-18":{"grossPts":493.8,"netRs":12554,"trades":5},"2026-03-19":{"grossPts":669.6,"netRs":17828,"trades":5},"2026-03-20":{"grossPts":738.9,"netRs":19907,"trades":5},"2026-03-23":{"grossPts":252.3,"netRs":5309,"trades":5},"2026-03-24":{"grossPts":706.8,"netRs":18944,"trades":5},"2026-03-25":{"grossPts":396.8,"netRs":9644,"trades":5},"2026-03-30":{"grossPts":335.9,"netRs":7817,"trades":5}},"2026-04":{"2026-04-02":{"grossPts":157.4,"netRs":2462,"trades":5},"2026-04-07":{"grossPts":197.8,"netRs":3674,"trades":5},"2026-04-08":{"grossPts":594,"netRs":15560,"trades":5},"2026-04-09":{"grossPts":445.8,"netRs":11114,"trades":5},"2026-04-10":{"grossPts":256.1,"netRs":5423,"trades":5},"2026-04-13":{"grossPts":509,"netRs":13010,"trades":5},"2026-04-16":{"grossPts":313.3,"netRs":8043,"trades":3},"2026-04-17":{"grossPts":356.4,"netRs":8432,"trades":5},"2026-04-20":{"grossPts":139.3,"netRs":1919,"trades":5},"2026-04-21":{"grossPts":126,"netRs":1520,"trades":5},"2026-04-22":{"grossPts":289.9,"netRs":6437,"trades":5},"2026-04-23":{"grossPts":153.7,"netRs":2351,"trades":5},"2026-04-27":{"grossPts":137.3,"netRs":2763,"trades":3},"2026-04-28":{"grossPts":178.9,"netRs":3107,"trades":5},"2026-04-29":{"grossPts":500.9,"netRs":12767,"trades":5},"2026-04-30":{"grossPts":198.7,"netRs":3701,"trades":5}},"2026-05":{"2026-05-05":{"grossPts":526.8,"netRs":13544,"trades":5},"2026-05-06":{"grossPts":182.5,"netRs":3215,"trades":5},"2026-05-07":{"grossPts":383.7,"netRs":9251,"trades":5},"2026-05-08":{"grossPts":334.8,"netRs":7784,"trades":5},"2026-05-13":{"grossPts":620.4,"netRs":16352,"trades":5},"2026-05-14":{"grossPts":713.1,"netRs":19133,"trades":5},"2026-05-15":{"grossPts":342.3,"netRs":8009,"trades":5},"2026-05-18":{"grossPts":23.1,"netRs":-1567,"trades":5},"2026-05-19":{"grossPts":186.6,"netRs":3338,"trades":5},"2026-05-20":{"grossPts":184.3,"netRs":3269,"trades":5},"2026-05-21":{"grossPts":548.7,"netRs":14201,"trades":5},"2026-05-22":{"grossPts":201.8,"netRs":3794,"trades":5}}};
+
+window._rpMonths=${JSON.stringify(getRealPremiumHistoryWithLive().months)};
+window._rpDaily=${JSON.stringify(getRealPremiumHistoryWithLive().dailyByMonth)};
+(function(){
+  var tbody=document.getElementById('sig3-mo-tbody');
+  if(!tbody||!window._rpMonths)return;
+  function money(n){
+    n=Math.round(Number(n||0));
+    return (n>=0?'+':'&#8722;')+'&#8377;'+Math.abs(n).toLocaleString('en-IN');
+  }
+  function cls(n){return Number(n||0)>=0?'sig3-g':'sig3-r';}
+  function lbl(mo){
+    var p=mo.split('-');
+    var names=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+    return names[parseInt(p[1],10)-1]+" '"+p[0].slice(2);
+  }
+  var rows=Object.keys(window._rpMonths).sort().reverse().map(function(mo){
+    var m=window._rpMonths[mo]||{};
+    var yr=mo.slice(0,4);
+    return '<tr data-year="'+yr+'" data-mo="'+mo+'" style="cursor:pointer" onclick="_sigDrill(\\\''+mo+'\\\')">'
+      +'<td style="font-weight:600"><span id="sig3-i-'+mo+'" style="font-size:.7rem;margin-right:.3rem;transition:transform .2s">&#9658;</span>'+lbl(mo)+'</td>'
+      +'<td><span class="sig3-pnl-rs '+cls(m.futRsNet)+'" style="font-size:.95rem">'+money(m.futRsNet)+'</span></td>'
+      +'<td><span class="sig3-pnl-rs '+cls(m.optRsNet)+'" style="font-size:.95rem">'+money(m.optRsNet)+'</span></td>'
+      +'<td>'+(m.trades||0)+'</td>'
+      +'<td>'+(m.days||0)+'</td>'
+      +'</tr><tr id="sig3-d-'+mo+'" style="display:none"><td colspan="5" style="padding:0"></td></tr>';
+  }).join('');
+  tbody.innerHTML=rows;
+})();
+
+function _sigYr(btn,yr){
+  document.querySelectorAll('#sig3-mo-tbody tr[data-year]').forEach(function(r){
+    var show=yr==='all'||r.dataset.year===yr;
+    r.style.display=show?'':'none';
+    var dr=document.getElementById('sig3-d-'+r.dataset.mo);
+    if(dr&&!show){dr.style.display='none';var ic=document.getElementById('sig3-i-'+r.dataset.mo);if(ic)ic.innerHTML='&#9658;';}
+  });
+  document.querySelectorAll('.sig3-yr-b').forEach(function(b){b.style.background='transparent';b.style.color='var(--text-muted)';b.style.borderColor='var(--border)';});
+  btn.style.background='var(--accent-purple,#7c3aed)';btn.style.color='#fff';btn.style.borderColor='var(--accent-purple,#7c3aed)';
+}
+function _sigDrill(mo){
+  var dr=document.getElementById('sig3-d-'+mo);
+  var ic=document.getElementById('sig3-i-'+mo);
+  if(!dr)return;
+  if(dr.style.display!=='none'){dr.style.display='none';if(ic)ic.innerHTML='&#9658;';return;}
+  var days=(window._rpDaily&&window._rpDaily[mo])||{};
+  var sorted=Object.keys(days).sort().reverse();
+  if(sorted.length===0){
+    dr.querySelector('td').innerHTML='<table style="width:100%;border-collapse:collapse"><tr><td colspan="5" style="padding:.5rem 1.8rem;font-size:.8rem;color:var(--text-muted)">Daily real-premium breakdown not stored yet for this month</td></tr></table>';
+    dr.style.display='';
+    if(ic)ic.innerHTML='&#9660;';
+    return;
+  }
+  var MN=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  function money(n){n=Math.round(Number(n||0));return (n>=0?'+':'&#8722;')+'&#8377;'+Math.abs(n).toLocaleString('en-IN');}
+  function cls(n){return Number(n||0)>=0?'sig3-g':'sig3-r';}
+  var html='<table style="width:100%;border-collapse:collapse"><thead><tr style="background:rgba(255,255,255,.035)"><th style="padding:.35rem .5rem .35rem 1.8rem;text-align:left;font-size:.68rem;color:var(--text-muted)">Day</th><th style="text-align:left;font-size:.68rem;color:var(--text-muted)">Futures</th><th style="text-align:left;font-size:.68rem;color:var(--text-muted)">Options</th><th style="text-align:left;font-size:.68rem;color:var(--text-muted)">Trades</th><th style="text-align:left;font-size:.68rem;color:var(--text-muted)">Exit reasons</th></tr></thead><tbody>';
+  for(var i=0;i<sorted.length;i++){
+    var date=sorted[i];var d=days[date]||{};
+    var parts=date.split('-');var lbl=parseInt(parts[2],10)+' '+MN[parseInt(parts[1],10)-1];
+    var reasons=(d.reasons||[]).join(', ').replace(/_/g,' ');
+    html+='<tr style="background:rgba(255,255,255,.02)">'
+      +'<td style="padding:.28rem .5rem .28rem 1.8rem;font-size:.76rem;color:var(--text-muted);white-space:nowrap">'+lbl+'</td>'
+      +'<td style="font-size:.78rem;font-weight:700" class="'+cls(d.futRsNet)+'">'+money(d.futRsNet)+'</td>'
+      +'<td style="font-size:.78rem;font-weight:700" class="'+cls(d.optRsNet)+'">'+money(d.optRsNet)+'</td>'
+      +'<td style="font-size:.75rem;color:var(--text-muted)">'+(d.trades||0)+'</td>'
+      +'<td style="font-size:.68rem;color:var(--text-muted);max-width:240px">'+(reasons||'—')+'</td>'
+      +'</tr>';
+  }
+  html+='</tbody></table>';
+  dr.querySelector('td').innerHTML=html;
+  dr.style.display='';
+  if(ic)ic.innerHTML='&#9660;';
+}
+
+</script>
 
     ${!loggedIn ? `
     <div class="gv-cta">

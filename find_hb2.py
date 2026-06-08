@@ -1,9 +1,4 @@
-import re
-lines = open('/root/zeroscreen/dist/server.js').readlines()
-pat = re.compile(r'(?<![_a-zA-Z0-9])hb(?![_a-zA-Z0-9\-])')
-for i, l in enumerate(lines[8740:9270], start=8741):
-    m = pat.search(l)
-    if m:
-        before = l[:m.start()]
-        if '.hb' not in before[-3:] and 'hb-' not in l[m.start():m.start()+5]:
-            print(f'{i}: {l.rstrip()[:120]}')
+#!/usr/bin/env python3
+import runpy
+from pathlib import Path
+runpy.run_path(Path(__file__).resolve().parent / 'scripts' / 'tools' / 'find_hb2.py', run_name='__main__')

@@ -1,10 +1,4 @@
-raw=open('/root/zeroscreen/dist/server.js','rb').read()
-# Find the MONTHLY P&L section and get full context
-idx = raw.find(b'<!-- MONTHLY P&L -->')
-print('--- MONTHLY SECTION ---')
-print(repr(raw[idx:idx+300]))
-print()
-# Also find what comes after the monthly table
-end = raw.find(b'</table>', idx)
-print('--- AFTER TABLE ---')
-print(repr(raw[end:end+300]))
+#!/usr/bin/env python3
+import runpy
+from pathlib import Path
+runpy.run_path(Path(__file__).resolve().parent / 'scripts' / 'checks' / 'check_full_monthly.py', run_name='__main__')

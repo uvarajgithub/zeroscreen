@@ -1,11 +1,17 @@
 {
   "activeStrategy": "DRISHTI_V1",
   "quantity": 30,
-  "mode": "PAPER",
+  "mode": "LIVE_SHADOW",
   "risk": {
-    "maxDailyLossPoints": 150,
+    "maxDailyLossPoints": 200,
     "maxTradesPerDay": 5,
-    "dailyLossCap": 150,
-    "riskPerTradePercent": 1
+    "dailyLossCap": 200,
+    "riskPerTradePercent": 1,
+    "maxDailyLossRs": 6000,
+    "maxFuturesLossPts": 150,
+    "maxOptionsLossPts": 150,
+    "maxAllowedSlippagePts": 50,
+    "realEntryBlockRs": 4500,
+    "realIntradayExitRs": 6000
   }
 }

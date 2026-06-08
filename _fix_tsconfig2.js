@@ -1,6 +1,3 @@
-const fs = require('fs');
-const path = '/home/ubuntu/trading-bot/tsconfig.json';
-const c = JSON.parse(fs.readFileSync(path, 'utf8'));
-c.compilerOptions.noEmitOnError = false;
-fs.writeFileSync(path, JSON.stringify(c, null, 2));
-console.log('tsconfig.json: noEmitOnError=false set');
+'use strict';
+// Compatibility wrapper; real script moved to scripts/patch.
+require('./scripts/patch/_fix_tsconfig2.js');

@@ -1,6 +1,4 @@
-import subprocess
-result = subprocess.run(
-    ['sqlite3', '/root/zeroscreen/zeroscreen.db', ".tables"],
-    capture_output=True, text=True
-)
-print("TABLES:", result.stdout)
+#!/usr/bin/env python3
+import runpy
+from pathlib import Path
+runpy.run_path(Path(__file__).resolve().parent / 'scripts' / 'checks' / 'check_db.py', run_name='__main__')

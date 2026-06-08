@@ -1,7 +1,4 @@
-raw=open('/root/zeroscreen/dist/server.js','rb').read()
-# Find th-panel-m in the source
-idx = raw.find(b'th-panel-m')
-if idx >= 0:
-    # Look back 500 chars for the route
-    start = max(0, idx-500)
-    print('Context before panel:', raw[start:idx+100])
+#!/usr/bin/env python3
+import runpy
+from pathlib import Path
+runpy.run_path(Path(__file__).resolve().parent / 'scripts' / 'checks' / 'check_route.py', run_name='__main__')

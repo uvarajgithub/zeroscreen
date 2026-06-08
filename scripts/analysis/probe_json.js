@@ -1,0 +1,11 @@
+const path = require('path');
+const d = require(path.join(process.cwd(), '5year-backtest-result.json'));
+console.log('keys:', Object.keys(d));
+console.log('totals:', JSON.stringify(d.totals));
+console.log('tradingDays:', d.tradingDays);
+console.log('tradedDays:', d.tradedDays);
+console.log('winRate:', d.winRate);
+console.log('period:', JSON.stringify(d.period));
+const months = Object.keys(d.monthly);
+console.log('monthly keys sample:', months.slice(0,2));
+console.log('monthly val sample:', JSON.stringify(d.monthly[months[0]]));

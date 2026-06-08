@@ -8,21 +8,26 @@ function log(event: string, details: Record<string, any> = {}) {
 }
 
 // process.env.MODE takes precedence (allows test-paper-trade.ts to force PAPER)
-const IS_PAPER = (process.env.MODE ?? config.mode ?? "LIVE").toUpperCase() === "PAPER";
+const RAW_MODE = (process.env.MODE ?? config.mode ?? "LIVE").toUpperCase();
+const IS_SHADOW_MODE = RAW_MODE === "PAPER" || RAW_MODE === "LIVE_SHADOW";
+const IS_PAPER = IS_SHADOW_MODE;
 
 // ── Paper trade simulator ─────────────────────────────────
 let paperOrderIdCounter = 1000;
 const paperPositions: Record<string, { qty: number; price: number }> = {};
 
 function simulatePaperOrder(symbol: string, type: "BUY" | "SELL", qty: number, price: number) {
-  const orderId = `PAPER-${paperOrderIdCounter++}`;
-  if (type === "BUY") {
-    paperPositions[symbol] = { qty, price };
-  } else {
+  const orderId = `${RAW_MODE === "LIVE_SHADOW" ? "SHADOW" : "PAPER"}-${paperOrderIdCounter++}`;
+  const signedQty = type === "BUY" ? qty : -qty;
+  const existing = paperPositions[symbol];
+  const nextQty = (existing?.qty ?? 0) + signedQty;
+  if (nextQty === 0) {
     delete paperPositions[symbol];
+  } else {
+    paperPositions[symbol] = { qty: nextQty, price };
   }
-  log("PAPER_ORDER", { orderId, symbol, type, qty, price });
-  return { order_id: orderId, status: "COMPLETE", filled_quantity: qty };
+  log(RAW_MODE === "LIVE_SHADOW" ? "SHADOW_ORDER" : "PAPER_ORDER", { orderId, symbol, type, qty, netQty: nextQty, price });
+  return { order_id: orderId, status: "COMPLETE", filled_quantity: qty, quantity: qty, average_price: price, transaction_type: type };
 }
 
 export function getPaperPositions() {
@@ -105,6 +110,7 @@ async function handleOrderState(order: any) {
 }
 
 // Spread filter for options (call before placing order)
+function isFuturesSymbol(symbol: string) { return /FUT$/i.test(symbol); }
 function isOptionLiquid(bid: number, ask: number) {
   if (bid <= 0 || ask <= 0) return false;
   const mid = (bid + ask) / 2;
@@ -128,20 +134,24 @@ export async function placeTrade(symbol: string, price: number, qty: number = co
     return result;
   }
 
-  // --- Spread Guard ---
-  try {
-    const quoteResp = await kite.getQuote([`NFO:${symbol}`]);
-    const quote = quoteResp[`NFO:${symbol}`];
-    if (quote && quote.depth) {
-      const bid = quote.depth.buy[0]?.price || 0;
-      const ask = quote.depth.sell[0]?.price || 0;
-      if (!isOptionLiquid(bid, ask)) {
-        throw new Error(`Bid-ask spread too wide: bid=${bid}, ask=${ask}`);
+  // --- Spread Guard (options only; futures spreads are not premium spreads) ---
+  if (!isFuturesSymbol(symbol)) {
+    try {
+      const quoteResp = await kite.getQuote([`NFO:${symbol}`]);
+      const quote = quoteResp[`NFO:${symbol}`];
+      if (quote && quote.depth) {
+        const bid = quote.depth.buy[0]?.price || 0;
+        const ask = quote.depth.sell[0]?.price || 0;
+        if (!isOptionLiquid(bid, ask)) {
+          throw new Error(`Bid-ask spread too wide: bid=${bid}, ask=${ask}`);
+        }
       }
+    } catch (e) {
+      console.error("Spread check failed:", e);
+      throw new Error("Spread check failed: " + (e instanceof Error ? e.message : String(e)));
     }
-  } catch (e) {
-    console.error("Spread check failed:", e);
-    throw new Error("Spread check failed: " + (e instanceof Error ? e.message : String(e)));
+  } else {
+    log("SPREAD_GUARD_SKIP", { symbol, reason: "futures_symbol" });
   }
   console.log(`Placing trade: ${symbol} qty=${qty} direction=${direction}`);
   let buyOrderId = "";
@@ -184,18 +194,20 @@ export async function placeTrade(symbol: string, price: number, qty: number = co
       }
       console.log(`Retry ${direction} order placed: ${buyOrderId}`);
     }
-    // Partial fill handling
-    const filledQty = order?.filled_quantity ?? 0;
-    if (filledQty < qty) {
-      handlePartialFill(symbol, qty, filledQty);
-      // Optionally, adjust SL/targets here
-    }
     // Verify fill before returning
     await verifyOrderFilled(buyOrderId);
     console.log(`${direction} order filled: ${buyOrderId}`);
     // Re-fetch order to get final COMPLETE status after verification
     const finalOrders: any[] = await kite.getOrders();
     order = finalOrders.find(o => o.order_id === buyOrderId) ?? order;
+    const filledQty = Number(order?.filled_quantity ?? 0);
+    if (filledQty <= 0) {
+      stopTradingForDay();
+      throw new Error(`Order ${buyOrderId} completed with zero filled quantity`);
+    }
+    if (filledQty < qty) {
+      handlePartialFill(symbol, qty, filledQty);
+    }
     // Note: SL is monitored in real-time via index price in index.ts (candle-low SL).
     // No Kite SL-M order is placed because trigger price is index-based, not option-price-based.
     return order;
@@ -248,16 +260,33 @@ export async function exitTrade(symbol: string, qty: number = config.quantity, d
       stopTradingForDay();
       throw new Error(`Exit order REJECTED after retry: ${exitOrder.status_message}`);
     }
-    console.log(`Retry EXIT(${direction}) order placed: ${retryResp.order_id}`);
-    return;
+    await verifyOrderFilled(retryResp.order_id);
+    const finalRetryOrders: any[] = await kite.getOrders();
+    const finalRetryOrder = finalRetryOrders.find(o => o.order_id === retryResp.order_id) ?? exitOrder;
+    const retryFilledQty = Number(finalRetryOrder?.filled_quantity ?? 0);
+    if (retryFilledQty <= 0) {
+      stopTradingForDay();
+      throw new Error(`Exit order ${retryResp.order_id} completed with zero filled quantity`);
+    }
+    if (retryFilledQty < qty) {
+      handlePartialFill(symbol, qty, retryFilledQty);
+    }
+    console.log(`Retry EXIT(${direction}) order filled: ${retryResp.order_id}`);
+    return finalRetryOrder;
   }
-  const order = exitOrder;
-  // Partial fill handling for exit
-  const filledQty = order?.filled_quantity ?? 0;
+  await verifyOrderFilled(resp.order_id);
+  const finalOrders: any[] = await kite.getOrders();
+  const order = finalOrders.find(o => o.order_id === resp.order_id) ?? exitOrder;
+  const filledQty = Number(order?.filled_quantity ?? 0);
+  if (filledQty <= 0) {
+    stopTradingForDay();
+    throw new Error(`Exit order ${resp.order_id} completed with zero filled quantity`);
+  }
   if (filledQty < qty) {
     handlePartialFill(symbol, qty, filledQty);
   }
-  console.log(`Exit order placed: ${resp.order_id}`);
+  console.log(`Exit order filled: ${resp.order_id}`);
+  return order;
 }
 
 // Exit all open positions (forced square-off)
@@ -265,9 +294,10 @@ export async function squareOffAll() {
   // ── PAPER MODE ──
   if (IS_PAPER) {
     for (const symbol of Object.keys(paperPositions)) {
-      simulatePaperOrder(symbol, "SELL", paperPositions[symbol].qty, 0);
+      const qty = paperPositions[symbol].qty;
+      simulatePaperOrder(symbol, qty > 0 ? "SELL" : "BUY", Math.abs(qty), 0);
     }
-    log("PAPER_SQUAREOFF", { message: "All paper positions squared off" });
+    log(RAW_MODE === "LIVE_SHADOW" ? "SHADOW_SQUAREOFF" : "PAPER_SQUAREOFF", { message: "All shadow/paper positions squared off" });
     return;
   }
   try {

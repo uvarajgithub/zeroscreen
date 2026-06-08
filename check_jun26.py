@@ -1,6 +1,4 @@
-import json
-d = json.load(open('/home/ubuntu/trading-bot/cache/banknifty_5yr.json'))
-# Check June 2026 dates
-for date in sorted(d.keys()):
-    if date.startswith('2026-06'):
-        print(f'{date}: {len(d[date])} candles')
+#!/usr/bin/env python3
+import runpy
+from pathlib import Path
+runpy.run_path(Path(__file__).resolve().parent / 'scripts' / 'checks' / 'check_jun26.py', run_name='__main__')

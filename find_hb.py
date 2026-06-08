@@ -1,5 +1,4 @@
-import re
-lines = open('/root/zeroscreen/dist/server.js').readlines()
-for i, l in enumerate(lines[9199:9449], start=9200):
-    if re.search(r'(?<![_a-zA-Z])hb(?![_\-a-zA-Z0-9])', l):
-        print(f'{i}: {l.rstrip()[:120]}')
+#!/usr/bin/env python3
+import runpy
+from pathlib import Path
+runpy.run_path(Path(__file__).resolve().parent / 'scripts' / 'tools' / 'find_hb.py', run_name='__main__')

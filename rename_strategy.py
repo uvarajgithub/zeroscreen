@@ -1,12 +1,4 @@
-import os
-f='/root/zeroscreen/dist/server.js'
-raw=open(f,'rb').read()
-old=b'DRISHTI_V1 \\xb7 SL=150pts \\xb7 lot=30'
-new=b'BankNifty Futures \\xb7 SL=150pts \\xb7 lot=30'
-count=raw.count(old)
-print('found:', count)
-out=raw.replace(old,new)
-tmp=f+'.ren_tmp'
-open(tmp,'wb').write(out)
-os.rename(tmp,f)
-print('DONE')
+#!/usr/bin/env python3
+import runpy
+from pathlib import Path
+runpy.run_path(Path(__file__).resolve().parent / 'scripts' / 'patch' / 'rename_strategy.py', run_name='__main__')

@@ -1,3 +1,4 @@
-data = open('/root/zeroscreen/dist/server.js', encoding='utf-8').read()
-lines = data.split('\n')
-print('Line 10628:', repr(lines[10627]))
+#!/usr/bin/env python3
+import runpy
+from pathlib import Path
+runpy.run_path(Path(__file__).resolve().parent / 'scripts' / 'tools' / 'show_line.py', run_name='__main__')

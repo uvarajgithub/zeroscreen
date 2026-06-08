@@ -7,7 +7,17 @@
     "dev": "ts-node-dev --respawn src/server.ts",
     "start": "ts-node src/server.ts",
     "build": "tsc",
-    "seed": "ts-node src/scheduler.ts --seed"
+    "seed": "ts-node src/scheduler.ts --seed",
+    "repo:inventory": "node scripts/repo-inventory.js",
+    "repo:verify-structure": "node scripts/verify-structure.js",
+    "repo:verify-structure:strict": "node scripts/verify-structure.js --strict",
+    "repo:scan-check-risk": "node scripts/scan-root-check-risk.js",
+    "repo:scan-check-py-risk": "node scripts/scan-root-check-py-risk.js",
+    "repo:scan-backtest-risk": "node scripts/scan-root-backtest-risk.js",
+    "repo:scan-utility-js-risk": "node scripts/scan-root-utility-js-risk.js",
+    "repo:migrate-with-wrapper": "node scripts/migrate-with-wrapper.js",
+    "repo:migrate-py-with-wrapper": "node scripts/migrate-py-with-wrapper.js",
+    "repo:patch-utility-js-paths": "node scripts/patch-utility-js-paths.js"
   },
   "dependencies": {
     "bcrypt": "^6.0.0",

@@ -1,8 +1,4 @@
-import json
-d = json.load(open('/home/ubuntu/trading-bot/cache/banknifty_5yr.json'))
-dates = sorted(d.keys())
-# Skip weekends/holidays (empty), find first trading day
-for date in dates:
-    if d[date]:
-        print(f'{date}: {d[date][0]}')
-        break
+#!/usr/bin/env python3
+import runpy
+from pathlib import Path
+runpy.run_path(Path(__file__).resolve().parent / 'scripts' / 'checks' / 'check_cache3.py', run_name='__main__')

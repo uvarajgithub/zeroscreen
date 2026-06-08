@@ -1,5 +1,23 @@
 # ZeroScreen — Restore Points
 
+## Repository Maintainability (Non-Breaking)
+
+- Structure guide: `docs/STRUCTURE_GUIDE.md`
+- Migration log: `docs/MIGRATION_LOG.md`
+- Inventory report: `npm run repo:inventory`
+- Structure guard (warn mode): `npm run repo:verify-structure`
+- Structure guard (strict mode): `npm run repo:verify-structure:strict`
+- Root check risk scan: `npm run repo:scan-check-risk`
+- Root check Python risk scan: `npm run repo:scan-check-py-risk`
+- Root backtest risk scan: `npm run repo:scan-backtest-risk`
+- Root utility JS risk scan: `npm run repo:scan-utility-js-risk`
+- Wrapper migration helper: `npm run repo:migrate-with-wrapper -- <targetDir> <files...>`
+- Python wrapper migration helper: `npm run repo:migrate-py-with-wrapper -- <targetDir> <files...>`
+- Utility JS path patch helper: `npm run repo:patch-utility-js-paths -- <files...>`
+
+This setup is intentionally compatibility-first. It does not move existing files yet.
+It adds tooling so future organization can happen in controlled batches.
+
 ## 🟢 RESTORE POINT 1 — Dashboard BHAV V3 Watch Card (May 25, 2026)
 
 ### What's in this restore point

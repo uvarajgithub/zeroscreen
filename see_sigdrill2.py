@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-f = '/root/zeroscreen/dist/server.js'
-data = open(f, 'rb').read()
-idx = data.find(b'function _sigDrill(')
-print(repr(data[idx+800:idx+1400]))
+import runpy
+from pathlib import Path
+runpy.run_path(Path(__file__).resolve().parent / 'scripts' / 'tools' / 'see_sigdrill2.py', run_name='__main__')

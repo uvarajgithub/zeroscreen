@@ -1,13 +1,4 @@
-import json
-d = json.load(open('/home/ubuntu/trading-bot/cache/banknifty_5yr.json'))
-# Find dates with candles that don't have 'h' key
-for date in sorted(d.keys()):
-    candles = d[date]
-    for c in candles:
-        if 'h' not in c:
-            print(f'{date}: candle without h: {c}')
-            break
-    else:
-        continue
-    break
-print('check done')
+#!/usr/bin/env python3
+import runpy
+from pathlib import Path
+runpy.run_path(Path(__file__).resolve().parent / 'scripts' / 'checks' / 'check_cache4.py', run_name='__main__')

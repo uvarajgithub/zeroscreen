@@ -1,6 +1,4 @@
-import json
-d = json.load(open('/home/ubuntu/trading-bot/cache/banknifty_5yr.json'))
-# Check June 2026 and May 2026 candle formats
-for date in ['2026-06-02', '2026-06-01', '2026-05-30', '2026-05-26', '2026-05-25']:
-    if date in d and d[date]:
-        print(f'{date}: {d[date][0]}')
+#!/usr/bin/env python3
+import runpy
+from pathlib import Path
+runpy.run_path(Path(__file__).resolve().parent / 'scripts' / 'checks' / 'check_jun_candles.py', run_name='__main__')
