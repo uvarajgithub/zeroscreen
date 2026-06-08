@@ -589,6 +589,18 @@ Notes:
 - This pass is strictly visibility-only.
 - `package.json`, `package-lock.json`, and `tsconfig.json` remain visible at root intentionally.
 
+## Root Declutter Pass 5 (Runtime JS Guardrail)
+Classified and retained root runtime JS files:
+- `amina-live.js`, `auto_token.js`, `order.js`, `server.js`, `server_vps.js`
+
+Rationale:
+- These files contain root-relative imports and/or deployment path assumptions.
+- Physical relocation would require broad path rewrites and introduces avoidable runtime risk.
+
+Action:
+- Keep files physically in root for compatibility.
+- Hide them in Explorer/Search for non-breaking visual declutter.
+
 ## Validation Performed
 - Wrapper presence validated.
 - Selected wrappers executed.

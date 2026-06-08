@@ -39,7 +39,12 @@
     "5year-backtest-result.json": true,
     "sessions.db": true,
     "zeroscreen.db": true,
-    "user-settings.json": true
+    "user-settings.json": true,
+    "amina-live.js": true,
+    "auto_token.js": true,
+    "order.js": true,
+    "server.js": true,
+    "server_vps.js": true
   },
   "search.exclude": {
     "backtest_*.js": true,
@@ -81,6 +86,11 @@
     "5year-backtest-result.json": true,
     "sessions.db": true,
     "zeroscreen.db": true,
-    "user-settings.json": true
+    "user-settings.json": true,
+    "amina-live.js": true,
+    "auto_token.js": true,
+    "order.js": true,
+    "server.js": true,
+    "server_vps.js": true
   }
 }

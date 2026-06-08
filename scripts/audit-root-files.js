@@ -30,6 +30,7 @@ function classify(file) {
   if (/\.(exe|sh)$/.test(file)) return 'tooling-binary-script';
   if (['README.md', 'CHECKLIST.md'].includes(file) || /^SESSION_\d{4}_\d{2}_\d{2}\.md$/.test(file)) return 'docs';
   if (['server.ts', 'server_zs.ts', 'amina-live.ts', 'order.ts', 'order_vps.ts', 'index_vps.ts'].includes(file)) return 'core-runtime-ts';
+  if (['amina-live.js', 'auto_token.js', 'order.js', 'server.js', 'server_vps.js'].includes(file)) return 'core-runtime-js';
   if (['db.ts', 'drishti_strategy.ts', 'mailer.ts', 'nse.ts', 'scheduler.ts', 'scraper.ts'].includes(file)) return 'root-ts-wrapper';
   if (/\.(ts|js|py)$/.test(file)) return 'other-code-root';
   return 'other';
@@ -59,4 +60,5 @@ const show = (key, max = 30) => {
 show('artifact-or-asset', 120);
 show('tooling-binary-script', 120);
 show('docs', 120);
+show('core-runtime-js', 120);
 show('other-code-root', 80);
