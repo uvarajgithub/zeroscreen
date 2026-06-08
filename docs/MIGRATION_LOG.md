@@ -578,6 +578,17 @@ Notes:
 - Moves were limited to low-risk docs/snapshots only.
 - Runtime/core files and compatibility wrappers remain untouched.
 
+## Root Declutter Pass 4 (Runtime Artifact Visibility)
+Kept runtime/config root files in place (no path changes) but hid them in Explorer/Search for cleaner root view:
+- Runtime data: `5year-backtest-result.json`, `daily-pnl-log.json`, `trades_today.json`, `amina-candle-log.json`, `real-premium-*.json`
+- Runtime DBs: `sessions.db`, `zeroscreen.db`
+- Root static assets: `icon-*.svg`, `og-default.svg`
+- Local config: `user-settings.json`
+
+Notes:
+- This pass is strictly visibility-only.
+- `package.json`, `package-lock.json`, and `tsconfig.json` remain visible at root intentionally.
+
 ## Validation Performed
 - Wrapper presence validated.
 - Selected wrappers executed.

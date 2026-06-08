@@ -56,4 +56,7 @@ const show = (key, max = 30) => {
   arr.slice(0, max).forEach((f) => console.log(`- ${f}`));
 };
 
+show('artifact-or-asset', 120);
+show('tooling-binary-script', 120);
+show('docs', 120);
 show('other-code-root', 80);

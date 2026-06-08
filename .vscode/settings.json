@@ -30,10 +30,16 @@
     "SESSION_*.md": true,
     "CHECKLIST.md": true,
     "*.png": true,
+    "icon-*.svg": true,
+    "og-default.svg": true,
     "daily-pnl-log.json": true,
     "trades_today.json": true,
     "amina-candle-log.json": true,
-    "real-premium-*.json": true
+    "real-premium-*.json": true,
+    "5year-backtest-result.json": true,
+    "sessions.db": true,
+    "zeroscreen.db": true,
+    "user-settings.json": true
   },
   "search.exclude": {
     "backtest_*.js": true,
@@ -66,9 +72,15 @@
     "SESSION_*.md": true,
     "CHECKLIST.md": true,
     "*.png": true,
+    "icon-*.svg": true,
+    "og-default.svg": true,
     "daily-pnl-log.json": true,
     "trades_today.json": true,
     "amina-candle-log.json": true,
-    "real-premium-*.json": true
+    "real-premium-*.json": true,
+    "5year-backtest-result.json": true,
+    "sessions.db": true,
+    "zeroscreen.db": true,
+    "user-settings.json": true
   }
 }
