@@ -24,7 +24,16 @@
     "undo_*.py": true,
     "rename_*.py": true,
     "explain_*.py": true,
-    "_*.js": true
+    "_*.js": true,
+    "*.exe": true,
+    "auto_token_check.sh": true,
+    "SESSION_*.md": true,
+    "CHECKLIST.md": true,
+    "*.png": true,
+    "daily-pnl-log.json": true,
+    "trades_today.json": true,
+    "amina-candle-log.json": true,
+    "real-premium-*.json": true
   },
   "search.exclude": {
     "backtest_*.js": true,
@@ -51,6 +60,15 @@
     "undo_*.py": true,
     "rename_*.py": true,
     "explain_*.py": true,
-    "_*.js": true
+    "_*.js": true,
+    "*.exe": true,
+    "auto_token_check.sh": true,
+    "SESSION_*.md": true,
+    "CHECKLIST.md": true,
+    "*.png": true,
+    "daily-pnl-log.json": true,
+    "trades_today.json": true,
+    "amina-candle-log.json": true,
+    "real-premium-*.json": true
   }
 }

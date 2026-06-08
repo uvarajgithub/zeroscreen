@@ -5,6 +5,7 @@
 - Structure guide: `docs/STRUCTURE_GUIDE.md`
 - Migration log: `docs/MIGRATION_LOG.md`
 - Inventory report: `npm run repo:inventory`
+- Root file reason audit: `npm run repo:audit-root`
 - Structure guard (warn mode): `npm run repo:verify-structure`
 - Structure guard (strict mode): `npm run repo:verify-structure:strict`
 - Root check risk scan: `npm run repo:scan-check-risk`

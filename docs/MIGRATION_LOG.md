@@ -553,6 +553,31 @@ Notes:
 - Compatibility wrappers are retained for old command paths.
 - Canonical backtest implementations remain in `scripts/backtest/`.
 
+## Root Declutter Pass 2 (Artifacts/Tools/Docs Visibility)
+Expanded `.vscode/settings.json` excludes to hide additional non-core root clutter in Explorer/Search:
+- Local tunnel binaries and helpers (`*.exe`, `auto_token_check.sh`)
+- Session/checklist docs (`SESSION_*.md`, `CHECKLIST.md`)
+- Root image snapshots (`*.png`)
+- Generated runtime artifacts (`daily-pnl-log.json`, `trades_today.json`, `amina-candle-log.json`, `real-premium-*.json`)
+
+Notes:
+- This is visibility-only (non-breaking).
+- No runtime file paths were moved or deleted.
+
+## Root Declutter Pass 3 (Physical Low-Risk Moves)
+Moved non-runtime root files into docs folders:
+- `SESSION_2026_06_03.md` -> `docs/session/SESSION_2026_06_03.md`
+- `CHECKLIST.md` -> `docs/session/CHECKLIST.md`
+- Root UI snapshot PNG files -> `docs/assets/root-snapshots/`
+
+Validation:
+- `npm run repo:health` PASS after moves
+- `npm run repo:audit-root` now reports `TOTAL=265` (down from 274)
+
+Notes:
+- Moves were limited to low-risk docs/snapshots only.
+- Runtime/core files and compatibility wrappers remain untouched.
+
 ## Validation Performed
 - Wrapper presence validated.
 - Selected wrappers executed.
