@@ -17,9 +17,13 @@
 - Root visible files scan (after excludes): `npm run repo:scan-visible-root`
 - Root visible files strict policy: `npm run repo:scan-visible-root:strict`
 - Full repository health check: `npm run repo:health`
+- Pre-market GO/NO-GO check: `npm run repo:premarket-go`
 - Wrapper migration helper: `npm run repo:migrate-with-wrapper -- <targetDir> <files...>`
 - Python wrapper migration helper: `npm run repo:migrate-py-with-wrapper -- <targetDir> <files...>`
 - Utility JS path patch helper: `npm run repo:patch-utility-js-paths -- <files...>`
+
+For VPS checks, set this once in PowerShell before running pre-market check:
+`$env:ZS_VPS_PASSWORD="<your-vps-password>"`
 
 This setup is intentionally compatibility-first. It does not move existing files yet.
 It adds tooling so future organization can happen in controlled batches.
