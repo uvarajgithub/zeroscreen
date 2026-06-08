@@ -46,6 +46,11 @@ This repository currently contains production code and a large set of research/b
 - Root contains many historical scripts; immediate bulk moves are high risk.
 - Use the inventory script before planning any move batch.
 
+## Wrapper Declutter (Non-Breaking)
+- Root `backtest_*.js` and `bt_*.js` files are compatibility wrappers to preserve old commands.
+- To reduce day-to-day clutter without breaking workflows, workspace settings hide these root wrappers in Explorer/Search.
+- Canonical implementations remain under `scripts/backtest/`.
+
 ## TypeScript Core-Ignore Governance
 The root TypeScript risk scanner (`repo:scan-ts-risk`) intentionally marks the following files as `CORE_IGNORED` and does not auto-migrate them:
 - `amina-live.ts`

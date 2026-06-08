@@ -12,6 +12,7 @@ const allowedRootNames = new Set([
   "node_modules",
   "dist",
   "src",
+  ".vscode",
   "public",
   "views",
   "scripts",

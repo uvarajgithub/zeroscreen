@@ -9,6 +9,7 @@
 - Structure guard (strict mode): `npm run repo:verify-structure:strict`
 - Root check risk scan: `npm run repo:scan-check-risk`
 - Root check Python risk scan: `npm run repo:scan-check-py-risk`
+- Root Python wrapper scan: `npm run repo:scan-root-py-wrapper-risk`
 - Root backtest risk scan: `npm run repo:scan-backtest-risk`
 - Root utility JS risk scan: `npm run repo:scan-utility-js-risk`
 - Root TypeScript risk scan: `npm run repo:scan-ts-risk`

@@ -1,0 +1,10 @@
+{
+  "files.exclude": {
+    "backtest_*.js": true,
+    "bt_*.js": true
+  },
+  "search.exclude": {
+    "backtest_*.js": true,
+    "bt_*.js": true
+  }
+}

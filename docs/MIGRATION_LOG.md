@@ -530,6 +530,29 @@ Updated `scripts/scan-root-ts-risk.js` to print explicit `CORE_IGNORED` file rat
 
 Also documented the `CORE_IGNORED` TypeScript policy in `docs/STRUCTURE_GUIDE.md`.
 
+## Python Governance Tightening
+Added full root Python wrapper scanner:
+- `scripts/scan-root-py-wrapper-risk.js`
+- npm command: `repo:scan-root-py-wrapper-risk`
+
+Integrated into consolidated health pipeline:
+- `scripts/repo-health-check.js` now includes root Python wrapper scan.
+
+Validation:
+- Standalone root Python wrapper scan passes.
+- `repo:health` remains PASS with the new scan included.
+
+## Backtest Root Declutter (Non-Breaking)
+Observed root wrapper count:
+- `backtest_*.js` + `bt_*.js` in root: 61 files.
+
+Applied workspace declutter (no runtime behavior change):
+- Added `.vscode/settings.json` to hide root `backtest_*.js` and `bt_*.js` wrappers from Explorer/Search.
+
+Notes:
+- Compatibility wrappers are retained for old command paths.
+- Canonical backtest implementations remain in `scripts/backtest/`.
+
 ## Validation Performed
 - Wrapper presence validated.
 - Selected wrappers executed.

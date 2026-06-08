@@ -13,6 +13,7 @@
     "repo:verify-structure:strict": "node scripts/verify-structure.js --strict",
     "repo:scan-check-risk": "node scripts/scan-root-check-risk.js",
     "repo:scan-check-py-risk": "node scripts/scan-root-check-py-risk.js",
+    "repo:scan-root-py-wrapper-risk": "node scripts/scan-root-py-wrapper-risk.js",
     "repo:scan-backtest-risk": "node scripts/scan-root-backtest-risk.js",
     "repo:scan-utility-js-risk": "node scripts/scan-root-utility-js-risk.js",
     "repo:scan-ts-risk": "node scripts/scan-root-ts-risk.js",
