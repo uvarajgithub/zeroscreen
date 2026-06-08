@@ -74,3 +74,7 @@ Only this root file set is intended to remain visible in day-to-day development:
 - `style.css`, `server.ts.bak`
 
 All other root clutter should be hidden via `.vscode/settings.json` exclude rules unless explicitly promoted to this baseline.
+
+## Structure Guard Hardening
+`repo:verify-structure:strict` is now hardened to use explicit compatibility patterns and known file allowances.
+It no longer relies on blanket extension-based bypasses for all root `*.js`, `*.py`, `*.json`, or `*.png` files.

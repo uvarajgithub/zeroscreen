@@ -612,6 +612,13 @@ Strict baseline keeps only core files visible:
 
 Additional non-core root files flagged by strict scan were hidden (visibility-only) to satisfy policy.
 
+## Root Declutter Pass 7 (Structure Guard Hardening)
+Hardened `scripts/verify-structure.js` by removing overly broad wildcard allow rules and replacing them with explicit compatibility families plus known singleton files.
+
+Result:
+- `repo:verify-structure:strict` now meaningfully enforces root policy (no blanket `*.js/*.py/*.json/*.png` bypass)
+- `repo:health` remains PASS with strict structure + strict visible-root checks
+
 ## Validation Performed
 - Wrapper presence validated.
 - Selected wrappers executed.
