@@ -159,6 +159,8 @@ let optDailyRs = 0; // option ₹ (pts × qty)
 let optWins = 0;
 let optLosses = 0;
 let optATMCache = null;
+let drishtiFutSymbolCache = "";
+let drishtiFutSymbolCacheAt = 0;
 let optRecentTrades = [];
 let entryPrice = 0;
 let tradeSymbol = "";
@@ -1456,17 +1458,11 @@ function startDrishtiLTPMonitor() {
                 await executeDrishtiLTPExit(ltp, pts, `real_daily_intraday_stop_${REAL_INTRADAY_EXIT_RS}rs`);
                 return;
             }
-            // Update intraday peak and sync to DrishtiState
-            if (pts > drishtiIntradayPeak) {
-                drishtiIntradayPeak = pts;
-                const newTrail = drishtiIntradayPeak >= DRISHTI_TRAIL_GAP ? drishtiIntradayPeak - DRISHTI_TRAIL_GAP : -DRISHTI_SL_PTS;
-                if (drishtiIntradayPeak > DrishtiState.peakPts) {
-                    DrishtiState.peakPts = drishtiIntradayPeak;
-                    DrishtiState.trailStop = newTrail;
-                }
-            }
-            const currentTrail = drishtiIntradayPeak >= DRISHTI_TRAIL_GAP ? drishtiIntradayPeak - DRISHTI_TRAIL_GAP : -DRISHTI_SL_PTS;
-            log("LTP_MONITOR", { ltp, pts: pts.toFixed(1), peak: drishtiIntradayPeak.toFixed(1), trail: currentTrail, dir: tradeDirection, futLTP, realFutPts: realFutPts.toFixed(1), optLTP: lastOptionLTP, realOptPts: realOptPts.toFixed(1), projectedCombinedRs });
+            // LTP monitor is now a hard real-risk guard only.
+            // Strategy SL/trail exits must remain candle-close based via updateDrishtiTrail(),
+            // otherwise live exits no longer match the backtest.
+            const currentTrail = DrishtiState.trailStop;
+            log("LTP_RISK_MONITOR", { ltp, indexPts: pts.toFixed(1), candlePeak: Number(DrishtiState.peakPts || 0).toFixed(1), candleTrail: currentTrail, dir: tradeDirection, futLTP, realFutPts: realFutPts.toFixed(1), optLTP: lastOptionLTP, realOptPts: realOptPts.toFixed(1), projectedCombinedRs });
             if (realFutPts <= -REAL_FUTURES_SL_PTS) {
                 await executeDrishtiLTPExit(ltp, pts, `real_futures_sl_${REAL_FUTURES_SL_PTS}pts`);
                 return;
@@ -1475,22 +1471,12 @@ function startDrishtiLTPMonitor() {
                 await executeDrishtiLTPExit(ltp, pts, `real_options_sl_${REAL_OPTIONS_SL_PTS}pts`);
                 return;
             }
-            // SL hit
-            if (pts <= -DRISHTI_SL_PTS) {
-                await executeDrishtiLTPExit(ltp, pts, "ltp_sl_hit");
-                return;
-            }
-            // Trail hit
-            if (currentTrail > 0 && pts <= currentTrail) {
-                await executeDrishtiLTPExit(ltp, pts, `ltp_trail_${currentTrail.toFixed(0)}pts`);
-                return;
-            }
         }
         catch (e) {
             log("LTP_MONITOR_ERR", { error: e instanceof Error ? e.message : String(e) });
         }
-    }, 5 * 1000); // every 5 seconds — fast trail detection, ~3-4 pt slippage (options must exit while still ITM)
-    log("LTP_MONITOR_START", { entry: entryPrice, dir: tradeDirection, trailGap: DRISHTI_TRAIL_GAP });
+    }, 5 * 1000); // hard real-risk guard only; strategy trail exits on 15-min candle close
+    log("LTP_RISK_MONITOR_START", { entry: entryPrice, dir: tradeDirection, futuresEntry: drishtiFuturesEntry, hardFuturesSL: REAL_FUTURES_SL_PTS, hardOptionsSL: REAL_OPTIONS_SL_PTS });
 }
 // ═══════════════════════════════════════════════════════════════════════════
 // DRISHTI V1 — PDH/PDL Context + LOCK10 Trail (live bot)
@@ -1502,6 +1488,9 @@ function startDrishtiLTPMonitor() {
 // Returns the nearest-expiry BankNifty futures symbol (e.g. BANKNIFTY26JUNFUT)
 // Rolls automatically: picks the front-month until last-Thursday expiry, then next month
 function getDrishtiFuturesSymbol() {
+    if (drishtiFutSymbolCache && Date.now() - drishtiFutSymbolCacheAt < 15 * 60 * 1000) {
+        return Promise.resolve(drishtiFutSymbolCache);
+    }
     const { KiteConnect } = require('kiteconnect');
     const kite = new KiteConnect({ api_key: process.env.API_KEY || '' });
     kite.setAccessToken(process.env.ACCESS_TOKEN || '');
@@ -1517,7 +1506,10 @@ function getDrishtiFuturesSymbol() {
         const expiry = new Date(front.expiry);
         const daysToExpiry = (expiry.getTime() - today.getTime()) / 86400000;
         const chosen = daysToExpiry <= 1 && fut.length > 1 ? fut[1] : front;
-        return chosen.tradingsymbol;
+        drishtiFutSymbolCache = chosen.tradingsymbol;
+        drishtiFutSymbolCacheAt = Date.now();
+        log("DRISHTI_FUT_SYMBOL_CACHE", { symbol: drishtiFutSymbolCache, expiry: chosen.expiry });
+        return drishtiFutSymbolCache;
     });
 }
 // Returns ATM BankNifty option symbol for the nearest weekly expiry
@@ -1975,13 +1967,22 @@ async function runDrishtiBot() {
         log("DRISHTI_CANDLE", { idx: drishtiTodayCandles.length - 1, close: bc.close, no_signal: true });
         return;
     }
+    const signalDetectedAt = Date.now();
+    const signalCandleIdx = drishtiTodayCandles.length - 1;
+    log("DRISHTI_SIGNAL_DETECTED", { idx: signalCandleIdx, side: entrySig.side, reason: entrySig.reason, candleClose: bc.close, candleDate: bc.date ?? null });
     // ── Place trade (BankNifty FUTURES) ────────────────────────────────────
     let sym = "";
+    let symbolLookupMs = 0;
+    let futuresLtpMs = 0;
+    let orderPlacementMs = 0;
     try {
+        const symbolLookupStart = Date.now();
         sym = await Promise.race([
             getDrishtiFuturesSymbol(),
             new Promise((_, rej) => setTimeout(() => rej(new Error("futures symbol timeout")), 10000)),
         ]);
+        symbolLookupMs = Date.now() - symbolLookupStart;
+        log("DRISHTI_SYMBOL_READY", { symbol: sym, symbolLookupMs });
     }
     catch (e) {
         log("FUTURES_SYMBOL_FAIL", { error: String(e) });
@@ -2006,7 +2007,9 @@ async function runDrishtiBot() {
         }
     })();
     // Get FUTURES LTP (not index) right before placing order — most accurate price
+    const futuresLtpStart = Date.now();
     const futuresLTP = await (0, market_1.getOptionLTP)(sym).catch(() => 0);
+    futuresLtpMs = Date.now() - futuresLtpStart;
     const freshPrice = futuresLTP > 0 ? futuresLTP : bc.close;
     const _actualPrem = freshPrice - bc.close;
     appendRealPremiumAudit({ event: "futures_entry", symbol: sym, direction: entrySig.side, futuresLTP: freshPrice, indexClose: bc.close, premiumToIndex: _actualPrem, dte: _dte });
@@ -2029,8 +2032,11 @@ async function runDrishtiBot() {
     startDrishtiLTPMonitor(); // real-risk guard enabled; exits if futures/options real loss breaches cap
     try {
         tradeInProgress = true;
+        const orderStartAt = Date.now();
         const order = await (0, order_1.placeTrade)(sym, freshPrice, config_1.config.quantity, entrySig.side === "PE" ? "SELL" : "BUY");
+        orderPlacementMs = Date.now() - orderStartAt;
         tradeInProgress = false;
+        log("DRISHTI_ENTRY_TIMING", { idx: signalCandleIdx, side: entrySig.side, reason: entrySig.reason, symbol: sym, signalToOrderStartMs: orderStartAt - signalDetectedAt, symbolLookupMs, futuresLtpMs, orderPlacementMs, totalSignalToOrderDoneMs: Date.now() - signalDetectedAt });
         if (!order || order.status !== "COMPLETE" || order.filled_quantity <= 0) {
             stopDrishtiLTPMonitor(); // trade failed Γö stop LTP monitor
             log("ORDER_NOT_FILLED", { order });
@@ -2071,7 +2077,7 @@ async function runDrishtiBot() {
     // Options P&L = -₹1.4L over 5yr due to delta=0.5 + theta + spread eroding small wins.
     // Keep tracking for comparison data but DO NOT execute trades.
     try {
-        const optSym = await getDrishtiATMOptionSymbol(entrySig.side, bc.close);
+        const optSym = await getDrishtiATMOptionSymbol(entrySig.side, actualFillPrice || freshPrice);
         const optLTP = await (0, market_1.getOptionLTP)(optSym).catch(() => 0);
         if (optLTP > 0) {
             // Record for monitoring dashboard — not a real trade
@@ -2080,8 +2086,8 @@ async function runDrishtiBot() {
             optSymbol = optSym;
             optEntryPrem = optLTP;
             optEntryTime = Date.now();
-            appendRealPremiumAudit({ event: "options_entry", symbol: optSym, direction: entrySig.side, premium: optLTP, indexEntry: bc.close, note: "monitoring_only_not_live" });
-            log("OPT_MONITOR", { symbol: optSym, ltp: optLTP, dir: entrySig.side, indexEntry: bc.close.toFixed(0), note: "monitoring_only_not_live" });
+            appendRealPremiumAudit({ event: "options_entry", symbol: optSym, direction: entrySig.side, premium: optLTP, indexEntry: bc.close, futuresEntry: actualFillPrice || freshPrice, note: "monitoring_only_not_live" });
+            log("OPT_MONITOR", { symbol: optSym, ltp: optLTP, dir: entrySig.side, indexEntry: bc.close.toFixed(0), futuresEntry: (actualFillPrice || freshPrice).toFixed(0), note: "monitoring_only_not_live" });
         }
     }
     catch (_e) { /* options monitoring failure — ignore */ }
