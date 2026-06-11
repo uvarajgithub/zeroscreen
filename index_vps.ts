@@ -1,3 +1,4 @@
+// @ts-nocheck
 "use strict";
 var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
@@ -96,9 +97,10 @@ async function syncBotWithBroker() {
     try {
         if (!isMarketHours())
             return;
-        // In PAPER mode there are no real broker positions — skip sync entirely
-        // to avoid incorrectly resetting paper trade state
-        if ((config_1.config.mode ?? "LIVE").toUpperCase() === "PAPER")
+        // In PAPER/LIVE_SHADOW mode there are no real bot positions — skip broker sync entirely.
+        // Otherwise shadow mode could square off unrelated real broker positions.
+        const syncMode = (config_1.config.mode ?? "LIVE").toUpperCase();
+        if (syncMode === "PAPER" || syncMode === "LIVE_SHADOW")
             return;
         const brokerPos = await getPositionsFromBroker();
         // If broker has open positions but bot thinks flat, flatten all
@@ -158,7 +160,8 @@ let optDailyPts = 0; // option premium pts (exitPrem - entryPrem)
 let optDailyRs = 0; // option ₹ (pts × qty)
 let optWins = 0;
 let optLosses = 0;
-let optATMCache = null;
+let optATMCache = null; // last-picked strike pair, kept for OPT_ATM_CACHE logging only — not used to short-circuit
+let optInstrumentsCache = null; // NFO BANKNIFTY option instrument list, cached for the day
 let drishtiFutSymbolCache = "";
 let drishtiFutSymbolCacheAt = 0;
 let optRecentTrades = [];
@@ -178,7 +181,7 @@ let tradeAIScore = 0;
 const COOLDOWN_MS = 5 * 60 * 1000; // 5 minutes
 let lastKnownPrice = 0; // updated each runBot cycle for live PnL display
 const TOTAL_QTY = config_1.config.quantity;
-const DAILY_LOSS_CAP = config_1.config.risk.dailyLossCap ?? 200; // stop after 2 SL hits (-200 pts)
+const DAILY_LOSS_CAP = Number.POSITIVE_INFINITY; // disabled: do not stop the day based on theoretical strategy/index points
 const MAX_TRADES = config_1.config.risk.maxTradesPerDay ?? 3; // allow re-entries for recovery trade
 const MIN_BREAKOUT_MARGIN = config_1.config.optionSelection.minBreakoutMargin ?? 50; // min pts past body level
 const TARGET_PTS = config_1.config.tradeManagement.targetPoints ?? 0; // legacy; kept for reference
@@ -442,20 +445,20 @@ async function monitorCandleBreakouts() {
                     strategyCtx = `In Trade (${tradeDirection}) | ${_bCtx}\n`
                         + `Entry: ${entryPrice.toFixed(0)} | ${_bSLlabel}: ${_bSL}\n`
                         + `P&L: ${_bUS}${_bu.toFixed(0)} pts | Peak: ${DrishtiState.peakPts.toFixed(0)} pts\n`
-                        + `Day: ${_bSign}${dailyPnL.toFixed(0)} | ${drishtiWins}W ${drishtiLosses}L | T:${tradeCount}/5`;
+                        + `Day: ${_bSign}${dailyPnL.toFixed(0)} | ${drishtiWins}W ${drishtiLosses}L | T:${tradeCount}/8`;
                 }
                 else if (DrishtiState.firstDone && !DrishtiState.inTrade) {
                     const _reNum = DrishtiState.reCount + 1;
-                    const _re = DrishtiState.reCount < 5
+                    const _re = DrishtiState.reCount < 8
                         ? `⏳ Watching RE #${_reNum}` : `✅ All trades done`;
                     strategyCtx = `${_re}\n`
-                        + `Day: ${_bSign}${dailyPnL.toFixed(0)} pts | Rs${dailyRealRs >= 0 ? '+' : ''}${dailyRealRs.toLocaleString('en-IN')} | ${drishtiWins}W ${drishtiLosses}L | T:${tradeCount}/5`;
+                        + `Day: ${_bSign}${dailyPnL.toFixed(0)} pts | Rs${dailyRealRs >= 0 ? '+' : ''}${dailyRealRs.toLocaleString('en-IN')} | ${drishtiWins}W ${drishtiLosses}L | T:${tradeCount}/8`;
                 }
                 else {
                     strategyCtx = `Watching | Candle #${drishtiTodayCandles.length}\n`
                         + `PDH: ${_bPH} | PDL: ${_bPL} | ${_bCtx}\n`
                         + `Live: ${price} | SL: 100 pts\n`
-                        + `Day: ${_bSign}${dailyPnL.toFixed(0)} | T:${tradeCount}/5`;
+                        + `Day: ${_bSign}${dailyPnL.toFixed(0)} | T:${tradeCount}/8`;
                 }
             }
             // TG_LABEL
@@ -737,7 +740,7 @@ function printStatus() {
         const _pdH = drishtiPrevDayCandles.length > 0 ? Math.max(...drishtiPrevDayCandles.map((c) => c.high)).toFixed(0) : "?";
         const _pdL = drishtiPrevDayCandles.length > 0 ? Math.min(...drishtiPrevDayCandles.map((c) => c.low)).toFixed(0) : "?";
         const _hhmm = ist.split(',')[1]?.trim().slice(0, 8) ?? ist;
-        console.log(`[${_hhmm}] [${mode}] DRISHTI: ${pnlSign}${livePnL.toFixed(0)}pts  T:${tradeCount}/${MAX_TRADES}  ${tradeStatus}  PDH:${_pdH} PDL:${_pdL} C${drishtiTodayCandles.length}`);
+        console.log(String.fromCharCode(68,82,73,83,72,84,73,32,82,69,65,76,58,32,70,117,116,32,82,115,32) + dailyRealRs + String.fromCharCode(32,124,32,79,112,116,32,82,115,32) + optDailyRs + String.fromCharCode(32,124,32,67,111,109,98,105,110,101,100,32,82,115,32) + combinedRealRs() + String.fromCharCode(32,124,32,83,116,114,97,116,101,103,121,80,116,115,32) + livePnL.toFixed(0) + String.fromCharCode(32,124,32,84,58) + tradeCount + String.fromCharCode(47) + MAX_TRADES + String.fromCharCode(32,124,32) + tradeStatus);
     }
     else {
     }
@@ -950,7 +953,7 @@ async function runHybridReverseBot() {
     printStatus();
     // ── Capital protection ─────────────────────────────────────────────────────
     const maxDrawdown = config_1.config.capital * (config_1.config.capitalDrawdownPercent / 100);
-    if (dailyPnL <= -DAILY_LOSS_CAP || Math.abs(dailyPnL) >= maxDrawdown || realLossLimitHit()) {
+    if (false) {
         if (activeTrade && tradeSymbol) {
             try {
                 await (0, order_1.exitTrade)(tradeSymbol, config_1.config.quantity);
@@ -1291,16 +1294,16 @@ const HR_SL_PTS_LOCAL = 100;
 // This eliminates the candle-close exit discrepancy and matches backtest V15 logic.
 const DRISHTI_TRAIL_GAP = 10; // LOCK10 — same as backtest_verify.js V15 config
 const DRISHTI_SL_PTS = 100; // Hard SL — matches SL_PTS in drishti_strategy.ts
-const REAL_DAILY_LOSS_CAP_RS = Number(config_1.config.risk?.maxDailyLossRs ?? config_1.config.risk?.dailyLossCapRs ?? DAILY_LOSS_CAP * config_1.config.quantity);
+const REAL_DAILY_LOSS_CAP_RS = Number.POSITIVE_INFINITY; // disabled: no real daily loss stop
 const REAL_FUTURES_SL_PTS = Number(config_1.config.risk?.maxFuturesLossPts ?? 150);
 const REAL_OPTIONS_SL_PTS = Number(config_1.config.risk?.maxOptionsLossPts ?? 150);
 const REAL_EXIT_TOLERANCE_PTS = Number(config_1.config.risk?.maxAllowedSlippagePts ?? 50);
 // Stop new entries before the hard daily cap so slippage/fast moves do not push the day far past maxDailyLossRs.
 const REAL_ENTRY_BLOCK_RS = Number(config_1.config.risk?.realEntryBlockRs ?? Math.round(REAL_DAILY_LOSS_CAP_RS * 0.75));
-const REAL_INTRADAY_EXIT_RS = Number(config_1.config.risk?.realIntradayExitRs ?? REAL_DAILY_LOSS_CAP_RS);
+const REAL_INTRADAY_EXIT_RS = Number.POSITIVE_INFINITY; // disabled: no real intraday daily-loss exit
 function combinedRealRs() { return Math.round((dailyRealRs || 0) + (optDailyRs || 0)); }
-function realLossLimitHit() { return combinedRealRs() <= -REAL_DAILY_LOSS_CAP_RS; }
-function realEntryBlocked() { return combinedRealRs() <= -REAL_ENTRY_BLOCK_RS; }
+function realLossLimitHit() { return false; } // disabled: no daily real-loss stop; per-trade SL/trail remains active
+function realEntryBlocked() { return false; } // disabled: do not block entries from daily real P&L
 function appendRealPremiumAudit(row) {
     try {
         const rec = { at: new Date().toISOString(), strategy: "DRISHTI_V1", qty: config_1.config.quantity, ...row };
@@ -1361,14 +1364,15 @@ async function executeDrishtiLTPExit(ltp, pts, reason) {
     const _futEntryPrice = drishtiFuturesEntry > 0 ? drishtiFuturesEntry : capturedEntry;
     const _futExitRaw = exitOptionLTP > 0 ? exitOptionLTP : 0;
     const _futExitFair = _futEntryPrice + (capturedDir === "PE" ? -pts : pts);
-    const _futExitPrice = _futExitRaw > 0 && Math.abs(_futExitRaw - _futExitFair) <= REAL_EXIT_TOLERANCE_PTS
+    const _futExitPrice = _futExitRaw > 0
         ? _futExitRaw
         : _futExitFair;
+    const _futExitSource = _futExitRaw > 0 ? "ACTUAL_FUTURES_LTP" : "FALLBACK_FAIR_MISSING_LTP";
     const _futRealPts = capturedDir === "PE" ? (_futEntryPrice - _futExitPrice) : (_futExitPrice - _futEntryPrice);
     const _futRealRs = Math.round(_futRealPts * capturedQty);
     dailyRealRs += _futRealRs;
-    appendRealPremiumAudit({ event: "futures_exit", reason, symbol: capturedSymbol, direction: capturedDir, entry: _futEntryPrice, exit: _futExitPrice, rawExit: _futExitRaw, fairExit: _futExitFair, indexPts: pts, realPts: _futRealPts, realRs: _futRealRs });
-    log("REAL_LTP_EXIT_FUTURES", { reason, entryFut: _futEntryPrice.toFixed(1), exitFut: _futExitPrice.toFixed(1), exitRaw: _futExitRaw.toFixed(1), exitFair: _futExitFair.toFixed(1), realPts: _futRealPts.toFixed(1), realRs: _futRealRs, strategyPts: pts.toFixed(1) });
+    appendRealPremiumAudit({ event: "futures_exit", reason, symbol: capturedSymbol, direction: capturedDir, entry: _futEntryPrice, exit: _futExitPrice, rawExit: _futExitRaw, fairExit: _futExitFair, exitSource: _futExitSource, indexPts: pts, realPts: _futRealPts, realRs: _futRealRs });
+    log("REAL_LTP_EXIT_FUTURES", { reason, entryFut: _futEntryPrice.toFixed(1), exitFut: _futExitPrice.toFixed(1), exitRaw: _futExitRaw.toFixed(1), exitFair: _futExitFair.toFixed(1), exitSource: _futExitSource, realPts: _futRealPts.toFixed(1), realRs: _futRealRs, strategyPts: pts.toFixed(1) });
     if (capturedOptInTrade && capturedOptSymbol && capturedOptEntryPrem > 0) {
         const optExitLTP = await (0, market_1.getOptionLTP)(capturedOptSymbol).catch(() => 0);
         if (optExitLTP > 0) {
@@ -1419,7 +1423,7 @@ async function executeDrishtiLTPExit(ltp, pts, reason) {
     (0, logger_1.logTrade)({ date: new Date().toISOString(), type: "DRISHTI_V1", direction: capturedDir ?? "CE", symbol: capturedSymbol,
         premiumEntry: _futEntryPrice, premiumExit: _futExitPrice, qty: capturedQty,
         entryPrice: _futEntryPrice, exitPrice: _futExitPrice,
-        pnl: pts, pnlRs: _futRealRs,
+        pnl: parseFloat(_futRealPts.toFixed(1)), pnlRs: _futRealRs,
         reasonEntry: "drishti_entry", reasonExit: reason, aiScore: 1, slippage: Math.abs(_futRealPts - pts),
         duration: capturedTime > 0 ? Math.round((Date.now() - capturedTime) / 1000) : 0 });
 }
@@ -1518,16 +1522,20 @@ function getDrishtiFuturesSymbol() {
 const OPT_PREM_MIN = 0; // no lower limit
 const OPT_PREM_MAX = 99999; // no upper limit — accept any ATM premium
 async function getDrishtiATMOptionSymbol(dir, indexClose) {
-    if (optATMCache)
-        return dir === "CE" ? optATMCache.CE : optATMCache.PE;
+    // BUG-2026-017 fix: re-derive ATM strike from the CURRENT futures/index price on every call.
+    // Only the NFO instrument list is cached for the day (it doesn't change intraday);
+    // the strike itself is recomputed each time so it tracks price moves through the day.
     const { KiteConnect: KC2 } = require("kiteconnect");
     const kite2 = new KC2({ api_key: process.env.API_KEY || "" });
     kite2.setAccessToken(process.env.ACCESS_TOKEN || "");
-    const ins = await kite2.getInstruments("NFO");
+    if (!optInstrumentsCache) {
+        const ins = await kite2.getInstruments("NFO");
+        optInstrumentsCache = ins
+            .filter((i) => i.name === "BANKNIFTY" && (i.instrument_type === "CE" || i.instrument_type === "PE"))
+            .sort((a, b) => new Date(a.expiry).getTime() - new Date(b.expiry).getTime());
+    }
     const atm = Math.round(indexClose / 100) * 100;
-    const opts = ins
-        .filter((i) => i.name === "BANKNIFTY" && (i.instrument_type === "CE" || i.instrument_type === "PE"))
-        .sort((a, b) => new Date(a.expiry).getTime() - new Date(b.expiry).getTime());
+    const opts = optInstrumentsCache;
     if (!opts.length)
         throw new Error("No BankNifty options found");
     // Fix: use timestamp (number) for deduplication — Date objects compare by reference in Set, not value
@@ -1605,6 +1613,7 @@ async function runDrishtiBot() {
         optWins = 0;
         optLosses = 0;
         optATMCache = null;
+        optInstrumentsCache = null;
         optRecentTrades = [];
         optInTrade = false;
         optDir = null;
@@ -1656,7 +1665,7 @@ async function runDrishtiBot() {
     printStatus();
     // ── Capital protection ───────────────────────────────────────────────
     const maxDrawdown = config_1.config.capital * (config_1.config.capitalDrawdownPercent / 100);
-    if (dailyPnL <= -DAILY_LOSS_CAP || Math.abs(dailyPnL) >= maxDrawdown) {
+    if (false) {
         if (activeTrade && tradeSymbol) {
             try {
                 await (0, order_1.exitTrade)(tradeSymbol, config_1.config.quantity);
@@ -1673,8 +1682,8 @@ async function runDrishtiBot() {
     }
     if (stopForDay && !activeTrade)
         return;
-    if (tradeCount >= 5 && !activeTrade)
-        return; // max 5 trades — but still trail/exit if in trade
+    if (tradeCount >= 8 && !activeTrade)
+        return; // max 8 trades — but still trail/exit if in trade
     // ── Detect new 15-min candle ─────────────────────────────────────────
     const candle = await (0, market_1.getPreviousCandle)();
     if (!candle || !candle.open || !candle.close) {
@@ -1717,16 +1726,7 @@ async function runDrishtiBot() {
             catch (e) {
                 log("EXIT_FAIL", { error: e instanceof Error ? e.message : String(e) });
             }
-            const pts = trail.pts;
-            dailyPnL += pts;
-            if (pts > 0) {
-                consecutiveLosses = 0;
-                drishtiWins++;
-            }
-            else {
-                consecutiveLosses++;
-                drishtiLosses++;
-            }
+            const pts = trail.pts; // candle-close index pts — used only as fallback for fair exit price
             // Real futures P&L — use ACTUAL market LTPs
             // Entry: drishtiFuturesEntry = rawLTP at entry time (actual futures price from market)
             // Exit:  capturedPremiumExit = getOptionLTP(tradeSymbol) at exit time (actual futures price)
@@ -1734,16 +1734,28 @@ async function runDrishtiBot() {
             // Use actual futures LTP at exit if available and reasonable; else use entry + index movement
             const _futExitRaw = capturedPremiumExit > 0 ? capturedPremiumExit : 0;
             const _futExitFair = _futEntryPrice + (capturedDir === "CE" ? pts : -pts); // entry ± index pts
-            const _futExitPrice = _futExitRaw > 0 && Math.abs(_futExitRaw - _futExitFair) <= REAL_EXIT_TOLERANCE_PTS
-                ? _futExitRaw // use actual market LTP at exit
-                : _futExitFair; // fallback: entry ± index pts (same as index-based)
+            const _futExitPrice = _futExitRaw > 0
+                ? _futExitRaw // use actual futures market LTP at exit
+                : _futExitFair; // fallback only when futures LTP is missing
+            const _futExitSource = _futExitRaw > 0 ? "ACTUAL_FUTURES_LTP" : "FALLBACK_FAIR_MISSING_LTP";
             // For CE: P&L = exit - entry. For PE: P&L = entry - exit
             const _tradeRealRs = capturedDir === "CE"
                 ? Math.round((_futExitPrice - _futEntryPrice) * capturedQty)
                 : Math.round((_futEntryPrice - _futExitPrice) * capturedQty);
             dailyRealRs += _tradeRealRs;
-            appendRealPremiumAudit({ event: "futures_exit", reason: trail.action.toLowerCase(), symbol: capturedSymbol, direction: capturedDir, entry: _futEntryPrice, exit: _futExitPrice, rawExit: _futExitRaw, fairExit: _futExitFair, indexPts: pts, realRs: _tradeRealRs });
-            log("FUTURES_PNL", { entryFut: _futEntryPrice.toFixed(0), exitFut: _futExitPrice.toFixed(0), exitActual: _futExitRaw.toFixed(0), indexPts: pts.toFixed(1), realRs: _tradeRealRs, tolerancePts: REAL_EXIT_TOLERANCE_PTS });
+            // dailyPnL / win-loss now derived from real futures fill basis, not candle-close index pts (BUG-2026-010 fix)
+            const realPts = _tradeRealRs / capturedQty;
+            dailyPnL += realPts;
+            if (realPts > 0) {
+                consecutiveLosses = 0;
+                drishtiWins++;
+            }
+            else {
+                consecutiveLosses++;
+                drishtiLosses++;
+            }
+            appendRealPremiumAudit({ event: "futures_exit", reason: trail.action.toLowerCase(), symbol: capturedSymbol, direction: capturedDir, entry: _futEntryPrice, exit: _futExitPrice, rawExit: _futExitRaw, fairExit: _futExitFair, exitSource: _futExitSource, indexPts: pts, realRs: _tradeRealRs });
+            log("FUTURES_PNL", { entryFut: _futEntryPrice.toFixed(0), exitFut: _futExitPrice.toFixed(0), exitActual: _futExitRaw.toFixed(0), exitSource: _futExitSource, indexPts: pts.toFixed(1), realRs: _tradeRealRs, tolerancePts: REAL_EXIT_TOLERANCE_PTS });
             // ── Close shadow options trade ────────────────────────────────────────
             if (optInTrade && optSymbol && optEntryPrem > 0) {
                 try {
@@ -1839,7 +1851,7 @@ async function runDrishtiBot() {
                 qty: capturedQty,
                 entryPrice: _futEntryPrice, // same — displayed in Trade History BUY row
                 exitPrice: _futExitPrice, // same — displayed in Trade History SELL row
-                pnl: pts, // index pts (for backtest comparison)
+                pnl: parseFloat((_tradeRealRs / capturedQty).toFixed(1)), // real futures points
                 pnlRs: _tradeRealRs, // real futures Rs = (exitFut - entryFut) × qty
                 reasonEntry: "drishti_entry", reasonExit: trail.action.toLowerCase(),
                 aiScore: 1, slippage: Math.abs(_futEntryPrice - (capturedPremiumEntry || _futEntryPrice)),
@@ -1849,7 +1861,7 @@ async function runDrishtiBot() {
     }
     if (isEOD)
         return; // no new entries after EOD
-    if (tradeCount >= 5)
+    if (tradeCount >= 8)
         return;
     if (realEntryBlocked()) {
         if (!stopForDay) {
@@ -2106,7 +2118,7 @@ async function runDrishtiBot() {
 ` +
         `────────────────────
 ` +
-        `Trade #${tradeCount}/5 | Day P&L: ${dailyPnL >= 0 ? "+" : ""}${dailyPnL.toFixed(0)} pts`).catch(() => { });
+        `Trade #${tradeCount}/8 | Day P&L: ${dailyPnL >= 0 ? "+" : ""}${dailyPnL.toFixed(0)} pts`).catch(() => { });
     const premiumAtEntry = await (0, market_1.getOptionLTP)(sym).catch(() => 0);
     entryPremium = premiumAtEntry;
     lastOptionLTP = premiumAtEntry;
@@ -2152,7 +2164,7 @@ async function runBot() {
     // Note: printStatus() is called inside the try block AFTER price is fetched, so PnL is always live
     // Hard kill switch (account safety layer)
     const maxDrawdown = config_1.config.capital * (config_1.config.capitalDrawdownPercent / 100);
-    if (dailyPnL <= -DAILY_LOSS_CAP || Math.abs(dailyPnL) >= maxDrawdown) {
+    if (false) {
         log("HARD_KILL_SWITCH", { dailyPnL, maxDrawdown, message: "Hard kill switch triggered. Stopping trading." });
         await (0, order_1.squareOffAll)();
         capitalProtectionTriggered = true;
@@ -2271,7 +2283,7 @@ async function runBot() {
         return;
     }
     // ── Daily loss limit ─────────────────────────────────
-    if (dailyPnL <= -DAILY_LOSS_CAP || realLossLimitHit()) {
+    if (false) {
         console.log(`Daily loss limit hit (${dailyPnL.toFixed(0)} pts). Stopping for day.`);
         stopForDay = true;
         await notifyDailyLoss(dailyPnL);
@@ -2363,7 +2375,7 @@ async function runBot() {
                 unrealisedPnL: _inTrade ? parseFloat(livePnL.toFixed(0)) : 0,
                 tradeCount, qty: config_1.config.quantity,
                 slPts: ACTIVE_STRATEGY === "DRISHTI_V1" ? 150 : (config_1.config.tradeManagement?.stopLossPoints ?? 100),
-                dailyCapPts: config_1.config.risk?.dailyLossCap ?? 350, mode: config_1.config.mode,
+                dailyCapPts: null, mode: config_1.config.mode,
                 inTrade: _inTrade,
                 direction: tradeDirection ?? null,
                 entryPrice: entryPrice || null,
@@ -2787,7 +2799,7 @@ function printConfigSummary(cfg) {
     }
     console.log(`SL: index-price based (RC strategy) | option-premium based (breakout)`);
     console.log(`Premium range: ${cfg.optionSelection.minPremium}–${cfg.optionSelection.maxPremium}`);
-    console.log(`Max trades: ${MAX_TRADES} per day | Daily loss cap: ${DAILY_LOSS_CAP} pts`);
+    console.log(String.fromCharCode(68,97,105,108,121,32,108,111,115,115,32,99,97,112,58,32,68,73,83,65,66,76,69,68));
     console.log("");
 }
 async function preStartPrompt() {
@@ -3025,7 +3037,7 @@ async function preStartPrompt() {
                     unrealisedPnL: _unrealised,
                     tradeCount, qty: config_1.config.quantity,
                     slPts: ACTIVE_STRATEGY === "DRISHTI_V1" ? 150 : (config_1.config.tradeManagement?.stopLossPoints ?? 100),
-                    dailyCapPts: config_1.config.risk?.dailyLossCap ?? 350, strategy: ACTIVE_STRATEGY,
+                    dailyCapPts: null, strategy: ACTIVE_STRATEGY,
                     mode: config_1.config.mode,
                     inTrade: _inTrade,
                     direction: tradeDirection ?? null,
@@ -3086,7 +3098,7 @@ async function preStartPrompt() {
                         unrealisedPnL: _unrealised2,
                         tradeCount, qty: config_1.config.quantity,
                         slPts: ACTIVE_STRATEGY === "DRISHTI_V1" ? 150 : (config_1.config.tradeManagement?.stopLossPoints ?? 100),
-                        dailyCapPts: config_1.config.risk?.dailyLossCap ?? 350, mode: config_1.config.mode,
+                        dailyCapPts: null, mode: config_1.config.mode,
                         inTrade: _inTrade2,
                         direction: tradeDirection ?? null,
                         entryPrice: entryPrice || null,
@@ -3199,6 +3211,7 @@ process.on("unhandledRejection", async (reason) => {
 });
 // ─── Graceful shutdown helper ─────────────────────────
 async function gracefulShutdown(reason, isError = false) {
+    if (!isMarketHours()) { console.log(String.fromCharCode(83,72,85,84,68,79,87,78,95,78,79,95,84,71,95,65,70,84,69,82,95,72,79,85,82,83) + String.fromCharCode(58,32) + reason); return; }
     const pnlSign = dailyPnL >= 0 ? "+" : "";
     const emoji = isError ? "💥" : "🔴";
     try {

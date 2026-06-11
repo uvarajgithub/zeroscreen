@@ -4,7 +4,7 @@
   "mode": "LIVE_SHADOW",
   "risk": {
     "maxDailyLossPoints": 200,
-    "maxTradesPerDay": 5,
+    "maxTradesPerDay": 8,
     "dailyLossCap": 200,
     "riskPerTradePercent": 1,
     "maxDailyLossRs": 6000,
