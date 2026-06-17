@@ -9,6 +9,10 @@ const { findDrishtiEntry, findDrishtiReEntry, createDrishtiState } = require(pat
 
 const raw   = JSON.parse(fs.readFileSync(path.join(process.cwd(), 'cache', 'banknifty_5yr.json'), 'utf-8'));
 const dates = Object.keys(raw).sort();
+const gaps = (process.argv[2] || '5,10,20,50,75,100,150,200,300')
+  .split(',')
+  .map(v => Number(v.trim()))
+  .filter(v => Number.isFinite(v) && v > 0);
 
 const SL_PTS     = 150;
 const MAX_TRADES = 5;
@@ -131,8 +135,6 @@ function runBacktest(TRAIL_GAP) {
 }
 
 // ── Run sweep ──────────────────────────────────────────────────────────────
-const gaps = [5, 10, 20, 50, 75, 100, 150, 200, 300];
-
 console.log('\nDRISHTI_V1 — TRAIL_GAP Sweep');
 console.log('SL=150 | MAX_TRADES=5/day | Data: ' + dates[0] + ' → ' + dates[dates.length - 1]);
 console.log('─'.repeat(85));

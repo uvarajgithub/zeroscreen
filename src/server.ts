@@ -4273,6 +4273,12 @@ function getTodayIST(): string {
 }
 
 function computeAnalytics(trades: any[]) {
+  const tradePnlRs = (t: any): number => {
+    const v = Number(t?.pnlRs);
+    if (Number.isFinite(v)) return v;
+    const legacy = Number(t?.pnl);
+    return Number.isFinite(legacy) ? legacy : 0;
+  };
   // Build premiumEntry lookup from open records (exitPrice = 0), then enrich close records
   const premiumMap: Record<string, number> = {};
   for (const t of trades) {
@@ -4290,13 +4296,13 @@ function computeAnalytics(trades: any[]) {
   });
   const today = getTodayIST();
   const todayTrades = trades.filter((t: any) => (t.date || "").startsWith(today));
-  const allWins  = trades.filter((t: any) => t.pnl > 0).length;
+  const allWins  = trades.filter((t: any) => tradePnlRs(t) > 0).length;
   const allTotal = trades.length;
 
   let equity = 0, peak = 0, maxDD = 0;
   const equityCurve: number[] = [];
   for (const t of trades) {
-    equity += t.pnl ?? 0;
+    equity += tradePnlRs(t);
     if (equity > peak) peak = equity;
     const dd = peak - equity;
     if (dd > maxDD) maxDD = dd;
@@ -4305,7 +4311,7 @@ function computeAnalytics(trades: any[]) {
 
   let todayEq = 0, todayPeak = 0, todayMaxDD = 0;
   for (const t of todayTrades) {
-    todayEq += t.pnl ?? 0;
+    todayEq += tradePnlRs(t);
     if (todayEq > todayPeak) todayPeak = todayEq;
     const dd = todayPeak - todayEq;
     if (dd > todayMaxDD) todayMaxDD = dd;
@@ -4315,8 +4321,8 @@ function computeAnalytics(trades: any[]) {
   const nowIST = new Date(new Date().toLocaleString("en-US", { timeZone: "Asia/Kolkata" }));
   const wkAgo = new Date(nowIST); wkAgo.setDate(nowIST.getDate() - 7);
   const wkTrades = trades.filter((t: any) => t.date && new Date(t.date) >= wkAgo);
-  const wkWins = wkTrades.filter((t: any) => t.pnl > 0).length;
-  const wkPnl = parseFloat(wkTrades.reduce((s: number, t: any) => s + (t.pnl ?? 0), 0).toFixed(1));
+  const wkWins = wkTrades.filter((t: any) => tradePnlRs(t) > 0).length;
+  const wkPnl = parseFloat(wkTrades.reduce((s: number, t: any) => s + tradePnlRs(t), 0).toFixed(1));
 
   // Monthly breakdown
   const monthMap: Record<string, { trades: number; wins: number; losses: number; pnl: number }> = {};
@@ -4325,8 +4331,8 @@ function computeAnalytics(trades: any[]) {
     const mk = t.date.slice(0, 7);
     if (!monthMap[mk]) monthMap[mk] = { trades: 0, wins: 0, losses: 0, pnl: 0 };
     monthMap[mk].trades++;
-    monthMap[mk].pnl = parseFloat((monthMap[mk].pnl + (t.pnl ?? 0)).toFixed(1));
-    if ((t.pnl ?? 0) > 0) monthMap[mk].wins++; else monthMap[mk].losses++;
+    monthMap[mk].pnl = parseFloat((monthMap[mk].pnl + tradePnlRs(t)).toFixed(1));
+    if (tradePnlRs(t) > 0) monthMap[mk].wins++; else monthMap[mk].losses++;
   }
   const monthly = Object.keys(monthMap).sort().map(month => ({
     month,
@@ -4337,8 +4343,8 @@ function computeAnalytics(trades: any[]) {
   return {
     today: {
       trades: todayTrades.length,
-      wins: todayTrades.filter((t: any) => t.pnl > 0).length,
-      losses: todayTrades.filter((t: any) => t.pnl <= 0).length,
+      wins: todayTrades.filter((t: any) => tradePnlRs(t) > 0).length,
+      losses: todayTrades.filter((t: any) => tradePnlRs(t) <= 0).length,
       pnl: parseFloat(todayEq.toFixed(1)),
       maxDD: parseFloat(todayMaxDD.toFixed(1)),
     },
@@ -9456,6 +9462,7 @@ app.get("/dashboard", featureGate("feature_dashboard", "Dashboard"), async (req:
 
   // Build equity curve labels (trade numbers)
   const eqLabels = analytics.equityCurve.map((_: any, i: number) => `#${i + 1}`);
+  const fmtLiveRs = (v: number) => `${v >= 0 ? "+" : "\u2212"}₹${Math.abs(Math.round(v)).toLocaleString("en-IN")}`;
 
   // Build monthly backtest data
   const monthly: Record<string, any> = backtest.monthly || {};
@@ -9511,11 +9518,11 @@ app.get("/dashboard", featureGate("feature_dashboard", "Dashboard"), async (req:
       </div>
     </div>
     <div class="dash-kpi-row">
-      <div class="dash-kpi"><span class="dash-kpi-label">All-Time PnL</span><span class="dash-kpi-val ${analytics.allTime.pnl>=0?'sig-green':'sig-red'}">${analytics.allTime.pnl>=0?'+':''}${analytics.allTime.pnl.toFixed(1)} pts</span></div>
+      <div class="dash-kpi"><span class="dash-kpi-label">All-Time PnL</span><span class="dash-kpi-val ${analytics.allTime.pnl>=0?'sig-green':'sig-red'}">${fmtLiveRs(analytics.allTime.pnl)}</span></div>
       <div class="dash-kpi"><span class="dash-kpi-label">Total Trades</span><span class="dash-kpi-val">${analytics.allTime.trades}</span></div>
       <div class="dash-kpi"><span class="dash-kpi-label">Win Rate</span><span class="dash-kpi-val">${analytics.allTime.winRate}%</span></div>
-      <div class="dash-kpi"><span class="dash-kpi-label">Today PnL</span><span class="dash-kpi-val ${analytics.today.pnl>=0?'sig-green':'sig-red'}">${analytics.today.pnl>=0?'+':''}${analytics.today.pnl} pts</span></div>
-      <div class="dash-kpi"><span class="dash-kpi-label">Max Drawdown</span><span class="dash-kpi-val sig-yellow">${analytics.allTime.maxDD} pts</span></div>
+      <div class="dash-kpi"><span class="dash-kpi-label">Today PnL</span><span class="dash-kpi-val ${analytics.today.pnl>=0?'sig-green':'sig-red'}">${fmtLiveRs(analytics.today.pnl)}</span></div>
+      <div class="dash-kpi"><span class="dash-kpi-label">Max Drawdown</span><span class="dash-kpi-val sig-yellow">₹${Math.abs(Math.round(analytics.allTime.maxDD)).toLocaleString("en-IN")}</span></div>
     </div>
     <div class="dash-section-title">📈 Live Equity Curve</div>
     ${analytics.equityCurve.length === 0 ? `
@@ -9563,9 +9570,9 @@ app.get("/dashboard", featureGate("feature_dashboard", "Dashboard"), async (req:
       type: 'line',
       data: {
         labels: ${JSON.stringify(eqLabels)},
-        datasets: [{ label: 'Equity (pts)', data: ${JSON.stringify(analytics.equityCurve)}, borderColor: '#7c3aed', backgroundColor: 'rgba(124,58,237,0.1)', fill: true, tension: 0.3, pointRadius: 0 }]
+        datasets: [{ label: 'Equity (₹)', data: ${JSON.stringify(analytics.equityCurve)}, borderColor: '#7c3aed', backgroundColor: 'rgba(124,58,237,0.1)', fill: true, tension: 0.3, pointRadius: 0 }]
       },
-      options: { responsive: true, plugins: { legend: { display: false } }, scales: { y: { ticks: { callback: v => v + ' pts' } } } }
+      options: { responsive: true, plugins: { legend: { display: false } }, scales: { y: { ticks: { callback: v => '₹' + Math.round(v).toLocaleString('en-IN') } } } }
     });
   })();
   </script>` : ""}
@@ -9611,7 +9618,7 @@ app.get("/dashboard", featureGate("feature_dashboard", "Dashboard"), async (req:
     <div class="dash-kpi-grid">
       <div class="dash-kpi">
         <div class="dash-kpi-label">All-Time PnL</div>
-        <div class="dash-kpi-val ${analytics.allTime.pnl >= 0 ? "dash-green" : "dash-red"}">${analytics.allTime.pnl >= 0 ? "+" : ""}${analytics.allTime.pnl} pts</div>
+        <div class="dash-kpi-val ${analytics.allTime.pnl >= 0 ? "dash-green" : "dash-red"}">${fmtLiveRs(analytics.allTime.pnl)}</div>
       </div>
       <div class="dash-kpi">
         <div class="dash-kpi-label">Total Trades</div>
@@ -9627,11 +9634,11 @@ app.get("/dashboard", featureGate("feature_dashboard", "Dashboard"), async (req:
       </div>
       <div class="dash-kpi">
         <div class="dash-kpi-label">Max Drawdown</div>
-        <div class="dash-kpi-val dash-red">${analytics.allTime.maxDD} pts</div>
+        <div class="dash-kpi-val dash-red">₹${Math.abs(Math.round(analytics.allTime.maxDD)).toLocaleString("en-IN")}</div>
       </div>
       <div class="dash-kpi">
         <div class="dash-kpi-label">Today PnL</div>
-        <div class="dash-kpi-val ${analytics.today.pnl >= 0 ? "dash-green" : "dash-red"}">${analytics.today.pnl >= 0 ? "+" : ""}${analytics.today.pnl} pts</div>
+        <div class="dash-kpi-val ${analytics.today.pnl >= 0 ? "dash-green" : "dash-red"}">${fmtLiveRs(analytics.today.pnl)}</div>
       </div>
     </div>
 
@@ -9749,7 +9756,7 @@ app.get("/dashboard", featureGate("feature_dashboard", "Dashboard"), async (req:
       data: {
         labels,
         datasets: [{
-          label: 'Equity (pts)',
+          label: 'Equity (₹)',
           data,
           borderColor: color,
           backgroundColor: finalVal >= 0 ? 'rgba(16,185,129,0.08)' : 'rgba(239,68,68,0.08)',
@@ -9764,7 +9771,7 @@ app.get("/dashboard", featureGate("feature_dashboard", "Dashboard"), async (req:
         plugins: { legend: { display: false }, tooltip: { mode: 'index', intersect: false } },
         scales: {
           x: { display: data.length <= 100, ticks: { maxTicksLimit: 12 } },
-          y: { ticks: { callback: v => v + ' pts' } }
+          y: { ticks: { callback: v => '₹' + Math.round(v).toLocaleString('en-IN') } }
         }
       }
     });
@@ -9948,11 +9955,16 @@ app.get("/signals", featureGate("feature_signals", "Signals"), async (req, res) 
             return d.toLocaleDateString("en-IN", { timeZone: "Asia/Kolkata", day: "2-digit", month: "short" })
                 + " " + d.toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata", hour: "2-digit", minute: "2-digit" });
         }
-        const QTY_MULT2 = 15; // 30 qty × 0.5 delta — option premium ₹ per index pt
         function pnlCls2(v) { return v >= 0 ? "sig-green" : "sig-red"; }
-        function fmtPts2(v) { return `${v >= 0 ? "+" : ""}${v.toFixed(0)} pts`; }
-        function fmtRs2(v) { const r = Math.round(v * QTY_MULT2); return `${r >= 0 ? "+" : "−"}₹${Math.abs(r).toLocaleString("en-IN")}`; }
-        function fmtBoth2(v) { return `${fmtPts2(v)} <span class="rs-sub">${fmtRs2(v)}</span>`; }
+        function tradeRealRs2(t) {
+            const r = Number(t && t.pnlRs);
+            if (Number.isFinite(r)) return r;
+            const legacy = Number(t && t.pnl);
+            return Number.isFinite(legacy) ? legacy : 0;
+        }
+        function fmtPts2(v) { return `real ${v >= 0 ? "+" : ""}${v.toFixed(1)}`; }
+        function fmtRs2(v) { const r = Math.round(v); return `${r >= 0 ? "+" : "−"}₹${Math.abs(r).toLocaleString("en-IN")}`; }
+        function fmtBoth2(v) { return `${fmtRs2(v)}`; }
         function rcCls(r) {
             if (!r)
                 return "";
@@ -9968,7 +9980,7 @@ app.get("/signals", featureGate("feature_signals", "Signals"), async (req, res) 
         <td class="td-t">${fmtTime2(t.date)}</td>
         <td><span class="d-b d-${(t.direction || "").toLowerCase()}">${t.direction || "—"}</span></td>
         <td class="td-m">${(t.entryPrice ?? 0) > 0 ? (t.entryPrice ?? 0).toFixed(1) : "&mdash;"} &rarr; ${(t.exitPrice ?? 0) > 0 ? (t.exitPrice ?? 0).toFixed(1) : "&mdash;"}</td>
-        <td class="td-m ${pnlCls2(t.pnl ?? 0)}" style="font-weight:700">${fmtBoth2(t.pnl ?? 0)}</td>
+        <td class="td-m ${pnlCls2(tradeRealRs2(t))}" style="font-weight:700">${fmtBoth2(tradeRealRs2(t))}</td>
         <td>${t.reasonExit ? `<span class="rc-b ${rcCls(t.reasonExit)}">${t.reasonExit}</span>` : "—"}</td>
         <td class="td-t">${t.duration ? (t.duration < 60 ? t.duration + "s" : Math.round(t.duration / 60) + "m") : "—"}</td>
       </tr>`).join("");
@@ -9978,7 +9990,7 @@ app.get("/signals", featureGate("feature_signals", "Signals"), async (req, res) 
         <td class="td-t">${t.date ? fmtDate2(t.date) : "—"}</td>
         <td><span class="d-b d-${(t.direction || "").toLowerCase()}">${t.direction || "—"}</span></td>
         <td class="td-m">${(t.entryPrice ?? 0) > 0 ? (t.entryPrice ?? 0).toFixed(0) : "&mdash;"} &rarr; ${(t.exitPrice ?? 0) > 0 ? (t.exitPrice ?? 0).toFixed(0) : "&mdash;"}</td>
-        <td class="td-m ${pnlCls2(t.pnl ?? 0)}" style="font-weight:700">${fmtBoth2(t.pnl ?? 0)}</td>
+        <td class="td-m ${pnlCls2(tradeRealRs2(t))}" style="font-weight:700">${fmtBoth2(tradeRealRs2(t))}</td>
         <td>${t.reasonExit ? `<span class="rc-b ${rcCls(t.reasonExit)}">${t.reasonExit}</span>` : "—"}</td>
       </tr>`).join("");
         const monthRows2 = an2.monthly.map((m) => {
@@ -10133,7 +10145,7 @@ app.get("/signals", featureGate("feature_signals", "Signals"), async (req, res) 
     <div class="sig3-hdr">
       <div>
         <div class="sig3-title">📡 Live Bot Dashboard</div>
-        <div class="sig3-sub">BANKNIFTY &middot; HYBRID_REVERSE &middot; <strong>${mode2.toUpperCase()}</strong> &middot; 30 qty &middot; &#8377; P&amp;L = index pts &times; 30 qty &times; 0.5&#948; = pts &times; 15</div>
+        <div class="sig3-sub">BANKNIFTY &middot; DRISHTI live shadow &middot; <strong>${mode2.toUpperCase()}</strong> &middot; 30 qty &middot; P&amp;L uses real futures LTP and real option premium records only</div>
       </div>
       <div class="sig3-live"><span class="sig3-dot"></span><span id="sig3-upd">Connecting&hellip;</span></div>
     </div>
@@ -10159,10 +10171,10 @@ app.get("/signals", featureGate("feature_signals", "Signals"), async (req, res) 
     <script>function _switchTab(t){var iL=(t==='lock50');var pl=document.getElementById('panel-lock50');var pt=document.getElementById('panel-trail');var bl=document.getElementById('tab-btn-lock50');var bt=document.getElementById('tab-btn-trail');if(pl)pl.style.display=iL?'':'none';if(pt)pt.style.display=iL?'none':'';if(bl)bl.classList.toggle('active',iL);if(bt)bt.classList.toggle('active',!iL);}</script>
     <div class="strat-tabs">
       <button class="strat-tab strat-tab-lock50 active" id="tab-btn-lock50" onclick="_switchTab('lock50')">
-        &#9679; LOCK50 <span class="strat-badge">LIVE</span>
+        &#9679; DRISHTI <span class="strat-badge">LIVE</span>
       </button>
       <button class="strat-tab strat-tab-trail" id="tab-btn-trail" onclick="_switchTab('trail')">
-        &#9670; TRAIL <span class="strat-badge">PAPER</span>
+        &#9670; 10:30 <span class="strat-badge">SHADOW</span>
       </button>
     </div>
 
@@ -10174,7 +10186,7 @@ app.get("/signals", featureGate("feature_signals", "Signals"), async (req, res) 
       <div class="sig3-kpi">
         <div class="sig3-kl">Today P&amp;L</div>
         <div class="sig3-kv ${pnlCls2(an2.today.pnl)}" id="k3-today-rs">${fmtRs2(an2.today.pnl)}</div>
-        <div class="sig3-ks ${pnlCls2(an2.today.pnl)}" id="k3-today-pts">${fmtPts2(an2.today.pnl)}</div>
+        <div class="sig3-ks ${pnlCls2(an2.today.pnl)}" id="k3-today-pts">real money P&amp;L</div>
       </div>
       <div class="sig3-kpi">
         <div class="sig3-kl">Today Trades</div>
@@ -10184,12 +10196,12 @@ app.get("/signals", featureGate("feature_signals", "Signals"), async (req, res) 
       <div class="sig3-kpi">
         <div class="sig3-kl">This Week</div>
         <div class="sig3-kv ${pnlCls2(an2.weekly.pnl)}" id="k3-wk-rs">${fmtRs2(an2.weekly.pnl)}</div>
-        <div class="sig3-ks ${pnlCls2(an2.weekly.pnl)}" id="k3-wk-pts">${fmtPts2(an2.weekly.pnl)}</div>
+        <div class="sig3-ks ${pnlCls2(an2.weekly.pnl)}" id="k3-wk-pts">real money P&amp;L</div>
       </div>
       <div class="sig3-kpi">
         <div class="sig3-kl">All-Time P&amp;L</div>
         <div class="sig3-kv ${pnlCls2(an2.allTime.pnl)}">${fmtRs2(an2.allTime.pnl)}</div>
-        <div class="sig3-ks ${pnlCls2(an2.allTime.pnl)}">${fmtPts2(an2.allTime.pnl)}</div>
+        <div class="sig3-ks ${pnlCls2(an2.allTime.pnl)}">real money P&amp;L</div>
       </div>
       <div class="sig3-kpi">
         <div class="sig3-kl">Win Rate</div>
@@ -10220,14 +10232,14 @@ app.get("/signals", featureGate("feature_signals", "Signals"), async (req, res) 
           ${durStr2 ? `<span class="sig3-dur">${durStr2} in trade</span>` : ""}
         </div>
         <div class="sig3-pnl-big ${pnlCls2(unreal2)}" id="sig3-pnl-rs">${fmtRs2(unreal2)}</div>
-        <div class="sig3-pnl-pts ${pnlCls2(unreal2)}" id="sig3-pnl-pts">${unreal2 >= 0 ? "+" : ""}${unreal2.toFixed(0)} index pts unrealised</div>
+        <div class="sig3-pnl-pts ${pnlCls2(unreal2)}" id="sig3-pnl-pts">live unrealised from real prices</div>
         <div class="sig3-pg">
           <div>
-            <div class="sig3-pl">Entry Index</div>
+            <div class="sig3-pl">Entry Futures</div>
             <div class="sig3-pv sig3-mono">${ep2.toFixed(1)}</div>
           </div>
           <div>
-            <div class="sig3-pl">Live Index</div>
+            <div class="sig3-pl">Live Futures</div>
             <div class="sig3-pv sig3-g sig3-mono" id="sig3-live">${live2 > 0 ? live2.toFixed(1) : "&hellip;"}</div>
           </div>
           <div>
@@ -10291,8 +10303,8 @@ app.get("/signals", featureGate("feature_signals", "Signals"), async (req, res) 
             <td class="sig3-mono">${(t as any).premiumEntry > 0 ? `<span style="font-size:.61rem;background:rgba(16,185,129,.15);color:#34d399;border-radius:3px;padding:1px 4px;margin-right:3px">BUY</span>${(t as any).premiumEntry.toFixed(1)}` : ""} ${(t as any).premiumExit > 0 ? `<span style="font-size:.61rem;background:rgba(239,68,68,.15);color:#f87171;border-radius:3px;padding:1px 4px;margin-right:3px;margin-left:4px">SELL</span>${(t as any).premiumExit.toFixed(1)}` : ""}</td>
             <td class="sig3-mono">${(t.entryPrice ?? 0) > 0 ? (t.entryPrice ?? 0).toFixed(1) : "&mdash;"} &#8594; ${(t.exitPrice ?? 0) > 0 ? (t.exitPrice ?? 0).toFixed(1) : "&mdash;"}</td>` : ``}
             <td>
-              <span class="sig3-pnl-rs ${pnlCls2(t.pnl ?? 0)}">${fmtRs2(t.pnl ?? 0)}</span>
-              <span class="sig3-pnl-spt">${fmtPts2(t.pnl ?? 0)}</span>
+              <span class="sig3-pnl-rs ${pnlCls2(tradeRealRs2(t))}">${fmtRs2(tradeRealRs2(t))}</span>
+              <span class="sig3-pnl-spt">real trade value</span>
             </td>
             ${isAdmin ? `<td>${t.reasonExit ? `<span class="sig3-rc ${rcCls(t.reasonExit).replace("rc-", "sig3-rc-")}">${t.reasonExit}</span>` : "&mdash;"}</td>` : ``}
             <td class="sig3-ct">${t.duration ? (t.duration < 60 ? t.duration + "s" : Math.round(t.duration / 60) + "m") : "&mdash;"}</td>
@@ -10327,8 +10339,8 @@ app.get("/signals", featureGate("feature_signals", "Signals"), async (req, res) 
               <td class="sig3-mono">${(t as any).premiumEntry > 0 ? `<span style="font-size:.61rem;background:rgba(16,185,129,.15);color:#34d399;border-radius:3px;padding:1px 4px;margin-right:3px">BUY</span>${(t as any).premiumEntry.toFixed(1)}` : ""} ${(t as any).premiumExit > 0 ? `<span style="font-size:.61rem;background:rgba(239,68,68,.15);color:#f87171;border-radius:3px;padding:1px 4px;margin-right:3px;margin-left:4px">SELL</span>${(t as any).premiumExit.toFixed(1)}` : ""}</td>
               <td class="sig3-mono">${(t.entryPrice ?? 0) > 0 ? (t.entryPrice ?? 0).toFixed(0) : "&mdash;"} &#8594; ${(t.exitPrice ?? 0) > 0 ? (t.exitPrice ?? 0).toFixed(0) : "&mdash;"}</td>` : ``}
               <td>
-                <span class="sig3-pnl-rs ${pnlCls2(t.pnl ?? 0)}">${fmtRs2(t.pnl ?? 0)}</span>
-                <span class="sig3-pnl-spt">${fmtPts2(t.pnl ?? 0)}</span>
+                <span class="sig3-pnl-rs ${pnlCls2(tradeRealRs2(t))}">${fmtRs2(tradeRealRs2(t))}</span>
+                <span class="sig3-pnl-spt">real trade value</span>
               </td>
               ${isAdmin ? `<td>${t.reasonExit ? `<span class="sig3-rc ${rcCls(t.reasonExit).replace("rc-", "sig3-rc-")}">${t.reasonExit}</span>` : "&mdash;"}</td>` : ``}
             </tr>`).join("");
@@ -10346,7 +10358,7 @@ app.get("/signals", featureGate("feature_signals", "Signals"), async (req, res) 
     <div class="sig3-tw">
       <table class="sig3-t">
         <thead><tr>
-          <th>Month</th><th>P&amp;L (&#8377;)</th><th>P&amp;L (pts)</th><th>Trades</th><th>W / L</th><th>Win %</th>
+          <th>Month</th><th>P&amp;L (&#8377;)</th><th>Trades</th><th>W / L</th><th>Win %</th>
         </tr></thead>
         <tbody>
           ${an2.monthly.map((m) => {
@@ -10358,7 +10370,6 @@ app.get("/signals", featureGate("feature_signals", "Signals"), async (req, res) 
               <td>
                 <span class="sig3-pnl-rs ${pnlCls2(m.pnl)}" style="font-size:.95rem">${fmtRs2(m.pnl)}</span>
               </td>
-              <td class="sig3-mono" style="font-size:.76rem;color:var(--text-muted)">${fmtPts2(m.pnl)}</td>
               <td>${m.trades}</td>
               <td><span class="sig3-g">${m.wins}W</span>&nbsp;/&nbsp;<span class="sig3-r">${m.losses}L</span></td>
               <td class="${m.winRate >= 55 ? "sig3-g" : m.winRate >= 40 ? "" : "sig3-r"}">${m.trades > 0 ? m.winRate + "%" : "&mdash;"}</td>
@@ -10370,142 +10381,115 @@ app.get("/signals", featureGate("feature_signals", "Signals"), async (req, res) 
 
     </div><!-- /panel-lock50 -->
 
-    <!-- ═══ TRAIL PANEL (paper shadow dashboard) ═══ -->
+    <!-- ═══ 10:30 PANEL (paper shadow dashboard) ═══ -->
     <div id="panel-trail" style="display:none">
 
-    <!-- TRAIL KPI cards -->
-    <div class="sig3-kpis">
-      <div class="sig3-kpi">
-        <div class="sig3-kl">Today P&amp;L</div>
-        <div class="sig3-kv" id="k3t-today-rs" style="color:#818cf8">${fmtRs2(hb2?.shadowPnL ?? 0)}</div>
-        <div class="sig3-ks" id="k3t-today-pts" style="color:#818cf8">${fmtPts2(hb2?.shadowPnL ?? 0)}</div>
-      </div>
-      <div class="sig3-kpi">
-        <div class="sig3-kl">Today Trades</div>
-        <div class="sig3-kv" id="k3t-trades">${hb2?.shadowTrades ?? 0}</div>
-        <div class="sig3-ks sig3-d" id="k3t-wl"><span class="sig3-g">${hb2?.shadowWins ?? 0}W</span> / <span class="sig3-r">${hb2?.shadowLosses ?? 0}L</span></div>
-      </div>
-      <div class="sig3-kpi">
-        <div class="sig3-kl">Win Rate</div>
-        <div class="sig3-kv sig3-d" id="k3t-winrate">${hb2 && ((hb2.shadowWins??0)+(hb2.shadowLosses??0))>0 ? Math.round(((hb2.shadowWins??0)/((hb2.shadowWins??0)+(hb2.shadowLosses??0)))*100)+'%' : '&mdash;'}</div>
-        <div class="sig3-ks sig3-d">today</div>
-      </div>
-      <div class="sig3-kpi">
-        <div class="sig3-kl">5yr Backtest</div>
-        <div class="sig3-kv sig3-d">+&#8377;26.1L</div>
-        <div class="sig3-ks sig3-d">vs LOCK50 +&#8377;31.5L</div>
-      </div>
-      <div class="sig3-kpi">
-        <div class="sig3-kl">Strategy Rules</div>
-        <div class="sig3-kv sig3-d" style="font-size:.82rem">TRAIL</div>
-        <div class="sig3-ks sig3-d">peak&ge;100&#8594;+20 &nbsp; peak&ge;200&#8594;+100</div>
-      </div>
-    </div>
-
-    <!-- TRAIL Live Position Card -->
-    <div id="k3t-pos-wrap">
-      <!-- In-trade card: always rendered, JS shows/hides -->
-      <div class="sig3-pos sig3-pos-ce" id="k3t-pos-intrade" style="display:${(hb2?.shadowInTrade && (hb2?.shadowEntry ?? 0) > 0) ? '' : 'none'}">
-        <div class="sig3-ph">
-          <span class="sig3-dot"></span>
-          <span class="sig3-dir-b" id="k3t-pos-dir-b" style="background:rgba(99,102,241,.15);color:#818cf8">${hb2?.shadowDir ?? "?"} OPTION</span>
-          <span class="sig3-mode-b" style="background:rgba(99,102,241,.15);color:#818cf8">PAPER</span>
-          <span class="sig3-dur" style="color:#818cf8">Shadow only</span>
+      <!-- 10:30 KPI cards -->
+      <div class="sig3-kpis">
+        <div class="sig3-kpi">
+          <div class="sig3-kl">Session P&amp;L</div>
+          <div class="sig3-kv" id="tt1030-pnl-rs" style="color:#818cf8">${fmtRs2(hb2?.tt1030PnL ?? 0)}</div>
+          <div class="sig3-ks" id="tt1030-pnl-pts" style="color:#818cf8">10:30 shadow paper P&amp;L</div>
         </div>
-        <div class="sig3-pnl-big" id="k3t-pos-pnl" style="color:#818cf8">&mdash;</div>
-        <div class="sig3-pnl-pts" id="k3t-pos-pts" style="color:#818cf8">Unrealised (paper)</div>
-        <div class="sig3-pg">
-          <div>
-            <div class="sig3-pl">Entry Index</div>
-            <div class="sig3-pv sig3-mono" id="k3t-pos-entry">${(hb2?.shadowEntry ?? 0) > 0 ? (hb2?.shadowEntry ?? 0).toFixed(1) : "&mdash;"}</div>
-          </div>
-          <div>
-            <div class="sig3-pl">Live Index</div>
-            <div class="sig3-pv sig3-g sig3-mono" id="k3t-pos-live">&hellip;</div>
-          </div>
-          <div>
-            <div class="sig3-pl">Stop Loss</div>
-            <div class="sig3-pv sig3-r sig3-mono" id="k3t-pos-sl">${(hb2?.shadowSL ?? 0) > 0 ? (hb2?.shadowSL ?? 0).toFixed(1) : "&mdash;"}</div>
-          </div>
-          <div>
-            <div class="sig3-pl">Direction</div>
-            <div class="sig3-pv" id="k3t-pos-dir">${hb2?.shadowDir ?? "&mdash;"}</div>
-          </div>
+        <div class="sig3-kpi">
+          <div class="sig3-kl">Today Trades</div>
+          <div class="sig3-kv" id="tt1030-tc">${hb2?.tt1030Trades ?? 0}</div>
+          <div class="sig3-ks sig3-d" id="tt1030-wl"><span class="sig3-g" id="tt1030-w">0W</span> / <span class="sig3-r" id="tt1030-l">0L</span></div>
+        </div>
+        <div class="sig3-kpi">
+          <div class="sig3-kl">Win Rate</div>
+          <div class="sig3-kv sig3-d" id="tt1030-wr">&mdash;</div>
+          <div class="sig3-ks sig3-d" id="tt1030-wrs">0W / 0L</div>
+        </div>
+        <div class="sig3-kpi">
+          <div class="sig3-kl">Range</div>
+          <div class="sig3-kv sig3-d" id="tt1030-range" style="font-size:1rem">${(hb2?.tt1030High && hb2?.tt1030Low)?`${Number(hb2.tt1030High).toFixed(1)} / ${Number(hb2.tt1030Low).toFixed(1)}`:'Waiting'}</div>
+          <div class="sig3-ks sig3-d">10:30 6th candle</div>
+        </div>
+        <div class="sig3-kpi">
+          <div class="sig3-kl">Session Status</div>
+          <div class="sig3-kv sig3-d"><span class="sig3-phase live" id="tt1030-status">Watching</span></div>
+          <div class="sig3-ks sig3-d" id="tt1030-detail">Waiting for candle close</div>
         </div>
       </div>
-      <!-- Flat/watching card: always rendered, JS shows/hides -->
-      <div class="sig3-pos sig3-pos-flat" id="k3t-pos-flat" style="display:${(hb2?.shadowInTrade && (hb2?.shadowEntry ?? 0) > 0) ? 'none' : ''}">
-        <div style="display:flex;align-items:center;gap:.75rem">
-          <span style="font-size:1.6rem">&#9203;</span>
-          <div>
-            <div style="font-weight:700;font-size:.95rem">TRAIL — Watching for Signal</div>
-            <div class="sig3-ks sig3-d" id="k3t-next-opp" style="margin-top:4px">Next opportunity loading&hellip;</div>
+
+      <div class="sig3-grid">
+        <div>
+          <div class="sig3-sec">Session Timeline</div>
+          <div style="border:1px solid var(--border);border-radius:10px;padding:10px 12px;" id="tt1030-timeline">
+            <div style="margin-bottom:8px;color:var(--text-muted)">Collecting 10:30 session history...</div>
+            <div style="font-size:.74rem;font-family:monospace" id="tt1030-watch"><span class="sig3-mini">No candle yet</span></div>
+          </div>
+        </div>
+        <div id="tt1030-pos-wrap">
+          <div class="sig3-pos sig3-pos-flat" id="tt1030-pos-flat">
+            <div class="sig3-ph">
+              <span class="sig3-dot"></span>
+              <span class="sig3-dir-b sig3-dir-ce">WAITING</span>
+              <span class="sig3-mode-b">LIVE_SHADOW</span>
+            </div>
+            <div class="sig3-pnl-big sig3-g">—</div>
+            <div class="sig3-pnl-pts sig3-g">10:30 range is not ready yet</div>
+            <div class="sig3-pg">
+              <div><div class="sig3-pl">Status</div><div class="sig3-pv sig3-mono" id="tt1030-flat-msg">Waiting for 6th candle</div></div>
+              <div><div class="sig3-pl">Entry Index</div><div class="sig3-pv sig3-mono" id="tt1030-flat-entry">&mdash;</div></div>
+              <div><div class="sig3-pl">Trail SL</div><div class="sig3-pv sig3-mono" id="tt1030-flat-sl">&mdash;</div></div>
+            </div>
+          </div>
+
+          <div class="sig3-pos sig3-pos-ce" id="tt1030-pos-card" style="display:none">
+            <div class="sig3-ph">
+              <span class="sig3-dot"></span>
+              <span class="sig3-dir-b sig3-dir-ce" id="tt1030-card-badge">CE OPTION</span>
+              <span class="sig3-mode-b">LIVE_SHADOW</span>
+            </div>
+            <div class="sig3-pnl-big" id="tt1030-card-rs">&mdash;</div>
+            <div class="sig3-pnl-pts" id="tt1030-card-pts">&mdash; unrealised</div>
+            <div class="sig3-pg">
+              <div><div class="sig3-pl">Entry Index</div><div class="sig3-pv sig3-mono" id="tt1030-card-ep">&mdash;</div></div>
+              <div><div class="sig3-pl">Live Index</div><div class="sig3-pv sig3-g sig3-mono" id="tt1030-card-lp">&mdash;</div></div>
+              <div><div class="sig3-pl">Trail SL</div><div class="sig3-pv sig3-r sig3-mono" id="tt1030-card-sl">&mdash;</div></div>
+              <div><div class="sig3-pl">Option Symbol</div><div class="sig3-pv sig3-mono" id="tt1030-card-sym">BANKNIFTY</div></div>
+            </div>
           </div>
         </div>
       </div>
-    </div>
+      <div id="tt1030-signal" style="margin-top:8px" class="sig3-note"></div>
 
-    <!-- TRAIL Today's Trades — shown right after position card -->
-    <div class="sig3-sec" style="margin-top:1.2rem">
-      Today &mdash; TRAIL Paper Trades
-      <span class="sig3-sec-count" id="k3t-today-count">(${hb2?.shadowTrades ?? 0} trades)</span>
-    </div>
-    <div class="sig3-tw">
-      <table class="sig3-t">
-        <thead><tr>
-          <th>Time</th><th>Dir</th><th>Entry &rarr; Exit (Index)</th>
-          <th>Prem In</th><th>Prem Out</th>
-          <th>P&amp;L (&#8377;)</th><th>Reason</th>
-        </tr></thead>
-        <tbody id="k3t-today-body">
-          <tr><td colspan="7" class="sig3-te">Loading&hellip;</td></tr>
-        </tbody>
-      </table>
-    </div>
-
-    <!-- LAST 15-MIN CANDLE (shared with LOCK50) -->
-    <div id="sig3t-candle-wrap" style="margin-bottom:1rem;display:none">
-      <div class="sig3-sec" style="margin-bottom:.5rem">Last 15-Min Candle <span id="sig3t-candle-time" style="font-weight:400;font-size:.72rem;color:var(--text-muted)"></span></div>
-      <div style="background:var(--card-bg);border:1px solid var(--border);border-radius:10px;padding:14px 18px;display:flex;flex-wrap:wrap;gap:1.2rem;align-items:center">
-        <span id="sig3t-candle-colour" style="font-size:1.1rem;font-weight:700"></span>
-        <span style="font-size:.8rem;color:var(--text-muted)">O: <b id="sig3t-c-o" style="color:var(--text)"></b></span>
-        <span style="font-size:.8rem;color:var(--text-muted)">H: <b id="sig3t-c-h" style="color:#10b981"></b></span>
-        <span style="font-size:.8rem;color:var(--text-muted)">L: <b id="sig3t-c-l" style="color:#ef4444"></b></span>
-        <span style="font-size:.8rem;color:var(--text-muted)">C: <b id="sig3t-c-c" style="color:var(--text)"></b></span>
-        <span id="sig3t-candle-status" style="font-size:.78rem;margin-left:auto;color:var(--text-muted)"></span>
+      <div style="display:flex;align-items:center;gap:8px;margin-top:1.2rem;margin-bottom:.6rem;flex-wrap:wrap">
+        <span style="font-size:.72rem;text-transform:uppercase;letter-spacing:1px;color:#8b949e;font-weight:700">10:30 Trade History</span>
+        <div class="tt-wrap">
+          <button id="tt1030-tab-fut" class="tt-tab active" onclick="_tt1030Hist('fut')">Futures</button>
+          <button id="tt1030-tab-opt" class="tt-tab" onclick="_tt1030Hist('opt')">Options</button>
+          <button id="tt1030-tab-candle" class="tt-tab" onclick="_tt1030Hist('candle')">Candle Log</button>
+        </div>
+        <span class="sig3-sec-count" id="tt1030-today-count" style="margin-left:auto"></span>
+        <span class="sig3-sec-count" id="tt1030-candle-count"></span>
       </div>
-    </div>
+      <div class="sig3-tw" id="tt1030-panel-fut">
+        <table class="tt">
+          <thead><tr><th>Time</th><th>Dir</th><th>Entry &rarr; Exit</th><th>Prem In</th><th>Prem Out</th><th>Index P&amp;L</th><th>&#8377; P&amp;L</th><th>Reason</th><th>Dur</th></tr></thead>
+          <tbody id="tt1030-body"><tr><td colspan="9" class="tt-e">No 10:30 futures/index trades today</td></tr></tbody>
+        </table>
+      </div>
+      <div class="sig3-tw" id="tt1030-panel-opt" style="display:none">
+        <table class="tt">
+          <thead><tr><th>Time</th><th>Dir</th><th>Symbol</th><th>Buy Premium</th><th>Sell Premium</th><th>Premium P&amp;L</th><th>&#8377; P&amp;L</th><th>Reason</th><th>Dur</th></tr></thead>
+          <tbody id="tt1030-opt-body"><tr><td colspan="9" class="tt-e">No 10:30 options trades today</td></tr></tbody>
+        </table>
+      </div>
+      <div class="sig3-tw" id="tt1030-panel-candle" style="display:none">
+        <table class="tt">
+          <thead><tr><th>#</th><th>Time</th><th>O</th><th>H</th><th>L</th><th>C</th><th>Status</th><th>Dir</th><th>SL</th></tr></thead>
+          <tbody id="tt1030-candle-body"><tr><td colspan="9" class="tt-e">Waiting for 10:30 candle log</td></tr></tbody>
+        </table>
+      </div>
 
-    <!-- TRAIL status note -->
-    <div style="padding:12px 16px;border-radius:10px;background:rgba(99,102,241,.08);border:1px solid rgba(99,102,241,.2);font-size:.78rem;color:var(--text-muted);margin-bottom:1rem">
-      <strong style="color:#818cf8">&#9670; TRAIL — Paper Shadow Mode</strong><br>
-      Runs alongside the live LOCK50 bot. Same entry signals, different exit logic.
-      No real orders placed. Today's P&amp;L updates every 8 seconds from bot heartbeat.
-    </div>
-
-    <!-- Today's comparison section header -->
-    <div class="sig3-sec">Today &mdash; Strategy Comparison</div>
-    <div class="sig3-tw">
-      <table class="sig3-t">
-        <thead><tr><th>Strategy</th><th>Today P&amp;L (&#8377;)</th><th>pts</th><th>Trades</th><th>Mode</th></tr></thead>
-        <tbody>
-          <tr>
-            <td style="font-weight:700">&#9679; LOCK50</td>
-            <td><span class="sig3-pnl-rs ${pnlCls2(an2.today.pnl)}" id="k3t-cmp-lock-rs">${fmtRs2(an2.today.pnl)}</span></td>
-            <td class="sig3-mono" id="k3t-cmp-lock-pts">${fmtPts2(an2.today.pnl)}</td>
-            <td id="k3t-cmp-lock-tr">${an2.today.trades}</td>
-            <td><span style="font-size:.65rem;font-weight:700;background:rgba(16,185,129,.15);color:#10b981;padding:2px 6px;border-radius:3px">LIVE</span></td>
-          </tr>
-          <tr>
-            <td style="font-weight:700;color:#818cf8">&#9670; TRAIL</td>
-            <td><span class="sig3-pnl-rs" id="k3t-cmp-trail-rs" style="color:#818cf8">${fmtRs2(hb2?.shadowPnL ?? 0)}</span></td>
-            <td class="sig3-mono" id="k3t-cmp-trail-pts" style="color:#818cf8">${fmtPts2(hb2?.shadowPnL ?? 0)}</td>
-            <td id="k3t-cmp-trail-tr">${hb2?.shadowTrades ?? 0}</td>
-            <td><span style="font-size:.65rem;font-weight:700;background:rgba(99,102,241,.15);color:#818cf8;padding:2px 6px;border-radius:3px">PAPER</span></td>
-          </tr>
-        </tbody>
-      </table>
-    </div>
+      <div style="padding:12px 16px;border-radius:10px;background:rgba(99,102,241,.08);border:1px solid rgba(99,102,241,.2);font-size:.78rem;color:var(--text-muted);margin-top:1rem">
+        <strong style="color:#818cf8">&#9670; 10:30 — Live Shadow Mode</strong><br>
+        Runs alongside DRISHTI. Signal is BANKNIFTY index 10:30 high/low breakout with candle-close trailing SL.
+        No real orders are placed. Today's P&amp;L updates from bot heartbeat.
+      </div>
 
     </div><!-- /panel-trail -->
 
@@ -10515,11 +10499,103 @@ app.get("/signals", featureGate("feature_signals", "Signals"), async (req, res) 
   </footer>
 
   <script>
-  var _QM = 15;
-  function _fR(v){var r=Math.round(v*_QM);return(r>=0?"+":"\u2212")+"\u20B9"+Math.abs(r).toLocaleString("en-IN");}
-  function _fP(v){return(v>=0?"+":"")+v.toFixed(0)+" pts";}
+  function _fR(v){var r=Math.round(v||0);return(r>=0?"+":"\u2212")+"\u20B9"+Math.abs(r).toLocaleString("en-IN");}
+  function _fP(v){return "real value";}
   function _gc(v){return v>=0?"#10b981":"#ef4444";}
   function _ge(id){return document.getElementById(id);}
+  function _tt1030Hist(mode){
+    mode = mode || 'fut';
+    var p1=_ge('tt1030-panel-fut'), p2=_ge('tt1030-panel-opt'), p3=_ge('tt1030-panel-candle');
+    if(p1) p1.style.display=mode==='fut'?'':'none';
+    if(p2) p2.style.display=mode==='opt'?'':'none';
+    if(p3) p3.style.display=mode==='candle'?'':'none';
+    var b1=_ge('tt1030-tab-fut'), b2=_ge('tt1030-tab-opt'), b3=_ge('tt1030-tab-candle');
+    if(b1){b1.className='tt-tab'+(mode==='fut'?' active':'');}
+    if(b2){b2.className='tt-tab'+(mode==='opt'?' active':'');}
+    if(b3){b3.className='tt-tab'+(mode==='candle'?' active':'');}
+  }
+  function _ttDirCls(d){return (d||'').toLowerCase()==='pe'?'pe':'ce';}
+  function _fmt10(v){var n=parseFloat(v||0);return isFinite(n)?n.toFixed(1):'&mdash;';}
+  function _render1030Log(log){
+    var l=log||[];
+    var fut=_ge('tt1030-body'), opt=_ge('tt1030-opt-body');
+    var ct=0;
+    if(!l || !l.length){
+      if(fut) fut.innerHTML='<tr><td colspan="9" class="tt-e">No 10:30 futures/index trades today</td></tr>';
+      if(opt) opt.innerHTML='<tr><td colspan="9" class="tt-e">No 10:30 options trades today</td></tr>';
+      if(_ge('tt1030-today-count')) _ge('tt1030-today-count').textContent='('+ct+' trades)';
+      return;
+    }
+    ct=l.length;
+    if(_ge('tt1030-today-count')) _ge('tt1030-today-count').textContent='('+ct+' trades)';
+    if(fut) fut.innerHTML=[].concat(l).reverse().map(function(t){
+      var dir=((t.dir||'').toUpperCase());
+      var pts=parseFloat(t.pts||0);
+      var rs=t.pnlRs!=null?parseFloat(t.pnlRs):Math.round(pts*30);
+      var reason=(t.reason||'&mdash;');
+      var cls=rs>=0?'sig3-g':rs<0?'sig3-r':'';
+      var e=t.entry>0?_fmt10(t.entry):'&mdash;';
+      var x=t.exit!=null&&t.exit>0?_fmt10(t.exit):'<em style="color:#818cf8">live</em>';
+      var pin=t.premIn>0?_fR(parseFloat(t.premIn)):parseFloat(t.premIn||0)===0?'&mdash;':(t.premIn!=null?parseFloat(t.premIn).toFixed(1):'&mdash;');
+      var pout=t.premOut>0?_fR(parseFloat(t.premOut)):t.exit!=null&&t.exit>0?'&mdash;':(t.premOut!=null?parseFloat(t.premOut).toFixed(1):'<em style="color:#818cf8">live</em>');
+      var dur=t.duration?(t.duration<60?(t.duration+'s'):(Math.round(t.duration/60)+'m')):'&mdash;';
+      return '<tr>'
+        +'<td class="sig3-ct">'+(t.time||'&mdash;')+'</td>'
+        +'<td><span class="sig3-db '+_ttDirCls(dir)+'">'+(dir||'&mdash;')+'</span></td>'
+        +'<td><span class="tt-side"><span class="dbadge '+_ttDirCls(dir)+'">'+(dir||'&mdash;')+'</span>'+e+' -> '+x+'</td>'
+        +'<td class="sig3-mono">'+pin+'</td>'
+        +'<td class="sig3-mono">'+pout+'</td>'
+        +'<td class="'+cls+'">'+_fR(pts)+'</td>'
+        +'<td class="'+cls+'">'+_fR(rs)+'</td>'
+        +'<td>'+reason+'</td>'
+        +'<td>'+dur+'</td>'
+      +'</tr>';
+    }).join('');
+    if(opt) opt.innerHTML=[].concat(l).reverse().map(function(t){
+      var dir=((t.dir||'').toUpperCase());
+      var cls=((t.premOut||t.premIn||0)-0)>=0?'sig3-g':(t.premIn&&t.premOut? 'sig3-r':'');
+      var pin=t.premIn>0?'&#8379;'+parseFloat(t.premIn).toFixed(1):'&mdash;';
+      var pout=t.premOut>0?'&#8379;'+parseFloat(t.premOut).toFixed(1):(t.exit!=null&&t.exit>0?'&mdash;':'<em style="color:#818cf8">live</em>');
+      var pts=(t.premOut||0)-(t.premIn||0);
+      var rs=Math.round((pts||0)*30);
+      var reason=(t.reason||'&mdash;');
+      var dur=t.duration?(t.duration<60?(t.duration+'s'):(Math.round(t.duration/60)+'m')):'&mdash;';
+      return '<tr>'
+        +'<td class="sig3-ct">'+(t.time||'&mdash;')+'</td>'
+        +'<td><span class="sig3-db '+_ttDirCls(dir)+'">'+(dir||'&mdash;')+'</span></td>'
+        +'<td class="sig3-mono">'+(t.symbol||'BANKNIFTY OPT')+'</td>'
+        +'<td class="sig3-mono">'+pin+'</td>'
+        +'<td class="sig3-mono">'+pout+'</td>'
+        +'<td class="'+(pts>0?'sig3-g':pts<0?'sig3-r':'')+'">'+(pts===0?'0.0':(pts>0?'+':'')+Number(pts).toFixed(1))+'</td>'
+        +'<td class="'+(rs>0?'sig3-g':rs<0?'sig3-r':'')+'">' + (rs===0&&isNaN(rs)?'&mdash;': _fR(rs)) +'</td>'
+        +'<td>'+reason+'</td>'
+        +'<td>'+dur+'</td>'
+      +'</tr>';
+    }).join('');
+  }
+  function _render1030CandleLog(log){
+    var l=log||[];
+    var el=_ge('tt1030-candle-body');
+    if(_ge('tt1030-candle-count'))_ge('tt1030-candle-count').textContent='('+l.length+' candles)';
+    if(!el){return;}
+    if(!l.length){el.innerHTML='<tr><td colspan="9" class="tt-e">Waiting for 10:30 candle log</td></tr>';return;}
+    el.innerHTML=[].concat(l).reverse().map(function(c){
+      var st=(c.status||'watching');
+      var dir=(c.dir||'').toUpperCase();
+      return '<tr>'
+        +'<td class="sig3-ct">'+(c.idx||'&mdash;')+'</td>'
+        +'<td class="sig3-ct">'+(c.time||'&mdash;')+'</td>'
+        +'<td>'+(c.open!=null?Number(c.open).toFixed(1):'&mdash;')+'</td>'
+        +'<td>'+(c.high!=null?Number(c.high).toFixed(1):'&mdash;')+'</td>'
+        +'<td>'+(c.low!=null?Number(c.low).toFixed(1):'&mdash;')+'</td>'
+        +'<td>'+(c.close!=null?Number(c.close).toFixed(1):'&mdash;')+'</td>'
+        +'<td>'+st+'</td>'
+        +'<td>'+ (dir || '&mdash;') +'</td>'
+        +'<td>'+(c.sl!=null?Number(c.sl).toFixed(1):'&mdash;')+'</td>'
+      +'</tr>';
+    }).join('');
+  }
+  function _fmtTTColor(v){return v>=0?'#10b981':'#ef4444';}
   async function _sig3Refresh(){
     try{
       const r=await fetch("/api/bot/status");const d=await r.json();
@@ -10528,18 +10604,18 @@ app.get("/signals", featureGate("feature_signals", "Signals"), async (req, res) 
       const tot=parseFloat(((d.today?.pnl||0)+(inT?(d.activeState?.unrealisedPnL||0):0)).toFixed(0));
       // ── LOCK50 KPI
       if(_ge("k3-today-rs")){_ge("k3-today-rs").textContent=_fR(tot);_ge("k3-today-rs").style.color=_gc(tot);}
-      if(_ge("k3-today-pts")){_ge("k3-today-pts").textContent=_fP(tot);_ge("k3-today-pts").style.color=_gc(tot);}
+      if(_ge("k3-today-pts")){_ge("k3-today-pts").textContent="real money P&L";_ge("k3-today-pts").style.color=_gc(tot);}
       const tc=d.today?.trades||0;
       if(_ge("k3-trades"))_ge("k3-trades").innerHTML=tc+(tc!==1?" trades":" trade")+(inT?' <span style="font-size:.65rem;color:#10b981">+live</span>':"");
       if(_ge("k3-wl")&&d.today)_ge("k3-wl").innerHTML='<span class="sig3-g">'+d.today.wins+'W</span> / <span class="sig3-r">'+d.today.losses+'L</span>';
       if(_ge("k3-wk-rs")&&d.weekly){_ge("k3-wk-rs").textContent=_fR(d.weekly.pnl);_ge("k3-wk-rs").style.color=_gc(d.weekly.pnl);}
-      if(_ge("k3-wk-pts")&&d.weekly){_ge("k3-wk-pts").textContent=_fP(d.weekly.pnl);_ge("k3-wk-pts").style.color=_gc(d.weekly.pnl);}
+      if(_ge("k3-wk-pts")&&d.weekly){_ge("k3-wk-pts").textContent="real money P&L";_ge("k3-wk-pts").style.color=_gc(d.weekly.pnl);}
       if(_ge("k3-wr")&&d.allTime)_ge("k3-wr").textContent=d.allTime.winRate+"%";
       // ── LOCK50 live position + SL update
       if(inT&&d.activeState?.entryPrice>0){
         const u=d.activeState?.unrealisedPnL??0;
         if(_ge("sig3-pnl-rs")){_ge("sig3-pnl-rs").textContent=_fR(u);_ge("sig3-pnl-rs").style.color=_gc(u);}
-        if(_ge("sig3-pnl-pts")){_ge("sig3-pnl-pts").textContent=(u>=0?"+":"")+u.toFixed(0)+" index pts unrealised";_ge("sig3-pnl-pts").style.color=_gc(u);}
+        if(_ge("sig3-pnl-pts")){_ge("sig3-pnl-pts").textContent="live unrealised from real prices";_ge("sig3-pnl-pts").style.color=_gc(u);}
         if(_ge("sig3-live")&&d.activeState?.livePrice)_ge("sig3-live").textContent=parseFloat(d.activeState.livePrice).toFixed(1);
       }
       // ── LOCK50 flat — next opportunity trigger levels
@@ -10565,89 +10641,79 @@ app.get("/signals", featureGate("feature_signals", "Signals"), async (req, res) 
           _noEl.innerHTML='<span style="opacity:.5">Waiting for first candle&hellip;</span>';
         }
       }
-      const shPnl=parseFloat((d.heartbeat?.shadowPnL??0).toFixed(0));
-      const shTr=d.heartbeat?.shadowTrades??0;
-      const shW=d.heartbeat?.shadowWins??0;
-      const shL=d.heartbeat?.shadowLosses??0;
-      const shInT=!!(d.heartbeat?.shadowInTrade);
-      const shDir=(d.heartbeat?.shadowDir||"").toUpperCase();
-      const shEntry=parseFloat(d.heartbeat?.shadowEntry||0);
-      const shSL=parseFloat(d.heartbeat?.shadowSL||0);
-      const livePrice=d.activeState?.livePrice||d.heartbeat?.livePrice||0;
+      const shPnl=parseFloat((d.heartbeat?.tt1030PnL||0).toFixed(0));
+      const shTr=d.heartbeat?.tt1030Trades??0;
+      const shW=d.heartbeat?.tt1030Wins??0;
+      const shL=d.heartbeat?.tt1030Losses??0;
+      const shInT=!!(d.heartbeat?.tt1030InTrade);
+      const shDir=(d.heartbeat?.tt1030Dir||"").toUpperCase();
+      const shEntry=parseFloat(d.heartbeat?.tt1030Entry||0);
+      const shSL=parseFloat(d.heartbeat?.tt1030SL||0);
+      const livePrice=d.heartbeat?.tt1030Live||d.activeState?.livePrice||d.heartbeat?.livePrice||0;
+      const hi=parseFloat(d.heartbeat?.tt1030High||0);
+      const lo=parseFloat(d.heartbeat?.tt1030Low||0);
       const lock50Today=parseFloat(((d.today?.pnl||0)+(inT?(d.activeState?.unrealisedPnL||0):0)).toFixed(0));
       // TRAIL KPI
-      if(_ge("k3t-today-rs")){_ge("k3t-today-rs").textContent=_fR(shPnl);_ge("k3t-today-rs").style.color="#818cf8";}
-      if(_ge("k3t-today-pts")){_ge("k3t-today-pts").textContent=_fP(shPnl);_ge("k3t-today-pts").style.color="#818cf8";}
-      if(_ge("k3t-trades")){_ge("k3t-trades").textContent=shTr;}
-      if(_ge("k3t-wl"))_ge("k3t-wl").innerHTML='<span class="sig3-g">'+shW+'W</span> / <span class="sig3-r">'+shL+'L</span>';
-      const _wrt=shW+shL>0?Math.round(shW/(shW+shL)*100):0;
-      if(_ge("k3t-winrate")){_ge("k3t-winrate").textContent=shW+shL>0?_wrt+'%':'\u2014';}
-      if(_ge("k3t-cmp-lock-rs")){_ge("k3t-cmp-lock-rs").textContent=_fR(lock50Today);_ge("k3t-cmp-lock-rs").style.color=_gc(lock50Today);}
-      if(_ge("k3t-cmp-lock-pts")){_ge("k3t-cmp-lock-pts").textContent=_fP(lock50Today);_ge("k3t-cmp-lock-pts").style.color=_gc(lock50Today);}
-      if(_ge("k3t-cmp-lock-tr")){_ge("k3t-cmp-lock-tr").textContent=d.today?.trades??0;}
-      if(_ge("k3t-cmp-trail-rs")){_ge("k3t-cmp-trail-rs").textContent=_fR(shPnl);}
-      if(_ge("k3t-cmp-trail-pts")){_ge("k3t-cmp-trail-pts").textContent=_fP(shPnl);}
-      if(_ge("k3t-cmp-trail-tr")){_ge("k3t-cmp-trail-tr").textContent=shTr;}
-      // TRAIL today's trades log
-      const shLog=d.heartbeat?.shadowTradeLog||[];
-      // (lock50Today already declared above)
-      if(_ge("k3t-today-count"))_ge("k3t-today-count").textContent="("+shTr+" trade"+(shTr!==1?"s":"")+")";
-      const k3tbody=_ge("k3t-today-body");
-      if(k3tbody){
-        if(!shLog.length){
-          k3tbody.innerHTML='<tr><td colspan="7" class="sig3-te">No TRAIL paper trades today'+(shInT?' &mdash; 1 live position active':'')+'</td></tr>';
-        } else {
-          k3tbody.innerHTML=[...shLog].reverse().map(function(t){
-            const _pts=t.pts!=null?parseFloat(t.pts):null;
-            const _pC=_pts!=null?(_pts>0?'sig3-g':_pts<0?'sig3-r':''):''; 
-            const _rsV=_pts!=null?_fR(_pts):'&mdash;';
-            const _ptV=_pts!=null?_fP(_pts):'';
-            const _entStr=t.entry>0?parseFloat(t.entry).toFixed(1):'&mdash;';
-            const _exStr=t.exit!=null&&t.exit>0?parseFloat(t.exit).toFixed(1):'<em style="color:#818cf8">live</em>';
-            const _dir=(t.dir||'').toUpperCase();
-            const _pIn=t.premIn!=null?'&#8377;'+parseFloat(t.premIn).toFixed(0):'&mdash;';
-            const _pOut=t.premOut!=null?'&#8377;'+parseFloat(t.premOut).toFixed(0):(t.exit!=null&&t.exit>0?'&mdash;':'<em style="color:#818cf8">live</em>');
-            return '<tr>'
-              +'<td class="sig3-ct">'+(t.time||'&mdash;')+'</td>'
-              +'<td><span class="sig3-db '+(_dir.toLowerCase())+'">'+(_dir||'&mdash;')+'</span></td>'
-              +'<td class="sig3-mono">'+_entStr+' &rarr; '+_exStr+'</td>'
-              +'<td class="sig3-mono">'+_pIn+'</td>'
-              +'<td class="sig3-mono">'+_pOut+'</td>'
-              +'<td><span class="sig3-pnl-rs '+_pC+'">'+_rsV+'</span><span class="sig3-pnl-spt"> '+_ptV+'</span></td>'
-              +'<td>'+(t.reason||'&mdash;')+'</td>'
-              +'</tr>';
-          }).join("");
-        }
-      }
-      // TRAIL live position card — show/hide and update
-      const _k3inT=_ge("k3t-pos-intrade");
-      const _k3flat=_ge("k3t-pos-flat");
-      if(_k3inT)_k3inT.style.display=shInT&&shEntry>0?'':'none';
-      if(_k3flat)_k3flat.style.display=shInT&&shEntry>0?'none':'';
+      if(_ge("tt1030-pnl-rs")){_ge("tt1030-pnl-rs").textContent=_fR(shPnl);_ge("tt1030-pnl-rs").style.color=_fmtTTColor(shPnl);}
+      if(_ge("tt1030-pnl-pts")){_ge("tt1030-pnl-pts").textContent="10:30 shadow P&L";_ge("tt1030-pnl-pts").style.color=_fmtTTColor(shPnl);}
+      if(_ge("tt1030-tc")){_ge("tt1030-tc").textContent=shTr;}
+      if(_ge("tt1030-w"))_ge("tt1030-w").textContent=(shW||0)+'W';
+      if(_ge("tt1030-l"))_ge("tt1030-l").textContent=(shL||0)+'L';
+      if(_ge("tt1030-wr")){_ge("tt1030-wr").textContent=(shW+shL)>0?Math.round(shW/(shW+shL)*100)+'%':'--';}
+      if(_ge("tt1030-wrs")){_ge("tt1030-wrs").textContent=(shW+shL)>0?shW+'W / '+shL+'L':'--';}
+      if(_ge("tt1030-range")){_ge("tt1030-range").textContent=hi>0&&lo>0?(hi.toFixed(1)+' / '+lo.toFixed(1)):'Waiting';}
+      // 10:30 trades / candle history
+      const ttLog=d.heartbeat?.tt1030TradeLog||[];
+      _render1030Log(ttLog);
+      _render1030CandleLog(d.heartbeat?.tt1030CandleLog||[]);
+      const shLog=d.heartbeat?.tt1030TradeLog||[];
+      if(_ge('tt1030-today-count')) _ge('tt1030-today-count').textContent='('+shTr+' trade'+(shTr!==1?'s':'')+(shInT?' + live':'')+')';
+      // Trail live position card
+      const _ttFlat=_ge("tt1030-pos-flat");
+      const _ttCard=_ge("tt1030-pos-card");
+      if(_ttFlat) _ttFlat.style.display=shInT&&shEntry>0?'none':'';
+      if(_ttCard) _ttCard.style.display=shInT&&shEntry>0?'':'none';
       if(shInT&&shEntry>0&&livePrice>0){
         const shU=shDir==="CE"?livePrice-shEntry:shEntry-livePrice;
-        if(_ge("k3t-pos-pnl")){_ge("k3t-pos-pnl").textContent=_fR(shU);_ge("k3t-pos-pnl").style.color=shU>=0?"#818cf8":"#ef4444";}
-        if(_ge("k3t-pos-pts")){_ge("k3t-pos-pts").textContent=(shU>=0?"+":"")+shU.toFixed(0)+" index pts unrealised (paper)";}
-        if(_ge("k3t-pos-live"))_ge("k3t-pos-live").textContent=livePrice.toFixed(1);
-        if(_ge("k3t-pos-entry"))_ge("k3t-pos-entry").textContent=shEntry.toFixed(1);
-        if(_ge("k3t-pos-dir"))_ge("k3t-pos-dir").textContent=shDir||"—";
-        if(_ge("k3t-pos-dir-b"))_ge("k3t-pos-dir-b").textContent=(shDir||"?")+' OPTION';
-        if(_ge("k3t-pos-sl")&&shSL>0)_ge("k3t-pos-sl").textContent=shSL.toFixed(1);
+        if(_ge("tt1030-card-rs")){_ge("tt1030-card-rs").textContent=_fR(shU);_ge("tt1030-card-rs").style.color=_gc(shU);}
+        if(_ge("tt1030-card-pts")){_ge("tt1030-card-pts").textContent=(shU>=0?'+':'')+shU.toFixed(2)+' idx pts';}
+        if(_ge("tt1030-card-lp"))_ge("tt1030-card-lp").textContent=Number(livePrice).toFixed(1);
+        if(_ge("tt1030-card-ep"))_ge("tt1030-card-ep").textContent=shEntry.toFixed(1);
+        if(_ge("tt1030-card-sl"))_ge("tt1030-card-sl").textContent=shSL>0?shSL.toFixed(1):'--';
+        if(_ge("tt1030-card-badge")){_ge("tt1030-card-badge").textContent=(shDir||'?')+' OPTION';_ge("tt1030-card-badge").className='sig3-dir-b sig3-dir-'+(_ttDirCls(shDir)||'ce');}
+        if(_ge("tt1030-status")) _ge("tt1030-status").textContent=(shDir||'TRADE')+' In Trade';
+        if(_ge("tt1030-detail")) _ge("tt1030-detail").innerHTML='<span style="color:'+_fmtTTColor(shU)+'">'+_fR(shU)+'</span> unrealised &middot; Entry '+shEntry.toFixed(1)+' &middot; SL '+(shSL>0?shSL.toFixed(1):'--');
       }
-      // TRAIL flat — show next opportunity trigger levels
+      if(_ge("tt1030-flat-entry")) _ge("tt1030-flat-entry").textContent=shEntry>0?shEntry.toFixed(1):'&mdash;';
+      if(_ge("tt1030-flat-sl")) _ge("tt1030-flat-sl").textContent=shSL>0?shSL.toFixed(1):'&mdash;';
+      if(_ge("tt1030-flat-msg")) _ge("tt1030-flat-msg").innerHTML=hi>0&&lo>0?('Range ready: <strong>'+hi.toFixed(1)+'</strong> / <strong>'+lo.toFixed(1)+'</strong>'):hi>0||lo>0?'Range building&hellip;':'Waiting for 6th candle close';
+      if(_ge("tt1030-status")) _ge("tt1030-status").textContent=shInT&&shDir?shDir+' In Trade':'Watching';
+      if(_ge("tt1030-detail")){
+        if(shInT&&shEntry>0&&livePrice>0){
+          _ge("tt1030-detail").textContent=(shDir||'Trade')+' live at index '+Number(livePrice).toFixed(1);
+        } else if(hi>0&&lo>0){
+          _ge("tt1030-detail").innerHTML='10:30 high <b>'+hi.toFixed(1)+'</b> / low <b>'+lo.toFixed(1)+'</b>';
+        } else {
+          _ge("tt1030-detail").textContent='Waiting for 10:30 candle range';
+        }
+      }
+      if(_ge("tt1030-watch")) {
+        _ge("tt1030-watch").textContent='Timeline: '+(hi>0&&lo>0?('range ready ('+hi.toFixed(1)+' / '+lo.toFixed(1)+')'):'waiting for 6th candle close');
+      }
+      // 10:30 flat — show marked range / next breakout levels
       if(!shInT){
-        const lc2=d.heartbeat?.lastCandle;
-        if(lc2&&_ge("k3t-next-opp")){
-          const _bH=Math.max(lc2.open,lc2.close);
-          const _bL=Math.min(lc2.open,lc2.close);
-          const _ceTrig=(_bH+25).toFixed(0);
-          const _peTrig=(_bL-25).toFixed(0);
-          const _lpf=parseFloat(livePrice)||0;
-          const _ceAway=_lpf>0?((_bH+25)-_lpf).toFixed(0):null;
-          const _peAway=_lpf>0?(_lpf-(_bL-25)).toFixed(0):null;
-          const _ceStr=_ceAway!==null?(" \u2014 "+(_ceAway>0?"\uD83D\uDD34 "+_ceAway+" pts away":"\u2705 past")):"";
-          const _peStr=_peAway!==null?(" \u2014 "+(_peAway>0?"\uD83D\uDD34 "+_peAway+" pts away":"\u2705 past")):"";
-          _ge("k3t-next-opp").innerHTML="CE entry if close \u2265 "+_ceTrig+_ceStr+"&nbsp;&nbsp;/&nbsp;&nbsp;PE entry if close \u2264 "+_peTrig+_peStr;
+        const _lpf=parseFloat(livePrice)||0;
+        const _ceAway=shEntry>0&&_lpf>0?(_lpf-hi).toFixed(0):null;
+        const _peAway=shEntry>0&&_lpf>0?(_lpf-lo).toFixed(0):null;
+        if(_ge("tt1030-flat-msg")){
+          if(hi>0&&lo>0){
+            _ge("tt1030-flat-msg").innerHTML=
+              '10:30 high <b>'+hi.toFixed(1)+'</b> / low <b>'+lo.toFixed(1)+'</b><br>' +
+              'CE trigger ' + (_ceAway!==null ? (_ceAway>=0?_ceAway+' pts away':'past') : 'n/a') +
+              ' | PE trigger ' + (_peAway!==null ? (_peAway>=0?_peAway+' pts away':'past') : 'n/a');
+          } else {
+            _ge("tt1030-flat-msg").innerHTML='Waiting for 10:30 candle close';
+          }
         }
       }
       // ── Bot status bar
@@ -10715,12 +10781,17 @@ app.get("/signals", featureGate("feature_signals", "Signals"), async (req, res) 
     })();
     const todayStrG = new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" });
     const yTrades = trades.filter((t) => (t.date || "").startsWith(yesterdayIST) && t.exitPrice && t.exitPrice > 0);
-    const yPnl = parseFloat(yTrades.reduce((s, t) => s + (t.pnl ?? 0), 0).toFixed(1));
-    const yWins = yTrades.filter((t) => t.pnl > 0).length;
+    const tradeRealRsG = (t: any): number => {
+        const r = Number(t && t.pnlRs);
+        if (Number.isFinite(r)) return r;
+        const legacy = Number(t && t.pnl);
+        return Number.isFinite(legacy) ? legacy : 0;
+    };
+    const yPnl = parseFloat(yTrades.reduce((s, t) => s + tradeRealRsG(t), 0).toFixed(1));
+    const yWins = yTrades.filter((t) => tradeRealRsG(t) > 0).length;
     const closedTodayG = trades.filter((t) => (t.date || "").startsWith(todayStrG) && t.exitPrice && t.exitPrice > 0);
-    const QTY_MULT_G = 15;
-    function fmtRsG(v) { const r = Math.round(v * QTY_MULT_G); return (r >= 0 ? "+" : "\u2212") + "\u20B9" + Math.abs(r).toLocaleString("en-IN"); }
-    function fmtPtsG(v) { return (v >= 0 ? "+" : "") + v.toFixed(0) + " pts"; }
+    function fmtRsG(v) { const r = Math.round(v); return (r >= 0 ? "+" : "\u2212") + "\u20B9" + Math.abs(r).toLocaleString("en-IN"); }
+    function fmtPtsG(_v) { return "real money P&L"; }
     const tierLabel = loggedIn ? "\uD83D\uDD14 Member" : "\uD83D\uDC64 Guest";
     const tierClass = loggedIn ? "sig-tier-free" : "sig-tier-guest";
     const dirG = (hbGuest?.direction || "").toUpperCase();
@@ -10765,6 +10836,26 @@ app.get("/signals", featureGate("feature_signals", "Signals"), async (req, res) 
     .sig3-pnl-pts{font-size:.88rem;font-weight:600;margin-bottom:12px}
     .sig3-sec{font-size:.67rem;font-weight:700;text-transform:uppercase;letter-spacing:.1em;color:var(--text-muted);border-bottom:1px solid var(--border);padding-bottom:7px;margin:1.4rem 0 .75rem;display:flex;align-items:center;gap:.5rem;flex-wrap:wrap}
     .sig3-sec-count{font-size:.8rem;font-weight:700;text-transform:none;letter-spacing:0;color:var(--text)}
+    .tt-wrap{display:inline-flex;gap:3px;background:rgba(255,255,255,.04);border:1px solid var(--border);border-radius:7px;padding:2px}
+    .tt-tab{padding:3px 10px;border-radius:5px;font-size:.68rem;font-weight:700;cursor:pointer;border:none;background:transparent;color:var(--text-muted)}
+    .tt-tab.active{background:rgba(124,58,237,.25);color:#a78bfa}
+    .tt{width:100%;border-collapse:collapse;font-size:.74rem}
+    .tt th{padding:8px;background:var(--card-bg);border-bottom:1px solid var(--border);text-align:left;white-space:nowrap}
+    .tt td{padding:8px;border-bottom:1px solid var(--border);vertical-align:top}
+    .tt td,.tt th{font-size:.74rem}
+    .tt td.sig3-mono{text-align:right}
+    .tt-e{padding:22px 10px;text-align:center;color:var(--text-muted)}
+    .tt-side{display:flex;gap:6px}
+    .tt-side .dbadge{padding:1px 4px;border-radius:3px;font-size:.62rem;font-weight:800}
+    .dbadge.ce{background:rgba(16,185,129,.15);color:#34d399}
+    .dbadge.pe{background:rgba(239,68,68,.15);color:#f87171}
+    .sig3-note{font-size:.67rem;color:var(--text-muted);padding:4px 2px}
+    .sig3-mini{font-size:.62rem;font-weight:600;color:var(--text-muted)}
+    .sig3-mini strong{font-size:.72rem}
+    .sig3-phase{display:inline-flex;align-items:center;gap:4px;padding:1px 7px;border-radius:999px;border:1px solid rgba(37,99,235,.35);background:rgba(37,99,235,.08);font-size:.65rem;font-weight:700}
+    .sig3-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+    .sig3-watch{font-size:.8rem;color:var(--text-muted);line-height:1.5}
+    .sig3-watch b{color:var(--text-main)}
     .sig3-tw{overflow-x:auto;border:1px solid var(--border);border-radius:10px;margin-bottom:4px}
     table.sig3-t{width:100%;border-collapse:collapse;font-size:.85rem}
     .sig3-t th{text-align:left;padding:9px 11px;font-size:.63rem;text-transform:uppercase;letter-spacing:.06em;color:var(--text-muted);border-bottom:1px solid var(--border);font-weight:600;white-space:nowrap;background:var(--bg2)}
@@ -10813,7 +10904,7 @@ app.get("/signals", featureGate("feature_signals", "Signals"), async (req, res) 
     <div class="sig3-hdr">
       <div>
         <div class="sig3-title">&#x1F4E1; Live Signals</div>
-        <div class="sig3-sub">BANKNIFTY Options &middot; Automated intraday bot</div>
+        <div class="sig3-sub">BANKNIFTY Options &middot; Real premium/futures P&amp;L only</div>
       </div>
       <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
         <span class="gv-badge ${tierClass}">${tierLabel}</span>
@@ -10901,7 +10992,7 @@ app.get("/signals", featureGate("feature_signals", "Signals"), async (req, res) 
     <div class="sig3-tw">
       <table class="sig3-t">
         <thead><tr>
-          <th>Time</th><th>Dir</th><th>P&amp;L (&#8377;)</th><th>P&amp;L (pts)</th><th>Duration</th>
+          <th>Time</th><th>Dir</th><th>P&amp;L (&#8377;)</th><th>Source</th><th>Duration</th>
         </tr></thead>
         <tbody>
           ${[...closedTodayG].reverse().map((t) => {
@@ -10911,8 +11002,8 @@ app.get("/signals", featureGate("feature_signals", "Signals"), async (req, res) 
             return `<tr>
               <td class="sig3-ct">${tStr}</td>
               <td>${d3 ? `<span class="sig3-db ${d3}">${(t.direction || "").toUpperCase()}</span>` : "\u2014"}</td>
-              <td><span class="sig3-pnl-rs ${(t.pnl ?? 0) >= 0 ? "sig3-g" : "sig3-r'"}"><span class="${!loggedIn ? 'sig-blur' : ''}">${fmtRsG(t.pnl ?? 0)}</span></span></td>
-              <td class="sig3-mono" style="font-size:.76rem;color:var(--text-muted)"><span class="${!loggedIn ? 'sig-blur' : ''}">${fmtPtsG(t.pnl ?? 0)}</span></td>
+              <td><span class="sig3-pnl-rs ${tradeRealRsG(t) >= 0 ? "sig3-g" : "sig3-r"}"><span class="${!loggedIn ? 'sig-blur' : ''}">${fmtRsG(tradeRealRsG(t))}</span></span></td>
+              <td class="sig3-mono" style="font-size:.76rem;color:var(--text-muted)"><span class="${!loggedIn ? 'sig-blur' : ''}">real trade value</span></td>
               <td class="sig3-ct">${dur}</td>
             </tr>`;
           }).join("") || `<tr><td colspan="5" class="sig3-te">No closed trades today${hasPosition ? " \u2014 1 live position active" : ""}</td></tr>`}
@@ -10931,7 +11022,7 @@ app.get("/signals", featureGate("feature_signals", "Signals"), async (req, res) 
       </div>
       <div class="sig3-tw">
         <table class="sig3-t">
-          <thead><tr><th>Date / Time</th><th>Dir</th><th>P&amp;L (&#8377;)</th><th>P&amp;L (pts)</th><th>Duration</th></tr></thead>
+          <thead><tr><th>Date / Time</th><th>Dir</th><th>P&amp;L (&#8377;)</th><th>Source</th><th>Duration</th></tr></thead>
           <tbody>
             ${_wkG.length === 0 ? `<tr><td colspan="5" class="sig3-te">No trades in the past 7 days</td></tr>` : _wkG.map((t) => {
               const _d = (t.direction || '').toLowerCase();
@@ -10940,8 +11031,8 @@ app.get("/signals", featureGate("feature_signals", "Signals"), async (req, res) 
               return `<tr>
                 <td class="sig3-ct">${_dt}</td>
                 <td>${_d ? `<span class="sig3-db ${_d}">${(t.direction || '').toUpperCase()}</span>` : '\u2014'}</td>
-                <td><span class="sig3-pnl-rs ${(t.pnl ?? 0) >= 0 ? 'sig3-g' : 'sig3-r'}">${fmtRsG(t.pnl ?? 0)}</span></td>
-                <td class="sig3-mono" style="font-size:.76rem;color:var(--text-muted)">${fmtPtsG(t.pnl ?? 0)}</td>
+                <td><span class="sig3-pnl-rs ${tradeRealRsG(t) >= 0 ? 'sig3-g' : 'sig3-r'}">${fmtRsG(tradeRealRsG(t))}</span></td>
+                <td class="sig3-mono" style="font-size:.76rem;color:var(--text-muted)">real trade value</td>
                 <td class="sig3-ct">${_dur}</td>
               </tr>`;
             }).join('')}
@@ -10954,14 +11045,14 @@ app.get("/signals", featureGate("feature_signals", "Signals"), async (req, res) 
     <div class="sig3-sec">Month-wise P&amp;L</div>
     <div class="sig3-tw">
       <table class="sig3-t">
-        <thead><tr><th>Month</th><th>P&amp;L (&#8377;)</th><th>P&amp;L (pts)</th><th>Trades</th><th>Win%</th></tr></thead>
+        <thead><tr><th>Month</th><th>P&amp;L (&#8377;)</th><th>Source</th><th>Trades</th><th>Win%</th></tr></thead>
         <tbody>
           ${analytics.monthly.slice(0, 6).map((m) => {
             const ml = new Date(m.month + "-01").toLocaleString("en-IN", { month: "short", year: "2-digit" });
             return `<tr>
               <td style="font-weight:600">${ml}</td>
               <td><span class="sig3-pnl-rs ${m.pnl >= 0 ? "sig3-g" : "sig3-r"}" style="font-size:.95rem"><span class="${!loggedIn ? 'sig-blur' : ''}">${fmtRsG(m.pnl)}</span></span></td>
-              <td class="sig3-mono" style="font-size:.76rem;color:var(--text-muted)"><span class="${!loggedIn ? 'sig-blur' : ''}">${fmtPtsG(m.pnl)}</span></td>
+              <td class="sig3-mono" style="font-size:.76rem;color:var(--text-muted)"><span class="${!loggedIn ? 'sig-blur' : ''}">real records</span></td>
               <td>${m.trades}</td>
               <td class="${m.winRate >= 55 ? "sig3-g" : m.winRate >= 40 ? "" : "sig3-r"}"><span class="${!loggedIn ? 'sig-blur' : ''}">${m.trades > 0 ? m.winRate + "%" : "\u2014"}</span></td>
             </tr>`;
@@ -10992,9 +11083,8 @@ app.get("/signals", featureGate("feature_signals", "Signals"), async (req, res) 
   <footer class="site-footer"><span>&#xA9; 2026 ZeroScreen &mdash; For informational purposes only. Not SEBI registered. Not investment advice.</span></footer>
   <script src="/public/js/app.js"></script>
   <script>
-  const _GQM = 15;
-  function _gfR(v){const r=Math.round(v*_GQM);return(r>=0?"+":"\u2212")+"\u20B9"+Math.abs(r).toLocaleString("en-IN");}
-  function _gfP(v){return(v>=0?"+":"")+v.toFixed(0)+" pts";}
+  function _gfR(v){const r=Math.round(v||0);return(r>=0?"+":"\u2212")+"\u20B9"+Math.abs(r).toLocaleString("en-IN");}
+  function _gfP(v){return "real money P&L";}
   function _gc2(v){return v>=0?"#10b981":"#ef4444";}
   function _ge2(id){return document.getElementById(id);}
   async function gvRefresh(){

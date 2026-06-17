@@ -30,6 +30,7 @@ async function main() {
 
   // ── Fetch futures OHLC for each available contract ─────────────────────────
   const futuresCache = {};
+  const futuresMinuteCache = {};
   for (const fut of bnFuts) {
     const sym   = fut.tradingsymbol;
     const from  = new Date(new Date(fut.expiry).getFullYear(), new Date(fut.expiry).getMonth(), 1);
@@ -56,6 +57,30 @@ async function main() {
       console.log(`   Got ${data.length} candles for ${sym}`);
     } catch (e) {
       console.log(`   Error: ${e.message}`);
+    }
+
+    try {
+      const minuteData = await kite.getHistoricalData(fut.instrument_token, 'minute', fromS, toS, false);
+      await sleep(400);
+
+      for (const candle of minuteData) {
+        const ist = new Date(new Date(candle.date).getTime() + 5.5 * 3600000);
+        const dateStr = ist.toISOString().slice(0, 10);
+        if (!futuresMinuteCache[dateStr]) futuresMinuteCache[dateStr] = [];
+        futuresMinuteCache[dateStr].push({
+          time: ist.toISOString().slice(11, 16),
+          open: candle.open,
+          high: candle.high,
+          low: candle.low,
+          close: candle.close,
+          h: ist.getUTCHours(),
+          m: ist.getUTCMinutes(),
+          sym,
+        });
+      }
+      console.log(`   Got ${minuteData.length} minute candles for ${sym}`);
+    } catch (e) {
+      console.log(`   Minute error: ${e.message}`);
     }
   }
 
@@ -114,11 +139,16 @@ async function main() {
 
   // Save
   fs.writeFileSync(path.join(CACHE_DIR, 'banknifty_futures_recent.json'), JSON.stringify(futuresCache, null, 1));
+  fs.writeFileSync(path.join(CACHE_DIR, 'banknifty_futures_minute_recent.json'), JSON.stringify(futuresMinuteCache, null, 1));
   fs.writeFileSync(path.join(CACHE_DIR, 'banknifty_options_recent.json'), JSON.stringify(optionsCache, null, 1));
 
   const futDates  = Object.keys(futuresCache).sort();
+  const futMinuteDates = Object.keys(futuresMinuteCache).sort();
   const optDates  = Object.keys(optionsCache).sort();
   console.log(`\n Futures data: ${futDates[0]} → ${futDates[futDates.length-1]} (${futDates.length} days)`);
+  if (futMinuteDates.length > 0) {
+    console.log(` Futures minute data: ${futMinuteDates[0]} → ${futMinuteDates[futMinuteDates.length-1]} (${futMinuteDates.length} days)`);
+  }
   console.log(` Options data: ${optDates[0]} → ${optDates[optDates.length-1]} (${optDates.length} days)`);
   console.log('\n Running premium-based backtest... (see bt_premium.js)');
 }

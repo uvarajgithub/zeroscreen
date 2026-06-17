@@ -166,6 +166,24 @@ let drishtiFutSymbolCache = "";
 let drishtiFutSymbolCacheAt = 0;
 let optRecentTrades = [];
 let entryPrice = 0;
+// ── BODY_HOLD Shadow (S1=Fixed200SL, S2=CandleSL) ────────────────────────────
+interface BHState { inTrade: boolean; dir: 'CE'|'PE'|null; entryIdx: number; entryPrem: number; optSym: string; sl: number; slPrem: number; waitDir: 'CE'|'PE'|null; dayFutPts: number; dayOptPts: number; dayFutRs: number; dayOptRs: number; winsFut: number; lossFut: number; winsOpt: number; lossOpt: number; }
+const BH_EMPTY = (): BHState => ({ inTrade: false, dir: null, entryIdx: 0, entryPrem: 0, optSym: '', sl: 0, slPrem: 0, waitDir: null, dayFutPts: 0, dayOptPts: 0, dayFutRs: 0, dayOptRs: 0, winsFut: 0, lossFut: 0, winsOpt: 0, lossOpt: 0 });
+let bhs1: BHState = BH_EMPTY();
+let bhs2: BHState = BH_EMPTY();
+let bhPrevCandle: { open: number; high: number; low: number; close: number } | null = null;
+let bhCandleNum = 0;
+// 10:30 index breakout shadow. Paper-only; never calls broker order functions.
+interface TT1030TradeLog { time: string; dir: 'CE'|'PE'; entry: number; exit?: number; pts?: number; pnlRs?: number; reason?: string; premIn?: number; premOut?: number; symbol?: string; }
+interface TT1030State {
+    day: string; inTrade: boolean; dir: 'CE'|'PE'|null; entry: number; entryTime: string; sl: number;
+    optSym: string; optEntryPrem: number; optLivePrem: number; refHigh: number; refLow: number;
+    tenHigh: number; tenLow: number; tenTime: string; trades: number; wins: number; losses: number;
+    dayPts: number; dayRs: number; log: TT1030TradeLog[]; candleLog: any[]; seen: Set<string>;
+}
+const TT1030_INDEX_TOKEN = 260105;
+const TT1030_EMPTY = (): TT1030State => ({ day: '', inTrade: false, dir: null, entry: 0, entryTime: '', sl: 0, optSym: '', optEntryPrem: 0, optLivePrem: 0, refHigh: 0, refLow: 0, tenHigh: 0, tenLow: 0, tenTime: '', trades: 0, wins: 0, losses: 0, dayPts: 0, dayRs: 0, log: [], candleLog: [], seen: new Set<string>() });
+let tt1030: TT1030State = TT1030_EMPTY();
 let tradeSymbol = "";
 let tradeDirection = null;
 let earlyQty = 0;
@@ -1576,6 +1594,340 @@ async function getDrishtiATMOptionSymbol(dir, indexClose) {
     }
     throw new Error("No BankNifty option found with premium in 400-600 range across all expiries");
 }
+function tt1030ISTParts(d = new Date()) {
+    const ist = new Date(d.getTime() + 5.5 * 3600000);
+    const ymd = ist.toISOString().slice(0, 10);
+    const hh = String(ist.getUTCHours()).padStart(2, '0');
+    const mm = String(ist.getUTCMinutes()).padStart(2, '0');
+    return { ymd, hhmm: `${hh}:${mm}`, ist };
+}
+function tt1030FmtIST(epochMs) {
+    const p = tt1030ISTParts(new Date(epochMs));
+    const ss = String(p.ist.getUTCSeconds()).padStart(2, '0');
+    return `${p.ymd} ${p.hhmm}:${ss}`;
+}
+function tt1030CandleTime(c) {
+    const d = c.date ? new Date(c.date) : new Date();
+    return tt1030ISTParts(d).hhmm;
+}
+function tt1030ResetIfNewDay() {
+    const today = tt1030ISTParts().ymd;
+    if (tt1030.day !== today) {
+        tt1030 = TT1030_EMPTY();
+        tt1030.day = today;
+    }
+}
+async function getTodayIndex15mCandles() {
+    const nowMs = Date.now();
+    const todayStart = new Date(tt1030ISTParts().ymd + "T00:00:00.000Z").getTime() - 5.5 * 3600000;
+    const from = tt1030FmtIST(todayStart + (9 * 60 + 15) * 60000);
+    const to = tt1030FmtIST(nowMs - 60000);
+    const data = await kite.getHistoricalData(TT1030_INDEX_TOKEN, "15minute", from, to, false);
+    return (data || []).map((c) => ({
+        open: +c.open, high: +c.high, low: +c.low, close: +c.close,
+        date: typeof c.date === "string" ? c.date : new Date(c.date).toISOString(),
+    }));
+}
+function tt1030CloseTrade(c, exit, reason, premOut) {
+    if (!tt1030.inTrade || !tt1030.dir)
+        return 0;
+    const qty = Number(config_1.config.quantity || 30);
+    const pts = tt1030.dir === "CE" ? exit - tt1030.entry : tt1030.entry - exit;
+    const pnlRs = Math.round(pts * qty);
+    tt1030.dayPts += pts;
+    tt1030.dayRs += pnlRs;
+    tt1030.trades++;
+    if (pts > 0)
+        tt1030.wins++;
+    else
+        tt1030.losses++;
+    const row = {
+        time: tt1030CandleTime(c), dir: tt1030.dir, entry: tt1030.entry, exit,
+        pts: parseFloat(pts.toFixed(1)), pnlRs, reason,
+        premIn: tt1030.optEntryPrem || undefined, premOut: premOut || undefined, symbol: tt1030.optSym || undefined,
+    };
+    tt1030.log.push(row);
+    tt1030.log = tt1030.log.slice(-20);
+    (0, logger_1.logTrade)({ date: new Date().toISOString(), type: "TEN_THIRTY_INDEX", direction: row.dir, symbol: "BANKNIFTY_INDEX_SHADOW", entryPrice: row.entry, exitPrice: row.exit, pnl: row.pts, pnlRs: row.pnlRs, reasonEntry: "ten_thirty_breakout", reasonExit: reason, aiScore: 1, slippage: 0, duration: 0, qty });
+    if (row.premIn && row.premOut)
+        (0, logger_1.logTrade)({ date: new Date().toISOString(), type: "TEN_THIRTY_OPT", direction: row.dir, symbol: row.symbol, entryPrice: row.premIn, exitPrice: row.premOut, premiumEntry: row.premIn, premiumExit: row.premOut, pnl: parseFloat((row.premOut - row.premIn).toFixed(1)), pnlRs: Math.round((row.premOut - row.premIn) * qty), reasonEntry: "ten_thirty_opt_shadow", reasonExit: reason, aiScore: 1, slippage: 0, duration: 0, qty });
+    tt1030.inTrade = false;
+    tt1030.dir = null;
+    tt1030.entry = 0;
+    tt1030.sl = 0;
+    tt1030.optSym = "";
+    tt1030.optEntryPrem = 0;
+    tt1030.optLivePrem = 0;
+    return pts;
+}
+async function tt1030Enter(dir, entry, sl, ref, reason) {
+    const optSym = await getDrishtiATMOptionSymbol(dir, ref.close).catch(() => "");
+    const optPrem = optSym ? await (0, market_1.getOptionLTP)(optSym).catch(() => 0) : 0;
+    tt1030.inTrade = true;
+    tt1030.dir = dir;
+    tt1030.entry = entry;
+    tt1030.entryTime = tt1030CandleTime(ref);
+    tt1030.sl = sl;
+    tt1030.refHigh = ref.high;
+    tt1030.refLow = ref.low;
+    tt1030.optSym = optSym;
+    tt1030.optEntryPrem = optPrem;
+    tt1030.optLivePrem = optPrem;
+    tt1030.log.push({ time: tt1030.entryTime, dir, entry, reason, premIn: optPrem || undefined, symbol: optSym || undefined });
+    tt1030.log = tt1030.log.slice(-20);
+    log("TT1030_ENTRY", { dir, entry: entry.toFixed(1), sl: sl.toFixed(1), optSym, optPrem });
+}
+async function runTenThirtyShadow(isEOD) {
+    tt1030ResetIfNewDay();
+    const candles = await getTodayIndex15mCandles();
+    if (!candles.length)
+        return;
+    for (let i = 0; i < candles.length; i++) {
+        const c = candles[i];
+        const key = c.date || `${c.high}_${c.low}`;
+        if (tt1030.seen.has(key))
+            continue;
+        tt1030.seen.add(key);
+        const num = i + 1;
+        const t = tt1030CandleTime(c);
+        const clog = { idx: num, time: t, open: c.open, high: c.high, low: c.low, close: c.close, status: "watching", dir: tt1030.dir, sl: tt1030.sl || null, note: "" };
+        if (num === 6 && !tt1030.tenHigh) {
+            tt1030.tenHigh = c.high;
+            tt1030.tenLow = c.low;
+            tt1030.tenTime = t;
+            clog.status = "marked_1030";
+            clog.note = `range ${c.high.toFixed(1)} / ${c.low.toFixed(1)}`;
+            tt1030.candleLog.push(clog);
+            tt1030.candleLog = tt1030.candleLog.slice(-30);
+            log("TT1030_MARKED", { high: c.high, low: c.low, time: t });
+            continue;
+        }
+        if (!tt1030.tenHigh) {
+            clog.status = "pre_1030";
+            clog.note = "waiting for 10:30 candle";
+            tt1030.candleLog.push(clog);
+            tt1030.candleLog = tt1030.candleLog.slice(-30);
+            continue;
+        }
+        const eodCandle = t >= "15:15" || isEOD;
+        if (tt1030.inTrade && tt1030.dir) {
+            const premOut = tt1030.optSym ? await (0, market_1.getOptionLTP)(tt1030.optSym).catch(() => 0) : 0;
+            tt1030.optLivePrem = premOut || tt1030.optLivePrem;
+            const slHit = tt1030.dir === "CE" ? c.close <= tt1030.sl : c.close >= tt1030.sl;
+            if (slHit) {
+                const oldDir = tt1030.dir;
+                const exit = tt1030.sl;
+                tt1030CloseTrade(c, exit, "sl_hit", premOut);
+                clog.status = "sl_hit";
+                clog.dir = oldDir;
+                clog.sl = exit;
+                clog.note = `SL hit at ${exit.toFixed(1)}`;
+                if (tt1030.trades < 2 && !eodCandle) {
+                    const revDir = oldDir === "CE" ? "PE" : "CE";
+                    await tt1030Enter(revDir, exit, revDir === "CE" ? c.low : c.high, c, "reverse_after_sl");
+                    clog.note += `; reversed ${revDir}`;
+                }
+                tt1030.candleLog.push(clog);
+                tt1030.candleLog = tt1030.candleLog.slice(-30);
+                continue;
+            }
+            if (eodCandle) {
+                tt1030CloseTrade(c, c.close, "exit_eod", premOut);
+                clog.status = "exit_eod";
+                clog.note = `EOD exit ${c.close.toFixed(1)}`;
+                tt1030.candleLog.push(clog);
+                tt1030.candleLog = tt1030.candleLog.slice(-30);
+                continue;
+            }
+            if (tt1030.dir === "CE" && c.close > tt1030.refHigh) {
+                tt1030.sl = c.low;
+                tt1030.refHigh = c.high;
+                tt1030.refLow = c.low;
+                clog.status = "trail";
+                clog.dir = "CE";
+                clog.sl = tt1030.sl;
+                clog.note = `close broke ref high; SL -> ${tt1030.sl.toFixed(1)}`;
+                log("TT1030_TRAIL", { dir: "CE", sl: c.low, refHigh: c.high, close: c.close });
+            }
+            else if (tt1030.dir === "PE" && c.close < tt1030.refLow) {
+                tt1030.sl = c.high;
+                tt1030.refHigh = c.high;
+                tt1030.refLow = c.low;
+                clog.status = "trail";
+                clog.dir = "PE";
+                clog.sl = tt1030.sl;
+                clog.note = `close broke ref low; SL -> ${tt1030.sl.toFixed(1)}`;
+                log("TT1030_TRAIL", { dir: "PE", sl: c.high, refLow: c.low, close: c.close });
+            }
+            else {
+                clog.status = "hold";
+                clog.dir = tt1030.dir;
+                clog.sl = tt1030.sl || null;
+                clog.note = "in trade; no SL/trail";
+            }
+            tt1030.candleLog.push(clog);
+            tt1030.candleLog = tt1030.candleLog.slice(-30);
+            continue;
+        }
+        if (!tt1030.inTrade && tt1030.trades < 2 && !eodCandle && num > 6) {
+            if (c.high > tt1030.tenHigh) {
+                await tt1030Enter("CE", tt1030.tenHigh, c.low, c, "break_1030_high");
+                clog.status = "entry";
+                clog.dir = "CE";
+                clog.sl = c.low;
+                clog.note = `broke 10:30 high ${tt1030.tenHigh.toFixed(1)}`;
+            }
+            else if (c.low < tt1030.tenLow) {
+                await tt1030Enter("PE", tt1030.tenLow, c.high, c, "break_1030_low");
+                clog.status = "entry";
+                clog.dir = "PE";
+                clog.sl = c.high;
+                clog.note = `broke 10:30 low ${tt1030.tenLow.toFixed(1)}`;
+            }
+            else {
+                clog.status = "watching";
+                clog.note = "inside 10:30 range";
+            }
+        }
+        else if (!tt1030.inTrade) {
+            clog.status = eodCandle ? "eod_no_trade" : "done";
+            clog.note = eodCandle ? "EOD/no new entry" : "max trades reached";
+        }
+        tt1030.candleLog.push(clog);
+        tt1030.candleLog = tt1030.candleLog.slice(-30);
+    }
+}
+function tt1030HeartbeatFields() {
+    const liveIdx = lastKnownPrice || null;
+    const unrealPts = tt1030.inTrade && tt1030.dir && liveIdx
+        ? (tt1030.dir === "CE" ? liveIdx - tt1030.entry : tt1030.entry - liveIdx)
+        : 0;
+    return {
+        tt1030Strategy: "TEN_THIRTY_INDEX_SHADOW",
+        tt1030PnL: Math.round(tt1030.dayRs + (unrealPts * Number(config_1.config.quantity || 30))),
+        tt1030ClosedPnL: tt1030.dayRs,
+        tt1030Pts: parseFloat((tt1030.dayPts + unrealPts).toFixed(1)),
+        tt1030Trades: tt1030.trades,
+        tt1030Wins: tt1030.wins,
+        tt1030Losses: tt1030.losses,
+        tt1030InTrade: tt1030.inTrade,
+        tt1030Dir: tt1030.dir,
+        tt1030Entry: tt1030.entry || null,
+        tt1030SL: tt1030.sl || null,
+        tt1030Live: liveIdx,
+        tt1030OptionSymbol: tt1030.optSym || null,
+        tt1030OptionEntry: tt1030.optEntryPrem || null,
+        tt1030OptionLive: tt1030.optLivePrem || null,
+        tt1030High: tt1030.tenHigh || null,
+        tt1030Low: tt1030.tenLow || null,
+        tt1030TradeLog: tt1030.log.slice(-20),
+        tt1030CandleLog: tt1030.candleLog.slice(-30),
+    };
+}
+// ── BODY_HOLD Shadow runner ───────────────────────────────────────────────────
+// Runs each 15-min candle close. Tracks two independent shadow strategies:
+// S1: same-color body breakout, SL = ±200 pts (index for FUT, premium for OPT), hold EOD
+// S2: same entry, SL = prev candle low (CE) or high (PE) on index, hold EOD
+// Re-entry: after SL hit, only same-direction breakout allowed until EOD
+async function runBodyHoldShadow(bc: { open: number; high: number; low: number; close: number }, isEOD: boolean) {
+    const qty = (config_1.config.quantity as number) || 30;
+    const S1_IDX_SL = 200;   // index pts SL for S1 futures
+    const S1_PREM_SL = 200;  // premium pts SL for S1 options
+
+    const logBHTrade = (name: string, state: BHState, exitIdx: number, exitPrem: number, reason: string) => {
+        const futPts = state.dir === 'CE' ? exitIdx - state.entryIdx : state.entryIdx - exitIdx;
+        const optPts = (state.entryPrem > 0 && exitPrem > 0)
+            ? (state.dir === 'CE' ? exitPrem - state.entryPrem : state.entryPrem - exitPrem)
+            : 0;
+        if (state.entryIdx > 0)
+            (0, logger_1.logTrade)({ date: new Date().toISOString(), type: `${name}_FUT`, direction: state.dir!, symbol: 'BANKNIFTY_FUT_SHADOW',
+                entryPrice: state.entryIdx, exitPrice: exitIdx, pnl: parseFloat(futPts.toFixed(1)), pnlRs: Math.round(futPts * qty),
+                reasonEntry: `${name.toLowerCase()}_entry`, reasonExit: reason, aiScore: 1, slippage: 0, duration: 0, qty });
+        if (state.entryPrem > 0 && exitPrem > 0)
+            (0, logger_1.logTrade)({ date: new Date().toISOString(), type: `${name}_OPT`, direction: state.dir!, symbol: state.optSym,
+                entryPrice: state.entryPrem, exitPrice: exitPrem, premiumEntry: state.entryPrem, premiumExit: exitPrem,
+                pnl: parseFloat(optPts.toFixed(1)), pnlRs: Math.round(optPts * qty),
+                reasonEntry: `${name.toLowerCase()}_opt_entry`, reasonExit: reason, aiScore: 1, slippage: 0, duration: 0, qty });
+        return { futPts, optPts };
+    };
+
+    // ── S1 exit check ─────────────────────────────────────────────────────────
+    if (bhs1.inTrade && bhs1.dir) {
+        const exitPrem = bhs1.optSym ? await (0, market_1.getOptionLTP)(bhs1.optSym).catch(() => 0) : 0;
+        const idxSLHit = bhs1.dir === 'CE' ? bc.close <= bhs1.sl : bc.close >= bhs1.sl;
+        const premSLHit = bhs1.slPrem > 0 && exitPrem > 0 && exitPrem <= bhs1.slPrem;
+        if (idxSLHit || premSLHit || isEOD) {
+            const reason = isEOD ? 'exit_eod' : 'exit_sl';
+            const { futPts, optPts } = logBHTrade('BH_S1', bhs1, bc.close, exitPrem, reason);
+            bhs1.dayFutPts += futPts; bhs1.dayFutRs += Math.round(futPts * qty);
+            bhs1.dayOptPts += optPts; bhs1.dayOptRs += Math.round(optPts * qty);
+            if (futPts > 0) bhs1.winsFut++; else bhs1.lossFut++;
+            if (optPts > 0) bhs1.winsOpt++; else bhs1.lossOpt++;
+            if (!isEOD && futPts <= 0) bhs1.waitDir = bhs1.dir; // re-entry same dir only
+            log('BH_S1_EXIT', { reason, futPts: futPts.toFixed(1), optPts: optPts.toFixed(1), dayFutPts: bhs1.dayFutPts.toFixed(1), dayFutRs: bhs1.dayFutRs });
+            bhs1.inTrade = false; bhs1.dir = null;
+        }
+    }
+
+    // ── S2 exit check ─────────────────────────────────────────────────────────
+    if (bhs2.inTrade && bhs2.dir) {
+        const exitPrem = bhs2.optSym ? await (0, market_1.getOptionLTP)(bhs2.optSym).catch(() => 0) : 0;
+        const slHit = bhs2.dir === 'CE' ? bc.close <= bhs2.sl : bc.close >= bhs2.sl;
+        if (slHit || isEOD) {
+            const reason = isEOD ? 'exit_eod' : 'exit_sl';
+            const { futPts, optPts } = logBHTrade('BH_S2', bhs2, bc.close, exitPrem, reason);
+            bhs2.dayFutPts += futPts; bhs2.dayFutRs += Math.round(futPts * qty);
+            bhs2.dayOptPts += optPts; bhs2.dayOptRs += Math.round(optPts * qty);
+            if (futPts > 0) bhs2.winsFut++; else bhs2.lossFut++;
+            if (optPts > 0) bhs2.winsOpt++; else bhs2.lossOpt++;
+            if (!isEOD && futPts <= 0) bhs2.waitDir = bhs2.dir;
+            log('BH_S2_EXIT', { reason, futPts: futPts.toFixed(1), optPts: optPts.toFixed(1), dayFutPts: bhs2.dayFutPts.toFixed(1), dayFutRs: bhs2.dayFutRs });
+            bhs2.inTrade = false; bhs2.dir = null;
+        }
+    }
+
+    if (isEOD) { bhPrevCandle = bc; return; }
+
+    // ── Entry signal: same-color body breakout from candle 2 onward ──────────
+    bhCandleNum++;
+    if (bhCandleNum >= 2 && bhPrevCandle) {
+        const p = bhPrevCandle;
+        const prevGreen = p.close > p.open, prevRed = p.close < p.open;
+        const curGreen  = bc.close > bc.open, curRed  = bc.close < bc.open;
+        const prevBodyH = Math.max(p.open, p.close);
+        const prevBodyL = Math.min(p.open, p.close);
+
+        let bhSig: 'CE'|'PE'|null = null;
+        if (curGreen && prevGreen && bc.close > prevBodyH) bhSig = 'CE';
+        else if (curRed && prevRed && bc.close < prevBodyL)  bhSig = 'PE';
+
+        if (bhSig) {
+            // S1 entry
+            if (!bhs1.inTrade && (bhs1.waitDir === null || bhs1.waitDir === bhSig)) {
+                const optSym = await getDrishtiATMOptionSymbol(bhSig, bc.close).catch(() => '');
+                const optPrem = optSym ? await (0, market_1.getOptionLTP)(optSym).catch(() => 0) : 0;
+                bhs1.inTrade = true; bhs1.dir = bhSig; bhs1.entryIdx = bc.close;
+                bhs1.entryPrem = optPrem; bhs1.optSym = optSym;
+                bhs1.sl = bhSig === 'CE' ? bc.close - S1_IDX_SL : bc.close + S1_IDX_SL;
+                bhs1.slPrem = optPrem > 0 ? optPrem - S1_PREM_SL : 0;
+                bhs1.waitDir = null;
+                log('BH_S1_ENTRY', { dir: bhSig, idx: bc.close, prem: optPrem, sl: bhs1.sl, slPrem: bhs1.slPrem, optSym });
+            }
+            // S2 entry
+            if (!bhs2.inTrade && (bhs2.waitDir === null || bhs2.waitDir === bhSig)) {
+                const optSym = await getDrishtiATMOptionSymbol(bhSig, bc.close).catch(() => '');
+                const optPrem = optSym ? await (0, market_1.getOptionLTP)(optSym).catch(() => 0) : 0;
+                bhs2.inTrade = true; bhs2.dir = bhSig; bhs2.entryIdx = bc.close;
+                bhs2.entryPrem = optPrem; bhs2.optSym = optSym;
+                bhs2.sl = bhSig === 'CE' ? p.low : p.high; // prev candle low/high
+                bhs2.slPrem = 0;
+                bhs2.waitDir = null;
+                log('BH_S2_ENTRY', { dir: bhSig, idx: bc.close, prem: optPrem, sl: bhs2.sl, optSym });
+            }
+        }
+    }
+    bhPrevCandle = bc;
+}
 async function runDrishtiBot() {
     const now = new Date();
     const ist = new Date(now.toLocaleString("en-US", { timeZone: "Asia/Kolkata" }));
@@ -1619,6 +1971,9 @@ async function runDrishtiBot() {
         optDir = null;
         optSymbol = "";
         optEntryPrem = 0;
+        bhs1 = BH_EMPTY(); bhs2 = BH_EMPTY(); bhPrevCandle = null; bhCandleNum = 0;
+        tt1030 = TT1030_EMPTY();
+        tt1030.day = tt1030ISTParts().ymd;
         log("STATE_RESET", { strategy: "DRISHTI_V1" });
         // Load previous day candles (non-blocking)
         (0, market_1.getPrevDayCandles)().then(candles => {
@@ -1703,6 +2058,9 @@ async function runDrishtiBot() {
     // New candle closed — push to today stack
     const bc = { open: candle.open, high: candle.high, low: candle.low, close: candle.close };
     drishtiTodayCandles.push(bc);
+    runTenThirtyShadow(h > 15 || (h === 15 && m >= 30)).catch(e => log('TT1030_SHADOW_ERR', { error: String(e) }));
+    // Run BODY_HOLD shadow strategies on every candle (fire-and-forget)
+    runBodyHoldShadow(bc, h > 15 || (h === 15 && m >= 30)).catch(e => log('BH_SHADOW_ERR', { error: String(e) }));
     // EOD at 3:30 PM close (3:15-3:30 candle) — matches backtest last candle exactly
     // Previously m>=15 caused early exit at 3:15 PM (3:00-3:15 candle), one candle too early
     const isEOD = h > 15 || (h === 15 && m >= 30);
@@ -1871,7 +2229,8 @@ async function runDrishtiBot() {
     }
     // ── Find entry signal ─────────────────────────────────────────────────
     let entrySig = null;
-    if (DrishtiState.firstDone && DrishtiState.reCount < 5 && DrishtiState.lastExitIdx >= 0 && DrishtiState.lastExitDir) {
+    const maxDrishtiReEntries = Math.max(0, MAX_TRADES - 1);
+    if (DrishtiState.firstDone && DrishtiState.reCount < maxDrishtiReEntries && DrishtiState.lastExitIdx >= 0 && DrishtiState.lastExitDir) {
         // Re-entry: look for strong candle after last exit — always allow reverse (REV_UNLOCK=0)
         // NOTE: prevDayCandles NOT required for re-entry (findDrishtiReEntry uses only today candles)
         const allowReverse = true;
@@ -1912,8 +2271,8 @@ async function runDrishtiBot() {
         const _c0bp = _c0 && (_c0.high - _c0.low) > 0 ? Math.round((_c0.close - _c0.open) / (_c0.high - _c0.low) * 100) : 0;
         if (DrishtiState.firstDone) {
             // Already had first trade today — re-entry path
-            if (DrishtiState.reCount >= 5)
-                return 'Re-entry limit reached (5 of 5 used today)';
+            if (DrishtiState.reCount >= maxDrishtiReEntries)
+                return `Re-entry limit reached (${maxDrishtiReEntries} of ${maxDrishtiReEntries} used today)`;
             if (DrishtiState.lastExitIdx < 0)
                 return 'Re-entry: no completed exit yet';
             if (DrishtiState.lastExitPts < 10)
@@ -2227,6 +2586,8 @@ async function runBot() {
         hybridState = (0, strategy_1.createHybridState)();
         hybridPrevCandle = null;
         hybridLastCandleKey = "";
+        tt1030 = TT1030_EMPTY();
+        tt1030.day = tt1030ISTParts().ymd;
         _dailyPnlLogSaved = false; // reset for the new day
         _tokenAutoRefreshing = false; // allow fresh auto-refresh next day if needed
         _candleHealthAlerted = false; // allow fresh candle health check next day
@@ -2384,6 +2745,7 @@ async function runBot() {
                 entryPremium: _inTrade ? entryPremium || null : null,
                 livePremium: _inTrade ? lastOptionLTP || null : null,
                 sl: _inTrade ? (tradeDirection === "CE" ? entryPrice - 100 : entryPrice + 100) : null,
+                ...tt1030HeartbeatFields(),
             }));
         }
         catch (_) { }
@@ -3017,6 +3379,12 @@ async function preStartPrompt() {
         log("BOT_START", { message: "Waiting for market hours (9:25 IST)..." });
         // Register trading intervals FIRST — Telegram must never block the bot from starting
         setInterval(() => {
+            // Skip entirely on weekends (IST) — markets are closed, historical-candle API
+            // returns empty data, and polling every cycle just spams CANDLE_MONITOR_ERR /
+            // RUN_BOT_UNCAUGHT ("Not enough candle data") and burns restarts for nothing.
+            const _istDay = new Date(Date.now() + 5.5 * 3600000).getUTCDay();
+            if (_istDay === 0 || _istDay === 6)
+                return;
             // Write heartbeat immediately so dashboards know the bot is alive even when flat/idle
             try {
                 const _inTrade = !!(mainEntryDone || earlyEntryDone);
@@ -3053,6 +3421,7 @@ async function preStartPrompt() {
                     drishtiPrevDayLow: ACTIVE_STRATEGY === "DRISHTI_V1" && drishtiPrevDayCandles.length > 0 ? Math.min(...drishtiPrevDayCandles.map((c) => c.low)) : undefined,
                     DrishtiCandles: ACTIVE_STRATEGY === "DRISHTI_V1" ? drishtiTodayCandles.length : undefined,
                     DrishtiCandleLog: ACTIVE_STRATEGY === "DRISHTI_V1" ? DrishtiCandleLog : undefined,
+                    ...tt1030HeartbeatFields(),
                 }));
             }
             catch (_) { }
@@ -3107,6 +3476,7 @@ async function preStartPrompt() {
                         entryPremium: _inTrade2 ? entryPremium || null : null,
                         livePremium: _inTrade2 ? lastOptionLTP || null : null,
                         sl: _inTrade2 ? (tradeDirection === "CE" ? entryPrice - 100 : entryPrice + 100) : null,
+                        ...tt1030HeartbeatFields(),
                     }));
                 }
                 catch (_) { }

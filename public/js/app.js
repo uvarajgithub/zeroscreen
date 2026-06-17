@@ -306,13 +306,57 @@ setInterval(loadTicker, 5 * 60 * 1000);
     msgs.scrollTop = msgs.scrollHeight;
   }
 
+  function isOpsAction(q) {
+    q = String(q || '').toLowerCase();
+    return /(restart|stop|start|dedupe|duplicate|cleanup|clean duplicate|token refresh|refresh token|clear token|mode change)/.test(q);
+  }
+
+  function confirmOpsAction(q) {
+    var safe = q.replace(/[<>&"]/g, function(c) {
+      return ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;' })[c];
+    });
+    addMsg(
+      '<strong>Confirm admin action</strong><br>' +
+      '<span style="color:#64748b">This can change live services or audit data.</span><br>' +
+      '<button class="chat-confirm" data-confirm-q="' + safe + '">Confirm</button>',
+      'bot'
+    );
+  }
+
+  function askAdminAssistant(q, cb) {
+    fetch('/api/admin/chat', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ message: q })
+    }).then(function(r) {
+      if (r.status === 401 || r.status === 403) return null;
+      return r.json();
+    }).then(function(d) {
+      if (d && d.html) cb(d.html);
+      else cb(findAnswer(q));
+    }).catch(function() {
+      cb(findAnswer(q));
+    });
+  }
+
   function handleSend() {
     var q = input.value.trim();
     if (!q) return;
     addMsg(q, 'user');
     input.value = '';
-    var ans = findAnswer(q);
-    setTimeout(function () { addMsg(ans, 'bot'); }, 320);
+    if (isOpsAction(q)) {
+      confirmOpsAction(q);
+      return;
+    }
+    var thinking = document.createElement('div');
+    thinking.className = 'chat-msg bot';
+    thinking.innerHTML = 'Checking...';
+    msgs.appendChild(thinking);
+    msgs.scrollTop = msgs.scrollHeight;
+    askAdminAssistant(q, function(ans) {
+      thinking.innerHTML = ans;
+      msgs.scrollTop = msgs.scrollHeight;
+    });
   }
 
   btn.addEventListener('click', function () {
@@ -326,12 +370,23 @@ setInterval(loadTicker, 5 * 60 * 1000);
 
   // Chip clicks
   msgs.addEventListener('click', function (e) {
+    var confirm = e.target.closest('.chat-confirm');
+    if (confirm) {
+      var cq = confirm.getAttribute('data-confirm-q') || '';
+      confirm.disabled = true;
+      confirm.textContent = 'Running...';
+      askAdminAssistant(cq, function(ans) { addMsg(ans, 'bot'); });
+      return;
+    }
     var chip = e.target.closest('.chat-chip');
     if (!chip) return;
     var q = chip.getAttribute('data-q') || chip.textContent;
     addMsg(q, 'user');
-    var ans = findAnswer(q);
-    setTimeout(function () { addMsg(ans, 'bot'); }, 320);
+    if (isOpsAction(q)) {
+      confirmOpsAction(q);
+      return;
+    }
+    askAdminAssistant(q, function(ans) { addMsg(ans, 'bot'); });
   });
 
   // Close when clicking outside

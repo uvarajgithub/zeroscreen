@@ -1,4 +1,4 @@
-﻿// drishti_strategy.ts — DRISHTI v1 Live Strategy
+// drishti_strategy.ts — DRISHTI v1 Live Strategy
 // Upgraded from V3 (LOCK20 → LOCK10, RE 3→5, reThresh 35/65→40, PDR≥150)
 // Strategy entry: PDH/PDL context + 15-candle pattern detection
 // Trail: LOCK10 (peak - 10), candle-close SL only
@@ -233,7 +233,7 @@ export function findDrishtiEntry(
 
 // ─── Re-entry signal (after profitable trail exit) ────────────────────────────
 // Returns candle index for re-entry if a strong candle appears after exitIdx
-// For same-direction: body > 40%; for reverse: body > 40%
+// For same-direction: body > 25%; for reverse: body > 40%
 export function findDrishtiReEntry(
   todayCandles: DrishtiCandle[],
   exitIdx: number,
@@ -250,11 +250,15 @@ export function findDrishtiReEntry(
   let sameDirMatch: { idx: number; side: DrishtiDir; reason: string } | null = null;
   let revMatch:     { idx: number; side: DrishtiDir; reason: string } | null = null;
 
+  // Same-direction re-entry uses a lower bar (25%) than reverse (40%): after a profitable
+  // trail exit in a trending market, continuation candles are often steady rather than
+  // single explosive bars — waiting for >40% body caused the bot to sit out trend days.
+  const SAME_DIR_THRESH = 25;
   for (let i = exitIdx + 1; i <= lastIdx; i++) {
     const b = _bp(todayCandles[i]);
     if (!sameDirMatch) {
-      if (side === 'CE' && b > 40) sameDirMatch = { idx: i, side, reason: 're_same_dir' };
-      if (side === 'PE' && b < -40) sameDirMatch = { idx: i, side, reason: 're_same_dir' };
+      if (side === 'CE' && b > SAME_DIR_THRESH) sameDirMatch = { idx: i, side, reason: 're_same_dir' };
+      if (side === 'PE' && b < -SAME_DIR_THRESH) sameDirMatch = { idx: i, side, reason: 're_same_dir' };
     }
     if (!revMatch && allowReverse) {
       if (revSide === 'CE' && b > 40) revMatch = { idx: i, side: revSide, reason: 're_reverse' };
