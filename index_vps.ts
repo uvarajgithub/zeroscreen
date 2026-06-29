@@ -182,8 +182,16 @@ interface TT1030State {
     dayPts: number; dayRs: number; log: TT1030TradeLog[]; candleLog: any[]; seen: Set<string>;
 }
 const TT1030_INDEX_TOKEN = 260105;
+const TT1030_BOTH_SIDE_CLOSE_BUFFER = 25;
+const TT1030_LIVE_AUDIT_FILE = 'tt1030-live-audit.jsonl';
+const TT1030_LIVE_AUDIT_STATE_FILE = 'tt1030-live-audit-state.json';
+const TT1030_MAX_SIGNAL_DELAY_MS = 2 * 60 * 1000;
+const TT1030_MAX_ENTRY_SLIPPAGE_PTS = Number(config_1.config.risk?.maxAllowedSlippagePts ?? 50);
+const TT1030_WARN_RISK_PTS = Number(config_1.config.risk?.maxFuturesLossPts ?? 150);
 const TT1030_EMPTY = (): TT1030State => ({ day: '', inTrade: false, dir: null, entry: 0, entryTime: '', sl: 0, optSym: '', optEntryPrem: 0, optLivePrem: 0, refHigh: 0, refLow: 0, tenHigh: 0, tenLow: 0, tenTime: '', trades: 0, wins: 0, losses: 0, dayPts: 0, dayRs: 0, log: [], candleLog: [], seen: new Set<string>() });
 let tt1030: TT1030State = TT1030_EMPTY();
+let tt1030AuditIssues: any[] = [];
+let tt1030LastSignalKey = "";
 let tradeSymbol = "";
 let tradeDirection = null;
 let earlyQty = 0;
@@ -1610,11 +1618,94 @@ function tt1030CandleTime(c) {
     const d = c.date ? new Date(c.date) : new Date();
     return tt1030ISTParts(d).hhmm;
 }
+function appendTT1030Audit(event: string, details: any = {}, severity: 'info'|'warn'|'error' = 'info') {
+    try {
+        const rec = {
+            ts: new Date().toISOString(),
+            day: tt1030.day || tt1030ISTParts().ymd,
+            severity,
+            event,
+            mode: (config_1.config.mode || "LIVE").toUpperCase(),
+            ...details,
+        };
+        fs_1.default.appendFileSync(TT1030_LIVE_AUDIT_FILE, JSON.stringify(rec) + "\n");
+        fs_1.default.writeFileSync(TT1030_LIVE_AUDIT_STATE_FILE, JSON.stringify({
+            date: rec.day,
+            updatedAt: rec.ts,
+            lastEvent: rec,
+            issues: tt1030AuditIssues.slice(-20),
+            readiness: tt1030AuditIssues.some(x => x.severity === "error") ? "BLOCKED" : (tt1030AuditIssues.length ? "WARN" : "OK"),
+        }, null, 2));
+    }
+    catch (_e) { }
+}
+function tt1030AuditIssue(code: string, message: string, details: any = {}, severity: 'warn'|'error' = 'warn') {
+    const issue = {
+        ts: new Date().toISOString(),
+        day: tt1030.day || tt1030ISTParts().ymd,
+        severity,
+        code,
+        message,
+        ...details,
+    };
+    tt1030AuditIssues.push(issue);
+    tt1030AuditIssues = tt1030AuditIssues.slice(-20);
+    appendTT1030Audit("issue", issue, severity);
+    log("TT1030_AUDIT_ISSUE", { severity, code, message });
+}
+function tt1030AuditSignal(dir: 'CE'|'PE', entry: number, sl: number, ref: any, reason: string, optSym: string, optPrem: number) {
+    const signalTime = tt1030CandleTime(ref);
+    const signalKey = `${tt1030.day}|${signalTime}|${dir}|${entry.toFixed(1)}|${reason}`;
+    const riskPts = dir === "CE" ? entry - sl : sl - entry;
+    const refStartMs = ref?.date ? new Date(ref.date).getTime() : NaN;
+    const delayMs = Number.isFinite(refStartMs) ? Date.now() - (refStartMs + 15 * 60 * 1000) : 0;
+    const issuesBefore = tt1030AuditIssues.length;
+    if (signalKey === tt1030LastSignalKey) {
+        tt1030AuditIssue("DUPLICATE_SIGNAL_KEY", "same TT1030 signal key fired again", { signalKey, dir, entry, reason }, "error");
+    }
+    if (!(tt1030.tenHigh > tt1030.tenLow)) {
+        tt1030AuditIssue("INVALID_1030_RANGE", "10:30 range is missing or invalid", { tenHigh: tt1030.tenHigh, tenLow: tt1030.tenLow }, "error");
+    }
+    if (!(entry > 0) || !(sl > 0) || !(riskPts > 0)) {
+        tt1030AuditIssue("INVALID_ENTRY_SL", "entry/SL is invalid for TT1030 signal", { dir, entry, sl, riskPts }, "error");
+    }
+    if (riskPts > TT1030_WARN_RISK_PTS) {
+        tt1030AuditIssue("WIDE_SIGNAL_RISK", "signal candle SL risk is wider than configured futures risk", { dir, entry, sl, riskPts, warnRiskPts: TT1030_WARN_RISK_PTS }, "warn");
+    }
+    if (!optSym) {
+        tt1030AuditIssue("OPTION_SYMBOL_MISSING", "option symbol lookup failed for TT1030 signal", { dir, refClose: ref?.close, reason }, "warn");
+    }
+    if (optSym && !(optPrem > 0)) {
+        tt1030AuditIssue("OPTION_PREMIUM_MISSING", "option LTP was not available at TT1030 entry", { dir, optSym, optPrem }, "warn");
+    }
+    if (delayMs > TT1030_MAX_SIGNAL_DELAY_MS) {
+        tt1030AuditIssue("SIGNAL_PROCESS_DELAY", "TT1030 signal processed late after candle close", { signalTime, delayMs, maxDelayMs: TT1030_MAX_SIGNAL_DELAY_MS }, "warn");
+    }
+    tt1030LastSignalKey = signalKey;
+    const newIssueCount = tt1030AuditIssues.length - issuesBefore;
+    appendTT1030Audit("signal_preflight", {
+        signalKey,
+        signalTime,
+        dir,
+        entry,
+        sl,
+        riskPts: parseFloat(riskPts.toFixed(1)),
+        reason,
+        optSym: optSym || null,
+        optPrem: optPrem || null,
+        delayMs,
+        maxEntrySlippagePts: TT1030_MAX_ENTRY_SLIPPAGE_PTS,
+        status: newIssueCount ? "WARN" : "OK",
+    }, newIssueCount ? "warn" : "info");
+}
 function tt1030ResetIfNewDay() {
     const today = tt1030ISTParts().ymd;
     if (tt1030.day !== today) {
         tt1030 = TT1030_EMPTY();
         tt1030.day = today;
+        tt1030AuditIssues = [];
+        tt1030LastSignalKey = "";
+        appendTT1030Audit("day_reset");
     }
 }
 async function getTodayIndex15mCandles() {
@@ -1651,6 +1742,21 @@ function tt1030CloseTrade(c, exit, reason, premOut) {
     (0, logger_1.logTrade)({ date: new Date().toISOString(), type: "TEN_THIRTY_INDEX", direction: row.dir, symbol: "BANKNIFTY_INDEX_SHADOW", entryPrice: row.entry, exitPrice: row.exit, pnl: row.pts, pnlRs: row.pnlRs, reasonEntry: "ten_thirty_breakout", reasonExit: reason, aiScore: 1, slippage: 0, duration: 0, qty });
     if (row.premIn && row.premOut)
         (0, logger_1.logTrade)({ date: new Date().toISOString(), type: "TEN_THIRTY_OPT", direction: row.dir, symbol: row.symbol, entryPrice: row.premIn, exitPrice: row.premOut, premiumEntry: row.premIn, premiumExit: row.premOut, pnl: parseFloat((row.premOut - row.premIn).toFixed(1)), pnlRs: Math.round((row.premOut - row.premIn) * qty), reasonEntry: "ten_thirty_opt_shadow", reasonExit: reason, aiScore: 1, slippage: 0, duration: 0, qty });
+    appendTT1030Audit("exit", {
+        dir: row.dir,
+        entry: row.entry,
+        exit: row.exit,
+        pts: row.pts,
+        pnlRs: row.pnlRs,
+        reason,
+        symbol: row.symbol || null,
+        premIn: row.premIn || null,
+        premOut: row.premOut || null,
+        premiumPts: row.premIn && row.premOut ? parseFloat((row.premOut - row.premIn).toFixed(1)) : null,
+    });
+    if (row.premIn && !row.premOut) {
+        tt1030AuditIssue("EXIT_PREMIUM_MISSING", "option LTP was not available at TT1030 exit", { symbol: row.symbol, reason }, "warn");
+    }
     tt1030.inTrade = false;
     tt1030.dir = null;
     tt1030.entry = 0;
@@ -1663,6 +1769,7 @@ function tt1030CloseTrade(c, exit, reason, premOut) {
 async function tt1030Enter(dir, entry, sl, ref, reason) {
     const optSym = await getDrishtiATMOptionSymbol(dir, ref.close).catch(() => "");
     const optPrem = optSym ? await (0, market_1.getOptionLTP)(optSym).catch(() => 0) : 0;
+    tt1030AuditSignal(dir, entry, sl, ref, reason, optSym, optPrem);
     tt1030.inTrade = true;
     tt1030.dir = dir;
     tt1030.entry = entry;
@@ -1675,6 +1782,16 @@ async function tt1030Enter(dir, entry, sl, ref, reason) {
     tt1030.optLivePrem = optPrem;
     tt1030.log.push({ time: tt1030.entryTime, dir, entry, reason, premIn: optPrem || undefined, symbol: optSym || undefined });
     tt1030.log = tt1030.log.slice(-20);
+    appendTT1030Audit("entry", {
+        dir,
+        entry,
+        sl,
+        reason,
+        signalTime: tt1030.entryTime,
+        symbol: optSym || null,
+        premium: optPrem || null,
+        mode: (config_1.config.mode || "LIVE").toUpperCase(),
+    });
     log("TT1030_ENTRY", { dir, entry: entry.toFixed(1), sl: sl.toFixed(1), optSym, optPrem });
 }
 async function runTenThirtyShadow(isEOD) {
@@ -1684,6 +1801,13 @@ async function runTenThirtyShadow(isEOD) {
         return;
     for (let i = 0; i < candles.length; i++) {
         const c = candles[i];
+        const candleStartMs = new Date(c.date).getTime();
+        const candleIsClosed = Number.isFinite(candleStartMs)
+            ? Date.now() >= candleStartMs + (15 * 60 * 1000)
+            : true;
+        // Do not lock a 15-minute candle until its full window has closed.
+        if (!candleIsClosed)
+            continue;
         const key = c.date || `${c.high}_${c.low}`;
         if (tt1030.seen.has(key))
             continue;
@@ -1770,19 +1894,49 @@ async function runTenThirtyShadow(isEOD) {
             continue;
         }
         if (!tt1030.inTrade && tt1030.trades < 2 && !eodCandle && num > 6) {
-            if (c.high > tt1030.tenHigh) {
-                await tt1030Enter("CE", tt1030.tenHigh, c.low, c, "break_1030_high");
+            const brokeHigh = c.high > tt1030.tenHigh;
+            const brokeLow = c.low < tt1030.tenLow;
+            let breakoutDir = null;
+            let breakoutReason = "";
+            if (brokeHigh && brokeLow) {
+                if (c.close < tt1030.tenLow - TT1030_BOTH_SIDE_CLOSE_BUFFER) {
+                    breakoutDir = "PE";
+                    breakoutReason = "break_1030_both_close_low";
+                }
+                else if (c.close > tt1030.tenHigh + TT1030_BOTH_SIDE_CLOSE_BUFFER) {
+                    breakoutDir = "CE";
+                    breakoutReason = "break_1030_both_close_high";
+                }
+                else {
+                    breakoutDir = "CE";
+                    breakoutReason = "break_1030_both_default_high";
+                }
+            }
+            else if (brokeHigh) {
+                breakoutDir = "CE";
+                breakoutReason = "break_1030_high";
+            }
+            else if (brokeLow) {
+                breakoutDir = "PE";
+                breakoutReason = "break_1030_low";
+            }
+            if (breakoutDir === "CE") {
+                await tt1030Enter("CE", tt1030.tenHigh, c.low, c, breakoutReason);
                 clog.status = "entry";
                 clog.dir = "CE";
                 clog.sl = c.low;
-                clog.note = `broke 10:30 high ${tt1030.tenHigh.toFixed(1)}`;
+                clog.note = brokeHigh && brokeLow
+                    ? `broke both sides; close chose CE (buffer ${TT1030_BOTH_SIDE_CLOSE_BUFFER})`
+                    : `broke 10:30 high ${tt1030.tenHigh.toFixed(1)}`;
             }
-            else if (c.low < tt1030.tenLow) {
-                await tt1030Enter("PE", tt1030.tenLow, c.high, c, "break_1030_low");
+            else if (breakoutDir === "PE") {
+                await tt1030Enter("PE", tt1030.tenLow, c.high, c, breakoutReason);
                 clog.status = "entry";
                 clog.dir = "PE";
                 clog.sl = c.high;
-                clog.note = `broke 10:30 low ${tt1030.tenLow.toFixed(1)}`;
+                clog.note = brokeHigh && brokeLow
+                    ? `broke both sides; close chose PE (buffer ${TT1030_BOTH_SIDE_CLOSE_BUFFER})`
+                    : `broke 10:30 low ${tt1030.tenLow.toFixed(1)}`;
             }
             else {
                 clog.status = "watching";
@@ -1820,6 +1974,8 @@ function tt1030HeartbeatFields() {
         tt1030OptionLive: tt1030.optLivePrem || null,
         tt1030High: tt1030.tenHigh || null,
         tt1030Low: tt1030.tenLow || null,
+        tt1030AuditStatus: tt1030AuditIssues.some(x => x.severity === "error") ? "BLOCKED" : (tt1030AuditIssues.length ? "WARN" : "OK"),
+        tt1030AuditIssues: tt1030AuditIssues.slice(-10),
         tt1030TradeLog: tt1030.log.slice(-20),
         tt1030CandleLog: tt1030.candleLog.slice(-30),
     };
