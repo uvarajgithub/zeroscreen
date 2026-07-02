@@ -1894,53 +1894,37 @@ async function runTenThirtyShadow(isEOD) {
             continue;
         }
         if (!tt1030.inTrade && tt1030.trades < 2 && !eodCandle && num > 6) {
-            const brokeHigh = c.high > tt1030.tenHigh;
-            const brokeLow = c.low < tt1030.tenLow;
+            const brokeHigh = c.close > tt1030.tenHigh;
+            const brokeLow = c.close < tt1030.tenLow;
             let breakoutDir = null;
             let breakoutReason = "";
-            if (brokeHigh && brokeLow) {
-                if (c.close < tt1030.tenLow - TT1030_BOTH_SIDE_CLOSE_BUFFER) {
-                    breakoutDir = "PE";
-                    breakoutReason = "break_1030_both_close_low";
-                }
-                else if (c.close > tt1030.tenHigh + TT1030_BOTH_SIDE_CLOSE_BUFFER) {
-                    breakoutDir = "CE";
-                    breakoutReason = "break_1030_both_close_high";
-                }
-                else {
-                    breakoutDir = "CE";
-                    breakoutReason = "break_1030_both_default_high";
-                }
-            }
-            else if (brokeHigh) {
+            if (brokeHigh) {
                 breakoutDir = "CE";
-                breakoutReason = "break_1030_high";
+                breakoutReason = "close_break_1030_high";
             }
             else if (brokeLow) {
                 breakoutDir = "PE";
-                breakoutReason = "break_1030_low";
+                breakoutReason = "close_break_1030_low";
             }
             if (breakoutDir === "CE") {
                 await tt1030Enter("CE", tt1030.tenHigh, c.low, c, breakoutReason);
                 clog.status = "entry";
                 clog.dir = "CE";
                 clog.sl = c.low;
-                clog.note = brokeHigh && brokeLow
-                    ? `broke both sides; close chose CE (buffer ${TT1030_BOTH_SIDE_CLOSE_BUFFER})`
-                    : `broke 10:30 high ${tt1030.tenHigh.toFixed(1)}`;
+                clog.note = `close broke 10:30 high ${tt1030.tenHigh.toFixed(1)}`;
             }
             else if (breakoutDir === "PE") {
                 await tt1030Enter("PE", tt1030.tenLow, c.high, c, breakoutReason);
                 clog.status = "entry";
                 clog.dir = "PE";
                 clog.sl = c.high;
-                clog.note = brokeHigh && brokeLow
-                    ? `broke both sides; close chose PE (buffer ${TT1030_BOTH_SIDE_CLOSE_BUFFER})`
-                    : `broke 10:30 low ${tt1030.tenLow.toFixed(1)}`;
+                clog.note = `close broke 10:30 low ${tt1030.tenLow.toFixed(1)}`;
             }
             else {
                 clog.status = "watching";
-                clog.note = "inside 10:30 range";
+                clog.note = c.high > tt1030.tenHigh || c.low < tt1030.tenLow
+                    ? "wick crossed 10:30 range; waiting for close confirmation"
+                    : "inside 10:30 range";
             }
         }
         else if (!tt1030.inTrade) {
