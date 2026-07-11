@@ -5,6 +5,7 @@
 
 import sqlite3 from "sqlite3";
 import path from "path";
+import { initCommandCenterSchema } from "./command-center/schema";
 
 const DB_PATH = path.join(__dirname, "..", "zeroscreen.db");
 
@@ -382,7 +383,27 @@ export async function initDb(): Promise<void> {
         created_at   TEXT DEFAULT (datetime('now','localtime'))
       )`);
       db.run("CREATE INDEX IF NOT EXISTS idx_pp_published ON premium_picks(published, published_at)");
-      db.run("CREATE INDEX IF NOT EXISTS idx_reset_tokens_user3 ON password_reset_tokens(user_id)", (err) => {
+      db.run("CREATE INDEX IF NOT EXISTS idx_reset_tokens_user3 ON password_reset_tokens(user_id)");
+
+      // ── Command Center (CC-002) — additive session/trading schema ─────────
+      initCommandCenterSchema(db);
+
+      // ── Command Center (CC-010) — rollout feature flags, safe defaults ────
+      // Same app_settings/featureGate convention as every other ZeroScreen
+      // feature flag above. All higher-risk flags default OFF; only the
+      // page itself (read-only) defaults on, per CC-010's Stage 1 plan.
+      // No route currently reads these — see docs/command-center/feature-flags.md.
+      db.run("INSERT OR IGNORE INTO app_settings (key,value) VALUES ('commandCenterEnabled','true')");
+      db.run("INSERT OR IGNORE INTO app_settings (key,value) VALUES ('commandCenterReadOnly','true')");
+      db.run("INSERT OR IGNORE INTO app_settings (key,value) VALUES ('commandCenterControlsEnabled','false')");
+      db.run("INSERT OR IGNORE INTO app_settings (key,value) VALUES ('simulationSessionsEnabled','false')");
+      db.run("INSERT OR IGNORE INTO app_settings (key,value) VALUES ('paperSessionsEnabled','false')");
+      db.run("INSERT OR IGNORE INTO app_settings (key,value) VALUES ('shadowSessionsEnabled','false')");
+      db.run("INSERT OR IGNORE INTO app_settings (key,value) VALUES ('backtestSessionsEnabled','false')");
+      db.run("INSERT OR IGNORE INTO app_settings (key,value) VALUES ('additionalLiveSessionsEnabled','false')");
+      db.run("INSERT OR IGNORE INTO app_settings (key,value) VALUES ('emergencyControlsEnabled','false')");
+
+      db.run("PRAGMA foreign_key_check", (err) => {
         if (err) resolve(); else resolve();
       });
     });

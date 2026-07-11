@@ -1,0 +1,107 @@
+/* Command Center design tokens (CC-004). Single source of truth — never
+   hardcode raw colors/spacing/radius elsewhere in Command Center components. */
+:root {
+  /* Color — surfaces */
+  --cc-bg: #080D14;
+  --cc-surface-1: #0E1520;
+  --cc-surface-2: #121B28;
+  --cc-surface-hover: #172231;
+  --cc-border: #1D2A3A;
+  --cc-border-strong: #2A384A;
+
+  /* Color — text */
+  --cc-text-primary: #F4F7FB;
+  --cc-text-secondary: #9AA8BA;
+  --cc-text-muted: #66758A;
+
+  /* Color — accent & status */
+  --cc-accent: #6D7CFF;
+  --cc-accent-hover: #7C8AFF;
+  --cc-success: #22C55E;
+  --cc-danger: #EF4444;
+  --cc-warning: #F59E0B;
+  --cc-info: #38BDF8;
+
+  /* Color — session mode indicators */
+  --cc-live-mode: #22C55E;
+  --cc-paper-mode: #60A5FA;
+  --cc-shadow-mode: #A78BFA;
+  --cc-backtest-mode: #F59E0B;
+
+  /* Spacing (4px base) */
+  --cc-space-1: 4px;
+  --cc-space-2: 8px;
+  --cc-space-3: 12px;
+  --cc-space-4: 16px;
+  --cc-space-5: 20px;
+  --cc-space-6: 24px;
+  --cc-space-8: 32px;
+
+  --cc-page-padding: 20px 24px;
+  --cc-page-padding-compact: 16px 20px;
+  --cc-card-padding: 16px;
+  --cc-card-padding-compact: 12px 14px;
+  --cc-section-gap: 16px;
+
+  /* Radius */
+  --cc-radius-sm: 8px;
+  --cc-radius-control: 10px;
+  --cc-radius-tab: 10px;
+  --cc-radius-card: 12px;
+  --cc-radius-hero: 14px;
+
+  /* Typography */
+  --cc-font-family: "Inter", "Manrope", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+
+  --cc-font-page-title-size: 24px;
+  --cc-font-page-title-weight: 700;
+  --cc-font-page-title-line: 1.2;
+
+  --cc-font-subtitle-size: 13px;
+  --cc-font-subtitle-weight: 500;
+
+  --cc-font-section-label-size: 11px;
+  --cc-font-section-label-weight: 700;
+  --cc-font-section-label-spacing: 0.06em;
+
+  --cc-font-card-title-size: 13px;
+  --cc-font-card-title-weight: 600;
+
+  --cc-font-value-primary-size: 32px;
+  --cc-font-value-primary-weight: 800;
+
+  --cc-font-value-standard-size: 20px;
+  --cc-font-value-standard-weight: 700;
+
+  --cc-font-body-size: 13px;
+  --cc-font-body-weight: 400;
+
+  --cc-font-table-size: 13px;
+  --cc-font-helper-size: 12px;
+
+  --cc-numeric-features: "tnum" 1, "lnum" 1;
+
+  /* Shadows */
+  --cc-shadow-elevation-1: 0 8px 24px rgba(0, 0, 0, 0.18);
+
+  /* Motion */
+  --cc-motion-fast: 120ms ease-out;
+  --cc-motion-standard: 180ms ease-out;
+  --cc-motion-panel: 220ms cubic-bezier(0.2, 0.8, 0.2, 1);
+
+  /* Component sizes */
+  --cc-control-height: 40px;
+  --cc-control-height-compact: 38px;
+  --cc-button-height: 40px;
+  --cc-tab-height: 36px;
+  --cc-status-dot-size: 7px;
+  --cc-min-target: 38px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --cc-motion-fast: 0ms;
+    --cc-motion-standard: 0ms;
+    --cc-motion-panel: 0ms;
+  }
+}
