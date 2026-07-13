@@ -188,6 +188,7 @@ const TT1030_LIVE_AUDIT_STATE_FILE = 'tt1030-live-audit-state.json';
 const TT1030_MAX_SIGNAL_DELAY_MS = 2 * 60 * 1000;
 const TT1030_MAX_ENTRY_SLIPPAGE_PTS = Number(config_1.config.risk?.maxAllowedSlippagePts ?? 50);
 const TT1030_WARN_RISK_PTS = Number(config_1.config.risk?.maxFuturesLossPts ?? 150);
+const TT1030_TRAIL_AFTER_PTS = 300;
 const TT1030_EMPTY = (): TT1030State => ({ day: '', inTrade: false, dir: null, entry: 0, entryTime: '', sl: 0, optSym: '', optEntryPrem: 0, optLivePrem: 0, refHigh: 0, refLow: 0, tenHigh: 0, tenLow: 0, tenTime: '', trades: 0, wins: 0, losses: 0, dayPts: 0, dayRs: 0, log: [], candleLog: [], seen: new Set<string>() });
 let tt1030: TT1030State = TT1030_EMPTY();
 let tt1030AuditIssues: any[] = [];
@@ -1863,7 +1864,9 @@ async function runTenThirtyShadow(isEOD) {
                 tt1030.candleLog = tt1030.candleLog.slice(-30);
                 continue;
             }
-            if (tt1030.dir === "CE" && c.close > tt1030.refHigh) {
+            const openPts = tt1030.dir === "CE" ? c.close - tt1030.entry : tt1030.entry - c.close;
+            const trailReady = openPts >= TT1030_TRAIL_AFTER_PTS;
+            if (trailReady && tt1030.dir === "CE" && c.close > tt1030.refHigh) {
                 tt1030.sl = c.low;
                 tt1030.refHigh = c.high;
                 tt1030.refLow = c.low;
@@ -1873,7 +1876,7 @@ async function runTenThirtyShadow(isEOD) {
                 clog.note = `close broke ref high; SL -> ${tt1030.sl.toFixed(1)}`;
                 log("TT1030_TRAIL", { dir: "CE", sl: c.low, refHigh: c.high, close: c.close });
             }
-            else if (tt1030.dir === "PE" && c.close < tt1030.refLow) {
+            else if (trailReady && tt1030.dir === "PE" && c.close < tt1030.refLow) {
                 tt1030.sl = c.high;
                 tt1030.refHigh = c.high;
                 tt1030.refLow = c.low;
@@ -1887,7 +1890,7 @@ async function runTenThirtyShadow(isEOD) {
                 clog.status = "hold";
                 clog.dir = tt1030.dir;
                 clog.sl = tt1030.sl || null;
-                clog.note = "in trade; no SL/trail";
+                clog.note = trailReady ? "in trade; no SL/trail" : `in trade; trail waits for +${TT1030_TRAIL_AFTER_PTS} pts`;
             }
             tt1030.candleLog.push(clog);
             tt1030.candleLog = tt1030.candleLog.slice(-30);
