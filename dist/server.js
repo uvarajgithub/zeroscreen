@@ -6597,6 +6597,8 @@ function tradeOpsReadRecentLogFiles() {
     const rows = [];
     for (const file of files) {
         try {
+            const stat = fs_1.default.statSync(file);
+            const fileName = path_1.default.basename(file);
             const lines = fs_1.default.readFileSync(file, "utf8").split(/\r?\n/).filter(Boolean).slice(-12);
             for (const line of lines) {
                 if (/requireStack|at Module|node:internal|ProcessContainerFork|^\s*at\s/i.test(line))
@@ -6604,7 +6606,7 @@ function tradeOpsReadRecentLogFiles() {
                 if (/Cannot find module '.\/command-center\/migrate-production-session'|MODULE_NOT_FOUND/i.test(line))
                     continue;
                 const level = /error|failed|reject/i.test(line) ? "ERROR" : /warn|token|margin/i.test(line) ? "WARN" : "INFO";
-                rows.push({ time: "", level, message: tradeOpsSanitizeLog(line) });
+                rows.push({ time: tradeOpsTime(stat.mtime), level, message: `[${fileName}] ${tradeOpsSanitizeLog(line)}` });
             }
         }
         catch { }
@@ -6635,6 +6637,18 @@ function buildTradeOpsLogPreview() {
     const isAlive = hbAt ? heartbeatAgeSec < 180 : false;
     const todayCandles = tradeOpsTodayCandleLog(hb, today);
     const liveNet = tradeOpsMaybeNum(hb?.tt1030PnL);
+    const recentFileLogs = tradeOpsReadRecentLogFiles();
+    const candleFile = (() => {
+        const file = "/home/ubuntu/trading-bot/tt1030-candle-log.json";
+        try {
+            const stat = fs_1.default.statSync(file);
+            const ageSec = Math.max(0, Math.round((Date.now() - stat.mtimeMs) / 1000));
+            return { ok: true, ageSec, mtime: stat.mtime };
+        }
+        catch {
+            return { ok: false, ageSec: null, mtime: null };
+        }
+    })();
     const auditTail = (() => {
         try {
             return fs_1.default.readFileSync(path_1.default.join(__dirname, "..", "tradeops-audit.jsonl"), "utf8")
@@ -6670,15 +6684,16 @@ function buildTradeOpsLogPreview() {
         };
     });
     const operationalLogs = [
-        { time: tradeOpsTime(new Date().toISOString()), level: "INFO", message: `Log poll tick ${new Date().toLocaleTimeString("en-IN", { hour12: false, timeZone: "Asia/Kolkata" })}` },
+        { time: tradeOpsTime(new Date().toISOString()), level: "INFO", message: `TradeOps monitor tick ${new Date().toLocaleTimeString("en-IN", { hour12: false, timeZone: "Asia/Kolkata" })}` },
         { time: tradeOpsTime(new Date().toISOString()), level: isAlive ? "INFO" : "WARN", message: `Bot heartbeat ${isAlive ? "fresh" : "stale"} (${heartbeatAgeSec ?? "no"}s)` },
-        { time: tradeOpsTime(new Date().toISOString()), level: todayCandles.length ? "INFO" : "WARN", message: `Candle feed today ${todayCandles.length} candles` },
+        { time: tradeOpsTime(new Date().toISOString()), level: todayCandles.length ? "INFO" : "WARN", message: `15m candle check ${todayCandles.length} candles today${candleFile.ok ? `, candle file age ${candleFile.ageSec}s` : ", candle file missing"}` },
         { time: tradeOpsTime(new Date().toISOString()), level: liveNet === null || liveNet >= 0 ? "INFO" : "WARN", message: `Live P&L ${liveNet === null ? "unavailable" : liveNet.toFixed(2)} from bot heartbeat` },
     ];
     return [
         ...heartbeatLogRows,
         ...auditTail.map((x) => ({ time: tradeOpsTime(x.at), level: x.ok === false ? "WARN" : "INFO", message: tradeOpsSanitizeLog(x.message || x.action || "Audit event") })),
         ...candleLines,
+        ...recentFileLogs,
         ...operationalLogs,
     ].slice(-30).reverse();
 }
@@ -7388,7 +7403,7 @@ body.tradeops-collapsed .help,body.tradeops-collapsed .collapse-btn{justify-cont
         <section class="card quick mini-card"><div class="card-h"><span>System Quick Status</span><a href="/tradeops/health">View details &rsaquo;</a></div><div class="card-b"><div class="quick-grid"><div class="quick-row"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10Z"/></svg><span>Token</span><b id="tokenValidUntil">Unavailable</b></div><div class="quick-row"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 7h18s-3 0-3-7"/></svg><span>Alerts</span><b id="alertsEnabled">Yes</b></div><div class="quick-row"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><rect x="6" y="7" width="12" height="10" rx="2"/><path d="M12 3v4"/></svg><span>Bot Heartbeat</span><b id="heartbeat">--</b></div><div class="quick-row"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M5 19 19 5"/><path d="m14 5 5 5"/></svg><span>Execution Status</span><b id="executionState">--</b></div><div class="quick-row"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M3 21h18"/><path d="M5 21V9l7-5 7 5v12"/></svg><span>Broker Sync</span><b id="brokerSync">--</b></div></div></div></section>
         <section class="card positions"><div class="card-h"><span>Live Positions</span><a href="/tradeops/positions">View Positions &rsaquo;</a></div><div id="positionsEmpty" class="compact-empty"><div class="empty-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M4 20V10M10 20V4M16 20v-7M22 20V8"/></svg></div><div><b>No open positions</b><span>Positions will appear here when active.</span><a class="btn" href="/tradeops/positions">View Positions</a></div></div><div id="positionsTable" class="table-wrap"><table class="table"><thead><tr><th>Symbol</th><th>Qty</th><th>Avg Price</th><th>LTP</th><th>P&amp;L</th><th>P&amp;L %</th><th>Status</th></tr></thead><tbody id="positionsBody"></tbody></table></div></section>
         <section class="card recent"><div class="card-h"><span>Recent Orders</span><a href="/tradeops/orders">View Details &rsaquo;</a></div><div id="ordersEmpty" class="compact-empty"><div class="empty-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M8 6h13M8 12h13M8 18h13"/><path d="M3 6h.01M3 12h.01M3 18h.01"/></svg></div><div><b>No recent orders</b><span>Orders will appear after execution.</span><a class="btn" href="/tradeops/orders">View Orders</a></div></div><div id="ordersTable" class="table-wrap"><table class="table"><thead><tr><th>Time</th><th>Symbol</th><th>Side</th><th>Qty</th><th>Price</th><th>Status</th></tr></thead><tbody id="ordersBody"></tbody></table></div></section>
-        <section class="card logs-card"><div class="card-h"><span>Server Log Preview <span class="dot ok"></span> <span class="ok">Live</span></span><div class="log-actions"><button class="btn" id="pauseLogs">Pause</button><button class="btn" id="clearLogs">Clear</button><a class="btn" href="/tradeops/server-logs">View Full Logs</a></div></div><div class="console"><div id="logs" class="logs"></div></div></section>
+        <section class="card logs-card"><div class="card-h"><span>Bot Activity Log <span class="dot ok"></span> <span class="ok">Live</span></span><div class="log-actions"><button class="btn" id="pauseLogs">Pause</button><button class="btn" id="clearLogs">Clear</button><a class="btn" href="/tradeops/server-logs">View Full Logs</a></div></div><div class="console"><div id="logs" class="logs"></div></div></section>
       </div><div id="detail" class="detail${safePage !== "dashboard" ? " active" : ""}"><div class="detail-grid" id="detailGrid">${safePage !== "dashboard" ? tradeOpsInitialWorkspaceHTML(safePage, initialStatus) : ""}</div></div>
     </section>
   </main>
