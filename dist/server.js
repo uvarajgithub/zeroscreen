@@ -6786,6 +6786,32 @@ async function buildTradeOpsStatus() {
     const todayHigh = pnls.length ? Math.max(...pnls) : netPnl;
     const charges = tradeOpsMaybeNum(tt1030State?.charges ?? hb?.tt1030Charges);
     const netAfterCharges = charges === null ? null : netPnl - charges;
+    const monthStartMs = new Date(`${today}T00:00:00+05:30`).getTime() - 30 * 86400000;
+    const monthDaily = new Map();
+    for (const t of strategyTrades) {
+        const dkey = tradeOpsDateKey(t?.date || t?.exitTime || t?.entryTime);
+        const dms = dkey ? new Date(`${dkey}T00:00:00+05:30`).getTime() : 0;
+        if (!dkey || dms < monthStartMs)
+            continue;
+        const closed = tradeOpsNum(t?.exitPrice) > 0 || tradeOpsNum(t?.premiumExit) > 0;
+        if (!closed)
+            continue;
+        monthDaily.set(dkey, (monthDaily.get(dkey) || 0) + tradeOpsPnl(t));
+    }
+    const monthDays = Array.from(monthDaily.entries()).sort(([a], [b]) => a.localeCompare(b)).map(([date, pnl]) => ({ date, pnl }));
+    let monthRunning = 0;
+    let monthPeak = 0;
+    let maxDrawdown = 0;
+    for (const row of monthDays) {
+        monthRunning += row.pnl;
+        monthPeak = Math.max(monthPeak, monthRunning);
+        maxDrawdown = Math.max(maxDrawdown, monthPeak - monthRunning);
+    }
+    const worstDayLoss = Math.max(0, ...monthDays.map(x => x.pnl < 0 ? Math.abs(x.pnl) : 0));
+    const bufferFromHistory = Math.max(maxDrawdown, worstDayLoss * 3);
+    const bufferFallback = requiredMargin > 0 ? Math.ceil(requiredMargin * 0.2) : 0;
+    const monthlyReserve = Math.ceil(Math.max(bufferFromHistory, bufferFallback));
+    const safeMonthlyCapital = requiredMargin > 0 ? Math.ceil(requiredMargin + monthlyReserve) : 0;
     const tradeRows = strategyTrades.slice(-500).reverse().map(t => ({
         time: tradeOpsTime(t?.date || t?.exitTime || t?.entryTime),
         date: tradeOpsDateKey(t?.date || t?.exitTime || t?.entryTime),
@@ -6968,6 +6994,24 @@ async function buildTradeOpsStatus() {
             marginQty: nextMargin.qty,
             marginSpan: nextMargin.span,
             marginExposure: nextMargin.exposure,
+            safeMonthlyCapital,
+            monthlyReserve,
+            monthlyLookbackDays: 30,
+            monthlyWorstDayLoss: worstDayLoss,
+            monthlyMaxDrawdown: Math.ceil(maxDrawdown),
+            monthlyHistoryDays: monthDays.length,
+            monthlyCalculation: {
+                formula: "safeMonthlyCapital = requiredMargin + max(last30DayDrawdown, worstDayLoss * 3, requiredMargin * 20%)",
+                requiredMargin,
+                reserve: monthlyReserve,
+                historyDays: monthDays.length,
+                worstDayLoss,
+                maxDrawdown: Math.ceil(maxDrawdown),
+                fallbackBuffer: bufferFallback,
+                symbol: nextMargin.symbol,
+                qty: nextMargin.qty,
+                source: nextMargin.source,
+            },
             openCount: openPositions.length,
             closedToday: displayClosed.length,
         },
@@ -7339,7 +7383,7 @@ body.tradeops-collapsed .help,body.tradeops-collapsed .collapse-btn{justify-cont
         <section class="card pnl"><div class="card-h"><span class="pnl-head">10:30 Futures P&amp;L <span class="dot ok"></span><span class="ok" id="pnlLiveLabel">Live data</span></span><a class="pnl-link" href="/tradeops/trade-history">View details &rsaquo;</a></div><div class="card-b"><div id="pnlMetricLabel" class="pnl-label">10:30 Futures Net P&amp;L</div><div class="pnl-main"><div><div id="netPnl" class="pnl-value">Not synced</div><div id="pnlSupport" class="pnl-support">10:30 futures P&amp;L</div></div><span id="profitChip" class="profit-pill">--</span></div><div class="metric-grid"><div class="metric"><label>Realized P&amp;L</label><b id="realized">--</b></div><div class="metric emphasis"><label>Unrealized P&amp;L</label><b id="unrealized">--</b></div><div class="metric"><label>Charges</label><b id="charges">Not synced</b></div><div class="metric emphasis"><label>Net After Charges</label><b id="netAfterCharges">Not synced</b></div><div class="metric"><label>Day High</label><b id="dayHigh">--</b></div><div class="metric"><label>Day Low</label><b id="dayLow">--</b></div><div class="metric emphasis"><label>Open P&amp;L</label><b id="openPnl">--</b></div><div class="metric"><label>Closed P&amp;L</label><b id="closedPnl">--</b></div></div><div class="pnl-foot"><span>Last updated: <b id="pnlUpdated">--</b></span><span>Source: <b id="pnlSource">Loading</b></span><span>Mode: <b id="pnlMode">Loading</b></span></div></div></section>
         <section class="card chart"><div class="card-h"><span>BANKNIFTY &middot; <span id="chartTfLabel">15m</span> <span id="chartMode" class="chart-mode">Checking</span></span><a class="chart-link" href="/tradeops/candle-logs">View chart &rsaquo;</a></div><div class="card-b"><div class="chart-top"><div><div id="ohlc" class="ohlc">OHLC unavailable</div><div><span id="ltp" class="ltp">LTP unavailable</span> <span id="change" class="ok"></span></div></div><button class="btn" id="chartTfTop">15m</button></div><div class="chart-box" id="chartBox"></div><div class="tabs" id="chartTabs"><button type="button" data-tf="15m" class="active">15m</button><span style="margin-left:auto" class="muted chart-footer"><span id="feedStateDot" class="dot"></span> <span id="feedState">Checking</span> | Last candle: <b id="lastCandle">--</b> | <b id="candleCount">0 candles</b></span></div></div></section>
         <section class="card account"><div class="card-h"><span>Account Balance</span><span id="accountSyncChip" class="account-chip">Checking</span></div><div class="card-b"><div class="muted">Total Account Balance</div><div class="balance-big" id="balance">Not synced</div><div id="accountHint" class="account-hint">Sync account to view balance</div><div class="account-ident"><div><label>Account ID</label><b id="accountId">Not synced</b></div><div><label>Broker</label><b id="brokerName">Not synced</b></div><div><label>Holder</label><b id="accountName">Not synced</b></div></div><div class="acct-lines"><div class="kv"><label>Available Margin</label><strong id="available">Not synced</strong></div><div class="kv"><label>Used Margin</label><b id="usedMargin">Not synced</b></div><div class="kv"><label>Buying Power</label><strong id="buyingPower">Not synced</strong></div></div><div id="accountWarn" class="account-warn">Account not synced. Balance and margin unavailable.</div><div class="kv"><label>Broker Sync</label><b id="brokerSyncAccount">Not synced</b></div><div class="kv"><label>Reconciliation</label><b id="recon" class="ok">Not synced</b></div><div class="kv"><label>Last Sync</label><b id="lastSync">Not synced</b></div><a class="btn account-primary" href="/tradeops/account">View Statement &rsaquo;</a></div></section>
-        <section class="card ready mini-card execution-gate"><div class="card-h"><span>Execution Gate</span><a href="/tradeops/executions">View details &rsaquo;</a></div><div class="card-b"><div class="gate-head"><span id="readyStrip" class="ready-strip">Checking</span><span id="gateReason" class="muted">Checking execution state</span></div><div id="gateIdle" class="compact-empty gate-idle"><div class="empty-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="12" r="9"/><path d="M8 12h8"/></svg></div><div><b>No pending execution</b><span>Waiting for next order request.</span><small>Last check: <strong id="gateLastCheck">--</strong></small></div></div><div id="gateMetrics" class="mini-grid"><div class="mini-stat"><label>Next Order Value</label><b id="nextOrderValue">Idle</b></div><div class="mini-stat"><label>Required Margin</label><b id="requiredMargin">Idle</b></div><div class="mini-stat"><label>Available Margin</label><b id="available2">Not synced</b></div><div class="mini-stat"><label>Shortfall</label><b id="shortfall">--</b></div></div><div class="checks-row" id="checksRow"></div></div></section>
+        <section class="card ready mini-card execution-gate"><div class="card-h"><span>Execution Gate</span><a href="/tradeops/executions">View details &rsaquo;</a></div><div class="card-b"><div class="gate-head"><span id="readyStrip" class="ready-strip">Checking</span><span id="gateReason" class="muted">Checking execution state</span></div><div id="gateIdle" class="compact-empty gate-idle"><div class="empty-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="12" r="9"/><path d="M8 12h8"/></svg></div><div><b>No pending execution</b><span>Waiting for next order request.</span><small>Last check: <strong id="gateLastCheck">--</strong></small></div></div><div id="gateMetrics" class="mini-grid"><button type="button" class="mini-stat calc-stat" id="requiredCalcBtn" style="text-align:left;background:#fff;cursor:pointer"><label>Required Margin</label><b id="requiredMargin">Idle</b></button><button type="button" class="mini-stat calc-stat" id="safeCapitalBtn" style="text-align:left;background:#fff;cursor:pointer"><label>Safe Monthly Capital</label><b id="safeMonthlyCapital">Idle</b></button><div class="mini-stat"><label>Next Order Value</label><b id="nextOrderValue">Idle</b></div><div class="mini-stat"><label>Available Margin</label><b id="available2">Not synced</b></div><div class="mini-stat"><label>Shortfall</label><b id="shortfall">--</b></div></div><div class="checks-row" id="checksRow"></div></div></section>
         <section class="card orders mini-card"><div class="card-h"><span>Order Watch <span id="orderStateChip" class="order-state-chip">Checking</span></span><a href="/tradeops/orders">View details &rsaquo;</a></div><div class="card-b"><div id="orderIdle" class="order-idle"><b>Idle</b><span>No orders sent in this session.</span><small>Last check: <strong id="orderLastCheck">--</strong></small><a class="btn" href="/tradeops/orders">View Orders</a></div><div id="orderActive" class="order-active"><div class="order-bubbles"><div class="order-bubble sent"><span>Sent</span><b id="sent">--</b></div><div class="order-bubble filled"><span>Filled</span><b id="filled">--</b></div><div class="order-bubble pending"><span>Pending</span><b id="pendingOrders">--</b></div><div class="order-bubble rejected"><span>Rejected</span><b id="rejected">0</b></div><div class="order-bubble missed"><span>Missed</span><b id="missed">0</b></div><div class="order-bubble manual"><span>Manual</span><b id="manualReview">0</b></div></div><div class="order-meta"><span>Last order: <b id="lastOrderTime">--</b></span><span>Last update: <b id="orderLatency">Unavailable</b></span><span>Fill rate: <b id="fillRate">--</b></span></div><div id="actionStrip" class="action-strip"><span id="orderActionText">Action required</span><span>&rsaquo;</span></div></div><span id="completed" style="display:none"></span><span id="timedOut" style="display:none">0</span></div></section>
         <section class="card quick mini-card"><div class="card-h"><span>System Quick Status</span><a href="/tradeops/health">View details &rsaquo;</a></div><div class="card-b"><div class="quick-grid"><div class="quick-row"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10Z"/></svg><span>Token</span><b id="tokenValidUntil">Unavailable</b></div><div class="quick-row"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 7h18s-3 0-3-7"/></svg><span>Alerts</span><b id="alertsEnabled">Yes</b></div><div class="quick-row"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><rect x="6" y="7" width="12" height="10" rx="2"/><path d="M12 3v4"/></svg><span>Bot Heartbeat</span><b id="heartbeat">--</b></div><div class="quick-row"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M5 19 19 5"/><path d="m14 5 5 5"/></svg><span>Execution Status</span><b id="executionState">--</b></div><div class="quick-row"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M3 21h18"/><path d="M5 21V9l7-5 7 5v12"/></svg><span>Broker Sync</span><b id="brokerSync">--</b></div></div></div></section>
         <section class="card positions"><div class="card-h"><span>Live Positions</span><a href="/tradeops/positions">View Positions &rsaquo;</a></div><div id="positionsEmpty" class="compact-empty"><div class="empty-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M4 20V10M10 20V4M16 20v-7M22 20V8"/></svg></div><div><b>No open positions</b><span>Positions will appear here when active.</span><a class="btn" href="/tradeops/positions">View Positions</a></div></div><div id="positionsTable" class="table-wrap"><table class="table"><thead><tr><th>Symbol</th><th>Qty</th><th>Avg Price</th><th>LTP</th><th>P&amp;L</th><th>P&amp;L %</th><th>Status</th></tr></thead><tbody id="positionsBody"></tbody></table></div></section>
@@ -7350,7 +7394,7 @@ body.tradeops-collapsed .help,body.tradeops-collapsed .collapse-btn{justify-cont
   </main>
 </div>
 <div class="tradeops-loader" id="tradeopsLoader"><div class="loader-logo"><svg viewBox="0 0 24 24"><path d="M4 16.5 9 11l3.5 3.5L20 6"/><path d="M5 20h14"/><path d="M6 4h12"/></svg></div></div>
-<div class="modal" id="modal"><div class="dialog"><h2>Emergency Stop</h2><p class="muted">This will close all open positions immediately. This action cannot be undone.</p><input id="pin" placeholder="Optional PIN / password"><label><input type="checkbox" id="confirmBox"> I understand this is a live close-all action.</label><input id="confirmPhrase" placeholder="Type CLOSE ALL"><div id="emergencyResult" class="muted" style="margin:12px 0"></div><div class="actions"><button class="btn" id="cancelStop">Cancel</button><button class="btn danger" id="sendStop">Close All Trades Now</button></div></div></div><script src="https://cdn.jsdelivr.net/npm/lightweight-charts@4.2.3/dist/lightweight-charts.standalone.production.js"></script><script>
+<div class="modal" id="modal"><div class="dialog"><h2>Emergency Stop</h2><p class="muted">This will close all open positions immediately. This action cannot be undone.</p><input id="pin" placeholder="Optional PIN / password"><label><input type="checkbox" id="confirmBox"> I understand this is a live close-all action.</label><input id="confirmPhrase" placeholder="Type CLOSE ALL"><div id="emergencyResult" class="muted" style="margin:12px 0"></div><div class="actions"><button class="btn" id="cancelStop">Cancel</button><button class="btn danger" id="sendStop">Close All Trades Now</button></div></div></div><div class="modal" id="capitalModal"><div class="dialog"><h2>Capital Calculation</h2><div id="capitalCalcBody" class="side-list" style="margin:12px 0"></div><p class="muted">Updates with the dashboard refresh. Values come from Zerodha margin API and TradeOps 10:30 futures history.</p><div class="actions"><button class="btn" id="closeCapitalModal">Close</button></div></div></div><script src="https://cdn.jsdelivr.net/npm/lightweight-charts@4.2.3/dist/lightweight-charts.standalone.production.js"></script><script>
 const PAGE=${JSON.stringify(safePage)};const INITIAL_STATUS=${JSON.stringify(initialStatus || null).replace(/<\\/g, "<\\\\/")};const INR=new Intl.NumberFormat('en-IN',{style:'currency',currency:'INR',maximumFractionDigits:0});let paused=false;let chartTf='15m';let lastStatus=null;let tradeOpsSessionDate='';
 function rs(n){n=Number(n||0);return (n<0?'-':'')+INR.format(Math.abs(n));}function pc(n){return Number(n||0).toFixed(2)+'%'}function cls(n){return Number(n||0)>=0?'ok':'bad'}function txt(v){v=String(v||'').trim();return !v||v==='Unavailable'?'Not synced':v}function money(ok,n){return ok?rs(n):'Not synced'}function ago(sec){if(sec==null)return 'No heartbeat';return sec<60?sec+'s ago':Math.round(sec/60)+'m ago'}function set(id,v){const e=document.getElementById(id);if(e)e.textContent=v}function markFlow(id,ok){const e=document.getElementById(id);if(!e)return;e.className='flow-ok '+(ok?'pass':'fail');e.textContent=ok?'✓':'!';const step=e.closest('.flow-step');if(step)step.classList.toggle('blocked',!ok)}function rows(cols,msg){return '<tr><td colspan="'+cols+'" class="muted" style="text-align:center;padding:18px">'+msg+'</td></tr>'}
 function nav(){document.querySelectorAll('.nav a').forEach(a=>a.classList.toggle('active',a.dataset.page===PAGE))}
@@ -7364,6 +7408,23 @@ function logGroups(logs){const meaningful=[];(logs||[]).forEach(l=>{let msg=Stri
 function logHtml(groups,limit){return groups.length?groups.slice(0,limit).map(g=>{const l=g.row;const msg=g.count>1?l.message+' repeated '+g.count+' times':l.message;return '<div><span class="muted">'+txt(l.time)+'</span> <span class="'+(l.level==='ERROR'?'error':l.level==='WARN'?'warn':'info')+'">['+txt(l.level)+']</span> '+txt(msg)+'</div>'}).join(''):'<div class="muted">No meaningful logs recorded yet</div>'}
 function renderLogs(logs){if(paused)return;const grouped=logGroups(logs);const logsEl=document.getElementById('logs');if(logsEl)logsEl.innerHTML=logHtml(grouped,6);const workspaceLogs=document.getElementById('workspaceLogs');if(workspaceLogs)workspaceLogs.innerHTML=logHtml(grouped,120)}
 async function loadLogs(){if(paused)return;try{const r=await fetch('/api/tradeops/logs',{cache:'no-store',credentials:'same-origin',headers:{'Accept':'application/json'}});if(!r.ok)return;const j=await r.json();if(j&&Array.isArray(j.logs))renderLogs(j.logs)}catch(e){}}
+function renderCapitalCalc(){const d=lastStatus||{};const e=d.execution||{};const c=e.monthlyCalculation||{};const body=document.getElementById('capitalCalcBody');if(!body)return;const required=Number(e.requiredMargin||c.requiredMargin||0);const reserve=Number(e.monthlyReserve||c.reserve||0);const safe=Number(e.safeMonthlyCapital||0);const available=d.pnl&&d.pnl.marginsSynced?Number(d.pnl.availableMargin||0):null;const shortfall=available==null?null:Math.max(0,safe-available);body.innerHTML=[
+  ['Strategy','10:30 BANKNIFTY futures'],
+  ['Contract',txt(c.symbol||e.marginSymbol||'BANKNIFTY FUT')],
+  ['Qty',String(c.qty||e.marginQty||30)],
+  ['One Trade Required Margin',required>0?rs(required):'Calculating'],
+  ['Monthly Reserve',reserve>0?rs(reserve):'Calculating'],
+  ['Safe Monthly Capital',safe>0?rs(safe):'Calculating'],
+  ['Available Margin',available==null?'Not synced':rs(available)],
+  ['Safe Capital Shortfall',shortfall==null?'Not synced':rs(shortfall)],
+  ['Lookback','Last '+(e.monthlyLookbackDays||30)+' days · '+(c.historyDays||e.monthlyHistoryDays||0)+' traded days'],
+  ['Worst Day Loss',rs(c.worstDayLoss||e.monthlyWorstDayLoss||0)],
+  ['Max Drawdown',rs(c.maxDrawdown||e.monthlyMaxDrawdown||0)],
+  ['Fallback Buffer',rs(c.fallbackBuffer||0)],
+  ['Formula',txt(c.formula||'required margin + reserve')],
+  ['Source',txt(c.source||e.marginSource||'Zerodha order margin API')]
+].map(r=>'<div class="side-row"><label>'+txt(r[0])+'</label><b>'+txt(r[1])+'</b></div>').join('')}
+function setupCapitalCalc(){const modal=document.getElementById('capitalModal');const close=document.getElementById('closeCapitalModal');['requiredCalcBtn','safeCapitalBtn'].forEach(id=>{const btn=document.getElementById(id);if(btn&&!btn._wired){btn._wired=true;btn.onclick=function(){renderCapitalCalc();if(modal)modal.classList.add('open')}}});if(close&&!close._wired){close._wired=true;close.onclick=function(){if(modal)modal.classList.remove('open')}}if(modal&&!modal._wired){modal._wired=true;modal.addEventListener('click',e=>{if(e.target===modal)modal.classList.remove('open')})}}
 function setupSidebar(){const btn=document.querySelector('.collapse-btn');if(!btn||btn._wired)return;btn._wired=true;const label=btn.querySelector('span');function sync(){const collapsed=document.body.classList.contains('tradeops-collapsed');if(label)label.textContent=collapsed?'Expand':'Collapse';btn.title=collapsed?'Expand sidebar':'Collapse sidebar'}try{if(localStorage.getItem('tradeopsSidebarCollapsed')==='1')document.body.classList.add('tradeops-collapsed')}catch(e){}sync();btn.onclick=function(){document.body.classList.toggle('tradeops-collapsed');try{localStorage.setItem('tradeopsSidebarCollapsed',document.body.classList.contains('tradeops-collapsed')?'1':'0')}catch(e){}sync()}}
 function render(d){
   lastStatus=d;
@@ -7475,6 +7536,7 @@ function render(d){
   set('buyingPower',money(synced,d.pnl.availableMargin));
   set('cashBalance',synced?(d.pnl.cashBalance==null?'Not available':rs(d.pnl.cashBalance)):'Not synced');
   const required=Number(d.execution.requiredMargin||0);
+  const safeCapital=Number(d.execution.safeMonthlyCapital||0);
   const idle=d.execution.status==='Idle';
   set('gateLastCheck',updated);
   const gateIdle=document.getElementById('gateIdle');
@@ -7483,9 +7545,11 @@ function render(d){
   if(gateMetrics)gateMetrics.style.display='grid';
   set('nextOrderValue',required>0?rs(d.execution.orderValue||required):(idle?'Calculating':'Not synced'));
   set('requiredMargin',required>0?rs(required):(synced?rs(0):'Not synced'));
+  set('safeMonthlyCapital',safeCapital>0?rs(safeCapital):(required>0?'Calculating':'Not synced'));
   const shortfall=Number(d.execution.shortfall||0);
   set('shortfall',synced?(shortfall?rs(shortfall):rs(0)):'Not synced');
   set('gateReason',idle?('Next 10:30 futures margin'+(d.execution.marginSymbol?' for '+d.execution.marginSymbol:'')+' · '+(d.execution.marginSource||'checking')):(d.execution.blockReason||'All checks passed'));
+  setupCapitalCalc();renderCapitalCalc();
   const checks=d.execution.checks||{};
   document.getElementById('checksRow').innerHTML=(idle?['token','broker','feed','account']:['token','broker','feed','account','margin']).map(k=>'<span class="'+(checks[k]?'ok':'bad')+'">'+(checks[k]?'OK':'X')+' '+(idle&&k==='margin'?'Not required':k.charAt(0).toUpperCase()+k.slice(1))+'</span>').join('');
 
