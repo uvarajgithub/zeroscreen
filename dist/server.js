@@ -6812,10 +6812,21 @@ async function buildTradeOpsStatus() {
     const pnlSource = displaySession === today
         ? (liveNetCandidate !== null ? "10:30 futures heartbeat" : liveClosedCandidate !== null ? "10:30 futures closed P&L" : "10:30 futures trade history")
         : "latest completed session";
-    const pnls = displayClosed.map(t => tradeOpsPnl(t)).reduce((arr, n) => {
+    const todayRangePnls = displayClosed.map(t => tradeOpsPnl(t)).reduce((arr, n) => {
         arr.push((arr[arr.length - 1] || 0) + n);
         return arr;
     }, []);
+    const previousSessionDate = strategyTrades.map(t => tradeOpsDateKey(t?.date || t?.exitTime || t?.entryTime)).filter(d => d && d < today).sort().pop() || "";
+    const previousClosed = previousSessionDate
+        ? strategyTrades.filter(t => tradeOpsDateKey(t?.date || t?.exitTime || t?.entryTime) === previousSessionDate).filter(t => tradeOpsNum(t?.exitPrice) > 0 || tradeOpsNum(t?.premiumExit) > 0)
+        : [];
+    const previousRangePnls = previousClosed.map(t => tradeOpsPnl(t)).reduce((arr, n) => {
+        arr.push((arr[arr.length - 1] || 0) + n);
+        return arr;
+    }, []);
+    const usePreviousRange = todayRangePnls.length === 0 && previousRangePnls.length > 0;
+    const rangePnls = usePreviousRange ? previousRangePnls : todayRangePnls;
+    const pnls = todayRangePnls.slice();
     if (pnls.length === 0 && Number.isFinite(netPnl))
         pnls.push(0, netPnl);
     let broker = { ok: false, tokenOK: false, profile: null, margins: null, positions: [], error: "Unavailable" };
@@ -6877,8 +6888,8 @@ async function buildTradeOpsStatus() {
     const requiredMargin = nextMargin.ok ? nextMargin.requiredMargin : Math.max(used ?? 0, openPositions.reduce((s, p) => s + Math.abs(p.qty * p.ltp), 0));
     const shortfall = marginsSynced ? Math.max(0, requiredMargin - (available ?? 0)) : null;
     const marginReady = marginsSynced && (requiredMargin <= 0 || (available ?? 0) >= requiredMargin);
-    const todayLow = pnls.length ? Math.min(...pnls) : netPnl;
-    const todayHigh = pnls.length ? Math.max(...pnls) : netPnl;
+    const todayLow = rangePnls.length ? Math.min(...rangePnls) : netPnl;
+    const todayHigh = rangePnls.length ? Math.max(...rangePnls) : netPnl;
     const charges = tradeOpsMaybeNum(tt1030State?.charges ?? hb?.tt1030Charges);
     const netAfterCharges = charges === null ? null : netPnl - charges;
     const monthStartMs = new Date(`${today}T00:00:00+05:30`).getTime() - 30 * 86400000;
@@ -7076,6 +7087,8 @@ async function buildTradeOpsStatus() {
             todayHigh,
             todayLow,
             dayRangeAvailable: Number.isFinite(todayHigh) && Number.isFinite(todayLow),
+            dayRangeSource: usePreviousRange ? "previous_session" : "today",
+            dayRangeDate: usePreviousRange ? previousSessionDate : today,
             charges,
             netAfterCharges,
             chargesAvailable: charges !== null,
@@ -7496,7 +7509,7 @@ body.tradeops-collapsed .help,body.tradeops-collapsed .collapse-btn{justify-cont
           <div class="flow-step"><div class="flow-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M5 19 19 5"/><path d="m14 5 5 5"/><path d="M5 19l5-1 8-8"/></svg></div><div class="flow-text"><b id="flowExecTitle">Execution</b><span id="flowExecSub">Checking</span></div><span class="flow-ok" id="flowExecBadge">?</span></div>
           <div class="flow-actions"><button class="btn" id="refreshTokenBtn">Refresh Token</button><button class="btn" id="syncAccountBtn">Sync Account</button></div>
         </section>
-        <section class="card pnl"><div class="card-h"><span class="pnl-head">10:30 Futures P&amp;L <span class="dot ok"></span><span class="ok" id="pnlLiveLabel">Live data</span></span><a class="pnl-link" href="/tradeops/trade-history">View details &rsaquo;</a></div><div class="card-b"><div id="pnlMetricLabel" class="pnl-label">10:30 Futures Net P&amp;L</div><div class="pnl-main"><div><div id="netPnl" class="pnl-value">Not synced</div><div id="pnlSupport" class="pnl-support">10:30 futures P&amp;L</div></div><span id="profitChip" class="profit-pill">--</span></div><div class="metric-grid"><div class="metric"><label>Realized P&amp;L</label><b id="realized">--</b></div><div class="metric emphasis"><label>Unrealized P&amp;L</label><b id="unrealized">--</b></div><div class="metric"><label>Charges</label><b id="charges">Not synced</b></div><div class="metric emphasis"><label>Net After Charges</label><b id="netAfterCharges">Not synced</b></div><div class="metric"><label>Day High</label><b id="dayHigh">--</b></div><div class="metric"><label>Day Low</label><b id="dayLow">--</b></div><div class="metric emphasis"><label>Open P&amp;L</label><b id="openPnl">--</b></div><div class="metric"><label>Closed P&amp;L</label><b id="closedPnl">--</b></div></div><div class="pnl-foot"><span>Last updated: <b id="pnlUpdated">--</b></span><span>Source: <b id="pnlSource">Loading</b></span><span>Mode: <b id="pnlMode">Loading</b></span></div></div></section>
+        <section class="card pnl"><div class="card-h"><span class="pnl-head">10:30 Futures P&amp;L <span class="dot ok"></span><span class="ok" id="pnlLiveLabel">Live data</span></span><a class="pnl-link" href="/tradeops/trade-history">View details &rsaquo;</a></div><div class="card-b"><div id="pnlMetricLabel" class="pnl-label">10:30 Futures Net P&amp;L</div><div class="pnl-main"><div><div id="netPnl" class="pnl-value">Not synced</div><div id="pnlSupport" class="pnl-support">10:30 futures P&amp;L</div></div><span id="profitChip" class="profit-pill">--</span></div><div class="metric-grid"><div class="metric"><label>Realized P&amp;L</label><b id="realized">--</b></div><div class="metric emphasis"><label>Unrealized P&amp;L</label><b id="unrealized">--</b></div><div class="metric"><label>Charges</label><b id="charges">Not synced</b></div><div class="metric emphasis"><label>Net After Charges</label><b id="netAfterCharges">Not synced</b></div><div class="metric"><label id="dayHighLabel">Day High</label><b id="dayHigh">--</b></div><div class="metric"><label id="dayLowLabel">Day Low</label><b id="dayLow">--</b></div><div class="metric emphasis"><label>Open P&amp;L</label><b id="openPnl">--</b></div><div class="metric"><label>Closed P&amp;L</label><b id="closedPnl">--</b></div></div><div class="pnl-foot"><span>Last updated: <b id="pnlUpdated">--</b></span><span>Source: <b id="pnlSource">Loading</b></span><span>Mode: <b id="pnlMode">Loading</b></span></div></div></section>
         <section class="card chart"><div class="card-h"><span>BANKNIFTY &middot; <span id="chartTfLabel">15m</span> <span id="chartMode" class="chart-mode">Checking</span></span><a class="chart-link" href="/tradeops/candle-logs">View chart &rsaquo;</a></div><div class="card-b"><div class="chart-top"><div><div id="ohlc" class="ohlc">OHLC unavailable</div><div><span id="ltp" class="ltp">LTP unavailable</span> <span id="change" class="ok"></span></div></div><button class="btn" id="chartTfTop">15m</button></div><div class="chart-box" id="chartBox"></div><div class="tabs" id="chartTabs"><button type="button" data-tf="15m" class="active">15m</button><span style="margin-left:auto" class="muted chart-footer"><span id="feedStateDot" class="dot"></span> <span id="feedState">Checking</span> | Last candle: <b id="lastCandle">--</b> | <b id="candleCount">0 candles</b></span></div></div></section>
         <section class="card account"><div class="card-h"><span>Account Balance</span><span id="accountSyncChip" class="account-chip">Checking</span></div><div class="card-b"><div class="muted">Total Account Balance</div><div class="balance-big" id="balance">Not synced</div><div id="accountHint" class="account-hint">Sync account to view balance</div><div class="account-ident"><div><label>Account ID</label><b id="accountId">Not synced</b></div><div><label>Broker</label><b id="brokerName">Not synced</b></div><div><label>Holder</label><b id="accountName">Not synced</b></div></div><div class="acct-lines"><div class="kv"><label>Available Margin</label><strong id="available">Not synced</strong></div><div class="kv"><label>Used Margin</label><b id="usedMargin">Not synced</b></div><div class="kv"><label>Buying Power</label><strong id="buyingPower">Not synced</strong></div></div><div id="accountWarn" class="account-warn">Account not synced. Balance and margin unavailable.</div><div class="kv"><label>Broker Sync</label><b id="brokerSyncAccount">Not synced</b></div><div class="kv"><label>Reconciliation</label><b id="recon" class="ok">Not synced</b></div><div class="kv"><label>Last Sync</label><b id="lastSync">Not synced</b></div><a class="btn account-primary" href="/tradeops/account">View Statement &rsaquo;</a></div></section>
         <section class="card ready mini-card execution-gate"><div class="card-h"><span>Execution Gate</span><a href="/tradeops/executions">View details &rsaquo;</a></div><div class="card-b"><div class="gate-head"><span id="readyStrip" class="ready-strip">Checking</span><span id="gateReason" class="muted">Checking execution state</span></div><div id="gateIdle" class="compact-empty gate-idle"><div class="empty-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="12" r="9"/><path d="M8 12h8"/></svg></div><div><b>No pending execution</b><span>Waiting for next order request.</span><small>Last check: <strong id="gateLastCheck">--</strong></small></div></div><div id="gateMetrics" class="mini-grid"><button type="button" class="mini-stat calc-stat" id="requiredCalcBtn" style="text-align:left;background:#fff;cursor:pointer"><label>Required Margin</label><b id="requiredMargin">Idle</b></button><button type="button" class="mini-stat calc-stat" id="safeCapitalBtn" style="text-align:left;background:#fff;cursor:pointer"><label>Safe Monthly Capital</label><b id="safeMonthlyCapital">Idle</b></button><div class="mini-stat"><label>Next Order Value</label><b id="nextOrderValue">Idle</b></div><div class="mini-stat"><label>Available Margin</label><b id="available2">Not synced</b></div><div class="mini-stat"><label>Shortfall</label><b id="shortfall">--</b></div></div><div class="checks-row" id="checksRow"></div></div></section>
@@ -7608,6 +7621,9 @@ function render(d){
   set('unrealized',rs(d.pnl.unrealized));
   set('charges',d.pnl.chargesAvailable?rs(d.pnl.charges||0):'Not synced');
   set('netAfterCharges',d.pnl.netAfterCharges!=null?rs(d.pnl.netAfterCharges):(d.pnl.chargesAvailable?rs(net-Number(d.pnl.charges||0)):'Not synced'));
+  const previousRange=d.pnl.dayRangeSource==='previous_session';
+  set('dayHighLabel',previousRange?'Prev Day High':'Day High');
+  set('dayLowLabel',previousRange?'Prev Day Low':'Day Low');
   set('dayHigh',d.pnl.dayRangeAvailable?rs(d.pnl.todayHigh):rs(net));
   set('dayLow',d.pnl.dayRangeAvailable?rs(d.pnl.todayLow):rs(net));
   set('openPnl',rs(d.pnl.unrealized));
