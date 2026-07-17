@@ -7453,6 +7453,86 @@ body.tradeops-collapsed .help,body.tradeops-collapsed .collapse-btn{justify-cont
 .logs .warn{color:#f59e0b!important}
 .logs .error{color:#ef4444!important}
 
+/* TradeOps dashboard density pass: scoped to the dashboard only. */
+body:has(.dashboard) .side{width:224px!important;padding:18px 14px!important}
+body:has(.dashboard) .main{margin-left:224px!important}
+body:has(.dashboard) .top{left:224px!important;height:64px!important;padding:0 18px!important;gap:10px!important}
+body:has(.dashboard) .status-chip{height:34px!important;padding:0 12px!important;border-radius:8px!important;font-size:12px!important}
+body:has(.dashboard) .top .btn{height:34px!important;border-radius:8px!important}
+body:has(.dashboard) .btn.danger{height:38px!important;border-radius:10px!important;padding:0 18px!important}
+body:has(.dashboard) .content{padding:14px 16px 16px!important}
+body:has(.dashboard) .dashboard{grid-template-columns:minmax(0,32fr) minmax(0,34fr) minmax(0,34fr)!important;grid-template-areas:"workflow workflow workflow" "pnl chart account" "ready orders quick" "recent recent recent" "logs logs logs"!important;gap:12px!important;align-items:stretch!important}
+body:has(.dashboard) .card{border-radius:8px!important;box-shadow:0 8px 22px rgba(15,23,42,.045)!important}
+body:has(.dashboard) .card-h{min-height:34px!important;padding:12px 16px 0!important;font-size:16px!important;font-weight:650!important}
+body:has(.dashboard) .card-b{padding:12px 16px 14px!important}
+body:has(.dashboard) .workflow.card{height:74px!important;min-height:74px!important;padding:10px 14px!important;gap:10px!important}
+body:has(.dashboard) .workflow .flow-actions{display:none!important}
+body:has(.dashboard) .flow-step{height:52px!important;border-radius:10px!important;padding:0 12px!important;gap:10px!important;box-shadow:none!important}
+body:has(.dashboard) .flow-step:not(:last-of-type):after{top:26px!important}
+body:has(.dashboard) .flow-icon{width:34px!important;height:34px!important}
+body:has(.dashboard) .flow-text b{font-size:12px!important}
+body:has(.dashboard) .flow-text span{font-size:11px!important;max-width:116px!important;white-space:nowrap!important;overflow:hidden!important;text-overflow:ellipsis!important}
+body:has(.dashboard) .pnl,body:has(.dashboard) .chart,body:has(.dashboard) .account{height:310px!important;min-height:310px!important}
+body:has(.dashboard) .pnl .card-b{padding-top:8px!important}
+body:has(.dashboard) .pnl-value{font-size:36px!important;line-height:1!important;margin:4px 0 12px!important}
+body:has(.dashboard) .pnl-main{margin-bottom:2px!important}
+body:has(.dashboard) .profit-pill{height:28px!important;border-radius:8px!important;font-size:12px!important}
+body:has(.dashboard) .metric-grid{grid-template-columns:repeat(4,minmax(0,1fr))!important;gap:7px!important}
+body:has(.dashboard) .metric{min-height:48px!important;padding:7px!important;border-radius:8px!important}
+body:has(.dashboard) .metric label{font-size:11px!important;margin-bottom:5px!important}
+body:has(.dashboard) .metric b{font-size:13px!important;line-height:1.2!important}
+body:has(.dashboard) .pnl-foot{height:auto!important;margin-top:8px!important;padding-top:6px!important;gap:8px!important;font-size:11px!important;align-items:flex-start!important}
+body:has(.dashboard) .chart-box{height:178px!important;margin-top:8px!important;border-radius:6px!important}
+body:has(.dashboard) .chart-top{min-height:44px!important}
+body:has(.dashboard) .ltp{font-size:24px!important}
+body:has(.dashboard) .tabs{margin-top:8px!important}
+body:has(.dashboard) .chart-footer{font-size:11px!important}
+body:has(.dashboard) .account .balance-big{font-size:28px!important;margin:6px 0 8px!important}
+body:has(.dashboard) .account-ident{display:none!important;grid-template-columns:repeat(3,minmax(0,1fr))!important;gap:8px!important;margin-bottom:8px!important}
+body:has(.dashboard) .account-ident>div{min-height:44px!important;padding:8px!important;border-radius:8px!important}
+body:has(.dashboard) .account-hint{display:none!important}
+body:has(.dashboard) .acct-lines{padding:6px 0!important;margin-bottom:6px!important}
+body:has(.dashboard) .kv{padding:3px 0!important}
+body:has(.dashboard) .account .kv:has(#recon){display:none!important}
+body:has(.dashboard) .account-warn{display:none!important;padding:6px 9px!important;margin:5px 0!important;border-radius:8px!important;font-size:11px!important}
+body:has(.dashboard) .account-primary{height:32px!important;border-radius:8px!important}
+body:has(.dashboard) .ready.mini-card,body:has(.dashboard) .orders.mini-card,body:has(.dashboard) .quick.mini-card{height:178px!important;min-height:178px!important}
+body:has(.dashboard) .execution-gate .card-b,body:has(.dashboard) .orders .card-b,body:has(.dashboard) .quick .card-b{padding-top:8px!important}
+body:has(.dashboard) .gate-head{display:flex!important;align-items:center!important;gap:10px!important}
+body:has(.dashboard) .ready-strip{height:26px!important;margin:0!important;font-size:12px!important;white-space:nowrap!important}
+body:has(.dashboard) .gate-idle{display:none!important}
+body:has(.dashboard) .execution-gate .mini-grid{grid-template-columns:repeat(5,minmax(0,1fr))!important;gap:8px!important;margin-top:8px!important}
+body:has(.dashboard) .mini-stat{min-height:46px!important;padding:6px!important;border:1px solid #e3edf8!important;border-radius:8px!important}
+body:has(.dashboard) .mini-stat label{font-size:11px!important}
+body:has(.dashboard) .mini-stat b{font-size:11px!important;line-height:1.12!important}
+body:has(.dashboard) .checks-row{margin-top:8px!important;display:flex!important;gap:6px!important;flex-wrap:wrap!important}
+body:has(.dashboard) .checks-row span{height:22px!important;border-radius:999px!important;font-size:10px!important;padding:0 8px!important}
+body:has(.dashboard) .order-idle{min-height:72px!important;margin-top:2px!important;display:block!important}
+body:has(.dashboard) .order-idle b{font-size:24px!important}
+body:has(.dashboard) .order-idle b,body:has(.dashboard) .order-idle span,body:has(.dashboard) .order-idle small{display:block!important;margin-bottom:3px!important}
+body:has(.dashboard) .order-idle .btn{height:30px!important;margin-top:8px!important}
+body:has(.dashboard) .order-bubbles{grid-template-columns:repeat(6,minmax(0,1fr))!important;gap:6px!important}
+body:has(.dashboard) .order-bubble{min-height:54px!important;border-radius:8px!important;padding:7px 4px!important}
+body:has(.dashboard) .order-bubble b{font-size:18px!important}
+body:has(.dashboard) .order-meta{font-size:11px!important;margin-top:8px!important}
+body:has(.dashboard) .action-strip{height:30px!important;margin-top:8px!important;border-radius:8px!important;font-size:12px!important}
+body:has(.dashboard) .quick-grid{gap:0!important}
+body:has(.dashboard) .quick-row{min-height:24px!important;padding:3px 0!important}
+body:has(.dashboard) .quick-row b{font-size:11px!important;padding:2px 8px!important}
+body:has(.dashboard) .positions{display:none!important}
+body:has(.dashboard) .recent{height:120px!important;min-height:120px!important}
+body:has(.dashboard) .recent .compact-empty{min-height:52px!important;margin:0 16px 8px!important;padding:7px 12px!important}
+body:has(.dashboard) .recent .compact-empty .empty-icon{width:32px!important;height:32px!important}
+body:has(.dashboard) .recent .compact-empty .btn{display:none!important}
+body:has(.dashboard) .recent .table-wrap{height:auto!important;max-height:none!important;overflow:visible!important;padding-bottom:8px!important}
+body:has(.dashboard) .recent .table th{height:26px!important}
+body:has(.dashboard) .recent .table td{height:25px!important}
+body:has(.dashboard) .logs-card{height:142px!important;min-height:142px!important}
+body:has(.dashboard) .logs-card>.card-h{min-height:38px!important;padding:10px 16px 6px!important}
+body:has(.dashboard) .console{margin:0 14px 12px!important}
+body:has(.dashboard) .logs{height:76px!important;font-size:11.5px!important;line-height:1.35!important}
+@media(max-width:1366px){body:has(.dashboard) .dashboard{grid-template-columns:1fr 1fr!important;grid-template-areas:"workflow workflow" "pnl chart" "account quick" "ready orders" "recent recent" "logs logs"!important}body:has(.dashboard) .pnl,body:has(.dashboard) .chart,body:has(.dashboard) .account{height:310px!important}}
+
 </style>
 </head>
 <body>
@@ -7532,7 +7612,7 @@ function setFlowBadge(id,ok){const e=document.getElementById(id);if(!e)return;e.
 markFlow=setFlowBadge;
 let tvChart=null,tvCandleSeries=null,tvVolumeSeries=null,tvPriceLine=null;
 function buildChartCandles(candles){const base=(candles||[]).slice().reverse().filter(c=>Number.isFinite(c.open)&&Number.isFinite(c.high)&&Number.isFinite(c.low)&&Number.isFinite(c.close)&&c.open>0&&c.high>0&&c.low>0&&c.close>0&&c.chartTime);if(chartTf!=='15m')return base;const buckets=new Map();const fmtBucketTime=key=>{const d=new Date(key*1000);return String(d.getUTCHours()).padStart(2,'0')+':'+String(d.getUTCMinutes()).padStart(2,'0')};base.forEach(c=>{const key=Math.floor(c.chartTime/900)*900;const b=buckets.get(key);if(!b){buckets.set(key,{...c,chartTime:key,time:fmtBucketTime(key),volume:Number(c.volume||0)});return;}b.high=Math.max(b.high,c.high);b.low=Math.min(b.low,c.low);b.close=c.close;b.volume=Number(b.volume||0)+Number(c.volume||0);b.closeOnly=b.closeOnly&&c.closeOnly;});return Array.from(buckets.values()).sort((a,b)=>a.chartTime-b.chartTime);}
-function chart(candles){const wrap=document.getElementById('chartBox');const cs=buildChartCandles(candles).slice(-80);if(cs.length<2){wrap.classList.add('no-data');wrap.innerHTML='<div class="empty-chart">No BANKNIFTY '+chartTf+' candles recorded yet<br><span style="color:#6aa8ff">Check feed</span></div>';return;}wrap.classList.remove('no-data');if(!window.LightweightCharts){wrap.innerHTML='<div class="empty-chart">TradingView chart library unavailable<br><span style="color:#6aa8ff">Retry after network loads</span></div>';return;}if(!tvChart){wrap.innerHTML='';tvChart=LightweightCharts.createChart(wrap,{autoSize:true,layout:{background:{type:'solid',color:'#081624'},textColor:'#9fb5cc',fontFamily:'Inter,Manrope,system-ui'},grid:{vertLines:{color:'rgba(255,255,255,.05)'},horzLines:{color:'rgba(255,255,255,.07)'}},rightPriceScale:{borderColor:'#223a55',scaleMargins:{top:.08,bottom:.10}},timeScale:{borderColor:'#223a55',timeVisible:true,secondsVisible:false},crosshair:{mode:LightweightCharts.CrosshairMode.Normal},handleScroll:true,handleScale:true});tvCandleSeries=tvChart.addCandlestickSeries({upColor:'#22c55e',downColor:'#ef4444',borderUpColor:'#22c55e',borderDownColor:'#ef4444',wickUpColor:'#22c55e',wickDownColor:'#ef4444',priceLineVisible:false});tvVolumeSeries=tvChart.addHistogramSeries({priceFormat:{type:'volume'},priceScaleId:'',color:'rgba(34,197,94,.35)',scaleMargins:{top:.80,bottom:0}});new ResizeObserver(()=>{if(tvChart)tvChart.applyOptions({autoSize:true})}).observe(wrap);}const candleData=cs.map(c=>({time:c.chartTime,open:c.open,high:c.high,low:c.low,close:c.close}));tvCandleSeries.setData(candleData);const volumes=cs.filter(c=>Number(c.volume||0)>0).map(c=>({time:c.chartTime,value:Number(c.volume||0),color:c.close>=c.open?'rgba(34,197,94,.38)':'rgba(239,68,68,.38)'}));const hasVolume=volumes.length>0;tvVolumeSeries.setData(volumes);tvChart.applyOptions({rightPriceScale:{borderColor:'#223a55',scaleMargins:{top:.08,bottom:hasVolume ? .24 : .10}}});const latest=cs[cs.length-1];if(tvPriceLine)tvCandleSeries.removePriceLine(tvPriceLine);tvPriceLine=tvCandleSeries.createPriceLine({price:latest.close,color:'#22c55e',lineWidth:1,lineStyle:LightweightCharts.LineStyle.Dashed,axisLabelVisible:true,title:'LTP'});tvChart.timeScale().fitContent();}
+function chart(candles){const wrap=document.getElementById('chartBox');const cs=buildChartCandles(candles).slice(-80);if(cs.length<2){wrap.classList.add('no-data');const checked=lastStatus&&lastStatus.updatedAt?new Date(lastStatus.updatedAt).toLocaleTimeString('en-IN'):'--';const view=lastStatus&&lastStatus.candleView&&lastStatus.candleView.label?lastStatus.candleView.label:'Today session';wrap.innerHTML='<div class="empty-chart"><b>No BANKNIFTY '+chartTf+' candles</b><span>Reason: feed has not recorded enough candles for this session.</span><span>Source: '+txt(view)+' · Last checked '+checked+'</span><button class="btn primary" onclick="load()">Check Feed</button></div>';return;}wrap.classList.remove('no-data');if(!window.LightweightCharts){wrap.innerHTML='<div class="empty-chart"><b>Chart library unavailable</b><span>Retry after the network resource loads.</span><button class="btn primary" onclick="location.reload()">Retry</button></div>';return;}if(!tvChart){wrap.innerHTML='';tvChart=LightweightCharts.createChart(wrap,{autoSize:true,layout:{background:{type:'solid',color:'#081624'},textColor:'#9fb5cc',fontFamily:'Inter,Manrope,system-ui'},grid:{vertLines:{color:'rgba(255,255,255,.05)'},horzLines:{color:'rgba(255,255,255,.07)'}},rightPriceScale:{borderColor:'#223a55',scaleMargins:{top:.08,bottom:.10}},timeScale:{borderColor:'#223a55',timeVisible:true,secondsVisible:false},crosshair:{mode:LightweightCharts.CrosshairMode.Normal},handleScroll:true,handleScale:true});tvCandleSeries=tvChart.addCandlestickSeries({upColor:'#22c55e',downColor:'#ef4444',borderUpColor:'#22c55e',borderDownColor:'#ef4444',wickUpColor:'#22c55e',wickDownColor:'#ef4444',priceLineVisible:false});tvVolumeSeries=tvChart.addHistogramSeries({priceFormat:{type:'volume'},priceScaleId:'',color:'rgba(34,197,94,.35)',scaleMargins:{top:.80,bottom:0}});new ResizeObserver(()=>{if(tvChart)tvChart.applyOptions({autoSize:true})}).observe(wrap);}const candleData=cs.map(c=>({time:c.chartTime,open:c.open,high:c.high,low:c.low,close:c.close}));tvCandleSeries.setData(candleData);const volumes=cs.filter(c=>Number(c.volume||0)>0).map(c=>({time:c.chartTime,value:Number(c.volume||0),color:c.close>=c.open?'rgba(34,197,94,.38)':'rgba(239,68,68,.38)'}));const hasVolume=volumes.length>0;tvVolumeSeries.setData(volumes);tvChart.applyOptions({rightPriceScale:{borderColor:'#223a55',scaleMargins:{top:.08,bottom:hasVolume ? .24 : .10}}});const latest=cs[cs.length-1];if(tvPriceLine)tvCandleSeries.removePriceLine(tvPriceLine);tvPriceLine=tvCandleSeries.createPriceLine({price:latest.close,color:'#22c55e',lineWidth:1,lineStyle:LightweightCharts.LineStyle.Dashed,axisLabelVisible:true,title:'LTP'});tvChart.timeScale().fitContent();}
 function logGroups(logs){const meaningful=[];(logs||[]).forEach(l=>{let msg=String(l.message||'');let level=String(l.level||'INFO').toUpperCase();if(/requireStack|at Module|node:internal|^\\s*at\\s/i.test(msg))return;if(/MODULE_NOT_FOUND/i.test(msg)){level='ERROR';msg='Server module missing. Stack trace available in full logs.'}if(/ETIMEDOUT|failed|rejected|Error:/i.test(msg))level='ERROR';meaningful.push({time:l.time,level,message:msg})});const grouped=[];meaningful.forEach(l=>{const prev=grouped[grouped.length-1];const key=l.level+'|'+String(l.message||'').replace(/attempt \\d+/i,'attempt #');if(prev&&prev.key===key){prev.count++}else grouped.push({key,count:1,row:l})});return grouped}
 function logHtml(groups,limit){return groups.length?groups.slice(0,limit).map(g=>{const l=g.row;const msg=g.count>1?l.message+' repeated '+g.count+' times':l.message;return '<div><span class="muted">'+txt(l.time)+'</span> <span class="'+(l.level==='ERROR'?'error':l.level==='WARN'?'warn':'info')+'">['+txt(l.level)+']</span> '+txt(msg)+'</div>'}).join(''):'<div class="muted">No meaningful logs recorded yet</div>'}
 function renderLogs(logs){if(paused)return;const grouped=logGroups(logs);const logsEl=document.getElementById('logs');if(logsEl)logsEl.innerHTML=logHtml(grouped,6);const workspaceLogs=document.getElementById('workspaceLogs');if(workspaceLogs)workspaceLogs.innerHTML=logHtml(grouped,120)}
@@ -7741,7 +7821,7 @@ function render(d){
   if(ordEmpty)ordEmpty.style.display=hasOrders?'none':'flex';
   if(ordTable)ordTable.style.display=hasOrders?'block':'none';
   document.getElementById('positionsBody').innerHTML=hasPositions?d.positions.slice(0,4).map(p=>'<tr><td title="'+p.symbol+'">'+p.symbol+'</td><td>'+p.qty+'</td><td>'+p.avg.toFixed(2)+'</td><td>'+p.ltp.toFixed(2)+'</td><td class="'+cls(p.pnl)+'">'+rs(p.pnl)+'</td><td>'+(p.avg?pc((p.ltp-p.avg)/p.avg*100):'--')+'</td><td><span class="badge">Open</span></td></tr>').join(''):'';
-  document.getElementById('ordersBody').innerHTML=hasOrders?d.trades.slice(0,4).map(t=>{const st=/reject|fail|error/i.test(t.status||t.note||'')?'Rejected':/pending|open|sent/i.test(t.status||'')?'Pending':'Filled';return '<tr><td>'+t.time+'</td><td title="'+t.symbol+'">'+t.symbol+'</td><td class="'+(t.side==='SELL'?'bad':'ok')+'">'+t.side+'</td><td>'+t.qty+'</td><td>'+t.exit.toFixed(2)+'</td><td><span class="badge">'+st+'</span></td></tr>'}).join(''):'';
+  document.getElementById('ordersBody').innerHTML=hasOrders?d.trades.slice(0,5).map(t=>{const st=/reject|fail|error/i.test(t.status||t.note||'')?'Rejected':/pending|open|sent/i.test(t.status||'')?'Pending':'Filled';return '<tr><td>'+t.time+'</td><td title="'+t.symbol+'">'+t.symbol+'</td><td class="'+(t.side==='SELL'?'bad':'ok')+'">'+t.side+'</td><td>'+t.qty+'</td><td>'+t.exit.toFixed(2)+'</td><td><span class="badge">'+st+'</span></td></tr>'}).join(''):'';
   renderLogs(d.logs||[]);
   if(PAGE!=='dashboard'){renderWorkspaceDetail(d);setTimeout(wireWorkspaceControls,0);}
   hideLoader();
