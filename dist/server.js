@@ -6961,6 +6961,29 @@ async function buildTradeOpsStatus() {
         }
         catch { }
     }
+    const minFromTimeText = (value) => {
+        const m = String(value || "").match(/^(\d{1,2}):(\d{2})/);
+        return m ? Number(m[1]) * 60 + Number(m[2]) : null;
+    };
+    const eventMinute = (x) => {
+        const m = String(x?.time || "").match(/^(\d{1,2}):(\d{2})/);
+        return m ? Number(m[1]) * 60 + Number(m[2]) : -1;
+    };
+    const eventDir = (x) => String(x?.dir || x?.direction || "").toUpperCase();
+    const entryEvents = hb1030Log.filter(x => x?.entry != null).map((x, i) => ({ ...x, _mins: eventMinute(x), _seq: i })).sort((a, b) => a._mins - b._mins || a._seq - b._seq);
+    const exitEvents = hb1030Log.filter(x => x?.exit != null || x?.pnlRs != null || x?.pts != null).map((x, i) => ({ ...x, _mins: eventMinute(x), _seq: i })).sort((a, b) => a._mins - b._mins || a._seq - b._seq);
+    function candleTradeContext(c, mins) {
+        const rawDir = eventDir(c);
+        const sameDir = (x) => !rawDir || eventDir(x) === rawDir;
+        const exit = [...exitEvents].reverse().find(x => x._mins >= 0 && x._mins <= mins && sameDir(x));
+        const entry = [...entryEvents].reverse().find(x => x._mins >= 0 && x._mins <= mins && sameDir(x))
+            || [...entryEvents].reverse().find(x => x._mins >= 0 && x._mins <= mins);
+        const dir = rawDir || eventDir(entry) || eventDir(exit) || candleDir || "--";
+        const entryPrice = tradeOpsMaybeNum(c?.entry ?? entry?.entry ?? exit?.entry ?? candleEntryPrice);
+        const exitPrice = tradeOpsMaybeNum(c?.exit ?? exit?.exit);
+        const pnlRs = tradeOpsMaybeNum(c?.pnlRs ?? (exit && exit._mins === mins ? exit.pnlRs : null));
+        return { dir, entryPrice, exitPrice, pnlRs };
+    }
     const candleLog = candleLogSource.slice(-50).reverse().map((c, idx) => {
         const closeOnly = c?.open == null && c?.high == null && c?.low == null && c?.close != null;
         const close = tradeOpsNum(c?.close ?? c?.c);
@@ -6980,9 +7003,11 @@ async function buildTradeOpsStatus() {
                 chartTime = Math.floor(Date.UTC(yyyy, mm - 1, dd, hour, minute, 0) / 1000);
             }
         }
-        const entryActive = candleEntryPrice !== null && (!candleEntryTime || String(hhmmText).slice(0, 5) >= candleEntryTime);
+        const candleMins = minFromTimeText(hhmmText);
+        const ctx = candleTradeContext(c, candleMins ?? -1);
+        const entryActive = ctx.entryPrice !== null && candleMins !== null;
         const pnlPts = entryActive && Number.isFinite(close)
-            ? (candleDir === "PE" || candleDir === "SHORT" || candleDir === "SELL" ? candleEntryPrice - close : close - candleEntryPrice)
+            ? (ctx.dir === "PE" || ctx.dir === "SHORT" || ctx.dir === "SELL" ? ctx.entryPrice - close : close - ctx.entryPrice)
             : null;
         return {
             idx: candleLogSource.length - idx,
@@ -6995,11 +7020,12 @@ async function buildTradeOpsStatus() {
             volume: tradeOpsNum(c?.volume ?? c?.v),
             closeOnly,
             status: c?.status || (candleEntryTime && String(hhmmText).slice(0, 5) === candleEntryTime ? "Entry candle" : entryActive ? "In trade" : "Monitoring"),
-            entry: candleEntryPrice,
-            dir: candleDir || "--",
+            entry: ctx.entryPrice,
+            exit: ctx.exitPrice,
+            dir: ctx.dir || "--",
             sl: tradeOpsMaybeNum(c?.sl ?? hb?.tt1030SL),
             pnlPts,
-            pnlRs: pnlPts === null ? null : Math.round(pnlPts * candleQty),
+            pnlRs: ctx.pnlRs !== null ? ctx.pnlRs : (pnlPts === null ? null : Math.round(pnlPts * candleQty)),
             note: tradeOpsSanitizeLog(c?.note || c?.reason || ""),
         };
     });
