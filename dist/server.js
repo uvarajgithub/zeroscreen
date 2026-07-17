@@ -6857,18 +6857,20 @@ async function buildTradeOpsStatus() {
         const close = tradeOpsNum(c?.close ?? c?.c);
         const rawTime = c?.time || c?.at || c?.date;
         const timeText = tradeOpsTime(rawTime);
+        const hhmmText = String(timeText || rawTime || "").match(/(\d{1,2}:\d{2})/)?.[1] || timeText;
+        const hhmm = String(hhmmText || "").match(/^(\d{1,2}):(\d{2})/);
         let chartTime = null;
-        const dateValue = rawTime ? new Date(rawTime) : null;
-        if (dateValue && Number.isFinite(dateValue.getTime())) {
-            chartTime = Math.floor(dateValue.getTime() / 1000);
-        }
-        else {
-            const hhmm = String(rawTime || "").match(/^(\d{1,2}):(\d{2})/);
-            if (hhmm) {
-                chartTime = Math.floor(new Date(`${today}T${hhmm[1].padStart(2, "0")}:${hhmm[2]}:00+05:30`).getTime() / 1000);
+        if (hhmm) {
+            const hour = Number(hhmm[1]);
+            const minute = Number(hhmm[2]);
+            const mins = hour * 60 + minute;
+            const sessionStart = 9 * 60 + 15;
+            const sessionEnd = 15 * 60 + 30;
+            if (mins >= sessionStart && mins <= sessionEnd) {
+                const [yyyy, mm, dd] = today.split("-").map(Number);
+                chartTime = Math.floor(Date.UTC(yyyy, mm - 1, dd, hour, minute, 0) / 1000);
             }
         }
-        const hhmmText = String(rawTime || timeText || "").match(/(\d{1,2}:\d{2})/)?.[1] || timeText;
         const entryActive = candleEntryPrice !== null && (!candleEntryTime || String(hhmmText).slice(0, 5) >= candleEntryTime);
         const pnlPts = entryActive && Number.isFinite(close)
             ? (candleDir === "PE" || candleDir === "SHORT" || candleDir === "SELL" ? candleEntryPrice - close : close - candleEntryPrice)
@@ -7417,7 +7419,7 @@ function hideLoader(){const e=document.getElementById('tradeopsLoader');if(e)e.c
 function setFlowBadge(id,ok){const e=document.getElementById(id);if(!e)return;e.className='flow-ok '+(ok?'pass':'fail');e.innerHTML=ok?'&#10003;':'!';const step=e.closest('.flow-step');if(step)step.classList.toggle('blocked',!ok)}
 markFlow=setFlowBadge;
 let tvChart=null,tvCandleSeries=null,tvVolumeSeries=null,tvPriceLine=null;
-function buildChartCandles(candles){const base=(candles||[]).slice().reverse().filter(c=>Number.isFinite(c.open)&&Number.isFinite(c.high)&&Number.isFinite(c.low)&&Number.isFinite(c.close)&&c.open>0&&c.high>0&&c.low>0&&c.close>0&&c.chartTime);if(chartTf!=='15m')return base;const buckets=new Map();base.forEach(c=>{const key=Math.floor(c.chartTime/900)*900;const b=buckets.get(key);if(!b){buckets.set(key,{...c,chartTime:key,time:new Date(key*1000).toLocaleTimeString('en-IN',{hour:'2-digit',minute:'2-digit',hour12:false,timeZone:'Asia/Kolkata'}),volume:Number(c.volume||0)});return;}b.high=Math.max(b.high,c.high);b.low=Math.min(b.low,c.low);b.close=c.close;b.volume=Number(b.volume||0)+Number(c.volume||0);b.closeOnly=b.closeOnly&&c.closeOnly;});return Array.from(buckets.values()).sort((a,b)=>a.chartTime-b.chartTime);}
+function buildChartCandles(candles){const base=(candles||[]).slice().reverse().filter(c=>Number.isFinite(c.open)&&Number.isFinite(c.high)&&Number.isFinite(c.low)&&Number.isFinite(c.close)&&c.open>0&&c.high>0&&c.low>0&&c.close>0&&c.chartTime);if(chartTf!=='15m')return base;const buckets=new Map();const fmtBucketTime=key=>{const d=new Date(key*1000);return String(d.getUTCHours()).padStart(2,'0')+':'+String(d.getUTCMinutes()).padStart(2,'0')};base.forEach(c=>{const key=Math.floor(c.chartTime/900)*900;const b=buckets.get(key);if(!b){buckets.set(key,{...c,chartTime:key,time:fmtBucketTime(key),volume:Number(c.volume||0)});return;}b.high=Math.max(b.high,c.high);b.low=Math.min(b.low,c.low);b.close=c.close;b.volume=Number(b.volume||0)+Number(c.volume||0);b.closeOnly=b.closeOnly&&c.closeOnly;});return Array.from(buckets.values()).sort((a,b)=>a.chartTime-b.chartTime);}
 function chart(candles){const wrap=document.getElementById('chartBox');const cs=buildChartCandles(candles).slice(-80);if(cs.length<2){wrap.classList.add('no-data');wrap.innerHTML='<div class="empty-chart">No BANKNIFTY '+chartTf+' candles recorded yet<br><span style="color:#6aa8ff">Check feed</span></div>';return;}wrap.classList.remove('no-data');if(!window.LightweightCharts){wrap.innerHTML='<div class="empty-chart">TradingView chart library unavailable<br><span style="color:#6aa8ff">Retry after network loads</span></div>';return;}if(!tvChart){wrap.innerHTML='';tvChart=LightweightCharts.createChart(wrap,{autoSize:true,layout:{background:{type:'solid',color:'#081624'},textColor:'#9fb5cc',fontFamily:'Inter,Manrope,system-ui'},grid:{vertLines:{color:'rgba(255,255,255,.05)'},horzLines:{color:'rgba(255,255,255,.07)'}},rightPriceScale:{borderColor:'#223a55',scaleMargins:{top:.08,bottom:.10}},timeScale:{borderColor:'#223a55',timeVisible:true,secondsVisible:false},crosshair:{mode:LightweightCharts.CrosshairMode.Normal},handleScroll:true,handleScale:true});tvCandleSeries=tvChart.addCandlestickSeries({upColor:'#22c55e',downColor:'#ef4444',borderUpColor:'#22c55e',borderDownColor:'#ef4444',wickUpColor:'#22c55e',wickDownColor:'#ef4444',priceLineVisible:false});tvVolumeSeries=tvChart.addHistogramSeries({priceFormat:{type:'volume'},priceScaleId:'',color:'rgba(34,197,94,.35)',scaleMargins:{top:.80,bottom:0}});new ResizeObserver(()=>{if(tvChart)tvChart.applyOptions({autoSize:true})}).observe(wrap);}const candleData=cs.map(c=>({time:c.chartTime,open:c.open,high:c.high,low:c.low,close:c.close}));tvCandleSeries.setData(candleData);const volumes=cs.filter(c=>Number(c.volume||0)>0).map(c=>({time:c.chartTime,value:Number(c.volume||0),color:c.close>=c.open?'rgba(34,197,94,.38)':'rgba(239,68,68,.38)'}));const hasVolume=volumes.length>0;tvVolumeSeries.setData(volumes);tvChart.applyOptions({rightPriceScale:{borderColor:'#223a55',scaleMargins:{top:.08,bottom:hasVolume ? .24 : .10}}});const latest=cs[cs.length-1];if(tvPriceLine)tvCandleSeries.removePriceLine(tvPriceLine);tvPriceLine=tvCandleSeries.createPriceLine({price:latest.close,color:'#22c55e',lineWidth:1,lineStyle:LightweightCharts.LineStyle.Dashed,axisLabelVisible:true,title:'LTP'});tvChart.timeScale().fitContent();}
 function logGroups(logs){const meaningful=[];(logs||[]).forEach(l=>{let msg=String(l.message||'');let level=String(l.level||'INFO').toUpperCase();if(/requireStack|at Module|node:internal|^\\s*at\\s/i.test(msg))return;if(/MODULE_NOT_FOUND/i.test(msg)){level='ERROR';msg='Server module missing. Stack trace available in full logs.'}if(/ETIMEDOUT|failed|rejected|Error:/i.test(msg))level='ERROR';meaningful.push({time:l.time,level,message:msg})});const grouped=[];meaningful.forEach(l=>{const prev=grouped[grouped.length-1];const key=l.level+'|'+String(l.message||'').replace(/attempt \\d+/i,'attempt #');if(prev&&prev.key===key){prev.count++}else grouped.push({key,count:1,row:l})});return grouped}
 function logHtml(groups,limit){return groups.length?groups.slice(0,limit).map(g=>{const l=g.row;const msg=g.count>1?l.message+' repeated '+g.count+' times':l.message;return '<div><span class="muted">'+txt(l.time)+'</span> <span class="'+(l.level==='ERROR'?'error':l.level==='WARN'?'warn':'info')+'">['+txt(l.level)+']</span> '+txt(msg)+'</div>'}).join(''):'<div class="muted">No meaningful logs recorded yet</div>'}
