@@ -6653,6 +6653,44 @@ function tradeOpsReadRecentLogFiles() {
     }
     return rows.slice(-18);
 }
+function tradeOpsTokenRefreshLogRow(today = getTodayIST()) {
+    const candidates = [
+        "/home/ubuntu/trading-bot/access_token.txt",
+        "/home/ubuntu/trading-bot/.env",
+    ];
+    for (const file of candidates) {
+        try {
+            const stat = fs_1.default.statSync(file);
+            const tokenDate = stat.mtime.toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" });
+            const time = tradeOpsTime(stat.mtime);
+            if (tokenDate === today)
+                return { time, level: "INFO", message: `Token refreshed today at ${time} (${path_1.default.basename(file)})` };
+            return { time, level: "WARN", message: `Token last refreshed ${tokenDate} at ${time} (${path_1.default.basename(file)})` };
+        }
+        catch { }
+    }
+    return { time: tradeOpsTime(new Date().toISOString()), level: "WARN", message: "Token refresh file not found" };
+}
+function tradeOpsLifecycleLogRow(isAlive, heartbeatAgeSec) {
+    const now = tradeOpsISTNow();
+    const day = now.getDay();
+    const mins = now.getHours() * 60 + now.getMinutes();
+    const time = tradeOpsTime(new Date().toISOString());
+    const marketStart = 9 * 60 + 15;
+    const marketClose = 15 * 60 + 30;
+    const sleepStart = 19 * 60;
+    if (day === 0 || day === 6)
+        return { time, level: "WARN", message: "Bot idle/sleep: weekend. Next wake follows the next trading-day schedule." };
+    if (mins >= sleepStart)
+        return { time, level: "WARN", message: "Bot idle/sleep after 19:00 IST. Next wake is automatic before next market session." };
+    if (!isAlive)
+        return { time, level: "ERROR", message: `Bot stopped/stale: heartbeat ${heartbeatAgeSec ?? "missing"}s old. Check PM2/bot loop.` };
+    if (mins < marketStart)
+        return { time, level: "WARN", message: "Bot waiting before market start. Auto wake/check begins for 09:15 IST session." };
+    if (mins <= marketClose)
+        return { time, level: "INFO", message: "Bot started/awake for live market session. Candle checks active." };
+    return { time, level: "WARN", message: "Bot post-market idle. Market closed; sleep window starts at 19:00 IST." };
+}
 function tradeOpsTodayCandleLog(hb, today = getTodayIST()) {
     const hbAt = hb?.at ? new Date(hb.at).getTime() : 0;
     const heartbeatSession = hbAt ? new Date(hb.at).toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" }) : "";
@@ -6724,6 +6762,8 @@ function buildTradeOpsLogPreview() {
         };
     });
     const operationalLogs = [
+        tradeOpsLifecycleLogRow(isAlive, heartbeatAgeSec),
+        tradeOpsTokenRefreshLogRow(today),
         { time: tradeOpsTime(new Date().toISOString()), level: "INFO", message: `TradeOps monitor tick ${new Date().toLocaleTimeString("en-IN", { hour12: false, timeZone: "Asia/Kolkata" })}` },
         { time: tradeOpsTime(new Date().toISOString()), level: isAlive ? "INFO" : "WARN", message: `Bot heartbeat ${isAlive ? "fresh" : "stale"} (${heartbeatAgeSec ?? "no"}s)` },
         { time: tradeOpsTime(new Date().toISOString()), level: todayCandles.length ? "INFO" : "WARN", message: `15m candle check ${todayCandles.length} candles today${candleFile.ok ? `, candle file age ${candleFile.ageSec}s` : ", candle file missing"}` },
@@ -7396,6 +7436,9 @@ body.tradeops-collapsed .help,body.tradeops-collapsed .collapse-btn{justify-cont
 .workflow .flow-step .flow-text{flex:0 1 auto!important}
 .workflow .flow-step .flow-ok{position:static!important;left:auto!important;right:auto!important;top:auto!important;bottom:auto!important;margin-left:4px!important;flex:0 0 19px!important;width:19px!important;height:19px!important;font-size:12px!important}
 .workflow .flow-step .flow-ok:before{content:""!important}
+.logs .info{color:#10b981!important}
+.logs .warn{color:#f59e0b!important}
+.logs .error{color:#ef4444!important}
 
 </style>
 </head>
@@ -7498,6 +7541,7 @@ function renderCapitalCalc(){const d=lastStatus||{};const e=d.execution||{};cons
   ['Source',txt(c.source||e.marginSource||'Zerodha order margin API')]
 ].map(r=>'<div class="side-row"><label>'+txt(r[0])+'</label><b>'+txt(r[1])+'</b></div>').join('')}
 function setupCapitalCalc(){const modal=document.getElementById('capitalModal');const close=document.getElementById('closeCapitalModal');['requiredCalcBtn','safeCapitalBtn'].forEach(id=>{const btn=document.getElementById(id);if(btn&&!btn._wired){btn._wired=true;btn.onclick=function(){renderCapitalCalc();if(modal)modal.classList.add('open')}}});if(close&&!close._wired){close._wired=true;close.onclick=function(){if(modal)modal.classList.remove('open')}}if(modal&&!modal._wired){modal._wired=true;modal.addEventListener('click',e=>{if(e.target===modal)modal.classList.remove('open')})}}
+function setupDetailLinks(){document.querySelectorAll('.dashboard .card-h a,.dashboard .compact-empty a.btn,.dashboard .account-primary').forEach(a=>{a.target='_blank';a.rel='noopener'})}
 function setupSidebar(){const btn=document.querySelector('.collapse-btn');if(!btn||btn._wired)return;btn._wired=true;const label=btn.querySelector('span');function sync(){const collapsed=document.body.classList.contains('tradeops-collapsed');if(label)label.textContent=collapsed?'Expand':'Collapse';btn.title=collapsed?'Expand sidebar':'Collapse sidebar'}try{if(localStorage.getItem('tradeopsSidebarCollapsed')==='1')document.body.classList.add('tradeops-collapsed')}catch(e){}sync();btn.onclick=function(){document.body.classList.toggle('tradeops-collapsed');try{localStorage.setItem('tradeopsSidebarCollapsed',document.body.classList.contains('tradeops-collapsed')?'1':'0')}catch(e){}sync()}}
 function render(d){
   lastStatus=d;
@@ -7847,7 +7891,7 @@ async function setTradeOpsMode(mode){
   }
 }
 function showLoadError(message){hideLoader();const root=document.getElementById('detailGrid');const title=PAGE.replace(/-/g,' ').replace(/\b\w/g,function(m){return m.toUpperCase()});if(root&&PAGE!=='dashboard'){root.innerHTML='<section class="ws-card" style="grid-column:1/-1"><div class="ws-card-h"><span>'+title+'</span><button class="btn" onclick="load()">Retry</button></div><div class="ws-card-b"><b class="bad">Could not load workspace data</b><p class="muted">'+txt(message||'Status API request failed')+'</p></div></section>'}}
-async function load(){try{const r=await fetch('/api/tradeops/status',{cache:'no-store',credentials:'same-origin',headers:{'Accept':'application/json'}});const ct=r.headers.get('content-type')||'';if(!r.ok)throw new Error('Status API HTTP '+r.status);if(!ct.includes('application/json'))throw new Error('Status API returned non-JSON');const j=await r.json();if(!j||j.ok===false)throw new Error(j&&j.error?j.error:'Status API failed');render(j)}catch(e){console.error(e);showLoadError(e&&e.message?e.message:'Request failed')}}setupSidebar();const emergencyBtn=document.getElementById('emergencyBtn');if(emergencyBtn)emergencyBtn.onclick=()=>document.getElementById('modal')?.classList.add('open');const cancelStop=document.getElementById('cancelStop');if(cancelStop)cancelStop.onclick=()=>document.getElementById('modal')?.classList.remove('open');const sendStop=document.getElementById('sendStop');if(sendStop)sendStop.onclick=async()=>{const out=document.getElementById('emergencyResult');if(out)out.innerHTML='Fetching open positions...<br>Sending exit orders...';try{const r=await fetch('/api/tradeops/emergency-stop',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({confirm:document.getElementById('confirmBox')?.checked,phrase:document.getElementById('confirmPhrase')?.value,pin:document.getElementById('pin')?.value})});const j=await r.json();if(out)out.innerHTML=(j.ok?'Closed positions count: '+(j.closed?j.closed.length:0)+'<br>Failed exits count: 0<br>':'Failed exits count: 1<br>')+(j.message||j.error||'Done');await load()}catch(e){if(out)out.textContent=e.message||'Request failed'}};const pauseLogs=document.getElementById('pauseLogs');if(pauseLogs)pauseLogs.onclick=()=>{paused=!paused;pauseLogs.textContent=paused?'Resume':'Pause'};const clearLogs=document.getElementById('clearLogs');if(clearLogs)clearLogs.onclick=()=>{const logsEl=document.getElementById('logs');if(logsEl)logsEl.innerHTML='<div class="muted">Preview cleared. New logs will appear on next tick.</div>'};const refreshTokenBtn=document.getElementById('refreshTokenBtn');if(refreshTokenBtn)refreshTokenBtn.onclick=()=>{refreshTokenBtn.textContent='Opening Token Page...';refreshTokenBtn.disabled=true;location.href='/admin/signals'};const syncAccountBtn=document.getElementById('syncAccountBtn');if(syncAccountBtn)syncAccountBtn.onclick=async()=>{const old=syncAccountBtn.textContent;syncAccountBtn.textContent='Syncing...';syncAccountBtn.disabled=true;await load();syncAccountBtn.textContent='Synced';setTimeout(()=>{syncAccountBtn.textContent=old;syncAccountBtn.disabled=false},1200)};document.querySelectorAll('#chartTabs button[data-tf]').forEach(btn=>{btn.onclick=()=>{chartTf=btn.dataset.tf||'15m';document.querySelectorAll('#chartTabs button[data-tf]').forEach(b=>b.classList.toggle('active',b===btn));if(lastStatus)render(lastStatus);}});if(INITIAL_STATUS&&INITIAL_STATUS.ok){try{render(INITIAL_STATUS)}catch(e){console.error(e);showLoadError(e&&e.message?e.message:"Initial render failed")}}load();loadLogs();if(PAGE==='dashboard'||PAGE==='account')setInterval(load,5000);setInterval(loadLogs,1000);
+async function load(){try{const r=await fetch('/api/tradeops/status',{cache:'no-store',credentials:'same-origin',headers:{'Accept':'application/json'}});const ct=r.headers.get('content-type')||'';if(!r.ok)throw new Error('Status API HTTP '+r.status);if(!ct.includes('application/json'))throw new Error('Status API returned non-JSON');const j=await r.json();if(!j||j.ok===false)throw new Error(j&&j.error?j.error:'Status API failed');render(j)}catch(e){console.error(e);showLoadError(e&&e.message?e.message:'Request failed')}}setupSidebar();setupDetailLinks();const emergencyBtn=document.getElementById('emergencyBtn');if(emergencyBtn)emergencyBtn.onclick=()=>document.getElementById('modal')?.classList.add('open');const cancelStop=document.getElementById('cancelStop');if(cancelStop)cancelStop.onclick=()=>document.getElementById('modal')?.classList.remove('open');const sendStop=document.getElementById('sendStop');if(sendStop)sendStop.onclick=async()=>{const out=document.getElementById('emergencyResult');if(out)out.innerHTML='Fetching open positions...<br>Sending exit orders...';try{const r=await fetch('/api/tradeops/emergency-stop',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({confirm:document.getElementById('confirmBox')?.checked,phrase:document.getElementById('confirmPhrase')?.value,pin:document.getElementById('pin')?.value})});const j=await r.json();if(out)out.innerHTML=(j.ok?'Closed positions count: '+(j.closed?j.closed.length:0)+'<br>Failed exits count: 0<br>':'Failed exits count: 1<br>')+(j.message||j.error||'Done');await load()}catch(e){if(out)out.textContent=e.message||'Request failed'}};const pauseLogs=document.getElementById('pauseLogs');if(pauseLogs)pauseLogs.onclick=()=>{paused=!paused;pauseLogs.textContent=paused?'Resume':'Pause'};const clearLogs=document.getElementById('clearLogs');if(clearLogs)clearLogs.onclick=()=>{const logsEl=document.getElementById('logs');if(logsEl)logsEl.innerHTML='<div class="muted">Preview cleared. New logs will appear on next tick.</div>'};const refreshTokenBtn=document.getElementById('refreshTokenBtn');if(refreshTokenBtn)refreshTokenBtn.onclick=()=>{refreshTokenBtn.textContent='Opening Token Page...';refreshTokenBtn.disabled=true;location.href='/admin/signals'};const syncAccountBtn=document.getElementById('syncAccountBtn');if(syncAccountBtn)syncAccountBtn.onclick=async()=>{const old=syncAccountBtn.textContent;syncAccountBtn.textContent='Syncing...';syncAccountBtn.disabled=true;await load();syncAccountBtn.textContent='Synced';setTimeout(()=>{syncAccountBtn.textContent=old;syncAccountBtn.disabled=false},1200)};document.querySelectorAll('#chartTabs button[data-tf]').forEach(btn=>{btn.onclick=()=>{chartTf=btn.dataset.tf||'15m';document.querySelectorAll('#chartTabs button[data-tf]').forEach(b=>b.classList.toggle('active',b===btn));if(lastStatus)render(lastStatus);}});if(INITIAL_STATUS&&INITIAL_STATUS.ok){try{render(INITIAL_STATUS)}catch(e){console.error(e);showLoadError(e&&e.message?e.message:"Initial render failed")}}load();loadLogs();if(PAGE==='dashboard'||PAGE==='account')setInterval(load,5000);setInterval(loadLogs,1000);
 </script>
 </body></html>`;
 }
