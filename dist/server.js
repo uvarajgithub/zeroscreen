@@ -6372,6 +6372,8 @@ async function tradeOpsKiteJSON(pathname, init = {}) {
 }
 let tradeOpsFuturesSymbolCache = null;
 let tradeOpsFuturesSymbolCacheAt = 0;
+let tradeOpsPrevSessionCandleCache = null;
+let tradeOpsPrevSessionCandleCacheAt = 0;
 async function tradeOpsKiteText(pathname) {
     const { apiKey, token } = await tradeOpsReadKiteCreds();
     if (!apiKey || !token)
@@ -6401,13 +6403,15 @@ async function tradeOpsBankNiftyFuturesInstrument() {
     const nameIdx = idx("name");
     const typeIdx = idx("instrument_type");
     const symbolIdx = idx("tradingsymbol");
+    const tokenIdx = idx("instrument_token");
     const expiryIdx = idx("expiry");
     const lotIdx = idx("lot_size");
     const instruments = lines.map((line) => line.split(",")).filter((row) => tradeOpsCsvCell(row, nameIdx) === "BANKNIFTY" && tradeOpsCsvCell(row, typeIdx) === "FUT").map((row) => ({
         tradingsymbol: tradeOpsCsvCell(row, symbolIdx),
+        instrumentToken: tradeOpsCsvCell(row, tokenIdx),
         expiry: tradeOpsCsvCell(row, expiryIdx),
         lotSize: tradeOpsNum(tradeOpsCsvCell(row, lotIdx), 30),
-    })).filter((x) => x.tradingsymbol && x.expiry).sort((a, b) => new Date(a.expiry).getTime() - new Date(b.expiry).getTime());
+    })).filter((x) => x.tradingsymbol && x.instrumentToken && x.expiry).sort((a, b) => new Date(a.expiry).getTime() - new Date(b.expiry).getTime());
     if (!instruments.length)
         throw new Error("No BANKNIFTY futures instrument found");
     const front = instruments[0];
@@ -6415,6 +6419,42 @@ async function tradeOpsBankNiftyFuturesInstrument() {
     tradeOpsFuturesSymbolCache = daysToExpiry <= 1 && instruments.length > 1 ? instruments[1] : front;
     tradeOpsFuturesSymbolCacheAt = Date.now();
     return tradeOpsFuturesSymbolCache;
+}
+function tradeOpsPreviousTradingDate(today = getTodayIST()) {
+    const d = new Date(`${today}T00:00:00+05:30`);
+    do {
+        d.setDate(d.getDate() - 1);
+    } while (d.getDay() === 0 || d.getDay() === 6);
+    return d.toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" });
+}
+function tradeOpsMarketStartedToday() {
+    const now = tradeOpsISTNow();
+    const day = now.getDay();
+    const mins = now.getHours() * 60 + now.getMinutes();
+    return day >= 1 && day <= 5 && mins >= 9 * 60 + 15;
+}
+async function tradeOpsPreviousSessionCandles(today = getTodayIST()) {
+    const sessionDate = tradeOpsPreviousTradingDate(today);
+    if (tradeOpsPrevSessionCandleCache?.sessionDate === sessionDate && Date.now() - tradeOpsPrevSessionCandleCacheAt < 5 * 60 * 1000)
+        return tradeOpsPrevSessionCandleCache;
+    const fut = await tradeOpsBankNiftyFuturesInstrument();
+    const from = `${sessionDate} 09:15:00`;
+    const to = `${sessionDate} 15:30:00`;
+    const json = await tradeOpsKiteJSON(`/instruments/historical/${fut.instrumentToken}/15minute?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`);
+    const candles = (json?.data?.candles || []).map((row) => ({
+        date: row[0],
+        time: tradeOpsTime(row[0]).slice(0, 5),
+        open: tradeOpsNum(row[1]),
+        high: tradeOpsNum(row[2]),
+        low: tradeOpsNum(row[3]),
+        close: tradeOpsNum(row[4]),
+        volume: tradeOpsNum(row[5]),
+        status: "previous_session",
+        note: `Previous session ${sessionDate}`,
+    })).filter((c) => c.open > 0 && c.high > 0 && c.low > 0 && c.close > 0);
+    tradeOpsPrevSessionCandleCache = { sessionDate, symbol: fut.tradingsymbol, candles };
+    tradeOpsPrevSessionCandleCacheAt = Date.now();
+    return tradeOpsPrevSessionCandleCache;
 }
 async function tradeOpsNextFuturesMargin(hb) {
     const qty = tradeOpsNum(hb?.tt1030Qty ?? hb?.qty ?? process.env.QUANTITY ?? 30, 30);
@@ -6851,7 +6891,22 @@ async function buildTradeOpsStatus() {
         ? tt1030CandleFile.log
         : Array.isArray(tt1030State?.candleLog) ? tt1030State.candleLog : [];
     const heartbeatCandleLog = tradeOpsTodayCandleLog(hb, today);
-    const candleLogSource = heartbeatCandleLog.length ? heartbeatCandleLog : persistedCandleLog;
+    let candleLogSource = heartbeatCandleLog.length ? heartbeatCandleLog : persistedCandleLog;
+    let candleScope = "today";
+    let candleSessionDate = today;
+    let candleSourceLabel = "Today session";
+    if (!candleLogSource.length && !tradeOpsMarketStartedToday()) {
+        try {
+            const previousSession = await tradeOpsPreviousSessionCandles(today);
+            if (previousSession.candles.length) {
+                candleLogSource = previousSession.candles;
+                candleScope = "previous_session";
+                candleSessionDate = previousSession.sessionDate;
+                candleSourceLabel = `Previous session ${previousSession.sessionDate}`;
+            }
+        }
+        catch { }
+    }
     const candleLog = candleLogSource.slice(-50).reverse().map((c, idx) => {
         const closeOnly = c?.open == null && c?.high == null && c?.low == null && c?.close != null;
         const close = tradeOpsNum(c?.close ?? c?.c);
@@ -6867,7 +6922,7 @@ async function buildTradeOpsStatus() {
             const sessionStart = 9 * 60 + 15;
             const sessionEnd = 15 * 60 + 30;
             if (mins >= sessionStart && mins <= sessionEnd) {
-                const [yyyy, mm, dd] = today.split("-").map(Number);
+                const [yyyy, mm, dd] = candleSessionDate.split("-").map(Number);
                 chartTime = Math.floor(Date.UTC(yyyy, mm - 1, dd, hour, minute, 0) / 1000);
             }
         }
@@ -7035,6 +7090,7 @@ async function buildTradeOpsStatus() {
         positions: openPositions,
         trades: tradeRows,
         history: { source: "trades_json_plus_heartbeat_shadow", total: strategyTrades.length, displaySession, todayShadowTrades: heartbeatTrades.length },
+        candleView: { scope: candleScope, sessionDate: candleSessionDate, label: candleSourceLabel },
         candles: candleLog,
         logs: serverLogs,
     };
@@ -7518,13 +7574,15 @@ function render(d){
   const chartCandles=buildChartCandles(d.candles||[]);
   const c=chartCandles.length?chartCandles[chartCandles.length-1]:(d.candles&&d.candles[0]);
   const feedFresh=!!(d.candles&&d.candles.length&&botOnline&&d.bot.heartbeatAgeSec!=null&&d.bot.heartbeatAgeSec<180);
-  const feedState=d.market.open?(feedFresh?'Fresh':'Delayed'):'Last Session';
+  const candleView=d.candleView||{};
+  const showingPrevious=candleView.scope==='previous_session';
+  const feedState=showingPrevious?('Previous session '+(candleView.sessionDate||'')):(d.market.open?(feedFresh?'Fresh':'Delayed'):'Last Session');
   set('chartTfLabel',chartTf);
   set('chartTfTop',chartTf);
-  set('chartMode',d.market.open?(feedFresh?'Live':'Delayed'):'Last Session');
+  set('chartMode',showingPrevious?'Previous Session':(d.market.open?(feedFresh?'Live':'Delayed'):'Last Session'));
   const hasVolume=!!(d.candles||[]).some(x=>Number(x.volume||0)>0);
   set('feedState',feedState+(hasVolume?'':' | Volume unavailable'));
-  const fsd=document.getElementById('feedStateDot'); if(fsd)fsd.className='dot '+(feedState==='Fresh'?'ok':feedState==='Delayed'?'warn':'');
+  const fsd=document.getElementById('feedStateDot'); if(fsd)fsd.className='dot '+(showingPrevious?'warn':feedState==='Fresh'?'ok':feedState==='Delayed'?'warn':'');
   set('candleCount',chartCandles.length+' '+chartTf+' candles');
   const ohlcEl=document.getElementById('ohlc');
   if(ohlcEl)ohlcEl.innerHTML=c?(c.closeOnly?'Close-only feed':'<span>O <b>'+c.open.toFixed(2)+'</b></span><span>H <b>'+c.high.toFixed(2)+'</b></span><span>L <b>'+c.low.toFixed(2)+'</b></span><span>C <b>'+c.close.toFixed(2)+'</b></span>'):'OHLC unavailable';
