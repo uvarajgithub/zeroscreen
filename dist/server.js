@@ -6301,7 +6301,7 @@ async function tradeOpsReadKiteCreds() {
             tokenFile = fs_1.default.readFileSync("/home/ubuntu/trading-bot/access_token.txt", "utf8").trim();
         }
         catch { }
-        const token = settingsToken || tokenFile || envToken;
+        const token = tokenFile || settingsToken || envToken;
         return { apiKey, token };
     }
     catch {
@@ -7198,6 +7198,32 @@ app.get("/api/tradeops/status", requireAdmin, async (_req, res) => {
         res.status(500).json({ ok: false, error: e?.message || "Status unavailable" });
     }
 });
+let tradeOpsTokenRefreshRunning = false;
+app.post("/api/tradeops/sync-account", requireAdmin, async (_req, res) => {
+    try {
+        res.setHeader("Cache-Control", "no-store");
+        const status = await buildTradeOpsStatus();
+        if (status?.broker?.tokenOK && status?.pnl?.marginsSynced) {
+            res.json({ ok: true, state: "synced", status });
+            return;
+        }
+        if (status?.broker?.tokenOK && !status?.pnl?.marginsSynced) {
+            res.json({ ok: true, state: "checking", message: "Token valid. Broker margins are still not synced.", status });
+            return;
+        }
+        if (!tradeOpsTokenRefreshRunning) {
+            tradeOpsTokenRefreshRunning = true;
+            (0, child_process_1.exec)("node /home/ubuntu/trading-bot/auto_token.js >> /home/ubuntu/trading-bot/logs/auto_token.log 2>&1", { cwd: "/home/ubuntu/trading-bot", timeout: 120000 }, () => {
+                tradeOpsTokenRefreshRunning = false;
+            });
+        }
+        res.json({ ok: true, state: "refreshing_token", message: "Refreshing Zerodha token using the existing auto-refresh flow. Dashboard will re-check shortly.", status });
+    }
+    catch (e) {
+        tradeOpsTokenRefreshRunning = false;
+        res.status(500).json({ ok: false, state: "failed", error: e?.message || "Sync failed" });
+    }
+});
 app.get("/api/tradeops/logs", requireAdmin, async (_req, res) => {
     try {
         res.setHeader("Cache-Control", "no-store");
@@ -7476,7 +7502,7 @@ body.tradeops-collapsed .help,body.tradeops-collapsed .collapse-btn{justify-cont
 .refresh-mini:hover{background:#eef5ff!important}
 .account-switcher{height:38px!important;border:1px solid #d9e5f2!important;background:#fff!important;border-radius:12px!important;padding:0 11px!important;display:inline-flex!important;align-items:center!important;gap:9px!important;color:#0b1738!important;font-size:13px!important;font-weight:760!important;box-shadow:0 8px 18px rgba(15,23,42,.035)!important;cursor:pointer!important}
 .account-switcher svg{width:16px!important;height:16px!important;stroke-width:2!important;color:#24416f!important}
-.account-switcher .chev{width:14px!important;height:14px!important;color:#64748b!important}
+.account-switcher .chev{display:none!important}
 .btn.danger{height:42px!important;border-radius:12px!important;background:linear-gradient(180deg,#ff4d5b 0%,#e11d2f 100%)!important;border:1px solid #ef4444!important;color:#fff!important;font-size:13px!important;font-weight:780!important;padding:0 18px!important;box-shadow:0 12px 24px rgba(225,29,47,.20)!important}
 .btn.danger:hover{background:linear-gradient(180deg,#ef4444 0%,#be123c 100%)!important;border-color:#dc2626!important}
 .btn.danger svg{width:17px!important;height:17px!important;stroke-width:2.2!important}
@@ -7627,7 +7653,7 @@ body:has(.dashboard) .logs{height:76px!important;font-size:11.5px!important;line
       </div>
       <div class="top-spacer"></div>
       <div class="command-group action-group">
-        <button class="account-switcher" type="button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="8" r="4"/><path d="M4 22a8 8 0 0 1 16 0"/></svg><b id="accountIdTop">Not synced</b><svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="m6 9 6 6 6-6"/></svg></button>
+        <button class="account-switcher" type="button" title="View account sync details"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="8" r="4"/><path d="M4 22a8 8 0 0 1 16 0"/></svg><b id="accountIdTop">Not synced</b></button>
         <button class="btn danger" id="emergencyBtn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="12" r="9"/><path d="M12 7v6"/><path d="M12 16h.01"/></svg>Emergency Stop</button>
         <div class="profile-block"><div class="avatar" id="headerAvatar">--</div><div class="user"><b id="headerUser">Account User</b><span id="headerRole">Live Account</span></div></div>
       </div>
@@ -7796,10 +7822,10 @@ function render(d){
   const syncChip=document.getElementById('accountSyncChip');
   if(syncChip){syncChip.textContent=synced?'Synced':(d.broker.tokenOK?'Not Synced':'Token Required');syncChip.className='account-chip '+(synced?'ok':d.broker.tokenOK?'warn':'bad');}
   const accountWarn=document.getElementById('accountWarn');
-  if(accountWarn){accountWarn.style.display=synced?'none':'block';accountWarn.textContent=d.broker.tokenOK?'Account not synced. Click Sync Now to re-check Zerodha margins.':'Token expired or invalid. Click Refresh Token, finish Zerodha login, then click Sync Now.';}
+  if(accountWarn){accountWarn.style.display=synced?'none':'block';accountWarn.textContent=d.broker.tokenOK?'Account not synced. Click Sync Now to re-check Zerodha margins.':'Token expired or invalid. Click Sync Now to run the daily auto token refresh, then broker margins will re-check automatically.';}
   const accountHint=document.getElementById('accountHint');
-  if(accountHint){accountHint.style.display='block';accountHint.textContent=synced?'Broker reported value':(d.broker.tokenOK?'Use Sync Now to fetch live margin':'Refresh token required before sync');}
-  document.querySelectorAll('#syncAccountBtn,#syncAccountBtnPage,#syncAccountBtn2,#syncAccountBtnEmpty').forEach(function(btn){if(!btn.disabled)btn.textContent=d.broker.tokenOK?'Sync Now':'Refresh Token';});
+  if(accountHint){accountHint.style.display='block';accountHint.textContent=synced?'Broker reported value':(d.broker.tokenOK?'Use Sync Now to fetch live margin':'Sync Now refreshes token first');}
+  document.querySelectorAll('#syncAccountBtn,#syncAccountBtnPage,#syncAccountBtn2,#syncAccountBtnEmpty').forEach(function(btn){if(!btn.disabled)btn.textContent='Sync Now';});
   set('openingBalance',synced?(d.pnl.openingBalance==null?'Not available':rs(d.pnl.openingBalance)):'Not synced');
   set('balance',money(synced,d.pnl.balance));
   set('available',money(synced,d.pnl.availableMargin));
@@ -8100,9 +8126,11 @@ async function setTradeOpsMode(mode){
   }
 }
 function showLoadError(message){hideLoader();const root=document.getElementById('detailGrid');const title=PAGE.replace(/-/g,' ').replace(/\b\w/g,function(m){return m.toUpperCase()});if(root&&PAGE!=='dashboard'){root.innerHTML='<section class="ws-card" style="grid-column:1/-1"><div class="ws-card-h"><span>'+title+'</span><button class="btn" onclick="load()">Retry</button></div><div class="ws-card-b"><b class="bad">Could not load workspace data</b><p class="muted">'+txt(message||'Status API request failed')+'</p></div></section>'}}
-function routeTradeOpsAction(action,btn){if(action==='token'||action==='broker'){if(btn){btn.textContent='Opening Token Refresh...';btn.disabled=true}location.href='/admin/signals?next='+encodeURIComponent(location.pathname||'/tradeops');return}if(action==='account'){location.href='/tradeops/account';return}if(action==='bot'){location.href='/tradeops/server-logs';return}if(action==='feed'){location.href='/tradeops/candle-logs';return}if(action==='execution'){location.href='/tradeops/executions';return}if(action==='health'){location.href='/tradeops/health';return}}
-async function syncTradeOpsAccount(btn){if(lastStatus&&lastStatus.broker&&!lastStatus.broker.tokenOK){routeTradeOpsAction('token',btn);return}const old=btn?btn.textContent:'';if(btn){btn.textContent='Checking broker...';btn.disabled=true}try{const fresh=await load();const synced=!!(fresh&&fresh.pnl&&fresh.pnl.marginsSynced);if(btn)btn.textContent=synced?'Synced':'Open token fix';if(!synced){setTimeout(()=>routeTradeOpsAction(fresh&&fresh.broker&&fresh.broker.tokenOK?'account':'token',btn),500);return}}catch(e){if(btn)btn.textContent='Open token fix';setTimeout(()=>routeTradeOpsAction('token',btn),500);return}setTimeout(()=>{if(btn){btn.textContent=old;btn.disabled=false}},1400)}
-document.addEventListener('click',function(ev){const el=ev.target.closest('button,a,.status-chip,.flow-step');if(!el)return;const text=(el.textContent||'').trim();if(el.id==='syncAccountBtn'||el.id==='syncAccountBtnPage'||el.id==='syncAccountBtn2'||el.id==='syncAccountBtnEmpty'||/^Sync (Now|Account)$/i.test(text)){ev.preventDefault();ev.stopPropagation();syncTradeOpsAccount(el);return}if(el.id==='refreshTokenBtn'||/Refresh Token/i.test(text)){ev.preventDefault();ev.stopPropagation();routeTradeOpsAction('token',el);return}if(el.classList&&el.classList.contains('account-switcher')){ev.preventDefault();ev.stopPropagation();routeTradeOpsAction('account',el);return}if(el.querySelector&&el.querySelector('#brokerLabel,#flowBrokerTitle')){ev.preventDefault();ev.stopPropagation();routeTradeOpsAction('broker',el);return}if(el.querySelector&&el.querySelector('#flowTokenTitle')){ev.preventDefault();ev.stopPropagation();routeTradeOpsAction('token',el);return}if(el.querySelector&&el.querySelector('#botLabel,#flowBotTitle')){ev.preventDefault();ev.stopPropagation();routeTradeOpsAction('bot',el);return}if(el.querySelector&&el.querySelector('#flowFeedTitle')){ev.preventDefault();ev.stopPropagation();routeTradeOpsAction('feed',el);return}if(el.querySelector&&el.querySelector('#flowExecTitle')){ev.preventDefault();ev.stopPropagation();routeTradeOpsAction('execution',el);return}},true);
+function routeTradeOpsAction(action,btn){if(action==='token'||action==='broker'){syncTradeOpsAccount(btn);return}if(action==='account'){location.href='/tradeops/account';return}if(action==='bot'){location.href='/tradeops/server-logs';return}if(action==='feed'){location.href='/tradeops/candle-logs';return}if(action==='execution'){location.href='/tradeops/executions';return}if(action==='health'){location.href='/tradeops/health';return}}
+function finishTradeOpsSyncButton(btn,old,label,ms){if(!btn)return;if(label)btn.textContent=label;setTimeout(function(){btn.textContent=old||'Sync Now';btn.disabled=false},ms||1600)}
+async function pollTradeOpsAccountSync(btn,old,attempt){attempt=attempt||0;if(btn)btn.textContent=attempt<2?'Refreshing token...':'Checking broker...';try{const fresh=await load();const synced=!!(fresh&&fresh.pnl&&fresh.pnl.marginsSynced);const tokenOK=!!(fresh&&fresh.broker&&fresh.broker.tokenOK);if(synced){finishTradeOpsSyncButton(btn,old,'Synced',1400);return}if(tokenOK&&attempt>=2){finishTradeOpsSyncButton(btn,old,'Margin not synced',2200);return}}catch(e){}if(attempt>=18){finishTradeOpsSyncButton(btn,old,'Sync still pending',2400);return}setTimeout(function(){pollTradeOpsAccountSync(btn,old,attempt+1)},5000)}
+async function syncTradeOpsAccount(btn){const old=btn?btn.textContent:'Sync Now';if(btn){btn.textContent='Syncing...';btn.disabled=true}try{const r=await fetch('/api/tradeops/sync-account',{method:'POST',cache:'no-store',credentials:'same-origin',headers:{'Accept':'application/json'}});const ct=r.headers.get('content-type')||'';if(!r.ok)throw new Error('Sync API HTTP '+r.status);if(!ct.includes('application/json'))throw new Error('Sync API returned non-JSON');const j=await r.json();if(!j||j.ok===false)throw new Error(j&&j.error?j.error:'Sync failed');if(j.status)render(j.status);if(j.state==='synced'){finishTradeOpsSyncButton(btn,old,'Synced',1400);return}if(j.state==='checking'){if(btn)btn.textContent='Checking broker...';setTimeout(async function(){try{await load()}catch(e){}finishTradeOpsSyncButton(btn,old,'Rechecked',1400)},2500);return}pollTradeOpsAccountSync(btn,old,0)}catch(e){console.error(e);finishTradeOpsSyncButton(btn,old,'Sync failed',2400)}}
+document.addEventListener('click',function(ev){const el=ev.target.closest('button,a,.status-chip,.flow-step');if(!el)return;const text=(el.textContent||'').trim();if(el.id==='syncAccountBtn'||el.id==='syncAccountBtnPage'||el.id==='syncAccountBtn2'||el.id==='syncAccountBtnEmpty'||/^Sync (Now|Account)$/i.test(text)){ev.preventDefault();ev.stopPropagation();syncTradeOpsAccount(el);return}if(el.id==='refreshTokenBtn'||/Refresh Token/i.test(text)){ev.preventDefault();ev.stopPropagation();syncTradeOpsAccount(el);return}if(el.classList&&el.classList.contains('account-switcher')){ev.preventDefault();ev.stopPropagation();routeTradeOpsAction('account',el);return}if(el.querySelector&&el.querySelector('#brokerLabel,#flowBrokerTitle')){ev.preventDefault();ev.stopPropagation();syncTradeOpsAccount(el);return}if(el.querySelector&&el.querySelector('#flowTokenTitle')){ev.preventDefault();ev.stopPropagation();syncTradeOpsAccount(el);return}if(el.querySelector&&el.querySelector('#botLabel,#flowBotTitle')){ev.preventDefault();ev.stopPropagation();routeTradeOpsAction('bot',el);return}if(el.querySelector&&el.querySelector('#flowFeedTitle')){ev.preventDefault();ev.stopPropagation();routeTradeOpsAction('feed',el);return}if(el.querySelector&&el.querySelector('#flowExecTitle')){ev.preventDefault();ev.stopPropagation();routeTradeOpsAction('execution',el);return}},true);
 async function load(){try{const r=await fetch('/api/tradeops/status',{cache:'no-store',credentials:'same-origin',headers:{'Accept':'application/json'}});const ct=r.headers.get('content-type')||'';if(!r.ok)throw new Error('Status API HTTP '+r.status);if(!ct.includes('application/json'))throw new Error('Status API returned non-JSON');const j=await r.json();if(!j||j.ok===false)throw new Error(j&&j.error?j.error:'Status API failed');render(j);return j}catch(e){console.error(e);showLoadError(e&&e.message?e.message:'Request failed');throw e}}setupSidebar();setupDetailLinks();const emergencyBtn=document.getElementById('emergencyBtn');if(emergencyBtn)emergencyBtn.onclick=()=>document.getElementById('modal')?.classList.add('open');const cancelStop=document.getElementById('cancelStop');if(cancelStop)cancelStop.onclick=()=>document.getElementById('modal')?.classList.remove('open');const sendStop=document.getElementById('sendStop');if(sendStop)sendStop.onclick=async()=>{const out=document.getElementById('emergencyResult');sendStop.disabled=true;if(out)out.innerHTML='Fetching open positions...<br>Sending close orders now...';try{const r=await fetch('/api/tradeops/emergency-stop',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({confirm:true})});const j=await r.json();if(out)out.innerHTML=(j.ok?'Closed positions count: '+(j.closed?j.closed.length:0)+'<br>Failed exits count: 0<br>':'Failed exits count: 1<br>')+(j.message||j.error||'Done');await load()}catch(e){if(out)out.textContent=e.message||'Request failed'}finally{sendStop.disabled=false}};const pauseLogs=document.getElementById('pauseLogs');if(pauseLogs)pauseLogs.onclick=()=>{paused=!paused;pauseLogs.textContent=paused?'Resume':'Pause'};const clearLogs=document.getElementById('clearLogs');if(clearLogs)clearLogs.onclick=()=>{const logsEl=document.getElementById('logs');if(logsEl)logsEl.innerHTML='<div class="muted">Preview cleared. New logs will appear on next tick.</div>'};function openTokenPage(btn){if(btn){btn.textContent='Opening Token Page...';btn.disabled=true}location.href='/admin/signals'}const refreshTokenBtn=document.getElementById('refreshTokenBtn');if(refreshTokenBtn)refreshTokenBtn.onclick=()=>openTokenPage(refreshTokenBtn);document.querySelectorAll('#syncAccountBtn,#syncAccountBtnPage,#syncAccountBtn2,#syncAccountBtnEmpty').forEach(btn=>{btn.onclick=async()=>{if(lastStatus&&lastStatus.broker&&!lastStatus.broker.tokenOK){openTokenPage(btn);return}const old=btn.textContent;btn.textContent='Checking broker...';btn.disabled=true;try{const fresh=await load();const synced=!!(fresh&&fresh.pnl&&fresh.pnl.marginsSynced);btn.textContent=synced?'Synced':'Still not synced';if(!synced&&fresh&&fresh.broker&&!fresh.broker.tokenOK)setTimeout(()=>openTokenPage(btn),600)}catch(e){btn.textContent='Sync failed'}setTimeout(()=>{btn.textContent=old;btn.disabled=false},1600)}});document.querySelectorAll('#chartTabs button[data-tf]').forEach(btn=>{btn.onclick=()=>{chartTf=btn.dataset.tf||'15m';document.querySelectorAll('#chartTabs button[data-tf]').forEach(b=>b.classList.toggle('active',b===btn));if(lastStatus)render(lastStatus);}});if(INITIAL_STATUS&&INITIAL_STATUS.ok){try{render(INITIAL_STATUS)}catch(e){console.error(e);showLoadError(e&&e.message?e.message:"Initial render failed")}}load().catch(()=>{});loadLogs();if(PAGE==='dashboard'||PAGE==='account')setInterval(()=>load().catch(()=>{}),5000);setInterval(loadLogs,1000);
 </script>
 </body></html>`;
