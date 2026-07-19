@@ -7405,11 +7405,17 @@ body.tradeops-collapsed .main{margin-left:74px!important}
 body.tradeops-collapsed .top{left:74px!important}
 body.tradeops-collapsed .brand{justify-content:center!important;padding-bottom:12px!important}
 body.tradeops-collapsed .brand-copy,body.tradeops-collapsed .nav-section,body.tradeops-collapsed .nav span,body.tradeops-collapsed .help span,body.tradeops-collapsed .collapse-btn span,body.tradeops-collapsed .nav-badge,body.tradeops-collapsed .nav-dot{display:none!important}
-body.tradeops-collapsed .nav a{justify-content:center!important;padding:0!important;gap:0!important}
+body.tradeops-collapsed .brand{display:grid!important;justify-items:center!important;gap:10px!important;margin-bottom:12px!important}
+body.tradeops-collapsed .brand-mark{width:40px!important;height:40px!important}
+body.tradeops-collapsed .brand>.collapse-btn{margin:0!important;width:44px!important;height:40px!important}
+body.tradeops-collapsed .nav{align-items:center!important;padding-top:4px!important}
+body.tradeops-collapsed .nav a{width:44px!important;min-width:44px!important;max-width:44px!important;height:44px!important;flex:0 0 44px!important;justify-content:center!important;padding:0!important;gap:0!important;margin:0 0 8px!important;border-radius:14px!important}
+body.tradeops-collapsed .nav a svg{width:20px!important;height:20px!important}
 body.tradeops-collapsed .nav a.active:before{left:-3px!important}
 body.tradeops-collapsed .side-bottom{align-items:center!important}
 body.tradeops-collapsed .help,body.tradeops-collapsed .collapse-btn{justify-content:center!important;padding:0!important;width:44px!important}
 @media(max-width:1120px){.side{width:74px!important;padding:14px 10px!important}.brand{justify-content:center!important;padding-bottom:12px!important}.brand-copy,.nav-section,.nav span,.help span,.collapse-btn span,.nav-badge,.nav-dot{display:none!important}.nav a{justify-content:center!important;padding:0!important;gap:0!important}.nav a.active:before{left:-3px!important}.side-bottom{align-items:center!important}.help,.collapse-btn{justify-content:center!important;padding:0!important;width:44px!important}.app{grid-template-columns:74px minmax(0,1fr)!important}}
+@media(max-width:1120px){.brand{display:grid!important;justify-items:center!important;gap:10px!important;margin-bottom:12px!important}.brand-mark{width:40px!important;height:40px!important}.brand>.collapse-btn{margin:0!important;width:44px!important;height:40px!important}.nav{align-items:center!important;padding-top:4px!important}.nav a{width:44px!important;min-width:44px!important;max-width:44px!important;height:44px!important;flex:0 0 44px!important;margin:0 0 8px!important;border-radius:14px!important}.nav a svg{width:20px!important;height:20px!important}}
 /* Final dashboard layout guard */
 .content{padding:16px 20px 24px!important}
 .dashboard{display:grid!important;grid-template-columns:minmax(320px,1fr) minmax(360px,1.05fr) minmax(320px,.96fr)!important;grid-template-areas:"workflow workflow workflow" "pnl chart account" "ready orders quick" "positions recent quick" "logs logs logs"!important;gap:14px!important;align-items:stretch!important;grid-auto-rows:auto!important}
@@ -7486,6 +7492,9 @@ body.tradeops-collapsed .help,body.tradeops-collapsed .collapse-btn{justify-cont
 body:has(.dashboard) .side{width:224px!important;padding:18px 14px!important}
 body:has(.dashboard) .main{margin-left:224px!important}
 body:has(.dashboard) .top{left:224px!important;height:64px!important;padding:0 18px!important;gap:10px!important}
+body.tradeops-collapsed:has(.dashboard) .side{width:74px!important;padding:14px 10px!important}
+body.tradeops-collapsed:has(.dashboard) .main{margin-left:74px!important}
+body.tradeops-collapsed:has(.dashboard) .top{left:74px!important}
 body:has(.dashboard) .status-chip{height:34px!important;padding:0 12px!important;border-radius:8px!important;font-size:12px!important}
 body:has(.dashboard) .top .btn{height:34px!important;border-radius:8px!important}
 body:has(.dashboard) .btn.danger{height:38px!important;border-radius:10px!important;padding:0 18px!important}
