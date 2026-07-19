@@ -5709,6 +5709,14 @@ app.post("/admin/signals/token", requireAdmin, async (req, res) => {
     }
     await (0, db_1.setSetting)("kite_access_token", token);
     await (0, db_1.setSetting)("kite_token_set_at", new Date().toLocaleString("en-IN", { timeZone: "Asia/Kolkata" }));
+    try {
+        fs_1.default.writeFileSync("/home/ubuntu/trading-bot/access_token.txt", token + "\n", "utf8");
+        const envPath = "/home/ubuntu/trading-bot/.env";
+        const raw = fs_1.default.readFileSync(envPath, "utf8");
+        const next = /^ACCESS_TOKEN=/m.test(raw) ? raw.replace(/^ACCESS_TOKEN=.*$/m, `ACCESS_TOKEN=${token}`) : raw.replace(/\s*$/, `\nACCESS_TOKEN=${token}\n`);
+        fs_1.default.writeFileSync(envPath, next, "utf8");
+    }
+    catch { }
     res.redirect("/admin/signals?msg=Zerodha+token+saved.+Bot+will+pick+it+up+on+next+poll.");
 });
 // -- GET /today -----------------------------------------------------------------
@@ -6283,13 +6291,12 @@ async function tradeOpsReadKiteCreds() {
         const raw = fs_1.default.readFileSync("/home/ubuntu/trading-bot/.env", "utf8");
         const apiKey = (raw.match(/^API_KEY=(.+)$/m)?.[1] ?? "").trim();
         const envToken = (raw.match(/^ACCESS_TOKEN=(.+)$/m)?.[1] ?? "").trim();
-        let token = envToken || settingsToken;
+        let tokenFile = "";
         try {
-            const tokenFile = fs_1.default.readFileSync("/home/ubuntu/trading-bot/access_token.txt", "utf8").trim();
-            if (tokenFile)
-                token = tokenFile;
+            tokenFile = fs_1.default.readFileSync("/home/ubuntu/trading-bot/access_token.txt", "utf8").trim();
         }
         catch { }
+        const token = settingsToken || tokenFile || envToken;
         return { apiKey, token };
     }
     catch {
