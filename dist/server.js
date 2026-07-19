@@ -189,6 +189,27 @@ app.use((0, express_session_1.default)({
 app.use(express_1.default.json());
 app.use(express_1.default.urlencoded({ extended: true }));
 app.use("/public", express_1.default.static(path_1.default.join(__dirname, "..", "public")));
+function cleanZeroScreenQuestionMarks(html) {
+    if (typeof html !== "string" || !html.includes("??"))
+        return html;
+    const cleaned = html
+        .split(/(<script\b[\s\S]*?<\/script>)/gi)
+        .map(part => /^<script\b/i.test(part) ? part : part.replace(/\?{2,}/g, "").replace(/\s+([·,.;:!?])/g, "$1"))
+        .join("");
+    const clientCleaner = `<script id="zs-qmark-cleaner">(function(){function c(n){if(n.nodeType===3&&/\\?{2,}/.test(n.nodeValue)){n.nodeValue=n.nodeValue.replace(/\\?{2,}/g,"").replace(/\\s+([·,.;:!?])/g,"$1")}}function w(r){try{var t=document.createTreeWalker(r||document.body,NodeFilter.SHOW_TEXT);var a=[];while(t.nextNode())a.push(t.currentNode);a.forEach(c)}catch(e){}}if(document.readyState==="loading"){document.addEventListener("DOMContentLoaded",function(){w(document.body)})}else{w(document.body)}try{new MutationObserver(function(ms){ms.forEach(function(m){m.addedNodes&&m.addedNodes.forEach(function(n){if(n.nodeType===3)c(n);else if(n.nodeType===1)w(n)})})}).observe(document.documentElement,{childList:true,subtree:true})}catch(e){}})();</script>`;
+    if (cleaned.includes("zs-qmark-cleaner"))
+        return cleaned;
+    return cleaned.includes("</body>") ? cleaned.replace("</body>", clientCleaner + "</body>") : cleaned + clientCleaner;
+}
+app.use((_req, res, next) => {
+    const originalSend = res.send.bind(res);
+    res.send = (body) => {
+        const contentType = String(res.getHeader("Content-Type") || "");
+        const looksHtml = typeof body === "string" && (contentType.includes("text/html") || body.trimStart().startsWith("<!DOCTYPE html") || body.trimStart().startsWith("<html"));
+        return originalSend(looksHtml ? cleanZeroScreenQuestionMarks(body) : body);
+    };
+    next();
+});
 // Bypass ngrok browser warning for all responses
 app.use((_req, res, next) => {
     res.setHeader("ngrok-skip-browser-warning", "true");
