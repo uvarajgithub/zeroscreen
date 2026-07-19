@@ -7708,8 +7708,13 @@ html,body{font-size:12px!important;overflow-x:hidden!important}
 .status-chip svg{width:15px!important;height:15px!important;stroke-width:2!important;color:#24416f!important;flex:0 0 auto!important}
 .status-chip b{font-weight:780!important;color:#0b1738!important}
 .status-chip .dot{width:8px!important;height:8px!important}
-.mode-chip{background:#f8fbff!important;color:#385173!important}
-.mode-dot{width:8px;height:8px;border-radius:50%;background:#2563eb;box-shadow:0 0 0 4px rgba(37,99,235,.10)}
+.mode-chip{background:#f8fbff!important;color:#385173!important;position:relative!important;overflow:visible!important}
+.mode-chip.live-mode{background:#ecfdf5!important;border-color:#86efac!important;color:#047857!important;box-shadow:0 0 0 1px rgba(16,185,129,.10),0 10px 24px rgba(16,185,129,.12)!important}
+.mode-chip.shadow-mode{background:#eef5ff!important;border-color:#bfdbfe!important;color:#1e3a8a!important;box-shadow:0 0 0 1px rgba(37,99,235,.08),0 10px 22px rgba(37,99,235,.08)!important}
+.mode-dot{width:9px;height:9px;border-radius:50%;background:#2563eb;box-shadow:0 0 0 4px rgba(37,99,235,.10);animation:modeBlink 1.1s ease-in-out infinite;flex:0 0 auto}
+.mode-chip.live-mode .mode-dot{background:#10b981;box-shadow:0 0 0 4px rgba(16,185,129,.13),0 0 16px rgba(16,185,129,.65)}
+.mode-chip.shadow-mode .mode-dot{background:#2563eb;box-shadow:0 0 0 4px rgba(37,99,235,.12),0 0 14px rgba(37,99,235,.55)}
+@keyframes modeBlink{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.35;transform:scale(.72)}}
 .updated-chip{padding-right:7px!important}
 .refresh-mini{width:28px!important;height:28px!important;border:0!important;border-left:1px solid #e5edf7!important;background:transparent!important;color:#2563eb!important;display:grid!important;place-items:center!important;border-radius:9px!important;cursor:pointer!important;margin-left:2px!important}
 .refresh-mini svg{width:15px!important;height:15px!important;stroke-width:2.2!important;color:currentColor!important}
@@ -7957,7 +7962,10 @@ function render(d){
   set('brokerLabel',brokerValidation.ok?'Broker Verified':'Broker Issue');
   document.getElementById('botDot').className='dot '+(botOnline?'ok':'bad');
   set('botLabel',botOnline?'Bot Online':'Bot Offline');
-  set('modeChip',((d.strategy&&d.strategy.label)||'10:30 Futures')+' · '+((d.strategy&&d.strategy.mode)||'UNKNOWN'));
+  const modeValue=String((d.strategy&&d.strategy.mode)||'UNKNOWN').toUpperCase();
+  set('modeChip',((d.strategy&&d.strategy.label)||'10:30 Futures')+' · '+modeValue);
+  const modeChipEl=document.querySelector('.mode-chip');
+  if(modeChipEl){modeChipEl.classList.toggle('live-mode',modeValue==='LIVE');modeChipEl.classList.toggle('shadow-mode',modeValue!=='LIVE');modeChipEl.title='TradeOps mode: '+modeValue;}
 
   set('flowBrokerTitle',brokerValidation.ok?'Broker Verified':'Broker Issue');
   set('flowBrokerSub',brokerValidation.source||'Kite profile check');
