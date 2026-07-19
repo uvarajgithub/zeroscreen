@@ -6539,6 +6539,39 @@ function tradeOpsPnl(t) {
     const pnl = Number(t?.pnl);
     return Number.isFinite(pnl) ? pnl : 0;
 }
+function tradeOpsEstimateCharges(trades) {
+    const out = { brokerage: 0, exchangeFees: 0, gst: 0, stt: 0, total: 0, source: "TradeOps estimate" };
+    const rows = Array.isArray(trades) ? trades : [];
+    for (const t of rows) {
+        const qty = Math.abs(tradeOpsNum(t?.qty ?? t?.quantity ?? t?.mainQty ?? 30, 30));
+        const entry = tradeOpsMaybeNum(t?.premiumEntry ?? t?.entryPrice ?? t?.entry);
+        const exit = tradeOpsMaybeNum(t?.premiumExit ?? t?.exitPrice ?? t?.exit);
+        if (!qty || entry === null || exit === null || entry <= 0 || exit <= 0)
+            continue;
+        const side = tradeOpsSide(t?.direction || t?.side);
+        const entryValue = entry * qty;
+        const exitValue = exit * qty;
+        const buyValue = side === "SELL" ? exitValue : entryValue;
+        const sellValue = side === "SELL" ? entryValue : exitValue;
+        const turnover = entryValue + exitValue;
+        const brokerage = Math.min(20, entryValue * 0.0003) + Math.min(20, exitValue * 0.0003);
+        const exchangeTxn = turnover * 0.0000173;
+        const sebi = turnover * 0.000001;
+        const stamp = buyValue * 0.00002;
+        const gst = (brokerage + exchangeTxn + sebi) * 0.18;
+        const stt = sellValue * 0.0002;
+        out.brokerage += brokerage;
+        out.exchangeFees += exchangeTxn + sebi + stamp;
+        out.gst += gst;
+        out.stt += stt;
+    }
+    out.brokerage = Math.round(out.brokerage);
+    out.exchangeFees = Math.round(out.exchangeFees);
+    out.gst = Math.round(out.gst);
+    out.stt = Math.round(out.stt);
+    out.total = out.brokerage + out.exchangeFees + out.gst + out.stt;
+    return out;
+}
 function tradeOpsDateKey(value) {
     const d = value ? new Date(value) : new Date();
     if (!Number.isFinite(d.getTime()))
@@ -6904,7 +6937,12 @@ async function buildTradeOpsStatus() {
     const marginReady = marginsSynced && (requiredMargin <= 0 || (available ?? 0) >= requiredMargin);
     const todayLow = rangePnls.length ? Math.min(...rangePnls) : netPnl;
     const todayHigh = rangePnls.length ? Math.max(...rangePnls) : netPnl;
-    const charges = tradeOpsMaybeNum(tt1030State?.charges ?? hb?.tt1030Charges);
+    const estimatedCharges = tradeOpsEstimateCharges(displayClosed);
+    const explicitCharges = tradeOpsMaybeNum(tt1030State?.charges ?? hb?.tt1030Charges);
+    const charges = explicitCharges !== null ? explicitCharges : (estimatedCharges.total > 0 ? estimatedCharges.total : null);
+    const chargeBreakdown = explicitCharges !== null
+        ? { brokerage: null, exchangeFees: null, gst: null, stt: null, total: explicitCharges, source: "Bot reported total" }
+        : estimatedCharges;
     const netAfterCharges = charges === null ? null : netPnl - charges;
     const monthStartMs = new Date(`${today}T00:00:00+05:30`).getTime() - 30 * 86400000;
     const monthDaily = new Map();
@@ -7131,6 +7169,7 @@ async function buildTradeOpsStatus() {
             dayRangeSource: usePreviousRange ? "previous_session" : "today",
             dayRangeDate: usePreviousRange ? previousSessionDate : today,
             charges,
+            chargeBreakdown,
             netAfterCharges,
             chargesAvailable: charges !== null,
             usedMargin: used,
@@ -7939,8 +7978,15 @@ function render(d){
     const used=synced?rs(d.pnl.usedMargin):'Not synced';
     const buying=synced?rs((d.pnl.buyingPower!=null?d.pnl.buyingPower:d.pnl.availableMargin)||0):'Not synced';
     const syncChip=synced?pill('Synced','ok'):pill('Not synced','warn');
-    const statementRows='';
-    root.innerHTML='<section class="workspace-page account-workspace"><div class="workspace-head"><div><h1>Account</h1><p>Auto-refreshes live Zerodha margins every 5 seconds while this page is open.</p></div><div class="workspace-actions"><button id="syncAccountBtnPage" class="btn" onclick="load()">Sync Now</button><a class="btn" href="/admin/signals">Refresh Token</a><button class="btn disabled-action" disabled title="Zerodha ledger sync is not connected">Export Statement</button><a class="btn" href="/tradeops">Back to Dashboard</a></div></div>'+summary([kpi('Account Balance',balance,syncChip,'&#8377;'),kpi('Available Margin',available,synced?pill('Broker value','ok'):pill('Not synced','warn'),'&#8599;'),kpi('Used Margin',used,pill('Live risk','warn'),'&#9684;'),kpi('Buying Power',buying,syncChip,'&#9889;'),kpi('Ledger Sync',synced?'Margins live':'Not synced',pill(synced?'Broker margins':'Not synced',synced?'ok':'warn'),'&#10003;')])+'<div class="ws-grid account-layout"><div class="ws-main"><section class="ws-card"><div class="ws-card-h"><span>Account Identity</span></div><div class="ws-card-b"><div class="identity-grid"><div class="identity-cell"><label>Account ID</label><b>'+txt(d.broker&&d.broker.accountId)+'</b></div><div class="identity-cell"><label>Account Holder</label><b>'+txt(d.broker&&d.broker.accountName)+'</b></div><div class="identity-cell"><label>Broker</label><b>'+(brokerOk?'Zerodha':'Not synced')+'</b></div><div class="identity-cell"><label>Account Type</label><b>Live</b></div><div class="identity-cell"><label>Token Status</label><b>'+(tokenOk?'Valid':'Required')+'</b></div><div class="identity-cell"><label>Last Broker Sync</label><b>'+txt(d.updatedAt||'Not synced')+'</b></div></div></div></section>'+filterBar('<select><option>All Types</option><option>Money In</option><option>Money Out</option><option>Charges</option><option>P&L</option></select>')+tableCard('Account Statement',[{t:'Date / Time'},{t:'Type'},{t:'Money In',right:1},{t:'Money Out',right:1},{t:'Charges',right:1},{t:'Realized P&L',right:1},{t:'Running Balance',right:1},{t:'Broker Ref ID'},{t:'Status'},{t:'Notes'}],statementRows,empty('','Ledger sync not connected','Live balance and available margin are pulled from Zerodha margins. Full account statement and charge ledger need a separate broker ledger integration.',{href:'/tradeops/trade-history',label:'View Trade History'}),' 0 ledger records')+'</div><aside class="ws-side">'+sidePanel('Live Margin Source', [['Broker Reported Balance',balance],['Available Margin',available],['Used Margin',used],['Last Sync',txt(d.updatedAt||'Not synced')]]) + sidePanel('Charges Breakdown', [['Brokerage','Unavailable'],['Exchange Fees','Unavailable'],['GST','Unavailable'],['STT','Unavailable'],['Total Charges',d.pnl&&d.pnl.charges!=null?rs(d.pnl.charges):'Unavailable','bad']])+'<section class="ws-card"><div class="ws-card-h"><span>Quick Actions</span></div><div class="ws-card-b quick-actions"><button class="btn" onclick="load()">Sync Now</button><a class="btn" href="/tradeops/trade-history">View Trade History</a><button class="btn disabled-action" disabled title="Ledger data required">Download CSV</button><button class="btn disabled-action" disabled title="Ledger data required">Download PDF</button></div></section></aside></div></section>';return;
+    const cb=(d.pnl&&d.pnl.chargeBreakdown)||{};
+    const brokerage=Number(cb.brokerage||0), exchangeFees=Number(cb.exchangeFees||0), gst=Number(cb.gst||0), stt=Number(cb.stt||0), totalCharge=Number(cb.total||d.pnl&&d.pnl.charges||0);
+    const todayStatementTrades=tradeRowsFor('today').filter(function(t){return Number(t.exit||0)>0});
+    const chargePer=todayStatementTrades.length?Math.round(totalCharge/todayStatementTrades.length):0;
+    let running=synced&&Number.isFinite(Number(d.pnl&&d.pnl.balance))?Number(d.pnl.balance)-todayStatementTrades.reduce(function(a,t){return a+Number(t.pnl||0)-chargePer},0):null;
+    const statementChrono=todayStatementTrades.slice().reverse().map(function(t){const net=Number(t.pnl||0)-chargePer;if(running!==null)running+=net;return {t:t,charge:chargePer,net:net,running:running}});
+    const statementRows=statementChrono.reverse().map(function(row){const t=row.t;return '<tr data-date="'+txt(t.date||'')+'"><td>'+txt((t.date||'')+' '+(t.time||''))+'</td><td>'+pill('Trade P&L','ok')+'</td><td class="right">'+(row.net>0?rs(row.net):'--')+'</td><td class="right">'+(row.net<0?rs(Math.abs(row.net)):'--')+'</td><td class="right bad">'+(row.charge?rs(row.charge):'--')+'</td><td class="right '+(Number(t.pnl||0)>=0?'ok':'bad')+'">'+rs(t.pnl||0)+'</td><td class="right">'+(row.running!==null?rs(row.running):'Broker balance only')+'</td><td>'+txt(t.symbol||'BANKNIFTY')+'</td><td>'+pill(t.status||'Filled','ok')+'</td><td title="'+txt(t.note||'TradeOps computed row')+'">10:30 futures '+txt(t.side||'')+' / qty '+txt(t.qty||'')+'</td></tr>'}).join('');
+    const statementEmpty=empty('','No TradeOps statement rows today','Completed 10:30 futures trades will appear here with estimated charges and realized P&L.',{href:'/tradeops/trade-history',label:'View Trade History'});
+    root.innerHTML='<section class="workspace-page account-workspace"><div class="workspace-head"><div><h1>Account</h1><p>Auto-refreshes live Zerodha margins every 5 seconds while this page is open.</p></div><div class="workspace-actions"><button id="syncAccountBtnPage" class="btn" onclick="load()">Sync Now</button><a class="btn" href="/admin/signals">Refresh Token</a><button class="btn disabled-action" disabled title="Zerodha ledger export is not connected">Export Statement</button><a class="btn" href="/tradeops">Back to Dashboard</a></div></div>'+summary([kpi('Account Balance',balance,syncChip,'&#8377;'),kpi('Available Margin',available,synced?pill('Broker value','ok'):pill('Not synced','warn'),'&#8599;'),kpi('Used Margin',used,pill('Live risk','warn'),'&#9684;'),kpi('Buying Power',buying,syncChip,'&#9889;'),kpi('Ledger Sync',todayStatementTrades.length?'TradeOps computed':'Broker ledger pending',pill(todayStatementTrades.length?'Computed':'Pending',todayStatementTrades.length?'ok':'warn'),'&#10003;')])+'<div class="ws-grid account-layout"><div class="ws-main"><section class="ws-card"><div class="ws-card-h"><span>Account Identity</span></div><div class="ws-card-b"><div class="identity-grid"><div class="identity-cell"><label>Account ID</label><b>'+txt(d.broker&&d.broker.accountId)+'</b></div><div class="identity-cell"><label>Account Holder</label><b>'+txt(d.broker&&d.broker.accountName)+'</b></div><div class="identity-cell"><label>Broker</label><b>'+(brokerOk?'Zerodha':'Not synced')+'</b></div><div class="identity-cell"><label>Account Type</label><b>Live</b></div><div class="identity-cell"><label>Token Status</label><b>'+(tokenOk?'Valid':'Required')+'</b></div><div class="identity-cell"><label>Last Broker Sync</label><b>'+txt(d.updatedAt||'Not synced')+'</b></div></div></div></section>'+filterBar('<select><option>All Types</option><option>Money In</option><option>Money Out</option><option>Charges</option><option>P&L</option></select>')+tableCard('Account Statement',[{t:'Date / Time'},{t:'Type'},{t:'Money In',right:1},{t:'Money Out',right:1},{t:'Charges',right:1},{t:'Realized P&L',right:1},{t:'Running Balance',right:1},{t:'Broker Ref ID'},{t:'Status'},{t:'Notes'}],statementRows,statementEmpty,' '+todayStatementTrades.length+' TradeOps rows',statementRows)+'</div><aside class="ws-side">'+sidePanel('Live Margin Source', [['Broker Reported Balance',balance],['Available Margin',available],['Used Margin',used],['Last Sync',txt(d.updatedAt||'Not synced')]]) + sidePanel('Charges Breakdown', [['Brokerage',brokerage?rs(brokerage):'No completed trades'],['Exchange Fees',exchangeFees?rs(exchangeFees):'No completed trades'],['GST',gst?rs(gst):'No completed trades'],['STT',stt?rs(stt):'No completed trades'],['Total Charges',totalCharge?rs(totalCharge):'No completed trades','bad'],['Source',txt(cb.source||'TradeOps estimate')]])+'<section class="ws-card"><div class="ws-card-h"><span>Quick Actions</span></div><div class="ws-card-b quick-actions"><button class="btn" onclick="load()">Sync Now</button><a class="btn" href="/tradeops/trade-history">View Trade History</a><button class="btn disabled-action" disabled title="Broker ledger export is not connected">Download CSV</button><button class="btn disabled-action" disabled title="Broker ledger export is not connected">Download PDF</button></div></section></aside></div></section>';return;
   }
   if(PAGE==='orders'){
     const sent=trades.length;
