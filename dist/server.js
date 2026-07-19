@@ -6382,6 +6382,57 @@ async function tradeOpsKiteJSON(pathname, init = {}) {
         throw new Error(json.message || `Broker request failed (${resp.status})`);
     return json;
 }
+function tradeOpsZerodhaChargesFromRows(rows) {
+    const charges = { brokerage: 0, exchangeFees: 0, gst: 0, stt: 0, total: 0, source: "Zerodha virtual contract note", available: false };
+    const list = Array.isArray(rows) ? rows : [];
+    for (const row of list) {
+        const c = row?.charges || {};
+        charges.brokerage += tradeOpsNum(c.brokerage);
+        charges.exchangeFees += tradeOpsNum(c.transaction_tax ?? c.exchange_turnover_charge) + tradeOpsNum(c.sebi_turnover_charge) + tradeOpsNum(c.stamp_duty);
+        charges.gst += tradeOpsNum(c.gst?.total ?? c.gst);
+        charges.stt += tradeOpsNum(c.stt);
+        charges.total += tradeOpsNum(row?.total ?? c.total);
+        charges.available = true;
+    }
+    charges.brokerage = Math.round(charges.brokerage);
+    charges.exchangeFees = Math.round(charges.exchangeFees);
+    charges.gst = Math.round(charges.gst);
+    charges.stt = Math.round(charges.stt);
+    charges.total = Math.round(charges.total || charges.brokerage + charges.exchangeFees + charges.gst + charges.stt);
+    return charges;
+}
+async function tradeOpsZerodhaChargeBreakdown(trades) {
+    const closed = (Array.isArray(trades) ? trades : []).filter((t) => tradeOpsNum(t?.premiumEntry ?? t?.entryPrice ?? t?.entry) > 0 && tradeOpsNum(t?.premiumExit ?? t?.exitPrice ?? t?.exit) > 0);
+    if (!closed.length)
+        return { brokerage: null, exchangeFees: null, gst: null, stt: null, total: null, source: "No completed orders for Zerodha charges", available: false };
+    const orders = [];
+    let seq = 1;
+    for (const t of closed) {
+        const symbol = tradeOpsSanitizeSymbol(t?.tradeSymbol || t?.symbol || "");
+        if (!symbol || symbol === "BANKNIFTY" || symbol.includes("INDEX_SHADOW"))
+            continue;
+        const qty = Math.abs(tradeOpsNum(t?.qty ?? t?.quantity ?? t?.mainQty ?? 30, 30));
+        const entry = tradeOpsNum(t?.premiumEntry ?? t?.entryPrice ?? t?.entry);
+        const exit = tradeOpsNum(t?.premiumExit ?? t?.exitPrice ?? t?.exit);
+        const entrySide = "BUY";
+        const exitSide = "SELL";
+        orders.push({ order_id: `tradeops-${seq++}-entry`, exchange: "NFO", tradingsymbol: symbol, transaction_type: entrySide, variety: "regular", product: "MIS", order_type: "MARKET", quantity: qty, average_price: entry });
+        orders.push({ order_id: `tradeops-${seq++}-exit`, exchange: "NFO", tradingsymbol: symbol, transaction_type: exitSide, variety: "regular", product: "MIS", order_type: "MARKET", quantity: qty, average_price: exit });
+    }
+    if (!orders.length)
+        return { brokerage: null, exchangeFees: null, gst: null, stt: null, total: null, source: "Zerodha charges need real option/futures symbols", available: false };
+    try {
+        const json = await tradeOpsKiteJSON("/charges/orders", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(orders),
+        });
+        return tradeOpsZerodhaChargesFromRows(json?.data);
+    }
+    catch (e) {
+        return { brokerage: null, exchangeFees: null, gst: null, stt: null, total: null, source: `Zerodha charges unavailable: ${e?.message || "request failed"}`, available: false };
+    }
+}
 let tradeOpsFuturesSymbolCache = null;
 let tradeOpsFuturesSymbolCacheAt = 0;
 let tradeOpsPrevSessionCandleCache = null;
@@ -6615,6 +6666,20 @@ function tradeOpsSanitizeSymbol(value) {
         .trim();
     return cleaned || "Completed trade";
 }
+function tradeOpsTradeQuality(value) {
+    const raw = String(value?.symbol || value?.tradeSymbol || value?.tradingsymbol || "").toUpperCase();
+    const symbol = tradeOpsSanitizeSymbol(raw).toUpperCase();
+    let score = 0;
+    if (raw && !raw.includes("INDEX_SHADOW"))
+        score += 10;
+    if (/\d{2}[A-Z]{3}\d{4,5}(CE|PE)$/.test(symbol))
+        score += 20;
+    if (tradeOpsNum(value?.premiumEntry) > 0 || tradeOpsNum(value?.premiumExit) > 0)
+        score += 5;
+    if (value?.source && !String(value.source).includes("heartbeat"))
+        score += 2;
+    return score;
+}
 function tradeOpsIsFuturesTrade(value) {
     const symbol = String(value?.tradeSymbol || value?.symbol || value?.tradingsymbol || "").toUpperCase();
     const segment = String(value?.segment || value?.instrumentType || value?.product || "").toUpperCase();
@@ -6647,7 +6712,7 @@ function tradeOpsHeartbeat1030Rows(hb, sessionDate) {
             date: `${sessionDate}T${String(time).padStart(5, "0")}:00+05:30`,
             type: "TEN_THIRTY_INDEX_SHADOW_HEARTBEAT",
             direction: dir || "PE",
-            symbol: "BANKNIFTY_INDEX_SHADOW",
+            symbol: tradeOpsSanitizeSymbol(exit?.symbol || entry?.symbol || "BANKNIFTY_INDEX_SHADOW"),
             entryPrice: tradeOpsNum(exit?.entry ?? entry?.entry),
             exitPrice: tradeOpsNum(exit?.exit),
             premiumEntry: tradeOpsNum(exit?.premIn ?? entry?.premIn),
@@ -6833,14 +6898,19 @@ async function buildTradeOpsStatus() {
     const isAlive = hbAt ? heartbeatAgeSec < 180 : false;
     const openTrade = hb?.tt1030InTrade === true;
     const today = getTodayIST();
-    const heartbeatTrades = tradeOpsHeartbeat1030Rows(hb, today);
+    const hbDate = hb?.at ? tradeOpsDateKey(hb.at) : today;
+    const heartbeatTrades = tradeOpsHeartbeat1030Rows(hb, hbDate);
     const strategyTradeMap = new Map();
     for (const t of [...heartbeatTrades, ...rawTrades.filter(tradeOpsIsTenThirtyFuturesTrade)]) {
-        const key = `${tradeOpsDateKey(t?.date || t?.exitTime || t?.entryTime)}|${tradeOpsSanitizeSymbol(t?.symbol || t?.tradeSymbol || "")}|${String(t?.direction || t?.side || "").toUpperCase()}|${tradeOpsPnl(t)}`;
-        strategyTradeMap.set(key, t);
+        const key = `${tradeOpsDateKey(t?.date || t?.exitTime || t?.entryTime)}|${tradeOpsSide(t?.direction || t?.side)}|${Math.round(tradeOpsPnl(t))}`;
+        const prev = strategyTradeMap.get(key);
+        if (!prev || tradeOpsTradeQuality(t) >= tradeOpsTradeQuality(prev))
+            strategyTradeMap.set(key, t);
     }
     const strategyTrades = Array.from(strategyTradeMap.values()).sort((a, b) => new Date(a?.date || a?.exitTime || a?.entryTime || 0).getTime() - new Date(b?.date || b?.exitTime || b?.entryTime || 0).getTime());
-    const displaySession = today;
+    const todayHasTrades = strategyTrades.some(t => tradeOpsDateKey(t?.date || t?.exitTime || t?.entryTime) === today);
+    const latestTradeSession = strategyTrades.map(t => tradeOpsDateKey(t?.date || t?.exitTime || t?.entryTime)).filter(Boolean).sort().pop() || today;
+    const displaySession = (tradeOpsMarketStartedToday() || todayHasTrades) ? today : latestTradeSession;
     const displayTrades = strategyTrades.filter(t => tradeOpsDateKey(t?.date || t?.exitTime || t?.entryTime) === displaySession);
     const displayClosed = displayTrades.filter(t => tradeOpsNum(t?.exitPrice) > 0 || tradeOpsNum(t?.premiumExit) > 0);
     const todayPnl = displayClosed.reduce((sum, t) => sum + tradeOpsPnl(t), 0);
@@ -6937,12 +7007,12 @@ async function buildTradeOpsStatus() {
     const marginReady = marginsSynced && (requiredMargin <= 0 || (available ?? 0) >= requiredMargin);
     const todayLow = rangePnls.length ? Math.min(...rangePnls) : netPnl;
     const todayHigh = rangePnls.length ? Math.max(...rangePnls) : netPnl;
-    const estimatedCharges = tradeOpsEstimateCharges(displayClosed);
+    const zerodhaCharges = await tradeOpsZerodhaChargeBreakdown(displayClosed);
     const explicitCharges = tradeOpsMaybeNum(tt1030State?.charges ?? hb?.tt1030Charges);
-    const charges = explicitCharges !== null ? explicitCharges : (estimatedCharges.total > 0 ? estimatedCharges.total : null);
+    const charges = explicitCharges !== null ? explicitCharges : (zerodhaCharges.available && zerodhaCharges.total > 0 ? zerodhaCharges.total : null);
     const chargeBreakdown = explicitCharges !== null
         ? { brokerage: null, exchangeFees: null, gst: null, stt: null, total: explicitCharges, source: "Bot reported total" }
-        : estimatedCharges;
+        : zerodhaCharges;
     const netAfterCharges = charges === null ? null : netPnl - charges;
     const monthStartMs = new Date(`${today}T00:00:00+05:30`).getTime() - 30 * 86400000;
     const monthDaily = new Map();
@@ -7510,6 +7580,111 @@ body.tradeops-collapsed .help,body.tradeops-collapsed .collapse-btn{justify-cont
 .pnl,.chart,.account{height:100%!important;max-height:none!important}
 .pnl .card-b,.chart .card-b,.account .card-b{height:calc(100% - 42px)!important}
 .logs{height:116px!important}
+/* Dashboard secondary row fit guard: keep these cards compact without clipped content. */
+.dashboard .ready.mini-card,.dashboard .orders.mini-card{min-height:178px!important;height:auto!important;overflow:hidden!important}
+.dashboard .ready.mini-card .card-b,.dashboard .orders.mini-card .card-b{padding:10px 18px 12px!important}
+.dashboard .gate-head{margin-bottom:8px!important;align-items:flex-start!important}
+.dashboard .gate-head .muted{display:-webkit-box!important;-webkit-line-clamp:2!important;-webkit-box-orient:vertical!important;overflow:hidden!important;line-height:1.25!important}
+.dashboard .mini-grid{grid-template-columns:repeat(5,minmax(0,1fr))!important;gap:8px!important}
+.dashboard .mini-stat{min-height:72px!important;padding:9px 8px!important;border-radius:8px!important}
+.dashboard .mini-stat label{font-size:11px!important;line-height:1.12!important;margin-bottom:5px!important}
+.dashboard .mini-stat b{font-size:13px!important;line-height:1.18!important;word-break:break-word!important}
+.dashboard .checks-row{display:none!important}
+.dashboard .order-idle{min-height:112px!important;padding:12px!important;align-items:center!important;gap:12px!important}
+.dashboard .order-idle .btn{height:32px!important;margin-top:4px!important}
+.dashboard .order-active{padding-top:0!important}
+.dashboard .order-bubbles{grid-template-columns:repeat(6,minmax(0,1fr))!important;gap:8px!important;margin-top:0!important}
+.dashboard .order-bubble{min-height:52px!important;padding:8px!important;border-radius:8px!important}
+.dashboard .order-bubble span{font-size:11px!important}
+.dashboard .order-bubble b{font-size:16px!important}
+.dashboard .order-meta{margin-top:8px!important;font-size:11.5px!important;gap:10px!important;flex-wrap:wrap!important}
+.dashboard .action-strip{margin-top:8px!important;min-height:32px!important;padding:7px 10px!important}
+/* Workflow action buttons must never crop inside the compact health strip. */
+.workflow.card{overflow:visible!important;align-items:center!important}
+.workflow .flow-actions{align-self:center!important;display:grid!important;grid-template-columns:1fr!important;gap:6px!important;min-width:120px!important;margin-left:8px!important}
+.workflow .flow-actions .btn{height:31px!important;min-height:31px!important;padding:0 11px!important;border-radius:10px!important;line-height:1!important}
+@media(max-width:1366px){.workflow.card{min-height:86px!important}.workflow .flow-actions{min-width:112px!important;gap:5px!important}.workflow .flow-actions .btn{height:30px!important;min-height:30px!important;font-size:11.5px!important}}
+/* TradeOps phone layout: bottom nav, full-width pages, compact cards. */
+@media(max-width:640px){
+html,body{font-size:12px!important;overflow-x:hidden!important}
+.app{display:block!important;min-height:100vh!important}
+.side{position:fixed!important;left:0!important;right:0!important;top:auto!important;bottom:0!important;width:100%!important;height:64px!important;z-index:60!important;padding:6px 8px!important;border-top:1px solid rgba(148,163,184,.22)!important;border-right:0!important;box-shadow:0 -12px 28px rgba(3,12,30,.18)!important;overflow:hidden!important}
+.brand,.side-bottom,.nav-section,.help,.collapse-btn{display:none!important}
+.nav{height:52px!important;display:flex!important;flex-direction:row!important;align-items:center!important;gap:6px!important;overflow-x:auto!important;overflow-y:hidden!important;padding:0!important;scroll-snap-type:x proximity!important}
+.nav a{width:48px!important;min-width:48px!important;max-width:48px!important;height:48px!important;flex:0 0 48px!important;padding:0!important;margin:0!important;border-radius:14px!important;justify-content:center!important;scroll-snap-align:center!important}
+.nav a span,.nav-badge,.nav-dot{display:none!important}
+.nav a svg{width:21px!important;height:21px!important}
+.nav a.active:before{display:none!important}
+.main,body.tradeops-collapsed .main{margin-left:0!important;padding-bottom:74px!important;width:100%!important}
+.top,body.tradeops-collapsed .top{left:0!important;position:sticky!important;top:0!important;height:auto!important;min-height:64px!important;padding:8px 10px!important;gap:7px!important;flex-wrap:wrap!important;overflow:visible!important}
+.command-group{gap:6px!important;flex-wrap:wrap!important}
+.status-group{width:100%!important;flex:1 0 100%!important;order:2!important;display:grid!important;grid-template-columns:repeat(2,minmax(0,1fr))!important}
+.action-group{width:100%!important;justify-content:space-between!important;order:1!important}
+.status-chip{height:32px!important;min-width:0!important;padding:0 9px!important;font-size:11px!important;border-radius:10px!important;overflow:hidden!important}
+.status-chip b,.status-chip span{overflow:hidden!important;text-overflow:ellipsis!important;white-space:nowrap!important}
+.updated-chip{grid-column:1/-1!important}
+.account-switcher{height:34px!important;max-width:112px!important;padding:0 9px!important}
+.btn.danger{height:36px!important;padding:0 10px!important;font-size:12px!important;border-radius:11px!important}
+.profile-block{height:36px!important;gap:6px!important}
+.avatar{width:34px!important;height:34px!important;font-size:12px!important}
+.profile-block .user{display:none!important}
+.content{padding:10px 10px 14px!important}
+.dashboard{grid-template-columns:minmax(0,1fr)!important;grid-template-areas:"workflow" "pnl" "chart" "account" "ready" "orders" "quick" "positions" "recent" "logs"!important;gap:10px!important}
+.card,.ws-card{border-radius:10px!important}
+.card-h,.ws-card-h{min-height:36px!important;padding:10px 12px 0!important;font-size:14px!important}
+.card-b,.ws-card-b{padding:10px 12px 12px!important}
+.workflow.card{display:grid!important;grid-template-columns:1fr!important;gap:8px!important;padding:10px!important;min-height:0!important}
+.flow-step{width:100%!important;height:48px!important;min-width:0!important;padding:0 10px!important;border-radius:12px!important}
+.flow-step:after{display:none!important}
+.flow-icon{width:30px!important;height:30px!important}
+.flow-text b{font-size:12px!important}.flow-text span{font-size:10px!important}
+.flow-actions{display:grid!important;grid-template-columns:1fr 1fr!important;margin:0!important;width:100%!important;min-width:0!important}
+.flow-actions .btn{height:32px!important}
+.pnl,.chart,.account,.ready.mini-card,.orders.mini-card,.quick.mini-card,.positions,.recent,.logs-card{min-height:0!important;height:auto!important}
+.pnl-value{font-size:34px!important;letter-spacing:-1px!important}
+.pnl-main{align-items:flex-start!important;gap:8px!important}
+.profit-pill{height:28px!important;padding:0 10px!important;font-size:12px!important;margin-left:auto!important}
+.metric-grid{grid-template-columns:repeat(2,minmax(0,1fr))!important;gap:6px!important}
+.metric{min-height:52px!important;padding:8px!important}.metric label{font-size:10px!important}.metric b{font-size:13px!important}
+.pnl-foot{height:auto!important;display:grid!important;grid-template-columns:1fr!important;gap:5px!important;font-size:11px!important}
+.chart-box{height:210px!important;max-height:210px!important}
+.tabs{flex-wrap:wrap!important}.chart-footer{width:100%!important;text-align:left!important;margin-left:0!important}
+.account-ident{grid-template-columns:1fr!important}
+.kv{grid-template-columns:minmax(0,1fr) auto!important}
+.dashboard .mini-grid,.execution-gate .mini-grid{grid-template-columns:repeat(2,minmax(0,1fr))!important}
+.dashboard .mini-stat{min-height:62px!important}
+.dashboard .order-bubbles,.order-bubbles{grid-template-columns:repeat(3,minmax(0,1fr))!important}
+.quick-grid{grid-template-columns:1fr!important}
+.table-wrap{height:auto!important;max-height:none!important;overflow-x:auto!important;padding:0 10px 10px!important}
+.table{min-width:620px!important}
+.logs-card .log-actions{gap:5px!important;flex-wrap:wrap!important}.logs-card .log-actions .btn{height:28px!important;padding:0 9px!important}
+.logs{height:150px!important}
+.workspace-page{gap:10px!important}
+.workspace-head{padding:2px 2px 0!important;display:grid!important;grid-template-columns:1fr!important;gap:10px!important}
+.workspace-head h1{font-size:24px!important;letter-spacing:-.4px!important}
+.workspace-head p{font-size:12px!important;line-height:1.35!important}
+.workspace-actions{display:grid!important;grid-template-columns:1fr 1fr!important;gap:8px!important;width:100%!important}
+.workspace-actions .btn,.workspace-actions a.btn{width:100%!important;height:34px!important;padding:0 8px!important}
+.scope-card .ws-card-b{display:grid!important;gap:8px!important}
+.scope-text{min-width:0!important;font-size:12px!important}
+.ws-grid,.account-layout,.settings-grid{grid-template-columns:1fr!important;gap:10px!important}
+.ws-summary,.account-summary,.candle-log-page .ws-summary{grid-template-columns:1fr!important;gap:8px!important}
+.ws-kpi{min-height:74px!important;padding:11px!important}.ws-kpi-icon{width:38px!important;height:38px!important}.ws-kpi b{font-size:16px!important;white-space:normal!important}
+.identity-grid,.account-workspace .identity-grid{grid-template-columns:1fr!important}
+.filter-bar{display:grid!important;grid-template-columns:1fr 1fr!important;gap:8px!important}
+.filter-bar input,.filter-bar select,.filter-bar .seg,.filter-bar .btn{width:100%!important;min-width:0!important;height:34px!important}
+.filter-bar input{grid-column:1/-1!important}
+.ws-table-wrap{overflow-x:auto!important;-webkit-overflow-scrolling:touch!important}
+.ws-table{min-width:680px!important;font-size:11px!important}
+.ws-table th,.ws-table td{height:32px!important;padding:0 8px!important}
+.ws-table-footer,.statement-pagination{display:grid!important;grid-template-columns:1fr!important;justify-items:stretch!important;gap:8px!important}
+.ws-pager{justify-content:space-between!important}.ws-page-info{min-width:0!important}
+.side-row{grid-template-columns:minmax(0,1fr) auto!important}.side-row b{max-width:150px!important;overflow:hidden!important;text-overflow:ellipsis!important;white-space:nowrap!important}
+.quick-actions{grid-template-columns:1fr!important}
+.server-log-full .console.full .logs{height:360px!important}
+.candle-note{max-width:260px!important;min-width:180px!important}
+.modal .dialog{width:calc(100vw - 24px)!important;max-width:none!important;margin:12px!important}
+}
 .dashboard.hidden{display:none!important}
 .detail.active{display:block!important}
 .detail:not(.active){display:none!important}
@@ -7878,7 +8053,7 @@ function render(d){
   set('gateLastCheck',updated);
   const gateIdle=document.getElementById('gateIdle');
   const gateMetrics=document.getElementById('gateMetrics');
-  if(gateIdle)gateIdle.style.display=idle?'flex':'none';
+  if(gateIdle)gateIdle.style.setProperty('display','none','important');
   if(gateMetrics)gateMetrics.style.display='grid';
   set('nextOrderValue',required>0?rs(d.execution.orderValue||required):(idle?'Calculating':'Not synced'));
   set('requiredMargin',required>0?rs(required):(synced?rs(0):'Not synced'));
@@ -7903,8 +8078,8 @@ function render(d){
   const orderIdle=document.getElementById('orderIdle');
   const orderActive=document.getElementById('orderActive');
   const orderChip=document.getElementById('orderStateChip');
-  if(orderIdle)orderIdle.style.display=sent?'none':'grid';
-  if(orderActive)orderActive.style.display=sent?'block':'none';
+  if(orderIdle)orderIdle.style.setProperty('display',sent?'none':'grid','important');
+  if(orderActive)orderActive.style.setProperty('display',sent?'block':'none','important');
   if(orderChip){orderChip.textContent=sent?(actionRequired?'Action Required':'Last Session Complete'):'Idle';orderChip.className='order-state-chip '+(sent?(actionRequired?'action':'normal'):'idle');}
   set('orderLastCheck',updated);
   set('completed',filled);
@@ -7951,6 +8126,8 @@ function render(d){
   const root=document.getElementById('detailGrid');
   if(!root)return;
   const trades=Array.isArray(d.trades)?d.trades:[];
+  const calendarToday=new Date().toLocaleDateString('en-CA',{timeZone:'Asia/Kolkata'});
+  const latestTradeDate=trades.reduce(function(m,t){const k=String(t&&t.date||'').slice(0,10);return k&&(!m||k>m)?k:m},'');
   const positions=Array.isArray(d.positions)?d.positions:[];
   const candles=Array.isArray(d.candles)?d.candles:[];
   const logs=Array.isArray(d.logs)?d.logs:[];
@@ -7969,7 +8146,8 @@ function render(d){
   function tableCard(title,cols,rows,emptyHtml,sideTitle,allRows){const hasRows=!!rows;const tpl=allRows?'<template class="ws-all-rows">'+allRows+'</template>':'';return '<section class="ws-card workspace-table-card" data-page-size="10" data-default-range="today">'+tpl+'<div class="ws-card-h"><span>'+title+'</span><span class="muted ws-total-label">'+sideTitle+'</span></div><div class="ws-card-b"><div class="ws-table-wrap"><table class="ws-table"><thead><tr>'+cols.map(c=>'<th class="'+(c.right?'right':'')+'">'+c.t+'</th>').join('')+'</tr></thead><tbody>'+(hasRows?rows:'<tr class="ws-empty-row"><td colspan="'+cols.length+'">'+emptyHtml+'</td></tr>')+'</tbody></table></div><div class="ws-table-footer"><span class="ws-page-total">'+(hasRows?'Filtering today...':'0-0 of 0')+'</span><div class="ws-pager"><button class="btn ws-prev" type="button">Prev</button><span class="ws-page-info">Page 1</span><button class="btn ws-next" type="button">Next</button></div></div></div></section>'}
   function sidePanel(title,rows,action){return '<section class="ws-card"><div class="ws-card-h"><span>'+title+'</span>'+(action||'')+'</div><div class="ws-card-b side-list">'+rows.map(r=>'<div class="side-row"><label>'+r[0]+'</label><b class="'+(r[2]||'')+'">'+r[1]+'</b></div>').join('')+'</div></section>'}
   function tradeDate(t){return String(t&&t.date||'').slice(0,10)}
-  function tradeRowsFor(range){return range==='today'?trades.filter(t=>tradeDate(t)===(tradeOpsSessionDate||'')):trades}
+  function addDaysKey(key,days){const d=new Date(key+'T00:00:00Z');if(isNaN(d.getTime()))return '';d.setUTCDate(d.getUTCDate()+days);return d.toISOString().slice(0,10)}
+  function tradeRowsFor(range){if(range==='today')return trades.filter(t=>tradeDate(t)===calendarToday);if(range==='latest-session')return trades.filter(t=>tradeDate(t)===(latestTradeDate||tradeOpsSessionDate||calendarToday));if(range==='weekly'){const start=addDaysKey(calendarToday,-7);return trades.filter(t=>{const k=tradeDate(t);return k>=start&&k<=calendarToday})}if(range==='monthly')return trades.filter(t=>tradeDate(t).slice(0,7)===calendarToday.slice(0,7));return trades}
   function rowsFromTrades(range){return tradeRowsFor(range||'all').map(t=>'<tr><td>'+txt(t.date||'')+'</td><td>'+txt(t.time||'')+'</td><td title="'+txt(t.symbol)+'">'+txt(t.symbol)+'</td><td>'+pill(t.side,t.side==='SELL'?'bad':'ok')+'</td><td class="right">'+txt(t.qty)+'</td><td class="right">'+txt(t.entry)+'</td><td class="right">'+txt(t.exit)+'</td><td class="right '+((t.pnl||0)>=0?'ok':'bad')+'">'+rs(t.pnl||0)+'</td><td>'+pill(t.status||'Filled','ok')+'</td></tr>').join('')}
   function standardPage(title,sub,kpis,filters,main,side){const scope='<section class="ws-card scope-card"><div class="ws-card-b"><div class="scope-title">Data Scope</div><div class="scope-text">Showing futures-only BANKNIFTY order records from live trade data and heartbeat logs.</div><div class="scope-badges"><span class="ws-pill ok">Futures only</span><span class="ws-pill ok">Live/session data</span><span class="ws-pill warn">Backtest excluded</span></div></div></section>';const actions=title==='Orders'?'<button class="btn" onclick="load()">Refresh</button><button class="btn disabled-action" disabled title="CSV export endpoint is not available yet">Export CSV</button><a class="btn" href="/tradeops">Back to Dashboard</a>':undefined;root.innerHTML=header(title,sub,actions)+scope+summary(kpis)+(filters||'')+'<div class="ws-grid"><div class="ws-main">'+main+'</div><aside class="ws-side">'+side+'</aside></div></section>';setTimeout(wireWorkspaceControls,0)}
   if(PAGE==='account'){
@@ -7979,6 +8157,8 @@ function render(d){
     const buying=synced?rs((d.pnl.buyingPower!=null?d.pnl.buyingPower:d.pnl.availableMargin)||0):'Not synced';
     const syncChip=synced?pill('Synced','ok'):pill('Not synced','warn');
     const cb=(d.pnl&&d.pnl.chargeBreakdown)||{};
+    const chargeSynced=!!cb.available||Number(d.pnl&&d.pnl.charges||0)>0;
+    const chargeMissing=txt(cb.source||'Zerodha charges not synced');
     const brokerage=Number(cb.brokerage||0), exchangeFees=Number(cb.exchangeFees||0), gst=Number(cb.gst||0), stt=Number(cb.stt||0), totalCharge=Number(cb.total||d.pnl&&d.pnl.charges||0);
     const todayStatementTrades=tradeRowsFor('today').filter(function(t){return Number(t.exit||0)>0});
     const chargePer=todayStatementTrades.length?Math.round(totalCharge/todayStatementTrades.length):0;
@@ -7986,23 +8166,26 @@ function render(d){
     const statementChrono=todayStatementTrades.slice().reverse().map(function(t){const net=Number(t.pnl||0)-chargePer;if(running!==null)running+=net;return {t:t,charge:chargePer,net:net,running:running}});
     const statementRows=statementChrono.reverse().map(function(row){const t=row.t;return '<tr data-date="'+txt(t.date||'')+'"><td>'+txt((t.date||'')+' '+(t.time||''))+'</td><td>'+pill('Trade P&L','ok')+'</td><td class="right">'+(row.net>0?rs(row.net):'--')+'</td><td class="right">'+(row.net<0?rs(Math.abs(row.net)):'--')+'</td><td class="right bad">'+(row.charge?rs(row.charge):'--')+'</td><td class="right '+(Number(t.pnl||0)>=0?'ok':'bad')+'">'+rs(t.pnl||0)+'</td><td class="right">'+(row.running!==null?rs(row.running):'Broker balance only')+'</td><td>'+txt(t.symbol||'BANKNIFTY')+'</td><td>'+pill(t.status||'Filled','ok')+'</td><td title="'+txt(t.note||'TradeOps computed row')+'">10:30 futures '+txt(t.side||'')+' / qty '+txt(t.qty||'')+'</td></tr>'}).join('');
     const statementEmpty=empty('','No TradeOps statement rows today','Completed 10:30 futures trades will appear here with estimated charges and realized P&L.',{href:'/tradeops/trade-history',label:'View Trade History'});
-    root.innerHTML='<section class="workspace-page account-workspace"><div class="workspace-head"><div><h1>Account</h1><p>Auto-refreshes live Zerodha margins every 5 seconds while this page is open.</p></div><div class="workspace-actions"><button id="syncAccountBtnPage" class="btn" onclick="load()">Sync Now</button><a class="btn" href="/admin/signals">Refresh Token</a><button class="btn disabled-action" disabled title="Zerodha ledger export is not connected">Export Statement</button><a class="btn" href="/tradeops">Back to Dashboard</a></div></div>'+summary([kpi('Account Balance',balance,syncChip,'&#8377;'),kpi('Available Margin',available,synced?pill('Broker value','ok'):pill('Not synced','warn'),'&#8599;'),kpi('Used Margin',used,pill('Live risk','warn'),'&#9684;'),kpi('Buying Power',buying,syncChip,'&#9889;'),kpi('Ledger Sync',todayStatementTrades.length?'TradeOps computed':'Broker ledger pending',pill(todayStatementTrades.length?'Computed':'Pending',todayStatementTrades.length?'ok':'warn'),'&#10003;')])+'<div class="ws-grid account-layout"><div class="ws-main"><section class="ws-card"><div class="ws-card-h"><span>Account Identity</span></div><div class="ws-card-b"><div class="identity-grid"><div class="identity-cell"><label>Account ID</label><b>'+txt(d.broker&&d.broker.accountId)+'</b></div><div class="identity-cell"><label>Account Holder</label><b>'+txt(d.broker&&d.broker.accountName)+'</b></div><div class="identity-cell"><label>Broker</label><b>'+(brokerOk?'Zerodha':'Not synced')+'</b></div><div class="identity-cell"><label>Account Type</label><b>Live</b></div><div class="identity-cell"><label>Token Status</label><b>'+(tokenOk?'Valid':'Required')+'</b></div><div class="identity-cell"><label>Last Broker Sync</label><b>'+txt(d.updatedAt||'Not synced')+'</b></div></div></div></section>'+filterBar('<select><option>All Types</option><option>Money In</option><option>Money Out</option><option>Charges</option><option>P&L</option></select>')+tableCard('Account Statement',[{t:'Date / Time'},{t:'Type'},{t:'Money In',right:1},{t:'Money Out',right:1},{t:'Charges',right:1},{t:'Realized P&L',right:1},{t:'Running Balance',right:1},{t:'Broker Ref ID'},{t:'Status'},{t:'Notes'}],statementRows,statementEmpty,' '+todayStatementTrades.length+' TradeOps rows',statementRows)+'</div><aside class="ws-side">'+sidePanel('Live Margin Source', [['Broker Reported Balance',balance],['Available Margin',available],['Used Margin',used],['Last Sync',txt(d.updatedAt||'Not synced')]]) + sidePanel('Charges Breakdown', [['Brokerage',brokerage?rs(brokerage):'No completed trades'],['Exchange Fees',exchangeFees?rs(exchangeFees):'No completed trades'],['GST',gst?rs(gst):'No completed trades'],['STT',stt?rs(stt):'No completed trades'],['Total Charges',totalCharge?rs(totalCharge):'No completed trades','bad'],['Source',txt(cb.source||'TradeOps estimate')]])+'<section class="ws-card"><div class="ws-card-h"><span>Quick Actions</span></div><div class="ws-card-b quick-actions"><button class="btn" onclick="load()">Sync Now</button><a class="btn" href="/tradeops/trade-history">View Trade History</a><button class="btn disabled-action" disabled title="Broker ledger export is not connected">Download CSV</button><button class="btn disabled-action" disabled title="Broker ledger export is not connected">Download PDF</button></div></section></aside></div></section>';return;
+    root.innerHTML='<section class="workspace-page account-workspace"><div class="workspace-head"><div><h1>Account</h1><p>Auto-refreshes live Zerodha margins every 5 seconds while this page is open.</p></div><div class="workspace-actions"><button id="syncAccountBtnPage" class="btn" onclick="load()">Sync Now</button><a class="btn" href="/admin/signals">Refresh Token</a><button class="btn disabled-action" disabled title="Zerodha ledger export is not connected">Export Statement</button><a class="btn" href="/tradeops">Back to Dashboard</a></div></div>'+summary([kpi('Account Balance',balance,syncChip,'&#8377;'),kpi('Available Margin',available,synced?pill('Broker value','ok'):pill('Not synced','warn'),'&#8599;'),kpi('Used Margin',used,pill('Live risk','warn'),'&#9684;'),kpi('Buying Power',buying,syncChip,'&#9889;'),kpi('Ledger Sync',todayStatementTrades.length?'TradeOps computed':'Broker ledger pending',pill(todayStatementTrades.length?'Computed':'Pending',todayStatementTrades.length?'ok':'warn'),'&#10003;')])+'<div class="ws-grid account-layout"><div class="ws-main"><section class="ws-card"><div class="ws-card-h"><span>Account Identity</span></div><div class="ws-card-b"><div class="identity-grid"><div class="identity-cell"><label>Account ID</label><b>'+txt(d.broker&&d.broker.accountId)+'</b></div><div class="identity-cell"><label>Account Holder</label><b>'+txt(d.broker&&d.broker.accountName)+'</b></div><div class="identity-cell"><label>Broker</label><b>'+(brokerOk?'Zerodha':'Not synced')+'</b></div><div class="identity-cell"><label>Account Type</label><b>Live</b></div><div class="identity-cell"><label>Token Status</label><b>'+(tokenOk?'Valid':'Required')+'</b></div><div class="identity-cell"><label>Last Broker Sync</label><b>'+txt(d.updatedAt||'Not synced')+'</b></div></div></div></section>'+filterBar('<select><option>All Types</option><option>Money In</option><option>Money Out</option><option>Charges</option><option>P&L</option></select>')+tableCard('Account Statement',[{t:'Date / Time'},{t:'Type'},{t:'Money In',right:1},{t:'Money Out',right:1},{t:'Charges',right:1},{t:'Realized P&L',right:1},{t:'Running Balance',right:1},{t:'Broker Ref ID'},{t:'Status'},{t:'Notes'}],statementRows,statementEmpty,' '+todayStatementTrades.length+' TradeOps rows',statementRows)+'</div><aside class="ws-side">'+sidePanel('Live Margin Source', [['Broker Reported Balance',balance],['Available Margin',available],['Used Margin',used],['Last Sync',txt(d.updatedAt||'Not synced')]]) + sidePanel('Charges Breakdown', [['Brokerage',chargeSynced?rs(brokerage):'Not synced'],['Exchange Fees',chargeSynced?rs(exchangeFees):'Not synced'],['GST',chargeSynced?rs(gst):'Not synced'],['STT',chargeSynced?rs(stt):'Not synced'],['Total Charges',chargeSynced?rs(totalCharge):'Not synced','bad'],['Source',chargeMissing]])+'<section class="ws-card"><div class="ws-card-h"><span>Quick Actions</span></div><div class="ws-card-b quick-actions"><button class="btn" onclick="load()">Sync Now</button><a class="btn" href="/tradeops/trade-history">View Trade History</a><button class="btn disabled-action" disabled title="Broker ledger export is not connected">Download CSV</button><button class="btn disabled-action" disabled title="Broker ledger export is not connected">Download PDF</button></div></section></aside></div></section>';return;
   }
   if(PAGE==='orders'){
-    const sent=trades.length;
-    const rejected=trades.filter(t=>/reject|fail|error/i.test(t.status||'')).length;
-    const pending=trades.filter(t=>/pending|open|sent/i.test(t.status||'')).length;
-    const filled=Math.max(0,sent-rejected-pending);
-    const lastOrder=sent?txt(trades[0].time):'No orders';
     const cleanSource=function(t){return String(t.source||t.reason||'').toLowerCase().includes('heartbeat')?'Heartbeat log':'Live trade record'};
-    const orderRowHtml=function(list){return list.map(function(t){const status=t.status||'Filled';const pnl=Number(t.pnl||0);return '<tr class="orders-workspace-row" data-date="'+txt(t.date||'')+'" data-time="'+txt(t.time||'')+'" data-symbol="'+txt(t.symbol||'')+'" data-side="'+txt(t.side||'')+'" data-qty="'+txt(t.qty||'')+'" data-entry="'+txt(t.entry||'')+'" data-exit="'+txt(t.exit||'')+'" data-pnl="'+rs(pnl)+'" data-status="'+txt(status)+'" data-source="'+txt(cleanSource(t))+'" data-note="'+txt(t.note||t.reason||'')+'"><td>'+txt(t.date||'')+'</td><td>'+txt(t.time||'')+'</td><td title="'+txt(t.symbol)+'">'+txt(t.symbol)+'</td><td>'+pill(t.side,t.side==='SELL'?'bad':'ok')+'</td><td class="right">'+txt(t.qty)+'</td><td class="right">'+txt(t.entry)+'</td><td class="right">'+txt(t.exit)+'</td><td class="right '+(pnl>=0?'ok':'bad')+'">'+rs(pnl)+'</td><td>'+pill(status,/reject|fail|error/i.test(status)?'bad':/pending|open|sent/i.test(status)?'warn':'ok')+'</td><td><button class="btn row-detail-btn" type="button">View</button></td></tr>'}).join('')};
-    const orderRows=orderRowHtml(tradeRowsFor('today'));
-    const allOrderRows=orderRowHtml(trades);
-    const filters=filterBar('<select><option>All Orders</option><option>Filled</option><option>Rejected</option><option>Pending</option></select><select><option>All Sides</option><option>BUY</option><option>SELL</option></select>');
-    const orderTable=tableCard('Orders',[{t:'Date'},{t:'Time'},{t:'Symbol'},{t:'Side'},{t:'Qty',right:1},{t:'Entry',right:1},{t:'Exit',right:1},{t:'P&L',right:1},{t:'Status'},{t:'Details'}],orderRows,empty('&#8594;','No futures orders found','No futures orders exist for the selected range.',{href:'/tradeops/trade-history',label:'View Latest Session'}),' '+sent+' records',allOrderRows);
-    const healthPanel='<section class="ws-card order-health-card"><div class="ws-card-h"><span>'+(rejected||pending?'Action Required':'Order Health')+'</span>'+(rejected||pending?pill('Review','bad'):pill('Healthy','ok'))+'</div><div class="ws-card-b">'+(rejected||pending?'<div class="action-note">'+(rejected?rejected+' rejected order(s) need review. ':'')+(pending?pending+' pending order(s) still open.':'')+'</div>':'<div class="healthy-note">No rejected or pending orders in selected range.</div>')+'</div></section>';
+    function orderStatus(t){const raw=String(t.status||t.note||'');if(/reject|fail|error/i.test(raw))return 'Rejected';if(/pending|open|sent/i.test(raw))return 'Pending';return 'Filled'}
+    function inOrderRange(t,range){const k=tradeDate(t);if(!k)return false;if(range==='latest-session')return k===(latestTradeDate||tradeOpsSessionDate||calendarToday);if(range==='weekly'){const start=addDaysKey(calendarToday,-7);return k>=start&&k<=calendarToday}if(range==='monthly')return k.slice(0,7)===calendarToday.slice(0,7);return k===calendarToday}
+    function inOrderType(t,type){const st=orderStatus(t).toLowerCase();if(type==='filled')return st==='filled';if(type==='rejected')return st==='rejected';if(type==='pending')return st==='pending';return true}
+    function inOrderSide(t,side){side=String(side||'all').toUpperCase();return side==='ALL'||String(t.side||'').toUpperCase()===side}
+    function orderMatches(t,q){q=String(q||'').trim().toLowerCase();if(!q)return true;return [t.date,t.time,t.symbol,t.side,t.qty,t.entry,t.exit,t.pnl,t.status,t.note,t.source].join(' ').toLowerCase().includes(q)}
+    function orderFilterList(state){return trades.filter(t=>inOrderRange(t,state.range)&&inOrderType(t,state.type)&&inOrderSide(t,state.side)&&orderMatches(t,state.q))}
     const selected='<section class="ws-card selected-order-card"><div class="ws-card-h"><span>Selected Order</span><a class="btn" href="/tradeops/executions">View Execution</a></div><div class="ws-card-b"><div id="selectedOrderEmpty" class="ws-empty compact"><div class="ws-empty-icon">&#8594;</div><div><b>Select an order to view details.</b><span>Click any order row or View button.</span></div></div><div id="selectedOrderDetail" class="side-list" style="display:none"><div class="side-row"><label>Date / Time</label><b id="selDate">--</b></div><div class="side-row"><label>Symbol</label><b id="selSymbol">--</b></div><div class="side-row"><label>Side / Qty</label><b id="selSide">--</b></div><div class="side-row"><label>Entry</label><b id="selEntry">--</b></div><div class="side-row"><label>Exit</label><b id="selExit">--</b></div><div class="side-row"><label>Gross P&L</label><b id="selPnl">--</b></div><div class="side-row"><label>Status</label><b id="selStatus">--</b></div><div class="side-row"><label>Source</label><b id="selSource">--</b></div><div class="side-row"><label>Related Logs</label><b id="selNote">--</b></div></div></div></section>';
-    standardPage('Orders','Track broker orders, failures, retries, and execution outcomes.',[kpi('Orders Sent',String(sent),pill(sent?'Live/session data':'Idle',sent?'ok':'warn'),'&#8594;'),kpi('Filled',String(filled),pill('Completed','ok'),'&#10003;'),kpi('Rejected',String(rejected),pill(rejected?'Action':'Clear',rejected?'bad':'ok'),'&#10005;'),kpi('Pending',String(pending),pill(pending?'Open':'Clear',pending?'warn':'ok'),'&#9711;'),kpi('Last Order',lastOrder,pill(sent?'Latest session':'Idle',sent?'ok':'warn'),'&#9719;')],filters,orderTable+healthPanel,selected);return;
+    root.innerHTML=header('Orders','Track broker orders, failures, retries, and execution outcomes.','<button class="btn" onclick="load()">Refresh</button><button class="btn disabled-action" disabled title="CSV export endpoint is not available yet">Export CSV</button><a class="btn" href="/tradeops">Back to Dashboard</a>')+'<section class="ws-card scope-card"><div class="ws-card-b"><div class="scope-title">Data Scope</div><div class="scope-text">Showing 10:30 futures/order records from live trade data and heartbeat logs.</div><div class="scope-badges"><span class="ws-pill ok">10:30 only</span><span class="ws-pill ok">Live/session data</span><span class="ws-pill warn">Backtest excluded</span></div></div></section><div id="ordersSummary" class="ws-summary"></div><section class="ws-card"><div class="ws-card-b"><div class="filter-bar" data-skip-workspace-wire="1"><button class="seg active" data-order-range="today" type="button">Today</button><button class="seg" data-order-range="latest-session" type="button">Latest Session</button><button class="seg" data-order-range="weekly" type="button">Weekly</button><button class="seg" data-order-range="monthly" type="button">Monthly</button><select id="orderType"><option value="all">All Orders</option><option value="filled">Filled</option><option value="rejected">Rejected</option><option value="pending">Pending</option></select><select id="orderSide"><option value="all">All Sides</option><option value="BUY">BUY</option><option value="SELL">SELL</option></select><input id="orderSearch" placeholder="Search..."><button id="orderApply" class="btn primary" type="button">Apply Filter</button><button id="orderReset" class="btn" type="button">Reset</button></div></div></section><div class="ws-grid"><div class="ws-main"><section class="ws-card"><div class="ws-card-h"><span>Orders</span><span id="ordersCount" class="muted">0 records</span></div><div class="ws-card-b"><div class="ws-table-wrap"><table class="ws-table"><thead><tr><th>Date</th><th>Time</th><th>Symbol</th><th>Side</th><th class="right">Qty</th><th class="right">Entry</th><th class="right">Exit</th><th class="right">P&L</th><th>Status</th><th>Details</th></tr></thead><tbody id="ordersPageBody"></tbody></table></div><div class="ws-table-footer"><span id="ordersPageTotal">Showing 0-0 of 0</span><div class="ws-pager"><button id="ordersPrev" class="btn" type="button">Prev</button><span id="ordersPageInfo">Page 1 of 1</span><button id="ordersNext" class="btn" type="button">Next</button></div></div></div></section><section id="orderHealthSlot"></section></div><aside class="ws-side">'+selected+'</aside></div></section>';
+    const state={range:'today',type:'all',side:'all',q:'',page:1};const pageSize=10;
+    function orderRow(t){const status=orderStatus(t);const pnl=Number(t.pnl||0);return '<tr class="orders-workspace-row" data-date="'+txt(t.date||'')+'" data-time="'+txt(t.time||'')+'" data-symbol="'+txt(t.symbol||'')+'" data-side="'+txt(t.side||'')+'" data-qty="'+txt(t.qty||'')+'" data-entry="'+txt(t.entry||'')+'" data-exit="'+txt(t.exit||'')+'" data-pnl="'+rs(pnl)+'" data-status="'+txt(status)+'" data-source="'+txt(cleanSource(t))+'" data-note="'+txt(t.note||t.reason||'')+'"><td>'+txt(t.date||'')+'</td><td>'+txt(t.time||'')+'</td><td title="'+txt(t.symbol)+'">'+txt(t.symbol)+'</td><td>'+pill(t.side,t.side==='SELL'?'bad':'ok')+'</td><td class="right">'+txt(t.qty)+'</td><td class="right">'+txt(t.entry)+'</td><td class="right">'+txt(t.exit)+'</td><td class="right '+(pnl>=0?'ok':'bad')+'">'+rs(pnl)+'</td><td>'+pill(status,status==='Rejected'?'bad':status==='Pending'?'warn':'ok')+'</td><td><button class="btn row-detail-btn" type="button">View</button></td></tr>'}
+    function drawOrders(){const list=orderFilterList(state);const rejected=list.filter(t=>orderStatus(t)==='Rejected').length;const pending=list.filter(t=>orderStatus(t)==='Pending').length;const filled=list.filter(t=>orderStatus(t)==='Filled').length;const pages=Math.max(1,Math.ceil(list.length/pageSize));state.page=Math.min(Math.max(1,state.page),pages);const start=(state.page-1)*pageSize;const page=list.slice(start,start+pageSize);document.querySelectorAll('[data-order-range]').forEach(b=>b.classList.toggle('active',b.getAttribute('data-order-range')===state.range));document.getElementById('orderType').value=state.type;document.getElementById('orderSide').value=state.side;document.getElementById('orderSearch').value=state.q;document.getElementById('ordersSummary').innerHTML=[kpi('Orders Sent',String(list.length),pill(state.range,'ok'),'&#8594;'),kpi('Filled',String(filled),pill('Completed','ok'),'&#10003;'),kpi('Rejected',String(rejected),pill(rejected?'Action':'Clear',rejected?'bad':'ok'),'&#10005;'),kpi('Pending',String(pending),pill(pending?'Open':'Clear',pending?'warn':'ok'),'&#9711;'),kpi('Last Order',list[0]?txt(list[0].time):'No orders',pill('Selected range',list.length?'ok':'warn'),'&#9719;')].join('');document.getElementById('ordersCount').textContent=list.length+' '+(list.length===1?'record':'records');document.getElementById('ordersPageBody').innerHTML=page.length?page.map(orderRow).join(''):'<tr class="ws-empty-row"><td colspan="10">'+empty('&#8594;','No orders found','No 10:30 orders exist for the selected range/filter.',{href:'javascript:void(0)',label:'Use Latest Session'})+'</td></tr>';document.getElementById('ordersPageTotal').textContent='Showing '+(list.length?start+1:0)+'-'+Math.min(start+pageSize,list.length)+' of '+list.length;document.getElementById('ordersPageInfo').textContent='Page '+state.page+' of '+pages;document.getElementById('ordersPrev').disabled=state.page<=1;document.getElementById('ordersNext').disabled=state.page>=pages;document.getElementById('orderHealthSlot').innerHTML='<section class="ws-card order-health-card"><div class="ws-card-h"><span>'+(rejected||pending?'Action Required':'Order Health')+'</span>'+(rejected||pending?pill('Review','bad'):pill('Healthy','ok'))+'</div><div class="ws-card-b">'+(rejected||pending?'<div class="action-note">'+(rejected?rejected+' rejected order(s) need review. ':'')+(pending?pending+' pending order(s) still open.':'')+'</div>':'<div class="healthy-note">No rejected or pending orders in selected range.</div>')+'</div></section>';wireWorkspaceControls()}
+    function apply(){state.type=document.getElementById('orderType').value;state.side=document.getElementById('orderSide').value;state.q=document.getElementById('orderSearch').value;state.page=1;drawOrders()}
+    function reset(){state.range='today';state.type='all';state.side='all';state.q='';state.page=1;drawOrders()}
+    document.querySelectorAll('[data-order-range]').forEach(b=>b.onclick=function(){state.range=b.getAttribute('data-order-range');state.page=1;drawOrders()});
+    document.getElementById('orderApply').onclick=apply;document.getElementById('orderReset').onclick=reset;document.getElementById('orderSearch').onkeydown=function(e){if(e.key==='Enter')apply()};document.getElementById('ordersPrev').onclick=function(){state.page--;drawOrders()};document.getElementById('ordersNext').onclick=function(){state.page++;drawOrders()};
+    drawOrders();return;
   }
   if(PAGE==='positions'){
     const rows=positions.map(p=>'<tr><td title="'+txt(p.symbol)+'">'+txt(p.symbol)+'</td><td class="right">'+txt(p.qty)+'</td><td class="right">'+txt(p.avg)+'</td><td class="right">'+txt(p.ltp)+'</td><td class="right '+((p.pnl||0)>=0?'ok':'bad')+'">'+rs(p.pnl||0)+'</td><td>'+pill(p.status||'Open','ok')+'</td></tr>').join('');
@@ -8018,7 +8201,7 @@ function render(d){
     function dayOffset(key,days){const dt=new Date((key||'')+'T00:00:00+05:30');if(isNaN(dt.getTime()))return '';dt.setDate(dt.getDate()+days);return dt.toISOString().slice(0,10)}
     function startOfWeek(key){const dt=new Date((key||'')+'T00:00:00+05:30');if(isNaN(dt.getTime()))return key||'';const day=dt.getDay()||7;dt.setDate(dt.getDate()-day+1);return dt.toISOString().slice(0,10)}
     const latestTradeDate=allTrades.reduce((m,t)=>{const k=dateKey(t);return k&&(!m||k>m)?k:m},'');
-    const baseDate=tradeOpsSessionDate||latestTradeDate||new Date().toISOString().slice(0,10);
+    const baseDate=calendarToday;
     function rangeLabel(range){return range==='latest-session'?'Latest Session':range==='weekly'?'This Week':range==='monthly'?'This Month':'Today'}
     function inRange(t,range){const k=dateKey(t);if(!k)return false;if(range==='latest-session')return k===(latestTradeDate||baseDate);if(range==='weekly'){const start=startOfWeek(baseDate);return k>=start&&k<=baseDate}if(range==='monthly')return k.slice(0,7)===baseDate.slice(0,7);return k===baseDate}
     function inType(t,type){const pnl=Number(t.pnl||0);const side=String(t.side||'').toUpperCase();const status=String(t.status||t.note||'');if(type==='winners')return pnl>0;if(type==='losers')return pnl<0;if(type==='buy')return side==='BUY';if(type==='sell')return side==='SELL';if(type==='closed')return /filled|closed|complete|exit/i.test(status)||Number(t.exit||0)>0;if(type==='rejected')return /reject|fail|error|insufficient|margin/i.test(status);return true}
@@ -8054,12 +8237,11 @@ function render(d){
     function fmtNum(v){return v==null||v===''?'--':txt(v)}
     function exitPrice(c,label){if(c.exit!=null)return c.exit;if(label==='SL Hit'&&c.sl!=null)return c.sl;if(isExitState(label)&&c.close!=null)return c.close;return null}
     const now=istParts();
-    const afterClear=now.mins>=9*60+15;
     const candleView=d.candleView||{};
     const showingPrevious=String(candleView.scope||'')==='previous_session';
-    const viewCandles=(afterClear&&showingPrevious)?[]:candles;
+    const viewCandles=candles;
     const tf=inferTf(viewCandles.length?viewCandles:candles);
-    const mode=viewCandles.length&&showingPrevious&&!afterClear?'Latest trading day':'Current day';
+    const mode=viewCandles.length&&showingPrevious?'Latest trading day':'Current day';
     const tableTitle=mode==='Latest trading day'?'Latest Trading Day Candle Log':'Today&rsquo;s Candle Log';
     const firstCandle=viewCandles.length?viewCandles[viewCandles.length-1]:null;
     const lastCandle=viewCandles.length?viewCandles[0]:null;
@@ -8068,11 +8250,11 @@ function render(d){
     const latestPnl=lastCandle&&lastCandle.pnlRs!=null?rs(lastCandle.pnlRs):'--';
     function noteCell(note){const n=txt(note||'No note');return '<div class="candle-note" title="'+txt(n)+'"><span>'+txt(n)+'</span><details><summary>View</summary><div>'+txt(n)+'</div></details></div>'}
     const rows=viewCandles.map(c=>{const st=readableState(c);const label=st[0];const entryCls=isEntryState(label)?' ok':'';const exit=exitPrice(c,label);const pnl=c.pnlRs==null?'Pending':rs(c.pnlRs);const pnlCls=c.pnlRs==null?'muted':Number(c.pnlRs)>0?'ok':Number(c.pnlRs)<0?'bad':'muted';return '<tr><td class="right">'+txt(c.idx||'')+'</td><td>'+txt(c.time)+'</td><td class="right">'+fmtNum(c.open)+'</td><td class="right">'+fmtNum(c.high)+'</td><td class="right">'+fmtNum(c.low)+'</td><td class="right">'+fmtNum(c.close)+'</td><td>'+pill(label,st[1])+'</td><td class="right'+entryCls+'">'+(c.entry==null?'--':txt(c.entry))+'</td><td>'+sideBadge(c.dir||'--')+'</td><td class="right">'+(c.sl==null?'--':txt(c.sl))+'</td><td class="right bad">'+(exit==null?'--':txt(exit))+'</td><td class="right '+pnlCls+'">'+pnl+'</td><td>'+noteCell(c.note)+'</td></tr>'}).join('');
-    const emptyMsg=afterClear?'No candles recorded yet today.':'Candle records will appear after the first market candle.';
-    const previousChip=showingPrevious&&!afterClear?'<span class="ws-pill warn">Showing previous trading day until 9:15 AM</span>':'';
+    const emptyMsg='Candle records will appear after the first market candle.';
+    const previousChip=showingPrevious?'<span class="ws-pill warn">Showing previous trading day until today first candle</span>':'';
     const actions='<button class="btn" onclick="load()">Refresh</button><a class="btn" href="/tradeops">Back to Dashboard</a>';
-    const chips='<div class="scope-badges candle-head-chips"><span class="ws-pill ok">Futures only</span><span class="ws-pill ok">'+tf+'</span><span class="ws-pill '+(mode==='Current day'?'ok':'warn')+'">'+mode+'</span><span class="ws-pill warn">Auto-clears at 9:15 AM</span>'+previousChip+'</div>';
-    const table='<section class="ws-card candle-log-table-card"><div class="ws-card-h"><span>'+tableTitle+'</span><span class="muted">'+viewCandles.length+' candles</span></div><div class="ws-card-b">'+(viewCandles.length?'<div class="ws-table-wrap"><table class="ws-table candle-log-table"><thead><tr><th class="right">#</th><th>Time</th><th class="right">Open</th><th class="right">High</th><th class="right">Low</th><th class="right">Close</th><th>State</th><th class="right">Entry</th><th>Side</th><th class="right">SL</th><th class="right">Exit</th><th class="right">P&L @ Close</th><th>Note</th></tr></thead><tbody>'+rows+'</tbody></table></div>':empty('&#9636;',afterClear?'No candles recorded yet today.':'No candle records visible yet',emptyMsg,{href:'javascript:load()',label:'Refresh'}))+'<div class="ws-table-footer candle-log-footer"><span>Total candles '+viewCandles.length+'</span><span>First '+(firstCandle?txt(firstCandle.time):'--')+'</span><span>Last '+(lastCandle?txt(lastCandle.time):'--')+'</span><span>Mode '+mode+'</span><span>Auto-clear at 9:15 AM</span></div></div></section>';
+    const chips='<div class="scope-badges candle-head-chips"><span class="ws-pill ok">Futures only</span><span class="ws-pill ok">'+tf+'</span><span class="ws-pill '+(mode==='Current day'?'ok':'warn')+'">'+mode+'</span><span class="ws-pill warn">Clears when today first candle arrives</span>'+previousChip+'</div>';
+    const table='<section class="ws-card candle-log-table-card"><div class="ws-card-h"><span>'+tableTitle+'</span><span class="muted">'+viewCandles.length+' candles</span></div><div class="ws-card-b">'+(viewCandles.length?'<div class="ws-table-wrap"><table class="ws-table candle-log-table"><thead><tr><th class="right">#</th><th>Time</th><th class="right">Open</th><th class="right">High</th><th class="right">Low</th><th class="right">Close</th><th>State</th><th class="right">Entry</th><th>Side</th><th class="right">SL</th><th class="right">Exit</th><th class="right">P&L @ Close</th><th>Note</th></tr></thead><tbody>'+rows+'</tbody></table></div>':empty('&#9636;','No candle records visible yet',emptyMsg,{href:'javascript:load()',label:'Refresh'}))+'<div class="ws-table-footer candle-log-footer"><span>Total candles '+viewCandles.length+'</span><span>First '+(firstCandle?txt(firstCandle.time):'--')+'</span><span>Last '+(lastCandle?txt(lastCandle.time):'--')+'</span><span>Mode '+mode+'</span><span>Clears when today first candle arrives</span></div></div></section>';
     root.innerHTML='<section class="workspace-page candle-log-page"><style>.candle-log-page .workspace-head{align-items:flex-start}.candle-head-chips{margin-top:10px}.candle-log-page .ws-summary{grid-template-columns:repeat(5,minmax(0,1fr))}.candle-log-table{table-layout:auto}.candle-log-table th,.candle-log-table td{padding:0 8px}.candle-log-table td{overflow:visible}.candle-log-table th:last-child,.candle-log-table td:last-child{text-align:left}.candle-note{max-width:360px;min-width:220px}.candle-note>span{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#14315d}.candle-note details{margin-top:4px}.candle-note summary{cursor:pointer;color:#0b65ff;font-weight:800;font-size:11px}.candle-note details div{white-space:normal;background:#f8fbff;border:1px solid #d9e6f4;border-radius:8px;padding:8px;margin-top:5px;color:#14315d;line-height:1.35}.candle-log-footer{justify-content:flex-start;gap:18px;flex-wrap:wrap}.candle-log-footer span{font-weight:760;color:#52627d}@media(max-width:1366px){.candle-log-page .ws-summary{grid-template-columns:repeat(3,minmax(0,1fr))}.candle-note{max-width:280px}}</style><div class="workspace-head"><div><h1>Candle Logs</h1><p>Live daily BANKNIFTY candle log with entry, exit, re-entry, and P&L at close.</p>'+chips+'</div><div class="workspace-actions">'+actions+'</div></div>'+summary([kpi('Candles Recorded',String(viewCandles.length),pill(mode,viewCandles.length?'ok':'warn'),'&#9636;'),kpi('Entry Price',entryCandle&&entryCandle.entry!=null?txt(entryCandle.entry):'No entry',pill('Daily','ok'),'&#8594;'),kpi('Entry Side',sideCandle?sideBadge(sideCandle.dir||'--'):'--',pill('Readable','ok'),'&#9719;'),kpi('Latest Candle P&L',latestPnl,pill('At close',lastCandle&&Number(lastCandle.pnlRs||0)<0?'bad':'ok'),'&#8377;'),kpi('Last Candle Time',lastCandle?txt(lastCandle.time):'No candle',pill(tf,'ok'),'&#9719;')])+table+'</section>';return;
   }
   if(PAGE==='server-logs'){
@@ -8091,6 +8273,25 @@ function render(d){
     const checked=String(mc.runningMode||mc.envMode||'SHADOW').toUpperCase()==='LIVE'?'checked':'';
     const panel='<section class="ws-card"><div class="ws-card-h"><span>10:30 Futures Mode</span>'+pill(String(mc.runningMode||mc.envMode||'SHADOW').toUpperCase(),mc.runningMode==='LIVE'?'bad':'ok')+'</div><div class="ws-card-b"><div class="identity-grid"><div class="identity-cell"><label>Switch Scope</label><b>10:30 Futures only</b></div><div class="identity-cell"><label>Configured Mode</label><b>'+txt(mc.envMode||'SHADOW')+'</b></div><div class="identity-cell"><label>Order Effect</label><b>'+((mc.runningMode==='LIVE')?'Real broker futures orders':'Shadow futures tracking')+'</b></div><div class="identity-cell"><label>Quantity</label><b>30</b></div></div><label style="display:inline-flex;align-items:center;gap:10px;margin-top:16px;padding:10px 14px;border:1px solid #d7e4f4;border-radius:999px;background:#fff;font-weight:800;cursor:pointer"><span>SHADOW</span><input id="tt1030ModeToggle" type="checkbox" '+checked+' onchange="setTradeOpsMode(this.checked?&quot;LIVE&quot;:&quot;SHADOW&quot;)" style="width:42px;height:22px;accent-color:#16a34a"><span>LIVE</span></label><div id="modeResult" class="account-warn" style="display:none"></div></div></section>';
     standardPage('Bot Config','TradeOps controls only the 10:30 futures strategy. Other ZeroScreen shadow strategies are not part of TradeOps.',[kpi('10:30 Futures',txt(mc.runningMode||mc.envMode||'SHADOW'),pill(mc.restartRequired?'Reload needed':'Configured',mc.restartRequired?'warn':'ok'),'&#9889;'),kpi('Switch Scope','10:30 Futures only',pill('Isolated','ok'),'&#9636;'),kpi('Configured Mode',txt(mc.envMode||'SHADOW'),pill('TT1030_FUTURES_MODE','ok'),'&#10003;'),kpi('Account Impact',mc.runningMode==='LIVE'?'Real orders':'No broker orders',pill(mc.runningMode==='LIVE'?'Live':'Shadow',mc.runningMode==='LIVE'?'bad':'ok'),'&#9719;'),kpi('LIVE Gate',mc.liveAllowed?'Clear':'Blocked',pill(mc.liveAllowed?'Eligible':'Blocked',mc.liveAllowed?'ok':'bad'),'&#8377;')],'',panel,sidePanel('10:30 Futures Safety',[['10:30 heartbeat',hasHeartbeat?'Issue':'Confirmed',hasHeartbeat?'bad':'ok'],['10:30 audit',hasAudit?'Blocked':'OK',hasAudit?'bad':'ok'],['Open Trade',hasOpen?'Blocked':'Flat',hasOpen?'bad':'ok'],['TradeOps scope','10:30 futures only','ok']])+issueHtml);return;
+  }
+  if(PAGE==='alerts'){
+    const warnLogs=logs.filter(l=>String(l.level||'').toUpperCase()==='WARN'||/alert|telegram|token|broker|failed|error/i.test(String(l.message||'')));
+    const rows=warnLogs.slice(0,50).map(l=>'<tr><td>'+txt(l.time)+'</td><td>'+pill(l.level||'INFO',l.level==='ERROR'?'bad':l.level==='WARN'?'warn':'ok')+'</td><td title="'+txt(l.message)+'">'+txt(l.message)+'</td><td>'+pill(/failed|error/i.test(l.message||'')?'Review':'Info',/failed|error/i.test(l.message||'')?'bad':'ok')+'</td></tr>').join('');
+    standardPage('Alerts','Review alert delivery, token warnings, broker issues, and notification state.',[kpi('Alert Events',String(warnLogs.length),pill('Live logs','ok'),'&#9636;'),kpi('Errors',String(warnLogs.filter(l=>l.level==='ERROR').length),pill('Review','bad'),'&#10005;'),kpi('Warnings',String(warnLogs.filter(l=>l.level==='WARN').length),pill('Watch','warn'),'&#9888;'),kpi('Telegram','10:30 only',pill('Scoped','ok'),'&#9719;'),kpi('Token',tokenOk?'Valid':'Required',pill(tokenOk?'OK':'Action',tokenOk?'ok':'bad'),'&#10003;')],'',tableCard('Alert Events',[{t:'Time'},{t:'Level'},{t:'Message'},{t:'Status'}],rows,empty('&#9888;','No alert events','No alert or warning events in the current server log preview.'),' '+warnLogs.length+' events'),sidePanel('Alert Routing',[['Telegram scope','10:30 futures only','ok'],['DRISHTI alerts','Disabled in TradeOps','warn'],['Broker issue alert',brokerOk?'Clear':'Active',brokerOk?'ok':'bad'],['Token alert',tokenOk?'Clear':'Required',tokenOk?'ok':'bad']]));return;
+  }
+  if(PAGE==='audit'){
+    const auditList=logs.filter(l=>/audit|mode|sync|token|emergency|stop|live|shadow/i.test(String(l.message||''))).slice(0,60);
+    const auditRows=auditList.map(l=>'<tr><td>'+txt(l.time)+'</td><td>'+pill(l.level||'INFO',l.level==='ERROR'?'bad':l.level==='WARN'?'warn':'ok')+'</td><td title="'+txt(l.message)+'">'+txt(l.message)+'</td><td>'+pill('Recorded','ok')+'</td></tr>').join('');
+    standardPage('Audit','Review TradeOps user actions, sync events, mode changes, and safety activity.',[kpi('Audit Events',String(auditList.length),pill('Preview','ok'),'&#9636;'),kpi('Mode',txt(d.strategy&&d.strategy.mode||'SHADOW'),pill('10:30','ok'),'&#9889;'),kpi('Emergency Stop','Available',pill('Manual confirm','warn'),'&#10005;'),kpi('Last Updated',txt(d.updatedAt||'--'),pill('Live','ok'),'&#9719;'),kpi('Scope','TradeOps only',pill('Isolated','ok'),'&#10003;')],'',tableCard('Audit Trail',[{t:'Time'},{t:'Level'},{t:'Event'},{t:'State'}],auditRows,empty('&#9636;','No audit preview rows','No audit-like events are visible in the current server preview.'),'Audit preview'),sidePanel('Audit Scope',[['Mode changes','Tracked'],['Sync actions','Tracked'],['Emergency stop','Tracked'],['Raw secrets','Hidden','ok']]));return;
+  }
+  if(PAGE==='admin-config'){
+    const mc=d.modeControl||{};
+    standardPage('Admin Config','Manage TradeOps account status, token actions, and administrative controls.',[kpi('Account',txt(d.broker&&d.broker.accountId||'Not synced'),pill(brokerOk?'Broker OK':'Issue',brokerOk?'ok':'bad'),'&#9679;'),kpi('Token',tokenOk?'Valid':'Required',pill(tokenOk?'OK':'Sync Now',tokenOk?'ok':'bad'),'&#10003;'),kpi('Mode',txt(mc.runningMode||mc.envMode||'SHADOW'),pill('10:30 futures','ok'),'&#9889;'),kpi('LIVE Gate',mc.liveAllowed?'Clear':'Blocked',pill(mc.liveAllowed?'Eligible':'Blocked',mc.liveAllowed?'ok':'bad'),'&#8377;'),kpi('Updated',txt(d.updatedAt||'--'),pill('Live','ok'),'&#9719;')],'','<section class="ws-card"><div class="ws-card-h"><span>Admin Actions</span></div><div class="ws-card-b quick-actions"><button id="syncAccountBtnPage" class="btn">Sync Now</button><a class="btn" href="/tradeops/bot-config">Bot Config</a><a class="btn" href="/tradeops/health">Health</a><button class="btn disabled-action" disabled title="User role management is outside TradeOps">User Roles</button></div></section>',sidePanel('Admin State',[['Broker',brokerOk?'Connected':'Issue',brokerOk?'ok':'bad'],['Token',tokenOk?'Valid':'Required',tokenOk?'ok':'bad'],['Account ID',txt(d.broker&&d.broker.accountId||'Not synced')],['TradeOps scope','10:30 futures only','ok']]));return;
+  }
+  if(PAGE==='settings'){
+    const mc=d.modeControl||{};
+    const settingsHtml='<section class="ws-card"><div class="ws-card-h"><span>TradeOps Settings</span></div><div class="ws-card-b settings-grid"><div class="setting-row"><div><b>Default strategy</b><small>TradeOps controls only 10:30 futures.</small></div>'+pill('TEN_THIRTY','ok')+'</div><div class="setting-row"><div><b>Running mode</b><small>Change from Bot Config.</small></div>'+pill(mc.runningMode||mc.envMode||'SHADOW',mc.runningMode==='LIVE'?'bad':'ok')+'</div><div class="setting-row"><div><b>Refresh interval</b><small>Dashboard and account refresh cadence.</small></div>'+pill(String(d.pnl&&d.pnl.refreshMs||5000)+' ms','ok')+'</div><div class="setting-row"><div><b>Charges source</b><small>Zerodha virtual contract note when available.</small></div>'+pill((d.pnl&&d.pnl.chargeBreakdown&&d.pnl.chargeBreakdown.available)?'Zerodha':'Not synced',(d.pnl&&d.pnl.chargeBreakdown&&d.pnl.chargeBreakdown.available)?'ok':'warn')+'</div></div></section>';
+    standardPage('Settings','Configure TradeOps display, refresh, and strategy-scoped preferences.',[kpi('Strategy','10:30 futures',pill('Fixed','ok'),'&#9889;'),kpi('Refresh',String(d.pnl&&d.pnl.refreshMs||5000)+' ms',pill('Live','ok'),'&#9719;'),kpi('Charges',(d.pnl&&d.pnl.chargeBreakdown&&d.pnl.chargeBreakdown.available)?'Zerodha':'Not synced',pill('Contract note',(d.pnl&&d.pnl.chargeBreakdown&&d.pnl.chargeBreakdown.available)?'ok':'warn'),'&#8377;'),kpi('Mode',txt(mc.runningMode||mc.envMode||'SHADOW'),pill('Runtime','ok'),'&#10003;'),kpi('Alerts','10:30 only',pill('Scoped','ok'),'&#9636;')],'',settingsHtml,sidePanel('Settings Notes',[['DRISHTI','Not controlled here','warn'],['Telegram','10:30 scoped'],['Exports','Broker ledger pending','warn'],['Secrets','Hidden','ok']]));return;
   }
   const genericTitle=titleCase(PAGE);
   const subtitles={health:'Monitor service health, broker connectivity, feed freshness, and execution safety.',alerts:'Review alert delivery, failed notifications, and channel status.',audit:'Review user actions, emergency-stop checks, config changes, and account events.','admin-config':'Manage users, roles, access, token/account status, and admin controls.','bot-config':'Control bot state, safety checklist, token/feed/sync controls, and control history.',settings:'Configure TradeOps preferences, display options, alerts, and audit notes.'};
@@ -8122,7 +8323,7 @@ function wireWorkspaceControls(){
     const next=card.querySelector('.ws-next');
     function rowDateKey(html){const m=String(html||'').match(/(20\d{2}-\d{2}-\d{2})|(\d{1,2}\s+[A-Za-z]{3,9}\s+20\d{2})/);if(!m)return '';const raw=m[0];if(/^\d{4}-/.test(raw))return raw.slice(0,10);const d=new Date(raw);return isNaN(d.getTime())?'':d.toISOString().slice(0,10)}
     function addDaysKey(key,days){const d=new Date(key+'T00:00:00Z');if(isNaN(d.getTime()))return '';d.setUTCDate(d.getUTCDate()+days);return d.toISOString().slice(0,10)}
-    function filtered(){const q=String(card._query||'').toLowerCase().trim();const terms=Array.isArray(card._terms)?card._terms.map(function(x){return String(x||'').toLowerCase().trim()}).filter(Boolean):[];const all=card._allRows.slice();let latest='';all.forEach(function(html){const k=rowDateKey(html);if(k&&(!latest||k>latest))latest=k});const today=tradeOpsSessionDate||latest||new Date().toISOString().slice(0,10);const weekStart=addDaysKey(today,-7);return all.filter(function(html){const low=html.toLowerCase();if(q&&!low.includes(q))return false;if(terms.some(function(t){return !low.includes(t)}))return false;const range=card._range||'today';const k=rowDateKey(html);if(!k)return range==='today'||range==='latest-session';if(range==='latest-session')return latest?k===latest:k===today;if(range==='today')return k===today;if(range==='weekly')return k>=weekStart&&k<=today;if(range==='monthly')return k.slice(0,7)===today.slice(0,7);return true})}
+    function filtered(){const q=String(card._query||'').toLowerCase().trim();const terms=Array.isArray(card._terms)?card._terms.map(function(x){return String(x||'').toLowerCase().trim()}).filter(Boolean):[];const all=card._allRows.slice();let latest='';all.forEach(function(html){const k=rowDateKey(html);if(k&&(!latest||k>latest))latest=k});const today=new Date().toLocaleDateString('en-CA',{timeZone:'Asia/Kolkata'});const weekStart=addDaysKey(today,-7);return all.filter(function(html){const low=html.toLowerCase();if(q&&!low.includes(q))return false;if(terms.some(function(t){return !low.includes(t)}))return false;const range=card._range||'today';const k=rowDateKey(html);if(!k)return false;if(range==='latest-session')return latest?k===latest:false;if(range==='today')return k===today;if(range==='weekly')return k>=weekStart&&k<=today;if(range==='monthly')return k.slice(0,7)===today.slice(0,7);return true})}
     function draw(){const rows=filtered();const total=rows.length;const pages=Math.max(1,Math.ceil(total/pageSize));card._page=Math.min(Math.max(1,card._page||1),pages);const start=(card._page-1)*pageSize;tbody.innerHTML=rows.slice(start,start+pageSize).join('');if(pageInfo)pageInfo.textContent='Page '+card._page+' of '+pages;if(totalEl)totalEl.textContent='Showing '+(total?start+1:0)+'-'+Math.min(start+pageSize,total)+' of '+total;if(prev)prev.disabled=card._page<=1;if(next)next.disabled=card._page>=pages;wireOrderRows()}
     if(prev&&!prev._wired){prev._wired=true;prev.onclick=function(){card._page=(card._page||1)-1;draw()}}
     if(next&&!next._wired){next._wired=true;next.onclick=function(){card._page=(card._page||1)+1;draw()}}
