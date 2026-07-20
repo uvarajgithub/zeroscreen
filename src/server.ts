@@ -7223,6 +7223,15 @@ body.tradeops-collapsed .help,body.tradeops-collapsed .collapse-btn{justify-cont
 .pnl,.chart,.account{height:100%!important;max-height:none!important}
 .pnl .card-b,.chart .card-b,.account .card-b{height:calc(100% - 42px)!important}
 .logs{height:116px!important}
+.execution-gate .card-b{display:flex!important;flex-direction:column!important;gap:10px!important}
+.execution-gate .gate-head{margin-bottom:0!important;align-items:center!important}
+.execution-gate .mini-grid{grid-template-columns:repeat(5,minmax(0,1fr))!important;gap:8px!important;margin-top:0!important}
+.execution-gate .mini-stat{min-width:0!important;min-height:66px!important;padding:10px!important}
+.execution-gate .mini-stat label{font-size:11px!important;line-height:1.15!important}
+.execution-gate .mini-stat b{font-size:12.5px!important;line-height:1.2!important;word-break:break-word!important}
+.execution-gate .checks-row{display:none!important}
+.flow-step:not(.blocked) .flow-ok:before{content:"OK"!important}
+@media(max-width:1366px){.execution-gate .mini-grid{grid-template-columns:repeat(3,minmax(0,1fr))!important}.execution-gate .mini-stat{min-height:58px!important}}
 .dashboard.hidden{display:none!important}
 .detail.active{display:block!important}
 .detail:not(.active){display:none!important}
@@ -7404,7 +7413,7 @@ function render(d){
   set('brokerLabel',brokerValidation.ok?'Broker Verified':'Broker Issue');
   document.getElementById('botDot').className='dot '+(botOnline?'ok':'bad');
   set('botLabel',botOnline?'Bot Online':'Bot Offline');
-  set('modeChip',((d.strategy&&d.strategy.label)||'10:30 Futures')+' · '+((d.strategy&&d.strategy.mode)||'UNKNOWN'));
+  set('modeChip',((d.strategy&&d.strategy.mode)||'UNKNOWN'));
 
   set('flowBrokerTitle',brokerValidation.ok?'Broker Verified':'Broker Issue');
   set('flowBrokerSub',brokerValidation.source||'Kite profile check');
@@ -7497,8 +7506,8 @@ function render(d){
   const shortfall=Number(d.execution.shortfall||0);
   set('shortfall',idle?'--':(synced?(shortfall?rs(shortfall):rs(0)):'Not synced'));
   set('gateReason',idle?'Monitoring latest session':(d.execution.blockReason||'All checks passed'));
-  const checks=d.execution.checks||{};
-  document.getElementById('checksRow').innerHTML=(idle?['token','broker','feed','account']:['token','broker','feed','account','margin']).map(k=>'<span class="'+(checks[k]?'ok':'bad')+'">'+(checks[k]?'OK':'X')+' '+(idle&&k==='margin'?'Not required':k.charAt(0).toUpperCase()+k.slice(1))+'</span>').join('');
+  const checksRow=document.getElementById('checksRow');
+  if(checksRow){checksRow.innerHTML='';checksRow.style.display='none';}
 
   const orderRows=tradeList;
   const orderText=o=>String((o&&o.status)||'')+' '+String((o&&o.note)||'')+' '+String((o&&o.reason)||'');

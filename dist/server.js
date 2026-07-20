@@ -7867,6 +7867,15 @@ html,body{width:100%!important;max-width:100%!important;overflow-x:hidden!import
 .ws-grid,.account-layout,.settings-grid{grid-template-columns:1fr!important}.ws-summary,.account-summary,.candle-log-page .ws-summary{grid-template-columns:1fr!important}.filter-bar{display:grid!important;grid-template-columns:1fr 1fr!important}.filter-bar input,.filter-bar select{grid-column:1/-1!important;min-width:0!important;width:100%!important}
 .ws-table-wrap{overflow-x:auto!important;max-width:100%!important}.ws-table{min-width:680px!important}.server-log-full .console.full .logs{height:360px!important}
 }
+.execution-gate .card-b{display:flex!important;flex-direction:column!important;gap:10px!important}
+.execution-gate .gate-head{margin-bottom:0!important;align-items:center!important}
+.execution-gate .mini-grid{grid-template-columns:repeat(5,minmax(0,1fr))!important;gap:8px!important;margin-top:0!important}
+.execution-gate .mini-stat{min-width:0!important;min-height:66px!important;padding:10px!important}
+.execution-gate .mini-stat label{font-size:11px!important;line-height:1.15!important}
+.execution-gate .mini-stat b{font-size:12.5px!important;line-height:1.2!important;word-break:break-word!important}
+.execution-gate .checks-row{display:none!important}
+.flow-step:not(.blocked) .flow-ok:before{content:"OK"!important}
+@media(max-width:1366px){.execution-gate .mini-grid{grid-template-columns:repeat(3,minmax(0,1fr))!important}.execution-gate .mini-stat{min-height:58px!important}}
 .dashboard.hidden{display:none!important}
 .detail.active{display:block!important}
 .detail:not(.active){display:none!important}
@@ -8176,7 +8185,7 @@ function render(d){
   document.getElementById('botDot').className='dot '+(botOnline?'ok':'bad');
   set('botLabel',botOnline?'Bot Online':'Bot Offline');
   const modeValue=String((d.strategy&&d.strategy.mode)||'UNKNOWN').toUpperCase();
-  set('modeChip',((d.strategy&&d.strategy.label)||'10:30 Futures')+' · '+modeValue);
+  set('modeChip',modeValue);
   const modeChipEl=document.querySelector('.mode-chip');
   if(modeChipEl){modeChipEl.classList.toggle('live-mode',modeValue==='LIVE');modeChipEl.classList.toggle('shadow-mode',modeValue!=='LIVE');modeChipEl.title='TradeOps mode: '+modeValue;}
 
@@ -8188,18 +8197,15 @@ function render(d){
   set('flowBotSub',botValidation.heartbeatAgeSec==null?'No heartbeat':'Heartbeat '+ago(botValidation.heartbeatAgeSec));
   set('flowFeedTitle',feedValidation.ok?'Feed Fresh':'Feed Waiting');
   set('flowFeedSub',feedValidation.ok?'Last candle '+(feedValidation.lastCandle||'available'):'No candles recorded');
-  const execChecks=d.execution.checks||{};
-  const execPrereqOk=!!(execChecks.token&&execChecks.broker&&execChecks.feed&&execChecks.account);
-  const execWaiting=d.execution.status==='Idle'&&!execPrereqOk;
-  set('flowExecTitle',execWaiting?'Execution Waiting':(d.execution.status==='Idle'?'Execution Idle':(d.execution.ready?'Execution Ready':'Execution Blocked')));
-  set('flowExecSub',execWaiting?'Fix broker/token/feed first':(d.execution.status==='Idle'?'No pending order':(d.execution.ready?'All systems go':(d.execution.blockReason||'Check status'))));
+  set('flowExecTitle',d.execution.status==='Idle'?'Execution Idle':(d.execution.ready?'Execution Ready':'Execution Blocked'));
+  set('flowExecSub',d.execution.status==='Idle'?'No pending order':(d.execution.ready?'All systems go':(d.execution.blockReason||'Check status')));
   const execFlow=document.getElementById('flowExecTitle')?.closest('.flow-step');
   if(execFlow)execFlow.classList.toggle('blocked',d.execution.status==='Blocked');
   markFlow('flowBrokerBadge',!!brokerValidation.ok);
   markFlow('flowTokenBadge',!!tokenValidation.ok);
   markFlow('flowBotBadge',!!botValidation.ok);
   markFlow('flowFeedBadge',!!feedValidation.ok);
-  markFlow('flowExecBadge',!!d.execution.ready);
+  markFlow('flowExecBadge',d.execution.status==='Idle'||!!d.execution.ready);
 
   const net=d.pnl.net;
   const openActive=d.bot.state==='In Trade'||Number(d.pnl.unrealized||0)!==0;
@@ -8283,8 +8289,8 @@ function render(d){
   set('shortfall',synced?(shortfall?rs(shortfall):rs(0)):'Not synced');
   set('gateReason',idle?('Next 10:30 futures margin'+(d.execution.marginSymbol?' for '+d.execution.marginSymbol:'')+' · '+(d.execution.marginSource||'checking')):(d.execution.blockReason||'All checks passed'));
   setupCapitalCalc();renderCapitalCalc();
-  const checks=d.execution.checks||{};
-  document.getElementById('checksRow').innerHTML=(idle?['token','broker','feed','account']:['token','broker','feed','account','margin']).map(k=>'<span class="'+(checks[k]?'ok':'bad')+'">'+(checks[k]?'OK':'X')+' '+(idle&&k==='margin'?'Not required':k.charAt(0).toUpperCase()+k.slice(1))+'</span>').join('');
+  const checksRow=document.getElementById('checksRow');
+  if(checksRow){checksRow.innerHTML='';checksRow.style.display='none';}
 
   const orderRows=tradeList;
   const orderText=o=>String((o&&o.status)||'')+' '+String((o&&o.note)||'')+' '+String((o&&o.reason)||'');
