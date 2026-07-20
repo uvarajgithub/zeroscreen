@@ -6182,6 +6182,19 @@ app.get("/api/bot/status", async (_req: Request, res: Response) => {
 
   res.json({
     timestamp: new Date().toLocaleString("en-IN", { timeZone: "Asia/Kolkata" }),
+    validations: {
+      token: {
+        ok: tokenOK,
+        label: tokenOK ? "Token valid" : "Token invalid or unavailable",
+        source: "Kite /user/profile HTTP 200",
+      },
+      bot: {
+        ok: isAlive,
+        label: isAlive ? "Heartbeat fresh" : "Heartbeat stale or missing",
+        source: "bot-heartbeat.json",
+        heartbeatAgeSec: hb?.at ? Math.max(0, Math.round((Date.now() - new Date(hb.at).getTime()) / 1000)) : null,
+      },
+    },
     activeState: state,
     heartbeat: hb,
     botStatus,
@@ -6215,6 +6228,8 @@ app.post("/api/bot/action", requireAdmin, (req: Request, res: Response) => {
 });
 
 type TradeOpsKiteCreds = { apiKey: string; token: string };
+const TRADEOPS_BOT_DIR = "/home/ubuntu/trading-bot";
+const TRADEOPS_BOT_ENV = `${TRADEOPS_BOT_DIR}/.env`;
 
 async function tradeOpsReadKiteCreds(): Promise<TradeOpsKiteCreds> {
   const settingsToken = await getSetting("kite_access_token").catch(() => "");
@@ -6231,6 +6246,55 @@ async function tradeOpsReadKiteCreds(): Promise<TradeOpsKiteCreds> {
   } catch {
     return { apiKey: "", token: settingsToken || "" };
   }
+}
+
+function tradeOpsReadBotEnv() {
+  try {
+    const raw = fs.readFileSync(TRADEOPS_BOT_ENV, "utf8");
+    const map: Record<string, string> = {};
+    raw.split(/\r?\n/).forEach(line => {
+      const m = line.match(/^([A-Z0-9_]+)=(.*)$/);
+      if (m) map[m[1]] = m[2];
+    });
+    return { raw, map };
+  } catch {
+    return { raw: "", map: {} as Record<string, string> };
+  }
+}
+
+function tradeOpsWriteBotEnvValue(key: string, value: string) {
+  const current = tradeOpsReadBotEnv();
+  const lines = current.raw ? current.raw.split(/\r?\n/) : [];
+  let found = false;
+  const next = lines.map(line => {
+    if (line.startsWith(`${key}=`)) {
+      found = true;
+      return `${key}=${value}`;
+    }
+    return line;
+  }).filter((line, idx, arr) => !(idx === arr.length - 1 && line === ""));
+  if (!found) next.push(`${key}=${value}`);
+  fs.writeFileSync(TRADEOPS_BOT_ENV, next.join("\n") + "\n");
+}
+
+function tradeOpsLiveSafety(hb: any) {
+  const issues: string[] = [];
+  const env = tradeOpsReadBotEnv().map;
+  const mode = String(hb?.tt1030FuturesMode || env.TT1030_FUTURES_MODE || "SHADOW").toUpperCase();
+  if (String(hb?.tt1030Strategy || "").toUpperCase() !== "TEN_THIRTY_INDEX_SHADOW") {
+    issues.push("10:30 futures heartbeat is not confirmed.");
+  }
+  if (hb?.tt1030AuditStatus === "BLOCKED") {
+    issues.push("10:30 audit status is BLOCKED.");
+  }
+  if (hb?.tt1030InTrade) {
+    issues.push("10:30 strategy is currently in a trade; mode changes are blocked while a position is active.");
+  }
+  return {
+    mode,
+    liveAllowed: issues.length === 0,
+    issues,
+  };
 }
 
 async function tradeOpsKiteJSON(pathname: string, init: RequestInit = {}) {
@@ -6371,6 +6435,32 @@ function tradeOpsHeartbeat1030Rows(hb: any, sessionDate: string) {
   return rows;
 }
 
+function tradeOpsState1030Rows(state1030: any, sessionDate: string) {
+  const log = Array.isArray(state1030?.log) ? state1030.log : [];
+  return log.map((x: any, idx: number) => {
+    const time = String(x?.time || "15:15").slice(0, 5);
+    const isExit = x?.exit != null || x?.pnlRs != null || x?.pts != null;
+    return {
+      date: `${sessionDate}T${time.padStart(5, "0")}:00+05:30`,
+      type: isExit ? "TEN_THIRTY_INDEX_EVENT_EXIT" : "TEN_THIRTY_INDEX_EVENT_ENTRY",
+      direction: String(x?.dir || "").toUpperCase(),
+      symbol: "BANKNIFTY_INDEX",
+      entryPrice: tradeOpsNum(x?.entry),
+      exitPrice: isExit ? tradeOpsNum(x?.exit) : 0,
+      premiumEntry: tradeOpsNum(x?.premIn),
+      premiumExit: isExit ? tradeOpsNum(x?.premOut) : 0,
+      pnl: isExit ? tradeOpsNum(x?.pts) : 0,
+      pnlRs: isExit ? tradeOpsNum(x?.pnlRs) : 0,
+      reasonEntry: x?.reason || (isExit ? "ten_thirty_exit" : "ten_thirty_entry"),
+      reasonExit: isExit ? (x?.reason || "ten_thirty_exit") : "",
+      qty: tradeOpsNum(state1030?.qty ?? 30),
+      status: isExit ? "Filled" : "Entry",
+      source: "tt1030_state_log",
+      eventIndex: idx + 1,
+    };
+  });
+}
+
 function tradeOpsSpark(series: number[]) {
   const clean = series.filter(n => Number.isFinite(n)).slice(-80);
   if (clean.length < 2) return "";
@@ -6393,6 +6483,8 @@ function tradeOpsReadRecentLogFiles() {
     try {
       const lines = fs.readFileSync(file, "utf8").split(/\r?\n/).filter(Boolean).slice(-12);
       for (const line of lines) {
+        if (/requireStack|at Module|node:internal|ProcessContainerFork|^\s*at\s/i.test(line)) continue;
+        if (/Cannot find module '.\/command-center\/migrate-production-session'|MODULE_NOT_FOUND/i.test(line)) continue;
         const level = /error|failed|reject/i.test(line) ? "ERROR" : /warn|token|margin/i.test(line) ? "WARN" : "INFO";
         rows.push({ time: "", level, message: tradeOpsSanitizeLog(line) });
       }
@@ -6401,47 +6493,115 @@ function tradeOpsReadRecentLogFiles() {
   return rows.slice(-18);
 }
 
-async function buildTradeOpsStatus() {
+function tradeOpsTodayCandleLog(hb: any, today = getTodayIST()) {
+  const hbAt = hb?.at ? new Date(hb.at).getTime() : 0;
+  const heartbeatSession = hbAt ? new Date(hb.at).toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" }) : "";
+  const heartbeatIsToday = heartbeatSession === today;
+  const raw = Array.isArray(hb?.tt1030CandleLog) ? hb.tt1030CandleLog : [];
+  return raw.filter((c: any) => {
+    const rawTime = c?.date || c?.at || c?.time;
+    if (!rawTime) return heartbeatIsToday;
+    const parsed = new Date(rawTime);
+    if (Number.isFinite(parsed.getTime())) {
+      return parsed.toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" }) === today;
+    }
+    return heartbeatIsToday;
+  });
+}
+
+function buildTradeOpsLogPreview() {
   const hb = readBotJSON("bot-heartbeat.json", {}) || {};
-  const state = readBotJSON("trade-state.json", {}) || {};
-  const rawTrades: any[] = readBotJSON("trades.json", []) || [];
+  const today = getTodayIST();
+  const hbAt = hb?.at ? new Date(hb.at).getTime() : 0;
+  const heartbeatAgeSec = hbAt ? Math.max(0, Math.round((Date.now() - hbAt) / 1000)) : null;
+  const isAlive = hbAt ? heartbeatAgeSec! < 180 : false;
+  const todayCandles = tradeOpsTodayCandleLog(hb, today);
+  const liveNet = tradeOpsMaybeNum(hb?.tt1030PnL);
   const auditTail = (() => {
     try {
       return fs.readFileSync(path.join(__dirname, "..", "tradeops-audit.jsonl"), "utf8")
         .trim().split("\n").slice(-8).filter(Boolean).map(line => {
           try { return JSON.parse(line); } catch { return { at: "", message: line }; }
-        });
+        }).filter((x: any) => tradeOpsDateKey(x?.at) === today);
     } catch { return []; }
   })();
+  const heartbeatLogRows = (hb?.logs || hb?.serverLogs || []).slice(-20).filter((x: any) => {
+    const raw = x?.time || x?.at;
+    return raw ? tradeOpsDateKey(raw) === today : false;
+  }).map((x: any) => {
+    const message = tradeOpsSanitizeLog(x?.message || x);
+    const rawLevel = String(x?.level || "INFO").toUpperCase();
+    const isError = /Error:|Exception|ETIMEDOUT|failed|rejected/i.test(message);
+    return { time: tradeOpsTime(x?.time || x?.at), level: (isError ? "ERROR" : rawLevel).slice(0, 8), message };
+  });
+  const candleLines = todayCandles.slice(-5).reverse().map((c: any) => {
+    const close = tradeOpsMaybeNum(c?.close ?? c?.c);
+    const suffix = close === null ? "" : ` close ${close}`;
+    return {
+      time: tradeOpsTime(c?.time || c?.at || c?.date || hb?.at),
+      level: "INFO",
+      message: tradeOpsSanitizeLog(c?.note || c?.reason || c?.status || `Today candle update${suffix}`),
+    };
+  });
+  const operationalLogs = [
+    { time: tradeOpsTime(new Date().toISOString()), level: "INFO", message: `Log poll tick ${new Date().toLocaleTimeString("en-IN", { hour12: false, timeZone: "Asia/Kolkata" })}` },
+    { time: tradeOpsTime(new Date().toISOString()), level: isAlive ? "INFO" : "WARN", message: `Bot heartbeat ${isAlive ? "fresh" : "stale"} (${heartbeatAgeSec ?? "no"}s)` },
+    { time: tradeOpsTime(new Date().toISOString()), level: todayCandles.length ? "INFO" : "WARN", message: `Candle feed today ${todayCandles.length} candles` },
+    { time: tradeOpsTime(new Date().toISOString()), level: liveNet === null || liveNet >= 0 ? "INFO" : "WARN", message: `Live P&L ${liveNet === null ? "unavailable" : liveNet.toFixed(2)} from bot heartbeat` },
+  ];
+  return [
+    ...heartbeatLogRows,
+    ...auditTail.map((x: any) => ({ time: tradeOpsTime(x.at), level: x.ok === false ? "WARN" : "INFO", message: tradeOpsSanitizeLog(x.message || x.action || "Audit event") })),
+    ...candleLines,
+    ...operationalLogs,
+  ].slice(-30).reverse();
+}
 
+async function buildTradeOpsStatus() {
+  const hb = readBotJSON("bot-heartbeat.json", {}) || {};
+  const state = readBotJSON("trade-state.json", {}) || {};
+  const tt1030State = readBotJSON("tt1030-state.json", {}) || {};
+  const tt1030CandleFile = readBotJSON("tt1030-candle-log.json", {}) || {};
+  const rawTrades: any[] = readBotJSON("trades.json", []) || [];
   const hbAt = hb?.at ? new Date(hb.at).getTime() : 0;
   const heartbeatAgeSec = hbAt ? Math.max(0, Math.round((Date.now() - hbAt) / 1000)) : null;
   const isAlive = hbAt ? heartbeatAgeSec! < 180 : false;
   const openTrade = hb?.tt1030InTrade === true;
   const today = getTodayIST();
   const heartbeatTrades = tradeOpsHeartbeat1030Rows(hb, today);
+  const persistedEventRows = tradeOpsDateKey(tt1030State?.date || today) === today ? tradeOpsState1030Rows(tt1030State, today) : [];
+  const persistedEventKeys = new Set(persistedEventRows.map((t: any) => `${tradeOpsDateKey(t?.date)}|${String(t?.direction || "").toUpperCase()}|${tradeOpsPnl(t)}`));
+  const rawTenThirtyTrades = rawTrades
+    .filter(tradeOpsIsTenThirtyFuturesTrade)
+    .filter((t: any) => {
+      if (!persistedEventRows.length) return true;
+      const key = `${tradeOpsDateKey(t?.date || t?.exitTime || t?.entryTime)}|${String(t?.direction || t?.side || "").toUpperCase()}|${tradeOpsPnl(t)}`;
+      return !persistedEventKeys.has(key);
+    });
   const strategyTradeMap = new Map<string, any>();
-  for (const t of [...heartbeatTrades, ...rawTrades.filter(tradeOpsIsTenThirtyFuturesTrade)]) {
+  for (const t of [...heartbeatTrades, ...persistedEventRows, ...rawTenThirtyTrades]) {
     const key = `${tradeOpsDateKey(t?.date || t?.exitTime || t?.entryTime)}|${tradeOpsSanitizeSymbol(t?.symbol || t?.tradeSymbol || "")}|${String(t?.direction || t?.side || "").toUpperCase()}|${tradeOpsPnl(t)}`;
     strategyTradeMap.set(key, t);
   }
   const strategyTrades = Array.from(strategyTradeMap.values()).sort((a: any, b: any) => new Date(a?.date || a?.exitTime || a?.entryTime || 0).getTime() - new Date(b?.date || b?.exitTime || b?.entryTime || 0).getTime());
-  const todayClosed = strategyTrades.filter(t => (t?.date || "").startsWith(today) && tradeOpsNum(t?.exitPrice) > 0);
-  const latestSession = strategyTrades
-    .map(t => t?.date || t?.exitTime || t?.entryTime)
-    .filter(Boolean)
-    .map(v => tradeOpsDateKey(v))
-    .sort()
-    .pop() || today;
-  const displaySession = todayClosed.length ? today : latestSession;
+  const displaySession = today;
   const displayTrades = strategyTrades.filter(t => tradeOpsDateKey(t?.date || t?.exitTime || t?.entryTime) === displaySession);
   const displayClosed = displayTrades.filter(t => tradeOpsNum(t?.exitPrice) > 0 || tradeOpsNum(t?.premiumExit) > 0);
   const todayPnl = displayClosed.reduce((sum, t) => sum + tradeOpsPnl(t), 0);
-  const live1030Net = tradeOpsNum(hb?.tt1030PnL);
-  const live1030Closed = tradeOpsNum(hb?.tt1030ClosedPnL);
+  const persistedDayRs = tradeOpsDateKey(tt1030State?.date || today) === today ? tradeOpsMaybeNum(tt1030State?.dayRs) : null;
+  const persistedTrades = tradeOpsDateKey(tt1030State?.date || today) === today ? tradeOpsMaybeNum(tt1030State?.trades) : null;
+  const heartbeatHas1030Session = (Array.isArray(hb?.tt1030TradeLog) && hb.tt1030TradeLog.length > 0) || tradeOpsNum(hb?.tt1030Trades) > 0;
+  const liveNetCandidate = heartbeatHas1030Session ? tradeOpsMaybeNum(hb?.tt1030PnL) : persistedDayRs;
+  const liveClosedCandidate = heartbeatHas1030Session ? tradeOpsMaybeNum(hb?.tt1030ClosedPnL) : persistedDayRs;
+  const liveUnrealizedCandidate = tradeOpsMaybeNum(hb?.tt1030UnrealizedPnL);
+  const live1030Closed = liveClosedCandidate ?? todayPnl;
+  const live1030Net = liveNetCandidate ?? live1030Closed + (liveUnrealizedCandidate ?? 0);
   const realized = displaySession === today ? live1030Closed : todayPnl;
-  const unrealized = displaySession === today && openTrade ? live1030Net - live1030Closed : 0;
+  const unrealized = displaySession === today ? (liveUnrealizedCandidate ?? (openTrade ? live1030Net - live1030Closed : 0)) : 0;
   const netPnl = displaySession === today ? live1030Net : todayPnl;
+  const pnlSource = displaySession === today
+    ? (liveNetCandidate !== null ? "10:30 futures heartbeat" : liveClosedCandidate !== null ? "10:30 futures closed P&L" : "10:30 futures trade history")
+    : "latest completed session";
   const pnls = displayClosed.map(t => tradeOpsPnl(t)).reduce((arr: number[], n) => {
     arr.push((arr[arr.length - 1] || 0) + n);
     return arr;
@@ -6520,19 +6680,95 @@ async function buildTradeOpsStatus() {
     entry: tradeOpsNum(t?.premiumEntry ?? t?.entryPrice),
     exit: tradeOpsNum(t?.premiumExit ?? t?.exitPrice),
     pnl: tradeOpsPnl(t),
-    status: tradeOpsNum(t?.exitPrice) > 0 || tradeOpsNum(t?.premiumExit) > 0 ? "Filled" : "Pending",
+    status: t?.status || (tradeOpsNum(t?.exitPrice) > 0 || tradeOpsNum(t?.premiumExit) > 0 ? "Filled" : "Pending"),
     note: tradeOpsSanitizeLog(t?.reasonExit || t?.status || t?.source || ""),
     source: t?.source || t?.type || "trades_json",
   }));
 
-  const hb1030Log = Array.isArray(hb?.tt1030TradeLog) ? hb.tt1030TradeLog : [];
-  const hb1030Entry = [...hb1030Log].reverse().find((x: any) => x?.entry != null && x?.exit == null) || hb1030Log.find((x: any) => x?.entry != null) || {};
-  const hb1030Exit = [...hb1030Log].reverse().find((x: any) => x?.exit != null || x?.pnlRs != null) || {};
-  const candleEntryPrice = tradeOpsMaybeNum(hb1030Entry?.entry ?? hb?.tt1030Entry);
-  const candleEntryTime = String(hb1030Entry?.time || "").slice(0, 5);
-  const candleDir = String(hb1030Entry?.dir || hb1030Exit?.dir || hb?.tt1030Dir || "").toUpperCase();
   const candleQty = tradeOpsNum(hb?.tt1030Qty ?? hb?.qty ?? 30);
-  const candleLogSource = hb?.tt1030CandleLog || [];
+  const stateEvents = (Array.isArray(tt1030State?.log) ? tt1030State.log : []).map((x: any) => ({
+    ...x,
+    hhmm: String(x?.time || "").slice(0, 5),
+    minute: (() => {
+      const m = String(x?.time || "").match(/^(\d{1,2}):(\d{2})/);
+      return m ? Number(m[1]) * 60 + Number(m[2]) : -1;
+    })(),
+    isExit: x?.exit != null || x?.pnlRs != null || x?.pts != null,
+  })).filter((x: any) => x.minute >= 0).sort((a: any, b: any) => a.minute - b.minute);
+  function tradeOps1030LockedProfitPts(maxFavPts: number | null, trailAfterPts = 300) {
+    if (!(trailAfterPts > 0) || maxFavPts === null || !(maxFavPts >= trailAfterPts)) return 0;
+    return trailAfterPts;
+  }
+  let candleLogSourceForState: any[] = [];
+  function candleTradeState(c: any, hhmm: string, close: number | null, sl: any) {
+    const m = String(hhmm || "").match(/^(\d{1,2}):(\d{2})/);
+    if (!m) return null;
+    const candleMinute = Number(m[1]) * 60 + Number(m[2]);
+    let active: any = null;
+    let exitAtClose: any = null;
+    for (const ev of stateEvents) {
+      if (ev.minute > candleMinute) break;
+      if (ev.isExit) {
+        if (ev.minute === candleMinute) exitAtClose = ev;
+        active = null;
+      } else {
+        active = ev;
+      }
+    }
+    const ev = exitAtClose || active;
+    if (!ev) return null;
+    const entry = tradeOpsMaybeNum(ev.entry);
+    const dir = String(ev.dir || "").toUpperCase();
+    const eventExit = tradeOpsMaybeNum(ev.exit);
+    let high = tradeOpsMaybeNum(c?.high ?? c?.h);
+    let low = tradeOpsMaybeNum(c?.low ?? c?.l);
+    for (const prior of candleLogSourceForState) {
+      const priorTime = String(prior?.time || prior?.at || prior?.date || "").match(/(\d{1,2}):(\d{2})/);
+      if (!priorTime) continue;
+      const priorMinute = Number(priorTime[1]) * 60 + Number(priorTime[2]);
+      if (priorMinute < ev.minute || priorMinute > candleMinute) continue;
+      const ph = tradeOpsMaybeNum(prior?.high ?? prior?.h);
+      const pl = tradeOpsMaybeNum(prior?.low ?? prior?.l);
+      if (ph !== null) high = high === null ? ph : Math.max(high, ph);
+      if (pl !== null) low = low === null ? pl : Math.min(low, pl);
+    }
+    const rawSl = tradeOpsMaybeNum(sl ?? ev.sl);
+    const maxFavPts = entry === null ? null
+      : dir === "PE" || dir === "SHORT" || dir === "SELL"
+        ? (low === null ? null : entry - low)
+        : (high === null ? null : high - entry);
+    const trendTrailEnabled = /300 pts|trail/i.test(String(c?.note || c?.reason || c?.status || ev?.reason || ""));
+    const protectedPts = tradeOps1030LockedProfitPts(maxFavPts, 300);
+    const protectedSl = trendTrailEnabled && protectedPts > 0 && entry !== null
+      ? (dir === "PE" || dir === "SHORT" || dir === "SELL" ? entry - protectedPts : entry + protectedPts)
+      : null;
+    const effectiveSl = protectedSl === null ? rawSl
+      : rawSl === null ? protectedSl
+        : (dir === "PE" || dir === "SHORT" || dir === "SELL" ? Math.min(rawSl, protectedSl) : Math.max(rawSl, protectedSl));
+    const price = exitAtClose && eventExit !== null ? eventExit : close;
+    const eventPnlPts = exitAtClose ? tradeOpsMaybeNum(ev.pts) : null;
+    const closePnlPts = entry !== null && close !== null ? (dir === "PE" || dir === "SHORT" || dir === "SELL" ? entry - close : close - entry) : null;
+    const pnlPts = eventPnlPts !== null ? eventPnlPts : closePnlPts;
+    const eventPnlRs = exitAtClose ? tradeOpsMaybeNum(ev.pnlRs) : null;
+    return {
+      entry,
+      dir: dir || "--",
+      sl: effectiveSl,
+      rawSl,
+      protectedSl,
+      closePnlPts,
+      closePnlRs: closePnlPts === null ? null : Math.round(closePnlPts * candleQty),
+      pnlPts,
+      pnlRs: eventPnlRs !== null ? eventPnlRs : (pnlPts === null ? null : Math.round(pnlPts * candleQty)),
+      protectedPts,
+    };
+  }
+  const persistedCandleLog = tradeOpsDateKey(tt1030CandleFile?.date || tt1030State?.date || today) === today && Array.isArray(tt1030CandleFile?.log)
+    ? tt1030CandleFile.log
+    : Array.isArray(tt1030State?.candleLog) ? tt1030State.candleLog : [];
+  const heartbeatCandleLog = tradeOpsTodayCandleLog(hb, today);
+  const candleLogSource = heartbeatCandleLog.length ? heartbeatCandleLog : persistedCandleLog;
+  candleLogSourceForState = candleLogSource;
   const candleLog = candleLogSource.slice(-50).reverse().map((c: any, idx: number) => {
     const closeOnly = c?.open == null && c?.high == null && c?.low == null && c?.close != null;
     const close = tradeOpsNum(c?.close ?? c?.c);
@@ -6545,14 +6781,14 @@ async function buildTradeOpsStatus() {
     } else {
       const hhmm = String(rawTime || "").match(/^(\d{1,2}):(\d{2})/);
       if (hhmm) {
-        chartTime = Math.floor(new Date(`${displaySession}T${hhmm[1].padStart(2, "0")}:${hhmm[2]}:00+05:30`).getTime() / 1000);
+        chartTime = Math.floor(new Date(`${today}T${hhmm[1].padStart(2, "0")}:${hhmm[2]}:00+05:30`).getTime() / 1000);
       }
     }
     const hhmmText = String(rawTime || timeText || "").match(/(\d{1,2}:\d{2})/)?.[1] || timeText;
-    const entryActive = candleEntryPrice !== null && (!candleEntryTime || String(hhmmText).slice(0, 5) >= candleEntryTime);
-    const pnlPts = entryActive && Number.isFinite(close)
-      ? (candleDir === "PE" || candleDir === "SHORT" || candleDir === "SELL" ? candleEntryPrice! - close : close - candleEntryPrice!)
-      : null;
+    const tradeAtClose = candleTradeState(c, String(hhmmText).slice(0, 5), close, c?.sl ?? hb?.tt1030SL);
+    const protectedNote = tradeAtClose?.protectedSl !== null && tradeAtClose?.protectedSl !== undefined
+      ? ` Protected +${tradeAtClose.protectedPts || 300} SL: ${tradeAtClose.protectedSl}.`
+      : "";
     return {
       idx: candleLogSource.length - idx,
       time: timeText,
@@ -6563,18 +6799,25 @@ async function buildTradeOpsStatus() {
       close,
       volume: tradeOpsNum(c?.volume ?? c?.v),
       closeOnly,
-      status: c?.status || (candleEntryTime && String(hhmmText).slice(0, 5) === candleEntryTime ? "Entry candle" : entryActive ? "In trade" : "Monitoring"),
-      entry: candleEntryPrice,
-      dir: candleDir || "--",
-      sl: tradeOpsMaybeNum(c?.sl ?? hb?.tt1030SL),
-      pnlPts,
-      pnlRs: pnlPts === null ? null : Math.round(pnlPts * candleQty),
-      note: tradeOpsSanitizeLog(c?.note || c?.reason || ""),
+      status: c?.status || (tradeAtClose ? "In trade" : "Monitoring"),
+      entry: tradeAtClose?.entry ?? null,
+      dir: tradeAtClose?.dir || "--",
+      sl: tradeAtClose?.sl ?? null,
+      pnlPts: tradeAtClose?.pnlPts ?? null,
+      pnlRs: tradeAtClose?.pnlRs ?? null,
+      closePnlPts: tradeAtClose?.closePnlPts ?? null,
+      closePnlRs: tradeAtClose?.closePnlRs ?? null,
+      protectedSl: tradeAtClose?.protectedSl ?? null,
+      note: tradeOpsSanitizeLog((c?.note || c?.reason || "") + protectedNote),
     };
   });
 
   const feedFresh = isAlive && candleLog.length > 0 && (heartbeatAgeSec === null || heartbeatAgeSec < 180);
   const pendingExecution = !!(hb?.tt1030PendingOrder || hb?.pendingOrder || state?.pendingOrder || state?.nextOrder);
+  const botEnv = tradeOpsReadBotEnv().map;
+  const envMode = String(botEnv.TT1030_FUTURES_MODE || "SHADOW").toUpperCase();
+  const telegramEnv = String(botEnv.TT1030_TELEGRAM_ENABLED || "OFF").toUpperCase();
+  const modeSafety = tradeOpsLiveSafety(hb);
   const executionChecks = {
     token: !!broker.tokenOK,
     broker: !!broker.ok,
@@ -6590,22 +6833,65 @@ async function buildTradeOpsStatus() {
       ? failedChecks.map((x) => x.charAt(0).toUpperCase() + x.slice(1)).join(", ") + " check failed"
       : "";
 
-  const serverLogs = [
-    ...auditTail.map((x: any) => ({ time: tradeOpsTime(x.at), level: x.ok === false ? "WARN" : "INFO", message: tradeOpsSanitizeLog(x.message || x.action || "Audit event") })),
-    ...(hb?.logs || hb?.serverLogs || []).slice(-20).map((x: any) => {
-      const message = tradeOpsSanitizeLog(x?.message || x);
-      const rawLevel = String(x?.level || "INFO").toUpperCase();
-      const isError = /MODULE_NOT_FOUND|Error:|Exception|ETIMEDOUT|failed|rejected/i.test(message);
-      const cleanMessage = /MODULE_NOT_FOUND/i.test(message) ? "Server module missing. Stack trace available in full logs." : message;
-      return { time: tradeOpsTime(x?.time || x?.at), level: (isError ? "ERROR" : rawLevel).slice(0, 8), message: cleanMessage };
-    }),
-    ...tradeOpsReadRecentLogFiles(),
-  ].slice(-30).reverse();
+  const serverLogs = buildTradeOpsLogPreview();
 
   return {
     ok: true,
     updatedAt: new Date().toISOString(),
+    validations: {
+      broker: {
+        ok: broker.ok,
+        label: broker.ok ? "Broker profile verified" : "Broker profile unavailable",
+        source: "Kite /user/profile",
+        checkedAt: new Date().toISOString(),
+        error: broker.error || "",
+      },
+      token: {
+        ok: broker.tokenOK,
+        label: broker.tokenOK ? "Token valid" : "Token invalid or unavailable",
+        source: "Kite /user/profile HTTP 200",
+        checkedAt: new Date().toISOString(),
+        error: broker.tokenOK ? "" : (broker.error || "Token could not validate against Kite profile"),
+      },
+      bot: {
+        ok: isAlive,
+        label: isAlive ? "Heartbeat fresh" : "Heartbeat stale or missing",
+        source: "bot-heartbeat.json",
+        heartbeatAgeSec,
+        lastHeartbeat: hbAt ? new Date(hb.at).toISOString() : null,
+      },
+      feed: {
+        ok: candleLog.length > 0,
+        label: candleLog.length > 0 ? "Candle feed available" : "No candle feed recorded",
+        source: "bot heartbeat candle log",
+        lastCandle: candleLog[0]?.time || null,
+        candleCount: candleLog.length,
+      },
+    },
     market: { open: tradeOpsMarketOpen(), label: tradeOpsMarketOpen() ? "Market Open" : "Market Closed", session: "09:15 - 15:30", latestSession: displaySession },
+    strategy: {
+      name: "TEN_THIRTY_INDEX_FUTURES",
+      label: "10:30 Futures",
+      mode: modeSafety.mode,
+      source: hb?.tt1030Strategy || "TEN_THIRTY_INDEX",
+      instrument: "BANKNIFTY futures/index shadow",
+    },
+    modeControl: {
+      scope: "TT1030_FUTURES",
+      runningMode: modeSafety.mode,
+      envMode,
+      restartRequired: !!hb?.tt1030FuturesMode && envMode !== String(hb.tt1030FuturesMode).toUpperCase(),
+      liveAllowed: modeSafety.liveAllowed,
+      safetyIssues: modeSafety.issues,
+    },
+    notificationControl: {
+      scope: "TT1030_FUTURES",
+      telegramEnabled: ["1", "TRUE", "YES", "ON", "ENABLED"].includes(telegramEnv),
+      telegramEnv,
+      tokenConfigured: !!botEnv.TELEGRAM_BOT_TOKEN,
+      chatConfigured: !!botEnv.TELEGRAM_CHAT_ID,
+      drishtiSuppressed: String(botEnv.DRISHTI_TELEGRAM_ENABLED || "OFF").toUpperCase() !== "ON",
+    },
     broker: {
       connected: broker.ok,
       tokenOK: broker.tokenOK,
@@ -6636,8 +6922,11 @@ async function buildTradeOpsStatus() {
       cashBalance,
       marginsSynced,
       exposurePct,
-      spark: tradeOpsSpark(pnls),
-    },
+            spark: tradeOpsSpark(pnls),
+            source: pnlSource,
+            refreshMs: 5000,
+            heartbeatAt: hbAt ? new Date(hb.at).toISOString() : null,
+        },
     execution: {
       ready: executionStatus === "Ready",
       status: executionStatus,
@@ -6665,6 +6954,98 @@ app.get("/api/tradeops/status", requireAdmin, async (_req: Request, res: Respons
     res.json(await buildTradeOpsStatus());
   } catch (e: any) {
     res.status(500).json({ ok: false, error: e?.message || "Status unavailable" });
+  }
+});
+
+app.get("/api/tradeops/logs", requireAdmin, async (_req: Request, res: Response) => {
+  try {
+    res.setHeader("Cache-Control", "no-store");
+    res.json({ ok: true, updatedAt: new Date().toISOString(), logs: buildTradeOpsLogPreview() });
+  } catch (e: any) {
+    res.status(500).json({ ok: false, error: e?.message || "Logs unavailable" });
+  }
+});
+
+app.post("/api/tradeops/mode", requireAdmin, async (req: Request, res: Response) => {
+  try {
+    const requested = String(req.body?.mode || "").toUpperCase();
+    const target = requested === "LIVE_SHADOW" ? "SHADOW" : requested;
+    const allowed = new Set(["SHADOW", "LIVE"]);
+    if (!allowed.has(target)) {
+      res.status(400).json({ ok: false, error: "Unsupported mode" });
+      return;
+    }
+    const hb = readBotJSON("bot-heartbeat.json", {}) || {};
+    const safety = tradeOpsLiveSafety(hb);
+    if (target === "LIVE") {
+      if (String(req.body?.phrase || "").trim() !== "ENABLE LIVE TRADING") {
+        res.status(400).json({ ok: false, error: "Confirmation phrase required: ENABLE LIVE TRADING", safety });
+        return;
+      }
+      if (req.body?.understandRealMoney !== true) {
+        res.status(400).json({ ok: false, error: "Real-money acknowledgement is required", safety });
+        return;
+      }
+      if (!safety.liveAllowed) {
+        res.status(409).json({ ok: false, error: "LIVE mode blocked by safety checks", safety });
+        return;
+      }
+    }
+    tradeOpsWriteBotEnvValue("TT1030_FUTURES_MODE", target);
+    const auditPath = path.join(__dirname, "..", "tradeops-audit.jsonl");
+    fs.appendFileSync(auditPath, JSON.stringify({
+      at: new Date().toISOString(),
+      action: "tt1030_futures_mode_change_requested",
+      scope: "TT1030_FUTURES",
+      mode: target,
+      restartBot: req.body?.restartBot === true,
+      safety,
+      user: (req.session as any)?.user?.email || "admin",
+    }) + "\n");
+    let restarted = false;
+    if (req.body?.restartBot === true) {
+      execSync("pm2 reload trading-bot", { cwd: TRADEOPS_BOT_DIR, stdio: "pipe" });
+      restarted = true;
+    }
+    res.json({
+      ok: true,
+      mode: target,
+      restarted,
+      message: restarted ? `10:30 futures mode saved as ${target} and bot reloaded` : `10:30 futures mode saved as ${target}. Bot reload required to take effect.`,
+      safety,
+    });
+  } catch (e: any) {
+    res.status(500).json({ ok: false, error: e?.message || "Mode change failed" });
+  }
+});
+
+app.post("/api/tradeops/notifications", requireAdmin, async (req: Request, res: Response) => {
+  try {
+    const enabled = req.body?.telegramEnabled === true || req.body?.enabled === true;
+    const value = enabled ? "ON" : "OFF";
+    tradeOpsWriteBotEnvValue("TT1030_TELEGRAM_ENABLED", value);
+    tradeOpsWriteBotEnvValue("DRISHTI_TELEGRAM_ENABLED", "OFF");
+    const botEnv = tradeOpsReadBotEnv().map;
+    const auditPath = path.join(__dirname, "..", "tradeops-audit.jsonl");
+    fs.appendFileSync(auditPath, JSON.stringify({
+      at: new Date().toISOString(),
+      action: "tt1030_telegram_notification_toggle",
+      scope: "TT1030_FUTURES",
+      telegramEnabled: enabled,
+      drishtiTelegram: "OFF",
+      tokenConfigured: !!botEnv.TELEGRAM_BOT_TOKEN,
+      chatConfigured: !!botEnv.TELEGRAM_CHAT_ID,
+      user: (req.session as any)?.user?.email || "admin",
+    }) + "\n");
+    res.json({
+      ok: true,
+      telegramEnabled: enabled,
+      message: `10:30 futures Telegram alerts ${enabled ? "enabled" : "disabled"}. Drishti Telegram stays off in TradeOps.`,
+      tokenConfigured: !!botEnv.TELEGRAM_BOT_TOKEN,
+      chatConfigured: !!botEnv.TELEGRAM_CHAT_ID,
+    });
+  } catch (e: any) {
+    res.status(500).json({ ok: false, error: e?.message || "Notification change failed" });
   }
 });
 
@@ -6730,6 +7111,7 @@ function tradeOpsInitialWorkspaceHTML(page: string, status: any) {
   const broker = status?.broker || {};
   const title = cap(page);
   const top = `<section class="workspace-page"><div class="workspace-head"><div><h1>${h(title)}</h1><p>Live TradeOps workspace data. Auto-refresh will update this page when the browser script is ready.</p></div><div class="workspace-actions"><a class="btn" href="/tradeops">Back to Dashboard</a><button class="btn" onclick="location.reload()">Reload</button></div></div>`;
+  if (!status) return `${top}<section class="ws-card"><div class="ws-card-h"><span>${h(title)}</span></div><div class="ws-card-b"><b>Loading ${h(title)}...</b><p class="muted">Fetching latest 10:30 futures records.</p></div></section></section>`;
   if (!ok) return `${top}<section class="ws-card"><div class="ws-card-h"><span>${h(title)}</span></div><div class="ws-card-b"><b class="bad">Status unavailable</b><p class="muted">${h(status?.error || "Could not load TradeOps status")}</p></div></section></section>`;
   const kpis = `<div class="ws-summary"><section class="ws-card ws-kpi"><div><label>Net P&L</label><b>${h(rs(Number(pnl.net || 0)))}</b></div></section><section class="ws-card ws-kpi"><div><label>Broker</label><b>${broker.connected ? "Connected" : "Not synced"}</b></div></section><section class="ws-card ws-kpi"><div><label>Token</label><b>${broker.tokenOK ? "Valid" : "Required"}</b></div></section><section class="ws-card ws-kpi"><div><label>Trades</label><b>${trades.length}</b></div></section><section class="ws-card ws-kpi"><div><label>Positions</label><b>${positions.length}</b></div></section></div>`;
   const simpleRows = (rows: any[], cols: string[], mapper: (x: any) => string) => `<section class="ws-card" style="grid-column:1/-1"><div class="ws-card-h"><span>${h(title)}</span><span class="muted">Server rendered</span></div><div class="ws-card-b"><div class="ws-table-wrap"><table class="ws-table"><thead><tr>${cols.map(c => `<th>${h(c)}</th>`).join("")}</tr></thead><tbody>${rows.length ? rows.slice(0, 40).map(mapper).join("") : `<tr><td colspan="${cols.length}" class="muted" style="text-align:center;padding:18px">No records available.</td></tr>`}</tbody></table></div></div></section>`;
@@ -6789,8 +7171,8 @@ html,body{background:#f3f7fd;font-size:13px;color:#06153a}.app{grid-template-col
 /* TradeOps sidebar premium grouping */
 .side{width:220px!important;display:flex!important;flex-direction:column!important;padding:16px!important;overflow:hidden!important}
 .brand{height:auto!important;margin:0 0 14px!important;padding:2px 2px 14px!important;border-bottom:1px solid rgba(148,163,184,.16)!important;display:flex!important;align-items:center!important;gap:10px!important}
-.brand-mark{width:36px!important;height:36px!important;border-radius:12px!important;box-shadow:0 12px 30px rgba(37,99,235,.28),inset 0 1px 0 rgba(255,255,255,.35)!important;flex:0 0 auto!important}
-.brand-mark svg{width:21px!important;height:21px!important}
+.brand-mark{width:36px!important;height:36px!important;border-radius:12px!important;box-shadow:0 12px 30px rgba(37,99,235,.28),inset 0 1px 0 rgba(255,255,255,.35)!important;flex:0 0 auto!important;overflow:hidden!important;background:linear-gradient(145deg,#00d4ff,#0b65ff 52%,#071827)!important;display:grid!important;place-items:center!important}
+.brand-mark svg{width:25px!important;height:25px!important;stroke:#fff!important;stroke-width:2.4!important;fill:none!important}
 .brand-copy{min-width:0!important;display:grid!important;gap:2px!important}
 .brand-name{font-size:21px!important;line-height:1.05!important}
 .brand-chip{display:inline-flex!important;width:max-content!important;height:19px!important;align-items:center!important;border-radius:999px!important;padding:0 8px!important;background:rgba(16,185,129,.12)!important;border:1px solid rgba(16,185,129,.28)!important;color:#8ef3bd!important;font-size:10px!important;font-weight:750!important}
@@ -6800,7 +7182,7 @@ html,body{background:#f3f7fd;font-size:13px;color:#06153a}.app{grid-template-col
 .nav-section:first-child{margin-top:4px!important}
 .nav a{position:relative!important;height:44px!important;border-radius:12px!important;margin:0 0 6px!important;padding:0 12px!important;display:flex!important;align-items:center!important;gap:12px!important;color:#cbd5e1!important;font-size:14px!important;font-weight:600!important;border:1px solid transparent!important;transition:background .18s ease,color .18s ease,border-color .18s ease,box-shadow .18s ease,transform .18s ease!important}
 .nav a:hover{background:rgba(255,255,255,.06)!important;color:#fff!important;border-color:rgba(148,163,184,.12)!important}
-.nav a svg{width:18px!important;height:18px!important;stroke-width:2!important;color:currentColor!important;flex:0 0 auto!important}
+.nav a svg{width:18px!important;height:18px!important;stroke-width:2.15!important;color:currentColor!important;flex:0 0 auto!important;stroke-linecap:round!important;stroke-linejoin:round!important}
 .nav a span{min-width:0!important;overflow:hidden!important;text-overflow:ellipsis!important;white-space:nowrap!important}
 .nav a.active{background:linear-gradient(135deg,#0f62fe 0%,#2563eb 100%)!important;border-color:rgba(56,189,248,.35)!important;color:#fff!important;box-shadow:0 14px 30px rgba(37,99,235,.34),inset 0 1px 0 rgba(255,255,255,.20)!important}
 .nav a.active:before{content:""!important;display:block!important;position:absolute!important;left:-5px!important;top:10px!important;width:3px!important;height:24px!important;border-radius:99px!important;background:#22d3ee!important;box-shadow:0 0 14px rgba(34,211,238,.9)!important}
@@ -6811,8 +7193,51 @@ html,body{background:#f3f7fd;font-size:13px;color:#06153a}.app{grid-template-col
 .help{height:42px!important;margin:0!important;border-radius:999px!important;background:rgba(37,99,235,.16)!important;border:1px solid rgba(59,130,246,.45)!important;color:#eef6ff!important;display:flex!important;align-items:center!important;justify-content:flex-start!important;gap:10px!important;padding:0 12px!important;font-size:13px!important;font-weight:750!important;text-decoration:none!important}
 .help svg,.collapse-btn svg{width:18px!important;height:18px!important;stroke-width:2!important}
 .collapse-btn{height:34px!important;border:0!important;background:transparent!important;color:rgba(203,213,225,.68)!important;display:flex!important;align-items:center!important;gap:9px!important;padding:0 10px!important;border-radius:10px!important;font-size:12px!important;font-weight:700!important;cursor:pointer!important}
+.brand>.collapse-btn{margin-left:auto!important;width:34px!important;justify-content:center!important;padding:0!important;background:rgba(255,255,255,.06)!important;color:#dbeafe!important}
+.brand>.collapse-btn span{display:none!important}
 .collapse-btn:hover{background:rgba(255,255,255,.06)!important;color:#fff!important}
+body.tradeops-collapsed .side{width:74px!important;padding:14px 10px!important}
+body.tradeops-collapsed .main{margin-left:74px!important}
+body.tradeops-collapsed .top{left:74px!important}
+body.tradeops-collapsed .brand{justify-content:center!important;padding-bottom:12px!important}
+body.tradeops-collapsed .brand-copy,body.tradeops-collapsed .nav-section,body.tradeops-collapsed .nav span,body.tradeops-collapsed .help span,body.tradeops-collapsed .collapse-btn span,body.tradeops-collapsed .nav-badge,body.tradeops-collapsed .nav-dot{display:none!important}
+body.tradeops-collapsed .nav a{justify-content:center!important;padding:0!important;gap:0!important}
+body.tradeops-collapsed .nav a.active:before{left:-3px!important}
+body.tradeops-collapsed .side-bottom{align-items:center!important}
+body.tradeops-collapsed .help,body.tradeops-collapsed .collapse-btn{justify-content:center!important;padding:0!important;width:44px!important}
 @media(max-width:1120px){.side{width:74px!important;padding:14px 10px!important}.brand{justify-content:center!important;padding-bottom:12px!important}.brand-copy,.nav-section,.nav span,.help span,.collapse-btn span,.nav-badge,.nav-dot{display:none!important}.nav a{justify-content:center!important;padding:0!important;gap:0!important}.nav a.active:before{left:-3px!important}.side-bottom{align-items:center!important}.help,.collapse-btn{justify-content:center!important;padding:0!important;width:44px!important}.app{grid-template-columns:74px minmax(0,1fr)!important}}
+/* Final dashboard layout guard */
+.content{padding:16px 20px 24px!important}
+.dashboard{display:grid!important;grid-template-columns:minmax(320px,1fr) minmax(360px,1.05fr) minmax(320px,.96fr)!important;grid-template-areas:"workflow workflow workflow" "pnl chart account" "ready orders quick" "positions recent quick" "logs logs logs"!important;gap:14px!important;align-items:stretch!important;grid-auto-rows:auto!important}
+.dashboard>.card{align-self:stretch!important;width:100%!important;height:100%!important}
+.workflow{grid-area:workflow!important}
+.pnl{grid-area:pnl!important;min-height:352px!important}
+.chart{grid-area:chart!important;min-height:352px!important}
+.account{grid-area:account!important;min-height:352px!important}
+.ready{grid-area:ready!important;min-height:154px!important}
+.orders{grid-area:orders!important;min-height:154px!important}
+.quick{grid-area:quick!important;min-height:322px!important}
+.positions{grid-area:positions!important;min-height:172px!important}
+.recent{grid-area:recent!important;min-height:172px!important}
+.logs-card{grid-area:logs!important;min-height:190px!important}
+.pnl,.chart,.account{height:100%!important;max-height:none!important}
+.pnl .card-b,.chart .card-b,.account .card-b{height:calc(100% - 42px)!important}
+.logs{height:116px!important}
+.dashboard.hidden{display:none!important}
+.detail.active{display:block!important}
+.detail:not(.active){display:none!important}
+.flow-ok{width:12px!important;height:12px!important;font-size:8px!important;line-height:1!important}
+.flow-ok:before{font-size:8px!important}
+.tradeops-loader{position:fixed;inset:0;z-index:80;display:grid;place-items:center;background:linear-gradient(180deg,#06172d,#02152c);transition:opacity .18s ease,visibility .18s ease;animation:loaderAutoHide .2s ease 7s forwards}
+.tradeops-loader.hide{opacity:0;visibility:hidden;pointer-events:none}
+.loader-logo{width:62px;height:62px;border-radius:18px;background:#fff;display:grid;place-items:center;box-shadow:0 20px 48px rgba(0,0,0,.28);animation:loaderPulse 1s ease-in-out infinite}
+.loader-logo svg{width:38px;height:38px;stroke:#0b65ff;stroke-width:2.4;fill:none}
+.ws-kpi-icon,.ws-empty-icon{width:52px!important;height:52px!important;border-radius:14px!important;font-size:24px!important;font-weight:950!important}
+.ws-kpi-icon svg,.ws-empty-icon svg{width:28px!important;height:28px!important;stroke-width:2.7!important}
+@keyframes loaderPulse{0%,100%{transform:scale(.96);opacity:.82}50%{transform:scale(1.04);opacity:1}}
+@keyframes loaderAutoHide{to{opacity:0;visibility:hidden;pointer-events:none}}
+@media(max-width:1280px){.dashboard{grid-template-columns:minmax(0,1fr) minmax(0,1fr)!important;grid-template-areas:"workflow workflow" "pnl chart" "account quick" "ready orders" "positions recent" "logs logs"!important}.account,.quick{min-height:300px!important}}
+@media(max-width:860px){.dashboard{grid-template-columns:minmax(0,1fr)!important;grid-template-areas:"workflow" "pnl" "chart" "account" "ready" "orders" "quick" "positions" "recent" "logs"!important}.workflow{flex-wrap:wrap!important}.pnl,.chart,.account,.quick{min-height:0!important}}
 /* TradeOps command strip premium header */
 .top{height:66px!important;background:rgba(255,255,255,.96)!important;backdrop-filter:blur(10px)!important;border-bottom:1px solid #d9e5f2!important;box-shadow:0 8px 24px rgba(15,23,42,.045)!important;padding:0 18px 0 26px!important;gap:12px!important;overflow:hidden!important}
 .command-group{display:flex!important;align-items:center!important;gap:10px!important;min-width:0!important}
@@ -6841,13 +7266,22 @@ html,body{background:#f3f7fd;font-size:13px;color:#06153a}.app{grid-template-col
 .user span{font-size:11px!important;color:#64748b!important;font-weight:600!important}
 @media(max-width:1366px){.top{padding-left:18px!important;gap:9px!important}.command-group{gap:8px!important}.status-chip{height:34px!important;padding:0 11px!important;font-size:12px!important}.mode-chip{display:none!important}.account-switcher{height:36px!important}.btn.danger{height:40px!important;padding:0 15px!important}.user{min-width:92px!important}.user b{max-width:100px!important}.user span{display:none!important}}
 @media(max-width:1120px){.top{left:74px!important;padding-left:14px!important}.status-chip span:not(#marketLabel):not(#brokerLabel):not(#botLabel):not(#lastUpdated){display:none!important}.updated-chip span{display:none!important}.profile-block .user{display:none!important}.account-switcher{padding:0 9px!important}.btn.danger{min-width:max-content!important}}
+.flow-ok{width:19px!important;height:19px!important;border-radius:999px!important;display:grid!important;place-items:center!important;color:#fff!important;font-size:12px!important;font-weight:900!important;line-height:1!important;background:#94a3b8!important;box-shadow:none!important}
+.flow-ok.pass{background:#10b981!important}
+.flow-ok.fail{background:#ef4444!important}
+.flow-ok:before{content:""!important}
+.flow-step.blocked{border-color:#fecdd3!important;background:linear-gradient(180deg,#fff,#fff1f2)!important}
+.workflow .flow-step{justify-content:flex-start!important;align-items:center!important}
+.workflow .flow-step .flow-text{flex:0 1 auto!important}
+.workflow .flow-step .flow-ok{position:static!important;left:auto!important;right:auto!important;top:auto!important;bottom:auto!important;margin-left:4px!important;flex:0 0 19px!important;width:19px!important;height:19px!important;font-size:12px!important}
+.workflow .flow-step .flow-ok:before{content:""!important}
 
 </style>
 </head>
 <body>
 <div class="app">
   <aside class="side">
-    <div class="brand"><div class="brand-mark"><svg viewBox="0 0 24 24" fill="none"><path d="M12 2 21 7v10l-9 5-9-5V7l9-5Z" fill="white"/></svg></div><div class="brand-copy"><div class="brand-name">TradeOps</div><div class="brand-chip">Live Account</div></div></div>
+    <div class="brand"><div class="brand-mark"><svg viewBox="0 0 24 24"><path d="M4 16.5 9 11l3.5 3.5L20 6"/><path d="M5 20h14"/><path d="M6 4h12"/></svg></div><div class="brand-copy"><div class="brand-name">TradeOps</div><div class="brand-chip">Live Account</div></div><button class="collapse-btn" type="button" title="Collapse sidebar"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="m15 18-6-6 6-6"/></svg><span>Collapse</span></button></div>
     <nav class="nav">
       <div class="nav-section">Monitor</div>
       <a href="/tradeops" data-page="dashboard"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><rect x="4" y="4" width="6" height="6"/><rect x="14" y="4" width="6" height="6"/><rect x="4" y="14" width="6" height="6"/><rect x="14" y="14" width="6" height="6"/></svg><span>Dashboard</span></a>
@@ -6870,7 +7304,6 @@ html,body{background:#f3f7fd;font-size:13px;color:#06153a}.app{grid-template-col
     </nav>
     <div class="side-bottom">
       <a class="help" href="/tradeops/health"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="12" r="9"/><path d="M9.5 9a2.5 2.5 0 0 1 4.5 1.5c0 2-2 2-2 4"/><path d="M12 18h.01"/></svg><span>Help &amp; Support</span></a>
-      <button class="collapse-btn" type="button" title="Collapse sidebar"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="m15 18-6-6 6-6"/></svg><span>Collapse</span></button>
     </div>
   </aside>
   <main class="main">
@@ -6892,15 +7325,15 @@ html,body{background:#f3f7fd;font-size:13px;color:#06153a}.app{grid-template-col
     <section class="content">
       <div id="dashboard" class="dashboard${safePage !== "dashboard" ? " hidden" : ""}">
         <section class="card workflow">
-          <div class="flow-step"><div class="flow-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M3 21h18"/><path d="M5 21V9l7-5 7 5v12"/><path d="M9 21v-6h6v6"/></svg></div><div class="flow-text"><b id="flowBrokerTitle">Broker</b><span id="flowBrokerSub">Checking</span></div><span class="flow-ok">OK</span></div>
-          <div class="flow-step"><div class="flow-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10Z"/><path d="m9 12 2 2 4-5"/></svg></div><div class="flow-text"><b id="flowTokenTitle">Token</b><span id="flowTokenSub">Checking</span></div><span class="flow-ok">OK</span></div>
-          <div class="flow-step"><div class="flow-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><rect x="6" y="7" width="12" height="10" rx="2"/><path d="M12 3v4M8 21h8M9 11h.01M15 11h.01"/></svg></div><div class="flow-text"><b id="flowBotTitle">Bot</b><span id="flowBotSub">Checking</span></div><span class="flow-ok">OK</span></div>
-          <div class="flow-step"><div class="flow-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M4 12h3l2-5 4 10 2-5h5"/></svg></div><div class="flow-text"><b id="flowFeedTitle">Feed</b><span id="flowFeedSub">Checking</span></div><span class="flow-ok">OK</span></div>
-          <div class="flow-step"><div class="flow-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M5 19 19 5"/><path d="m14 5 5 5"/><path d="M5 19l5-1 8-8"/></svg></div><div class="flow-text"><b id="flowExecTitle">Execution</b><span id="flowExecSub">Checking</span></div><span class="flow-ok">OK</span></div>
+          <div class="flow-step"><div class="flow-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M3 21h18"/><path d="M5 21V9l7-5 7 5v12"/><path d="M9 21v-6h6v6"/></svg></div><div class="flow-text"><b id="flowBrokerTitle">Broker</b><span id="flowBrokerSub">Checking</span></div><span class="flow-ok" id="flowBrokerBadge">?</span></div>
+          <div class="flow-step"><div class="flow-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10Z"/><path d="m9 12 2 2 4-5"/></svg></div><div class="flow-text"><b id="flowTokenTitle">Token</b><span id="flowTokenSub">Checking</span></div><span class="flow-ok" id="flowTokenBadge">?</span></div>
+          <div class="flow-step"><div class="flow-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><rect x="6" y="7" width="12" height="10" rx="2"/><path d="M12 3v4M8 21h8M9 11h.01M15 11h.01"/></svg></div><div class="flow-text"><b id="flowBotTitle">Bot</b><span id="flowBotSub">Checking</span></div><span class="flow-ok" id="flowBotBadge">?</span></div>
+          <div class="flow-step"><div class="flow-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M4 12h3l2-5 4 10 2-5h5"/></svg></div><div class="flow-text"><b id="flowFeedTitle">Feed</b><span id="flowFeedSub">Checking</span></div><span class="flow-ok" id="flowFeedBadge">?</span></div>
+          <div class="flow-step"><div class="flow-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M5 19 19 5"/><path d="m14 5 5 5"/><path d="M5 19l5-1 8-8"/></svg></div><div class="flow-text"><b id="flowExecTitle">Execution</b><span id="flowExecSub">Checking</span></div><span class="flow-ok" id="flowExecBadge">?</span></div>
           <div class="flow-actions"><button class="btn" id="refreshTokenBtn">Refresh Token</button><button class="btn" id="syncAccountBtn">Sync Account</button></div>
         </section>
-        <section class="card pnl"><div class="card-h"><span class="pnl-head">Live P&amp;L <span class="dot ok"></span><span class="ok" id="pnlLiveLabel">Live</span></span><a class="pnl-link" href="/tradeops/trade-history">View details &rsaquo;</a></div><div class="card-b"><div id="pnlMetricLabel" class="pnl-label">Net Live P&amp;L</div><div class="pnl-main"><div><div id="netPnl" class="pnl-value">Not synced</div><div id="pnlSupport" class="pnl-support">Live broker P&amp;L</div></div><span id="profitChip" class="profit-pill">--</span></div><div class="metric-grid"><div class="metric"><label>Realized P&amp;L</label><b id="realized">--</b></div><div class="metric emphasis"><label>Unrealized P&amp;L</label><b id="unrealized">--</b></div><div class="metric"><label>Charges</label><b id="charges">Pending</b></div><div class="metric emphasis"><label>Net After Charges</label><b id="netAfterCharges">Pending</b></div><div class="metric"><label>Day High</label><b id="dayHigh">Not available</b></div><div class="metric"><label>Day Low</label><b id="dayLow">Not available</b></div><div class="metric emphasis"><label>Open P&amp;L</label><b id="openPnl">--</b></div><div class="metric"><label>Closed P&amp;L</label><b id="closedPnl">--</b></div></div><div class="pnl-foot"><span>Last updated: <b id="pnlUpdated">--</b></span><span>Source: <b id="pnlSource">Broker</b></span><span>Mode: <b id="pnlMode">Live</b></span></div></div></section>
-        <section class="card chart"><div class="card-h"><span>BANKNIFTY &middot; 5m <span id="chartMode" class="chart-mode">Checking</span></span><a class="chart-link" href="/tradeops/candle-logs">View chart &rsaquo;</a></div><div class="card-b"><div class="chart-top"><div><div id="ohlc" class="ohlc">OHLC unavailable</div><div><span id="ltp" class="ltp">LTP unavailable</span> <span id="change" class="ok"></span></div></div><button class="btn">5m</button></div><div class="chart-box" id="chartBox"></div><div class="tabs"><button>1m</button><button class="active">5m</button><button>15m</button><button>1h</button><button>1D</button><span style="margin-left:auto" class="muted chart-footer"><span id="feedStateDot" class="dot"></span> <span id="feedState">Checking</span> | Last candle: <b id="lastCandle">--</b> | <b id="candleCount">0 candles</b></span></div></div></section>
+        <section class="card pnl"><div class="card-h"><span class="pnl-head">10:30 Futures P&amp;L <span class="dot ok"></span><span class="ok" id="pnlLiveLabel">Live data</span></span><a class="pnl-link" href="/tradeops/trade-history">View details &rsaquo;</a></div><div class="card-b"><div id="pnlMetricLabel" class="pnl-label">10:30 Futures Net P&amp;L</div><div class="pnl-main"><div><div id="netPnl" class="pnl-value">Not synced</div><div id="pnlSupport" class="pnl-support">10:30 futures P&amp;L</div></div><span id="profitChip" class="profit-pill">--</span></div><div class="metric-grid"><div class="metric"><label>Realized P&amp;L</label><b id="realized">--</b></div><div class="metric emphasis"><label>Unrealized P&amp;L</label><b id="unrealized">--</b></div><div class="metric"><label>Charges</label><b id="charges">Unavailable</b></div><div class="metric emphasis"><label>Net After Charges</label><b id="netAfterCharges">Unavailable</b></div><div class="metric"><label>Day High</label><b id="dayHigh">Not available</b></div><div class="metric"><label>Day Low</label><b id="dayLow">Not available</b></div><div class="metric emphasis"><label>Open P&amp;L</label><b id="openPnl">--</b></div><div class="metric"><label>Closed P&amp;L</label><b id="closedPnl">--</b></div></div><div class="pnl-foot"><span>Last updated: <b id="pnlUpdated">--</b></span><span>Source: <b id="pnlSource">Broker</b></span><span>Mode: <b id="pnlMode">Live</b></span></div></div></section>
+        <section class="card chart"><div class="card-h"><span>BANKNIFTY &middot; <span id="chartTfLabel">15m</span> <span id="chartMode" class="chart-mode">Checking</span></span><a class="chart-link" href="/tradeops/candle-logs">View chart &rsaquo;</a></div><div class="card-b"><div class="chart-top"><div><div id="ohlc" class="ohlc">OHLC unavailable</div><div><span id="ltp" class="ltp">LTP unavailable</span> <span id="change" class="ok"></span></div></div><button class="btn" id="chartTfTop">15m</button></div><div class="chart-box" id="chartBox"></div><div class="tabs" id="chartTabs"><button type="button" data-tf="15m" class="active">15m</button><span style="margin-left:auto" class="muted chart-footer"><span id="feedStateDot" class="dot"></span> <span id="feedState">Checking</span> | Last candle: <b id="lastCandle">--</b> | <b id="candleCount">0 candles</b></span></div></div></section>
         <section class="card account"><div class="card-h"><span>Account Balance</span><span id="accountSyncChip" class="account-chip">Checking</span></div><div class="card-b"><div class="muted">Total Account Balance</div><div class="balance-big" id="balance">Not synced</div><div id="accountHint" class="account-hint">Sync account to view balance</div><div class="account-ident"><div><label>Account ID</label><b id="accountId">Not synced</b></div><div><label>Broker</label><b id="brokerName">Not synced</b></div><div><label>Holder</label><b id="accountName">Not synced</b></div></div><div class="acct-lines"><div class="kv"><label>Available Margin</label><strong id="available">Not synced</strong></div><div class="kv"><label>Used Margin</label><b id="usedMargin">Not synced</b></div><div class="kv"><label>Buying Power</label><strong id="buyingPower">Not synced</strong></div></div><div id="accountWarn" class="account-warn">Account not synced. Balance and margin unavailable.</div><div class="kv"><label>Broker Sync</label><b id="brokerSyncAccount">Not synced</b></div><div class="kv"><label>Reconciliation</label><b id="recon" class="ok">Not synced</b></div><div class="kv"><label>Last Sync</label><b id="lastSync">Not synced</b></div><a class="btn account-primary" href="/tradeops/account">View Statement &rsaquo;</a></div></section>
         <section class="card ready mini-card execution-gate"><div class="card-h"><span>Execution Gate</span><a href="/tradeops/executions">View details &rsaquo;</a></div><div class="card-b"><div class="gate-head"><span id="readyStrip" class="ready-strip">Checking</span><span id="gateReason" class="muted">Checking execution state</span></div><div id="gateIdle" class="compact-empty gate-idle"><div class="empty-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="12" r="9"/><path d="M8 12h8"/></svg></div><div><b>No pending execution</b><span>Waiting for next order request.</span><small>Last check: <strong id="gateLastCheck">--</strong></small></div></div><div id="gateMetrics" class="mini-grid"><div class="mini-stat"><label>Next Order Value</label><b id="nextOrderValue">Idle</b></div><div class="mini-stat"><label>Required Margin</label><b id="requiredMargin">Idle</b></div><div class="mini-stat"><label>Available Margin</label><b id="available2">Not synced</b></div><div class="mini-stat"><label>Shortfall</label><b id="shortfall">--</b></div></div><div class="checks-row" id="checksRow"></div></div></section>
         <section class="card orders mini-card"><div class="card-h"><span>Order Watch <span id="orderStateChip" class="order-state-chip">Checking</span></span><a href="/tradeops/orders">View details &rsaquo;</a></div><div class="card-b"><div id="orderIdle" class="order-idle"><b>Idle</b><span>No orders sent in this session.</span><small>Last check: <strong id="orderLastCheck">--</strong></small><a class="btn" href="/tradeops/orders">View Orders</a></div><div id="orderActive" class="order-active"><div class="order-bubbles"><div class="order-bubble sent"><span>Sent</span><b id="sent">--</b></div><div class="order-bubble filled"><span>Filled</span><b id="filled">--</b></div><div class="order-bubble pending"><span>Pending</span><b id="pendingOrders">--</b></div><div class="order-bubble rejected"><span>Rejected</span><b id="rejected">0</b></div><div class="order-bubble missed"><span>Missed</span><b id="missed">0</b></div><div class="order-bubble manual"><span>Manual</span><b id="manualReview">0</b></div></div><div class="order-meta"><span>Last order: <b id="lastOrderTime">--</b></span><span>Last update: <b id="orderLatency">Unavailable</b></span><span>Fill rate: <b id="fillRate">--</b></span></div><div id="actionStrip" class="action-strip"><span id="orderActionText">Action required</span><span>&rsaquo;</span></div></div><span id="completed" style="display:none"></span><span id="timedOut" style="display:none">0</span></div></section>
@@ -6912,19 +7345,51 @@ html,body{background:#f3f7fd;font-size:13px;color:#06153a}.app{grid-template-col
     </section>
   </main>
 </div>
-<div class="modal" id="modal"><div class="dialog"><h2>Emergency Stop</h2><p class="muted">This will close all open positions immediately. This action cannot be undone.</p><input id="pin" placeholder="Optional PIN / password"><label><input type="checkbox" id="confirmBox"> I understand this is a live close-all action.</label><input id="confirmPhrase" placeholder="Type CLOSE ALL"><div id="emergencyResult" class="muted" style="margin:12px 0"></div><div class="actions"><button class="btn" id="cancelStop">Cancel</button><button class="btn danger" id="sendStop">Close All Trades Now</button></div></div></div><script src="https://cdn.jsdelivr.net/npm/lightweight-charts@4.2.3/dist/lightweight-charts.standalone.production.js"></script><script>
-const PAGE=${JSON.stringify(safePage)};const INITIAL_STATUS=${JSON.stringify(initialStatus || null).replace(/<\\/g,"<\\\\/")};const INR=new Intl.NumberFormat('en-IN',{style:'currency',currency:'INR',maximumFractionDigits:0});let paused=false;
-function rs(n){n=Number(n||0);return (n<0?'-':'')+INR.format(Math.abs(n));}function pc(n){return Number(n||0).toFixed(2)+'%'}function cls(n){return Number(n||0)>=0?'ok':'bad'}function txt(v){v=String(v||'').trim();return !v||v==='Unavailable'?'Not synced':v}function money(ok,n){return ok?rs(n):'Not synced'}function ago(sec){if(sec==null)return 'No heartbeat';return sec<60?sec+'s ago':Math.round(sec/60)+'m ago'}function set(id,v){const e=document.getElementById(id);if(e)e.textContent=v}function rows(cols,msg){return '<tr><td colspan="'+cols+'" class="muted" style="text-align:center;padding:18px">'+msg+'</td></tr>'}
+<div class="tradeops-loader" id="tradeopsLoader"><div class="loader-logo"><svg viewBox="0 0 24 24"><path d="M4 16.5 9 11l3.5 3.5L20 6"/><path d="M5 20h14"/><path d="M6 4h12"/></svg></div></div>
+<script>setTimeout(function(){var e=document.getElementById('tradeopsLoader');if(e)e.classList.add('hide')},7000);</script>
+<div class="modal" id="modal"><div class="dialog"><h2>Emergency Stop</h2><p class="muted">This will close all open positions immediately. This action cannot be undone.</p><input id="pin" placeholder="Optional PIN / password"><label><input type="checkbox" id="confirmBox"> I understand this is a live close-all action.</label><input id="confirmPhrase" placeholder="Type CLOSE ALL"><div id="emergencyResult" class="muted" style="margin:12px 0"></div><div class="actions"><button class="btn" id="cancelStop">Cancel</button><button class="btn danger" id="sendStop">Close All Trades Now</button></div></div></div><script async src="https://cdn.jsdelivr.net/npm/lightweight-charts@4.2.3/dist/lightweight-charts.standalone.production.js"></script><script>
+  const PAGE=${JSON.stringify(safePage)};const INITIAL_STATUS=${JSON.stringify(initialStatus || null).replace(/<\\/g,"<\\\\/")};const INR=new Intl.NumberFormat('en-IN',{style:'currency',currency:'INR',maximumFractionDigits:0});let paused=false;let chartTf='15m';let lastStatus=null;let tradeOpsSessionDate='';
+function rs(n){n=Number(n||0);return (n<0?'-':'')+INR.format(Math.abs(n));}function pc(n){return Number(n||0).toFixed(2)+'%'}function cls(n){return Number(n||0)>=0?'ok':'bad'}function txt(v){v=String(v||'').trim();return !v||v==='Unavailable'?'Not synced':v}function money(ok,n){return ok?rs(n):'Not synced'}function num(v){const n=Number(v);return Number.isFinite(n)?n:null}function fixed(v,d){const n=num(v);return n==null?'--':n.toFixed(d||2)}function ago(sec){if(sec==null)return 'No heartbeat';return sec<60?sec+'s ago':Math.round(sec/60)+'m ago'}function set(id,v){const e=document.getElementById(id);if(e)e.textContent=v}function markFlow(id,ok){const e=document.getElementById(id);if(!e)return;e.className='flow-ok '+(ok?'pass':'fail');e.textContent=ok?'✓':'!';const step=e.closest('.flow-step');if(step)step.classList.toggle('blocked',!ok)}function rows(cols,msg){return '<tr><td colspan="'+cols+'" class="muted" style="text-align:center;padding:18px">'+msg+'</td></tr>'}
 function nav(){document.querySelectorAll('.nav a').forEach(a=>a.classList.toggle('active',a.dataset.page===PAGE))}
+function hideLoader(){const e=document.getElementById('tradeopsLoader');if(e)e.classList.add('hide')}
+function setFlowBadge(id,ok){const e=document.getElementById(id);if(!e)return;e.className='flow-ok '+(ok?'pass':'fail');e.innerHTML=ok?'&#10003;':'!';const step=e.closest('.flow-step');if(step)step.classList.toggle('blocked',!ok)}
+markFlow=setFlowBadge;
 let tvChart=null,tvCandleSeries=null,tvVolumeSeries=null,tvPriceLine=null;
-function chart(candles){const wrap=document.getElementById('chartBox');const cs=(candles||[]).slice(0,80).reverse().filter(c=>Number.isFinite(c.open)&&Number.isFinite(c.high)&&Number.isFinite(c.low)&&Number.isFinite(c.close)&&c.open>0&&c.high>0&&c.low>0&&c.close>0&&c.chartTime);if(cs.length<2){wrap.classList.add('no-data');wrap.innerHTML='<div class="empty-chart">No BANKNIFTY 5m candles recorded yet<br><span style="color:#6aa8ff">Check feed</span></div>';return;}wrap.classList.remove('no-data');if(!window.LightweightCharts){wrap.innerHTML='<div class="empty-chart">TradingView chart library unavailable<br><span style="color:#6aa8ff">Retry after network loads</span></div>';return;}if(!tvChart){wrap.innerHTML='';tvChart=LightweightCharts.createChart(wrap,{autoSize:true,layout:{background:{type:'solid',color:'#081624'},textColor:'#9fb5cc',fontFamily:'Inter,Manrope,system-ui'},grid:{vertLines:{color:'rgba(255,255,255,.05)'},horzLines:{color:'rgba(255,255,255,.07)'}},rightPriceScale:{borderColor:'#223a55',scaleMargins:{top:.08,bottom:.10}},timeScale:{borderColor:'#223a55',timeVisible:true,secondsVisible:false},crosshair:{mode:LightweightCharts.CrosshairMode.Normal},handleScroll:true,handleScale:true});tvCandleSeries=tvChart.addCandlestickSeries({upColor:'#22c55e',downColor:'#ef4444',borderUpColor:'#22c55e',borderDownColor:'#ef4444',wickUpColor:'#22c55e',wickDownColor:'#ef4444',priceLineVisible:false});tvVolumeSeries=tvChart.addHistogramSeries({priceFormat:{type:'volume'},priceScaleId:'',color:'rgba(34,197,94,.35)',scaleMargins:{top:.80,bottom:0}});new ResizeObserver(()=>{if(tvChart)tvChart.applyOptions({autoSize:true})}).observe(wrap);}const candleData=cs.map(c=>({time:c.chartTime,open:c.open,high:c.high,low:c.low,close:c.close}));tvCandleSeries.setData(candleData);const volumes=cs.filter(c=>Number(c.volume||0)>0).map(c=>({time:c.chartTime,value:Number(c.volume||0),color:c.close>=c.open?'rgba(34,197,94,.38)':'rgba(239,68,68,.38)'}));const hasVolume=volumes.length>0;tvVolumeSeries.setData(volumes);tvChart.applyOptions({rightPriceScale:{borderColor:'#223a55',scaleMargins:{top:.08,bottom:hasVolume ? .24 : .10}}});const latest=cs[cs.length-1];if(tvPriceLine)tvCandleSeries.removePriceLine(tvPriceLine);tvPriceLine=tvCandleSeries.createPriceLine({price:latest.close,color:'#22c55e',lineWidth:1,lineStyle:LightweightCharts.LineStyle.Dashed,axisLabelVisible:true,title:'LTP'});tvChart.timeScale().fitContent();}
+function buildChartCandles(candles){const base=(candles||[]).slice().reverse().filter(c=>Number.isFinite(c.open)&&Number.isFinite(c.high)&&Number.isFinite(c.low)&&Number.isFinite(c.close)&&c.open>0&&c.high>0&&c.low>0&&c.close>0&&c.chartTime);if(chartTf!=='15m')return base;const buckets=new Map();base.forEach(c=>{const key=Math.floor(c.chartTime/900)*900;const b=buckets.get(key);if(!b){buckets.set(key,{...c,chartTime:key,time:new Date(key*1000).toLocaleTimeString('en-IN',{hour:'2-digit',minute:'2-digit',hour12:false,timeZone:'Asia/Kolkata'}),volume:Number(c.volume||0)});return;}b.high=Math.max(b.high,c.high);b.low=Math.min(b.low,c.low);b.close=c.close;b.volume=Number(b.volume||0)+Number(c.volume||0);b.closeOnly=b.closeOnly&&c.closeOnly;});return Array.from(buckets.values()).sort((a,b)=>a.chartTime-b.chartTime);}
+function chart(candles){const wrap=document.getElementById('chartBox');const cs=buildChartCandles(candles).slice(-80);if(cs.length<2){wrap.classList.add('no-data');wrap.innerHTML='<div class="empty-chart">No BANKNIFTY '+chartTf+' candles recorded yet<br><span style="color:#6aa8ff">Check feed</span></div>';return;}wrap.classList.remove('no-data');if(!window.LightweightCharts){wrap.innerHTML='<div class="empty-chart">TradingView chart library unavailable<br><span style="color:#6aa8ff">Retry after network loads</span></div>';return;}if(!tvChart){wrap.innerHTML='';tvChart=LightweightCharts.createChart(wrap,{autoSize:true,layout:{background:{type:'solid',color:'#081624'},textColor:'#9fb5cc',fontFamily:'Inter,Manrope,system-ui'},grid:{vertLines:{color:'rgba(255,255,255,.05)'},horzLines:{color:'rgba(255,255,255,.07)'}},rightPriceScale:{borderColor:'#223a55',scaleMargins:{top:.08,bottom:.10}},timeScale:{borderColor:'#223a55',timeVisible:true,secondsVisible:false},crosshair:{mode:LightweightCharts.CrosshairMode.Normal},handleScroll:true,handleScale:true});tvCandleSeries=tvChart.addCandlestickSeries({upColor:'#22c55e',downColor:'#ef4444',borderUpColor:'#22c55e',borderDownColor:'#ef4444',wickUpColor:'#22c55e',wickDownColor:'#ef4444',priceLineVisible:false});tvVolumeSeries=tvChart.addHistogramSeries({priceFormat:{type:'volume'},priceScaleId:'',color:'rgba(34,197,94,.35)',scaleMargins:{top:.80,bottom:0}});new ResizeObserver(()=>{if(tvChart)tvChart.applyOptions({autoSize:true})}).observe(wrap);}const candleData=cs.map(c=>({time:c.chartTime,open:c.open,high:c.high,low:c.low,close:c.close}));tvCandleSeries.setData(candleData);const volumes=cs.filter(c=>Number(c.volume||0)>0).map(c=>({time:c.chartTime,value:Number(c.volume||0),color:c.close>=c.open?'rgba(34,197,94,.38)':'rgba(239,68,68,.38)'}));const hasVolume=volumes.length>0;tvVolumeSeries.setData(volumes);tvChart.applyOptions({rightPriceScale:{borderColor:'#223a55',scaleMargins:{top:.08,bottom:hasVolume ? .24 : .10}}});const latest=cs[cs.length-1];if(tvPriceLine)tvCandleSeries.removePriceLine(tvPriceLine);tvPriceLine=tvCandleSeries.createPriceLine({price:latest.close,color:'#22c55e',lineWidth:1,lineStyle:LightweightCharts.LineStyle.Dashed,axisLabelVisible:true,title:'LTP'});tvChart.timeScale().fitContent();}
+function logGroups(logs){const meaningful=[];(logs||[]).forEach(l=>{let msg=String(l.message||'');let level=String(l.level||'INFO').toUpperCase();if(/requireStack|at Module|node:internal|^\\s*at\\s/i.test(msg))return;if(/MODULE_NOT_FOUND/i.test(msg)){level='ERROR';msg='Server module missing. Stack trace available in full logs.'}if(/ETIMEDOUT|failed|rejected|Error:/i.test(msg))level='ERROR';meaningful.push({time:l.time,level,message:msg})});const grouped=[];meaningful.forEach(l=>{const prev=grouped[grouped.length-1];const key=l.level+'|'+String(l.message||'').replace(/attempt \\d+/i,'attempt #');if(prev&&prev.key===key){prev.count++}else grouped.push({key,count:1,row:l})});return grouped}
+function logHtml(groups,limit){return groups.length?groups.slice(0,limit).map(g=>{const l=g.row;const msg=g.count>1?l.message+' repeated '+g.count+' times':l.message;return '<div><span class="muted">'+txt(l.time)+'</span> <span class="'+(l.level==='ERROR'?'error':l.level==='WARN'?'warn':'info')+'">['+txt(l.level)+']</span> '+txt(msg)+'</div>'}).join(''):'<div class="muted">No meaningful logs recorded yet</div>'}
+function renderLogs(logs){if(paused)return;const grouped=logGroups(logs);const logsEl=document.getElementById('logs');if(logsEl)logsEl.innerHTML=logHtml(grouped,6);const workspaceLogs=document.getElementById('workspaceLogs');if(workspaceLogs)workspaceLogs.innerHTML=logHtml(grouped,120)}
+async function loadLogs(){if(paused)return;try{const r=await fetch('/api/tradeops/logs',{cache:'no-store',credentials:'same-origin',headers:{'Accept':'application/json'}});if(!r.ok)return;const j=await r.json();if(j&&Array.isArray(j.logs))renderLogs(j.logs)}catch(e){}}
+function setupSidebar(){const btn=document.querySelector('.collapse-btn');if(!btn||btn._wired)return;btn._wired=true;const label=btn.querySelector('span');function sync(){const collapsed=document.body.classList.contains('tradeops-collapsed');if(label)label.textContent=collapsed?'Expand':'Collapse';btn.title=collapsed?'Expand sidebar':'Collapse sidebar'}try{if(localStorage.getItem('tradeopsSidebarCollapsed')==='1')document.body.classList.add('tradeops-collapsed')}catch(e){}sync();btn.onclick=function(){document.body.classList.toggle('tradeops-collapsed');try{localStorage.setItem('tradeopsSidebarCollapsed',document.body.classList.contains('tradeops-collapsed')?'1':'0')}catch(e){}sync()}}
 function render(d){
+  d=d||{};
+  d.market=d.market||{open:false,label:'Checking',latestSession:String(d.updatedAt||new Date().toISOString()).slice(0,10)};
+  d.broker=d.broker||{connected:false,tokenOK:false,accountName:'Unavailable',accountId:'Unavailable'};
+  d.bot=d.bot||{online:false,isAlive:false,state:'Offline',heartbeatAgeSec:null};
+  d.pnl=d.pnl||{net:0,realized:0,unrealized:0,todayHigh:0,todayLow:0,dayRangeAvailable:false,chargesAvailable:false,marginsSynced:false,refreshMs:5000};
+  d.execution=d.execution||{status:'Checking',ready:false,pending:false,checks:{},requiredMargin:0,shortfall:0,orderValue:0,blockReason:''};
+  d.strategy=d.strategy||{label:'10:30 Futures',mode:'UNKNOWN'};
+  d.validations=d.validations||{};
+  d.positions=Array.isArray(d.positions)?d.positions:[];
+  d.trades=Array.isArray(d.trades)?d.trades:[];
+  d.candles=Array.isArray(d.candles)?d.candles:[];
+  d.logs=Array.isArray(d.logs)?d.logs:[];
+  d.updatedAt=d.updatedAt||new Date().toISOString();
+  lastStatus=d;
+  tradeOpsSessionDate=(d&&d.market&&d.market.latestSession)||String((d&&d.updatedAt)||'').slice(0,10)||'';
   nav();
   document.getElementById('dashboard').classList.toggle('hidden',PAGE!=='dashboard');
   document.getElementById('detail').classList.toggle('active',PAGE!=='dashboard');
   const updated=new Date(d.updatedAt).toLocaleTimeString('en-IN');
-  const tradeList=Array.isArray(d.trades)?d.trades:[];
+  const allTradeRows=Array.isArray(d.trades)?d.trades:[];
+  const tradeList=allTradeRows.filter(function(t){return String(t&&t.date||'').slice(0,10)===(tradeOpsSessionDate||'')});
   const botOnline=!!(d.bot&&(d.bot.isAlive===true||d.bot.online===true));
+  const validations=d.validations||{};
+  const tokenValidation=validations.token||{};
+  const brokerValidation=validations.broker||{};
+  const botValidation=validations.bot||{};
+  const feedValidation=validations.feed||{};
   const name=txt(d.broker.accountName);
   const acct=txt(d.broker.accountId);
   set('headerUser',name==='Not synced'?'Account User':name);
@@ -6936,22 +7401,26 @@ function render(d){
   document.getElementById('marketDot').className='dot '+(d.market.open?'ok':'warn');
   set('marketLabel',d.market.label);
   document.getElementById('brokerDot').className='dot '+(d.broker.connected?'ok':'bad');
-  set('brokerLabel',d.broker.connected?'Broker OK':'Broker Issue');
+  set('brokerLabel',brokerValidation.ok?'Broker Verified':'Broker Issue');
   document.getElementById('botDot').className='dot '+(botOnline?'ok':'bad');
   set('botLabel',botOnline?'Bot Online':'Bot Offline');
-  set('modeChip',(d.market&&d.market.open&&botOnline)?'Live':'Last Session');
-  if(PAGE!=='dashboard'){renderWorkspaceDetail(d);return;}
+  set('modeChip',((d.strategy&&d.strategy.label)||'10:30 Futures')+' · '+((d.strategy&&d.strategy.mode)||'UNKNOWN'));
 
-  set('flowBrokerTitle',d.broker.connected?'Broker OK':'Broker Issue');
-  set('flowBrokerSub',d.broker.connected?'Connected':'Not synced');
-  set('flowTokenTitle',d.broker.tokenOK?'Token Valid':'Token Required');
-  set('flowTokenSub',d.broker.tokenOK?'Valid now':'Refresh required');
+  set('flowBrokerTitle',brokerValidation.ok?'Broker Verified':'Broker Issue');
+  set('flowBrokerSub',brokerValidation.source||'Kite profile check');
+  set('flowTokenTitle',tokenValidation.ok?'Token Valid':'Token Required');
+  set('flowTokenSub',tokenValidation.ok?'Kite profile HTTP 200':(tokenValidation.error||'Refresh required'));
   set('flowBotTitle',botOnline?'Bot Online':'Bot Offline');
-  set('flowBotSub',d.bot.heartbeatAgeSec==null?'No heartbeat':'Heartbeat '+ago(d.bot.heartbeatAgeSec));
-  set('flowFeedTitle',d.candles&&d.candles.length?'Feed Fresh':'Feed Waiting');
-  set('flowFeedSub',d.candles&&d.candles.length?'Last tick '+(d.candles[0].time||'available'):'No candles recorded');
+  set('flowBotSub',botValidation.heartbeatAgeSec==null?'No heartbeat':'Heartbeat '+ago(botValidation.heartbeatAgeSec));
+  set('flowFeedTitle',feedValidation.ok?'Feed Fresh':'Feed Waiting');
+  set('flowFeedSub',feedValidation.ok?'Last candle '+(feedValidation.lastCandle||'available'):'No candles recorded');
   set('flowExecTitle',d.execution.status==='Idle'?'Execution Idle':(d.execution.ready?'Execution Ready':'Execution Blocked'));
   set('flowExecSub',d.execution.status==='Idle'?'No pending order':(d.execution.ready?'All systems go':(d.execution.blockReason||'Check status')));
+  markFlow('flowBrokerBadge',!!brokerValidation.ok);
+  markFlow('flowTokenBadge',!!tokenValidation.ok);
+  markFlow('flowBotBadge',!!botValidation.ok);
+  markFlow('flowFeedBadge',!!feedValidation.ok);
+  markFlow('flowExecBadge',d.execution.status==='Idle'||!!d.execution.ready);
   const execFlow=document.getElementById('flowExecTitle')?.closest('.flow-step');
   if(execFlow)execFlow.classList.toggle('blocked',d.execution.status==='Blocked');
 
@@ -6965,32 +7434,35 @@ function render(d){
   profitChip.className='profit-pill '+(net>=0?'':'loss');
   set('pnlLiveLabel',liveMode?'Live':'Last Session');
   set('pnlMetricLabel',liveMode?'Net Live P&L':'Net Session P&L');
-  set('pnlSupport',openActive?'Open position active':(liveMode?'Live broker P&L':'Last session P&L'));
-  set('pnlSource',d.broker.connected?'Broker':'Bot');
-  set('pnlMode',liveMode?'Live':'Last Session');
+  set('pnlSupport',openActive?'10:30 futures position active':((d.pnl&&d.pnl.source)?'Source: '+d.pnl.source:'10:30 futures P&L'));
+  set('pnlSource',(d.pnl&&d.pnl.source?d.pnl.source:(d.broker.connected?'Broker':'Bot'))+' / '+Math.round(((d.pnl&&d.pnl.refreshMs)||5000)/1000)+'s');
+  set('pnlMode',(d.strategy&&d.strategy.mode)||'UNKNOWN');
   set('realized',rs(d.pnl.realized));
   set('unrealized',rs(d.pnl.unrealized));
-  set('charges',d.pnl.chargesAvailable?rs(d.pnl.charges||0):'Pending');
-  set('netAfterCharges',d.pnl.chargesAvailable?rs(net-Number(d.pnl.charges||0)):'Pending');
+  set('charges',d.pnl.chargesAvailable?rs(d.pnl.charges||0):'Unavailable');
+  set('netAfterCharges',d.pnl.chargesAvailable?rs(net-Number(d.pnl.charges||0)):'Unavailable');
   set('dayHigh',d.pnl.dayRangeAvailable?rs(d.pnl.todayHigh):'Not available');
   set('dayLow',d.pnl.dayRangeAvailable?rs(d.pnl.todayLow):'Not available');
   set('openPnl',rs(d.pnl.unrealized));
   set('closedPnl',rs(d.pnl.realized));
   ['realized','unrealized','dayHigh','dayLow','openPnl','closedPnl'].forEach(id=>{const e=document.getElementById(id);if(e)e.className=String(e.textContent||'').startsWith('-')?'bad':(String(e.textContent||'').includes('Not available')?'pending':'ok')});
-  ['charges','netAfterCharges'].forEach(id=>{const e=document.getElementById(id);if(e)e.className=String(e.textContent||'')==='Pending'?'pending':(String(e.textContent||'').startsWith('-')?'bad':'ok')});
+  ['charges','netAfterCharges'].forEach(id=>{const e=document.getElementById(id);if(e)e.className=String(e.textContent||'')==='Unavailable'?'pending':(String(e.textContent||'').startsWith('-')?'bad':'ok')});
 
-  const c=d.candles&&d.candles[0];
+  const chartCandles=buildChartCandles(d.candles||[]);
+  const c=chartCandles.length?chartCandles[chartCandles.length-1]:(d.candles&&d.candles[0]);
   const feedFresh=!!(d.candles&&d.candles.length&&botOnline&&d.bot.heartbeatAgeSec!=null&&d.bot.heartbeatAgeSec<180);
   const feedState=d.market.open?(feedFresh?'Fresh':'Delayed'):'Last Session';
+  set('chartTfLabel',chartTf);
+  set('chartTfTop',chartTf);
   set('chartMode',d.market.open?(feedFresh?'Live':'Delayed'):'Last Session');
   const hasVolume=!!(d.candles||[]).some(x=>Number(x.volume||0)>0);
   set('feedState',feedState+(hasVolume?'':' | Volume unavailable'));
   const fsd=document.getElementById('feedStateDot'); if(fsd)fsd.className='dot '+(feedState==='Fresh'?'ok':feedState==='Delayed'?'warn':'');
-  set('candleCount',(d.candles?d.candles.length:0)+' candles');
+  set('candleCount',chartCandles.length+' '+chartTf+' candles');
   const ohlcEl=document.getElementById('ohlc');
-  if(ohlcEl)ohlcEl.innerHTML=c?(c.closeOnly?'Close-only feed':'<span>O <b>'+c.open.toFixed(2)+'</b></span><span>H <b>'+c.high.toFixed(2)+'</b></span><span>L <b>'+c.low.toFixed(2)+'</b></span><span>C <b>'+c.close.toFixed(2)+'</b></span>'):'OHLC unavailable';
-  set('ltp',c?'LTP '+c.close.toFixed(2):'LTP unavailable');
-  set('change',c&&c.open&&!c.closeOnly?((c.close-c.open)>=0?'+':'')+(c.close-c.open).toFixed(2)+' ('+(((c.close-c.open)/c.open)*100).toFixed(2)+'%)':'');
+  if(ohlcEl)ohlcEl.innerHTML=c?(c.closeOnly?'Close-only feed':'<span>O <b>'+fixed(c.open)+'</b></span><span>H <b>'+fixed(c.high)+'</b></span><span>L <b>'+fixed(c.low)+'</b></span><span>C <b>'+fixed(c.close)+'</b></span>'):'OHLC unavailable';
+  set('ltp',c?'LTP '+fixed(c.close):'LTP unavailable');
+  set('change',c&&num(c.open)!=null&&num(c.close)!=null&&!c.closeOnly?((c.close-c.open)>=0?'+':'')+(c.close-c.open).toFixed(2)+' ('+(((c.close-c.open)/c.open)*100).toFixed(2)+'%)':'');
   set('lastCandle',c?c.time:'--');
   chart(d.candles||[]);
 
@@ -7080,10 +7552,11 @@ function render(d){
   if(posTable)posTable.style.display=hasPositions?'block':'none';
   if(ordEmpty)ordEmpty.style.display=hasOrders?'none':'flex';
   if(ordTable)ordTable.style.display=hasOrders?'block':'none';
-  document.getElementById('positionsBody').innerHTML=hasPositions?d.positions.slice(0,4).map(p=>'<tr><td title="'+p.symbol+'">'+p.symbol+'</td><td>'+p.qty+'</td><td>'+p.avg.toFixed(2)+'</td><td>'+p.ltp.toFixed(2)+'</td><td class="'+cls(p.pnl)+'">'+rs(p.pnl)+'</td><td>'+(p.avg?pc((p.ltp-p.avg)/p.avg*100):'--')+'</td><td><span class="badge">Open</span></td></tr>').join(''):'';
-  document.getElementById('ordersBody').innerHTML=hasOrders?d.trades.slice(0,4).map(t=>{const st=/reject|fail|error/i.test(t.status||t.note||'')?'Rejected':/pending|open|sent/i.test(t.status||'')?'Pending':'Filled';return '<tr><td>'+t.time+'</td><td title="'+t.symbol+'">'+t.symbol+'</td><td class="'+(t.side==='SELL'?'bad':'ok')+'">'+t.side+'</td><td>'+t.qty+'</td><td>'+t.exit.toFixed(2)+'</td><td><span class="badge">'+st+'</span></td></tr>'}).join(''):'';
-  if(!paused){const meaningful=[];(d.logs||[]).forEach(l=>{let msg=String(l.message||'');let level=String(l.level||'INFO').toUpperCase();if(/requireStack|at Module|node:internal|^\s*at\s/i.test(msg))return;if(/MODULE_NOT_FOUND/i.test(msg)){level='ERROR';msg='Server module missing. Stack trace available in full logs.'}if(/ETIMEDOUT|failed|rejected|Error:/i.test(msg))level='ERROR';meaningful.push({time:l.time,level,message:msg})});const grouped=[];meaningful.forEach(l=>{const prev=grouped[grouped.length-1];const key=l.level+'|'+String(l.message||'').replace(/attempt \d+/i,'attempt #');if(prev&&prev.key===key){prev.count++}else grouped.push({key,count:1,row:l})});document.getElementById('logs').innerHTML=grouped.length?grouped.slice(0,6).map(g=>{const l=g.row;const msg=g.count>1?l.message+' repeated '+g.count+' times':l.message;return '<div><span class="muted">'+l.time+'</span> <span class="'+(l.level==='ERROR'?'error':l.level==='WARN'?'warn':'info')+'">['+l.level+']</span> '+msg+'</div>'}).join(''):'<div class="muted">No meaningful logs recorded yet</div>';}
+  document.getElementById('positionsBody').innerHTML=hasPositions?d.positions.slice(0,4).map(p=>{const avg=num(p.avg),ltp=num(p.ltp);return '<tr><td title="'+txt(p.symbol)+'">'+txt(p.symbol)+'</td><td>'+txt(p.qty)+'</td><td>'+fixed(avg)+'</td><td>'+fixed(ltp)+'</td><td class="'+cls(p.pnl)+'">'+rs(p.pnl)+'</td><td>'+(avg&&ltp?pc((ltp-avg)/avg*100):'--')+'</td><td><span class="badge">Open</span></td></tr>'}).join(''):'';
+  document.getElementById('ordersBody').innerHTML=hasOrders?d.trades.slice(0,4).map(t=>{const st=/reject|fail|error/i.test(t.status||t.note||'')?'Rejected':/pending|open|sent/i.test(t.status||'')?'Pending':'Filled';const price=num(t.exit)!=null?t.exit:t.entry;return '<tr><td>'+txt(t.time)+'</td><td title="'+txt(t.symbol)+'">'+txt(t.symbol)+'</td><td class="'+(t.side==='SELL'?'bad':'ok')+'">'+txt(t.side)+'</td><td>'+txt(t.qty)+'</td><td>'+fixed(price)+'</td><td><span class="badge">'+st+'</span></td></tr>'}).join(''):'';
+  renderLogs(d.logs||[]);
   if(PAGE!=='dashboard'){renderWorkspaceDetail(d);setTimeout(wireWorkspaceControls,0);}
+  hideLoader();
 }function renderWorkspaceDetail(d){
   const root=document.getElementById('detailGrid');
   if(!root)return;
@@ -7103,10 +7576,12 @@ function render(d){
   function summary(items){return '<div class="ws-summary">'+items.join('')+'</div>'}
   function filterBar(extra){return '<section class="ws-card"><div class="ws-card-b"><div class="filter-bar"><button class="seg active">Today</button><button class="seg">Latest Session</button><button class="seg">Weekly</button><button class="seg">Monthly</button>'+(extra||'<select><option>All Status</option></select>')+'<input placeholder="Search..."><button class="btn primary">Apply Filter</button><button class="btn">Reset</button></div></div></section>'}
   function empty(iconText,title,msg,action){return '<div class="ws-empty"><div class="ws-empty-icon">'+iconText+'</div><div><b>'+title+'</b><span>'+msg+'</span>'+(action?'<a class="btn" href="'+action.href+'">'+action.label+'</a>':'')+'</div></div>'}
-  function tableCard(title,cols,rows,emptyHtml,sideTitle){const hasRows=!!rows;return '<section class="ws-card workspace-table-card" data-page-size="10"><div class="ws-card-h"><span>'+title+'</span><span class="muted ws-total-label">'+sideTitle+'</span></div><div class="ws-card-b"><div class="ws-table-wrap"><table class="ws-table"><thead><tr>'+cols.map(c=>'<th class="'+(c.right?'right':'')+'">'+c.t+'</th>').join('')+'</tr></thead><tbody>'+(hasRows?rows:'<tr class="ws-empty-row"><td colspan="'+cols.length+'">'+emptyHtml+'</td></tr>')+'</tbody></table></div><div class="ws-table-footer"><span class="ws-page-total">Showing '+(hasRows?'1-10 of '+String(sideTitle).replace(/[^0-9]/g,''):'0-0 of 0')+'</span><div class="ws-pager"><button class="btn ws-prev" type="button">Prev</button><span class="ws-page-info">Page 1</span><button class="btn ws-next" type="button">Next</button></div></div></div></section>'}
+  function tableCard(title,cols,rows,emptyHtml,sideTitle,allRows){const hasRows=!!rows;const tpl=allRows?'<template class="ws-all-rows">'+allRows+'</template>':'';return '<section class="ws-card workspace-table-card" data-page-size="10" data-default-range="today">'+tpl+'<div class="ws-card-h"><span>'+title+'</span><span class="muted ws-total-label">'+sideTitle+'</span></div><div class="ws-card-b"><div class="ws-table-wrap"><table class="ws-table"><thead><tr>'+cols.map(c=>'<th class="'+(c.right?'right':'')+'">'+c.t+'</th>').join('')+'</tr></thead><tbody>'+(hasRows?rows:'<tr class="ws-empty-row"><td colspan="'+cols.length+'">'+emptyHtml+'</td></tr>')+'</tbody></table></div><div class="ws-table-footer"><span class="ws-page-total">'+(hasRows?'Filtering today...':'0-0 of 0')+'</span><div class="ws-pager"><button class="btn ws-prev" type="button">Prev</button><span class="ws-page-info">Page 1</span><button class="btn ws-next" type="button">Next</button></div></div></div></section>'}
   function sidePanel(title,rows,action){return '<section class="ws-card"><div class="ws-card-h"><span>'+title+'</span>'+(action||'')+'</div><div class="ws-card-b side-list">'+rows.map(r=>'<div class="side-row"><label>'+r[0]+'</label><b class="'+(r[2]||'')+'">'+r[1]+'</b></div>').join('')+'</div></section>'}
-  function rowsFromTrades(){return trades.map(t=>'<tr><td>'+txt(t.date||'')+'</td><td>'+txt(t.time||'')+'</td><td title="'+txt(t.symbol)+'">'+txt(t.symbol)+'</td><td>'+pill(t.side,t.side==='SELL'?'bad':'ok')+'</td><td class="right">'+txt(t.qty)+'</td><td class="right">'+txt(t.entry)+'</td><td class="right">'+txt(t.exit)+'</td><td class="right '+((t.pnl||0)>=0?'ok':'bad')+'">'+rs(t.pnl||0)+'</td><td>'+pill(t.status||'Filled','ok')+'</td></tr>').join('')}
-  function standardPage(title,sub,kpis,filters,main,side){const scope='<section class="ws-card scope-card"><div class="ws-card-b"><div class="scope-title">Data Scope</div><div class="scope-text">Showing futures-only BANKNIFTY order records from live trade data and heartbeat logs.</div><div class="scope-badges"><span class="ws-pill ok">Futures only</span><span class="ws-pill ok">Live/session data</span><span class="ws-pill warn">Backtest excluded</span></div></div></section>';const actions=title==='Orders'?'<button class="btn" onclick="load()">Refresh</button><button class="btn disabled-action" disabled title="CSV export endpoint is not available yet">Export CSV</button><a class="btn" href="/tradeops">Back to Dashboard</a>':undefined;root.innerHTML=header(title,sub,actions)+scope+summary(kpis)+(filters||'')+'<div class="ws-grid"><div class="ws-main">'+main+'</div><aside class="ws-side">'+side+'</aside></div></section>';setTimeout(wireWorkspaceControls,0)}
+  function tradeDate(t){return String(t&&t.date||'').slice(0,10)}
+  function tradeRowsFor(range){return range==='today'?trades.filter(t=>tradeDate(t)===(tradeOpsSessionDate||'')):trades}
+  function rowsFromTrades(range){return tradeRowsFor(range||'all').map(t=>'<tr data-date="'+txt(t.date||'')+'"><td>'+txt(t.date||'')+'</td><td>'+txt(t.time||'')+'</td><td title="'+txt(t.symbol)+'">'+txt(t.symbol)+'</td><td>'+pill(t.side,t.side==='SELL'?'bad':'ok')+'</td><td class="right">'+txt(t.qty)+'</td><td class="right">'+txt(t.entry)+'</td><td class="right">'+txt(t.exit)+'</td><td class="right '+((t.pnl||0)>=0?'ok':'bad')+'">'+rs(t.pnl||0)+'</td><td>'+pill(t.status||'Filled','ok')+'</td></tr>').join('')}
+  function standardPage(title,sub,kpis,filters,main,side){const scope='<section class="ws-card scope-card"><div class="ws-card-b"><div class="scope-title">Data Scope</div><div class="scope-text">Showing futures-only BANKNIFTY order records from live trade data and heartbeat logs.</div><div class="scope-badges"><span class="ws-pill ok">Futures only</span><span class="ws-pill ok">Live/session data</span><span class="ws-pill warn">Backtest excluded</span></div></div></section>';const actions=title==='Orders'?'<button class="btn" onclick="load()">Refresh</button><button class="btn disabled-action" disabled title="CSV export endpoint is not available yet">Export CSV</button><a class="btn" href="/tradeops">Back to Dashboard</a>':undefined;const grid=side?'<div class="ws-grid"><div class="ws-main">'+main+'</div><aside class="ws-side">'+side+'</aside></div>':'<div class="ws-grid" style="grid-template-columns:minmax(0,1fr)"><div class="ws-main">'+main+'</div></div>';root.innerHTML=header(title,sub,actions)+scope+summary(kpis)+(filters||'')+grid+'</section>';setTimeout(wireWorkspaceControls,0)}
   if(PAGE==='account'){
     const balance=synced?rs(d.pnl.balance):'Not synced';
     const available=synced?rs(d.pnl.availableMargin):'Not synced';
@@ -7114,18 +7589,21 @@ function render(d){
     const buying=synced?rs((d.pnl.buyingPower!=null?d.pnl.buyingPower:d.pnl.availableMargin)||0):'Not synced';
     const syncChip=synced?pill('Synced','ok'):pill('Not synced','warn');
     const statementRows='';
-    root.innerHTML='<section class="workspace-page account-workspace"><div class="workspace-head"><div><h1>Account</h1><p>Monitor broker balance, margins, ledger, and reconciliation.</p></div><div class="workspace-actions"><button id="syncAccountBtnPage" class="btn">Sync Account</button><a class="btn" href="/admin/signals">Refresh Token</a><button class="btn disabled-action" disabled>Export Statement</button><a class="btn" href="/tradeops">Back to Dashboard</a></div></div>'+summary([kpi('Account Balance',balance,syncChip,'&#8377;'),kpi('Available Margin',available,synced?pill('Broker value','ok'):pill('Not synced','warn'),'&#8599;'),kpi('Used Margin',used,pill('Live risk','warn'),'&#9684;'),kpi('Buying Power',buying,syncChip,'&#9889;'),kpi('Reconciliation',synced?'Not checked':'Not synced',pill(synced?'Pending':'Not synced','warn'),'&#10003;')])+'<div class="ws-grid account-layout"><div class="ws-main"><section class="ws-card"><div class="ws-card-h"><span>Account Identity</span></div><div class="ws-card-b"><div class="identity-grid"><div class="identity-cell"><label>Account ID</label><b>'+txt(d.broker&&d.broker.accountId)+'</b></div><div class="identity-cell"><label>Account Holder</label><b>'+txt(d.broker&&d.broker.accountName)+'</b></div><div class="identity-cell"><label>Broker</label><b>'+(brokerOk?'Zerodha':'Not synced')+'</b></div><div class="identity-cell"><label>Account Type</label><b>Live</b></div><div class="identity-cell"><label>Token Status</label><b>'+(tokenOk?'Valid':'Required')+'</b></div><div class="identity-cell"><label>Last Broker Sync</label><b>'+txt(d.updatedAt||'Not synced')+'</b></div></div></div></section>'+filterBar('<select><option>All Types</option><option>Money In</option><option>Money Out</option><option>Charges</option><option>P&L</option></select>')+tableCard('Account Statement',[{t:'Date / Time'},{t:'Type'},{t:'Money In',right:1},{t:'Money Out',right:1},{t:'Charges',right:1},{t:'Realized P&L',right:1},{t:'Running Balance',right:1},{t:'Broker Ref ID'},{t:'Status'},{t:'Notes'}],statementRows,empty('','No account ledger records available','Broker account statement has not been synced yet. Trade P&L records are available separately in Trade History.',{href:'/tradeops/trade-history',label:'View Trade History'}),' 0 ledger records')+'</div><aside class="ws-side">'+sidePanel('Reconciliation', [['Broker Reported Balance',balance],['App Ledger Balance',synced?'Not checked':'Not synced'],['Difference',synced?'Not checked':'Not synced'],['Status',synced?'Not checked':'Not synced']]) + sidePanel('Charges Breakdown', [['Brokerage','Pending'],['Exchange Fees','Pending'],['GST','Pending'],['STT','Pending'],['Total Charges',d.pnl&&d.pnl.charges!=null?rs(d.pnl.charges):'Pending','bad']])+'<section class="ws-card"><div class="ws-card-h"><span>Quick Actions</span></div><div class="ws-card-b quick-actions"><button class="btn" onclick="load()">Sync Account</button><a class="btn" href="/tradeops/trade-history">View Trade History</a><button class="btn disabled-action" disabled title="Ledger data required">Download CSV</button><button class="btn disabled-action" disabled title="Ledger data required">Download PDF</button></div></section></aside></div></section>';return;
+    root.innerHTML='<section class="workspace-page account-workspace"><div class="workspace-head"><div><h1>Account</h1><p>Auto-refreshes live Zerodha margins every 5 seconds while this page is open.</p></div><div class="workspace-actions"><button id="syncAccountBtnPage" class="btn" onclick="load()">Sync Now</button><a class="btn" href="/admin/signals">Refresh Token</a><button class="btn disabled-action" disabled title="Zerodha ledger sync is not connected">Export Statement</button><a class="btn" href="/tradeops">Back to Dashboard</a></div></div>'+summary([kpi('Account Balance',balance,syncChip,'&#8377;'),kpi('Available Margin',available,synced?pill('Broker value','ok'):pill('Not synced','warn'),'&#8599;'),kpi('Used Margin',used,pill('Live risk','warn'),'&#9684;'),kpi('Buying Power',buying,syncChip,'&#9889;'),kpi('Ledger Sync',synced?'Margins live':'Not synced',pill(synced?'Broker margins':'Not synced',synced?'ok':'warn'),'&#10003;')])+'<div class="ws-grid account-layout"><div class="ws-main"><section class="ws-card"><div class="ws-card-h"><span>Account Identity</span></div><div class="ws-card-b"><div class="identity-grid"><div class="identity-cell"><label>Account ID</label><b>'+txt(d.broker&&d.broker.accountId)+'</b></div><div class="identity-cell"><label>Account Holder</label><b>'+txt(d.broker&&d.broker.accountName)+'</b></div><div class="identity-cell"><label>Broker</label><b>'+(brokerOk?'Zerodha':'Not synced')+'</b></div><div class="identity-cell"><label>Account Type</label><b>Live</b></div><div class="identity-cell"><label>Token Status</label><b>'+(tokenOk?'Valid':'Required')+'</b></div><div class="identity-cell"><label>Last Broker Sync</label><b>'+txt(d.updatedAt||'Not synced')+'</b></div></div></div></section>'+filterBar('<select><option>All Types</option><option>Money In</option><option>Money Out</option><option>Charges</option><option>P&L</option></select>')+tableCard('Account Statement',[{t:'Date / Time'},{t:'Type'},{t:'Money In',right:1},{t:'Money Out',right:1},{t:'Charges',right:1},{t:'Realized P&L',right:1},{t:'Running Balance',right:1},{t:'Broker Ref ID'},{t:'Status'},{t:'Notes'}],statementRows,empty('','Ledger sync not connected','Live balance and available margin are pulled from Zerodha margins. Full account statement and charge ledger need a separate broker ledger integration.',{href:'/tradeops/trade-history',label:'View Trade History'}),' 0 ledger records')+'</div><aside class="ws-side">'+sidePanel('Live Margin Source', [['Broker Reported Balance',balance],['Available Margin',available],['Used Margin',used],['Last Sync',txt(d.updatedAt||'Not synced')]]) + sidePanel('Charges Breakdown', [['Brokerage','Unavailable'],['Exchange Fees','Unavailable'],['GST','Unavailable'],['STT','Unavailable'],['Total Charges',d.pnl&&d.pnl.charges!=null?rs(d.pnl.charges):'Unavailable','bad']])+'<section class="ws-card"><div class="ws-card-h"><span>Quick Actions</span></div><div class="ws-card-b quick-actions"><button class="btn" onclick="load()">Sync Now</button><a class="btn" href="/tradeops/trade-history">View Trade History</a><button class="btn disabled-action" disabled title="Ledger data required">Download CSV</button><button class="btn disabled-action" disabled title="Ledger data required">Download PDF</button></div></section></aside></div></section>';return;
   }
   if(PAGE==='orders'){
-    const sent=trades.length;
-    const rejected=trades.filter(t=>/reject|fail|error/i.test(t.status||'')).length;
-    const pending=trades.filter(t=>/pending|open|sent/i.test(t.status||'')).length;
+    const todayTrades=tradeRowsFor('today');
+    const sent=todayTrades.length;
+    const rejected=todayTrades.filter(t=>/reject|fail|error/i.test(t.status||'')).length;
+    const pending=todayTrades.filter(t=>/pending|open|sent|entry/i.test(t.status||'')).length;
     const filled=Math.max(0,sent-rejected-pending);
-    const lastOrder=sent?txt(trades[0].time):'No orders';
+    const lastOrder=sent?txt(todayTrades[0].time):'No orders';
     const cleanSource=function(t){return String(t.source||t.reason||'').toLowerCase().includes('heartbeat')?'Heartbeat log':'Live trade record'};
-    const orderRows=trades.map(function(t){const status=t.status||'Filled';const pnl=Number(t.pnl||0);return '<tr class="orders-workspace-row" data-date="'+txt(t.date||'')+'" data-time="'+txt(t.time||'')+'" data-symbol="'+txt(t.symbol||'')+'" data-side="'+txt(t.side||'')+'" data-qty="'+txt(t.qty||'')+'" data-entry="'+txt(t.entry||'')+'" data-exit="'+txt(t.exit||'')+'" data-pnl="'+rs(pnl)+'" data-status="'+txt(status)+'" data-source="'+txt(cleanSource(t))+'" data-note="'+txt(t.note||t.reason||'')+'"><td>'+txt(t.date||'')+'</td><td>'+txt(t.time||'')+'</td><td title="'+txt(t.symbol)+'">'+txt(t.symbol)+'</td><td>'+pill(t.side,t.side==='SELL'?'bad':'ok')+'</td><td class="right">'+txt(t.qty)+'</td><td class="right">'+txt(t.entry)+'</td><td class="right">'+txt(t.exit)+'</td><td class="right '+(pnl>=0?'ok':'bad')+'">'+rs(pnl)+'</td><td>'+pill(status,/reject|fail|error/i.test(status)?'bad':/pending|open|sent/i.test(status)?'warn':'ok')+'</td><td><button class="btn row-detail-btn" type="button">View</button></td></tr>'}).join('');
+    const orderRowHtml=function(list){return list.map(function(t){const status=t.status||'Filled';const pnl=Number(t.pnl||0);return '<tr class="orders-workspace-row" data-date="'+txt(t.date||'')+'" data-time="'+txt(t.time||'')+'" data-symbol="'+txt(t.symbol||'')+'" data-side="'+txt(t.side||'')+'" data-qty="'+txt(t.qty||'')+'" data-entry="'+txt(t.entry||'')+'" data-exit="'+txt(t.exit||'')+'" data-pnl="'+rs(pnl)+'" data-status="'+txt(status)+'" data-source="'+txt(cleanSource(t))+'" data-note="'+txt(t.note||t.reason||'')+'"><td>'+txt(t.date||'')+'</td><td>'+txt(t.time||'')+'</td><td title="'+txt(t.symbol)+'">'+txt(t.symbol)+'</td><td>'+pill(t.side,t.side==='SELL'?'bad':'ok')+'</td><td class="right">'+txt(t.qty)+'</td><td class="right">'+txt(t.entry)+'</td><td class="right">'+txt(t.exit)+'</td><td class="right '+(pnl>=0?'ok':'bad')+'">'+rs(pnl)+'</td><td>'+pill(status,/reject|fail|error/i.test(status)?'bad':/pending|open|sent/i.test(status)?'warn':'ok')+'</td><td><button class="btn row-detail-btn" type="button">View</button></td></tr>'}).join('')};
+    const orderRows=orderRowHtml(todayTrades);
+    const allOrderRows=orderRowHtml(trades);
     const filters=filterBar('<select><option>All Orders</option><option>Filled</option><option>Rejected</option><option>Pending</option></select><select><option>All Sides</option><option>BUY</option><option>SELL</option></select>');
-    const orderTable=tableCard('Orders',[{t:'Date'},{t:'Time'},{t:'Symbol'},{t:'Side'},{t:'Qty',right:1},{t:'Entry',right:1},{t:'Exit',right:1},{t:'P&L',right:1},{t:'Status'},{t:'Details'}],orderRows,empty('&#8594;','No futures orders found','No futures orders exist for the selected range.',{href:'/tradeops/trade-history',label:'View Latest Session'}),' '+sent+' records');
+    const orderTable=tableCard('Orders',[{t:'Date'},{t:'Time'},{t:'Symbol'},{t:'Side'},{t:'Qty',right:1},{t:'Entry',right:1},{t:'Exit',right:1},{t:'P&L',right:1},{t:'Status'},{t:'Details'}],orderRows,empty('&#8594;','No futures orders found','No futures orders exist for the selected range.',{href:'/tradeops/trade-history',label:'View Latest Session'}),' '+sent+' today records',allOrderRows);
     const healthPanel='<section class="ws-card order-health-card"><div class="ws-card-h"><span>'+(rejected||pending?'Action Required':'Order Health')+'</span>'+(rejected||pending?pill('Review','bad'):pill('Healthy','ok'))+'</div><div class="ws-card-b">'+(rejected||pending?'<div class="action-note">'+(rejected?rejected+' rejected order(s) need review. ':'')+(pending?pending+' pending order(s) still open.':'')+'</div>':'<div class="healthy-note">No rejected or pending orders in selected range.</div>')+'</div></section>';
     const selected='<section class="ws-card selected-order-card"><div class="ws-card-h"><span>Selected Order</span><a class="btn" href="/tradeops/executions">View Execution</a></div><div class="ws-card-b"><div id="selectedOrderEmpty" class="ws-empty compact"><div class="ws-empty-icon">&#8594;</div><div><b>Select an order to view details.</b><span>Click any order row or View button.</span></div></div><div id="selectedOrderDetail" class="side-list" style="display:none"><div class="side-row"><label>Date / Time</label><b id="selDate">--</b></div><div class="side-row"><label>Symbol</label><b id="selSymbol">--</b></div><div class="side-row"><label>Side / Qty</label><b id="selSide">--</b></div><div class="side-row"><label>Entry</label><b id="selEntry">--</b></div><div class="side-row"><label>Exit</label><b id="selExit">--</b></div><div class="side-row"><label>Gross P&L</label><b id="selPnl">--</b></div><div class="side-row"><label>Status</label><b id="selStatus">--</b></div><div class="side-row"><label>Source</label><b id="selSource">--</b></div><div class="side-row"><label>Related Logs</label><b id="selNote">--</b></div></div></div></section>';
     standardPage('Orders','Track broker orders, failures, retries, and execution outcomes.',[kpi('Orders Sent',String(sent),pill(sent?'Live/session data':'Idle',sent?'ok':'warn'),'&#8594;'),kpi('Filled',String(filled),pill('Completed','ok'),'&#10003;'),kpi('Rejected',String(rejected),pill(rejected?'Action':'Clear',rejected?'bad':'ok'),'&#10005;'),kpi('Pending',String(pending),pill(pending?'Open':'Clear',pending?'warn':'ok'),'&#9711;'),kpi('Last Order',lastOrder,pill(sent?'Latest session':'Idle',sent?'ok':'warn'),'&#9719;')],filters,orderTable+healthPanel,selected);return;
@@ -7136,21 +7614,35 @@ function render(d){
   }
   if(PAGE==='executions'){
     const status=txt(d.execution&&d.execution.status||'Checking');
-    standardPage('Executions','Review execution lifecycle, readiness checks, failures, and manual review items.',[kpi('Execution State',status,pill(status,status==='Blocked'?'bad':status==='Ready'?'ok':'warn'),'&#9889;'),kpi('Token',tokenOk?'Valid':'Required',pill(tokenOk?'OK':'Required',tokenOk?'ok':'bad'),'&#10003;'),kpi('Broker',brokerOk?'Connected':'Not synced',pill(brokerOk?'OK':'Issue',brokerOk?'ok':'bad'),'&#9679;'),kpi('Feed','Latest status',pill(d.bot&&d.bot.isAlive?'Live':'No heartbeat',d.bot&&d.bot.isAlive?'ok':'warn'),'&#9719;'),kpi('Manual Review','0',pill('Clear','ok'),'&#9711;')],'<section class="ws-card"><div class="ws-card-b"><div class="workflow-line"><span>Token '+(tokenOk?'OK':'Required')+'</span><span>Broker '+(brokerOk?'OK':'Issue')+'</span><span>Feed '+(d.bot&&d.bot.isAlive?'Fresh':'Stale')+'</span><span>Account '+(synced?'Synced':'Not synced')+'</span><span>Execution '+status+'</span></div></div></section>',tableCard('Execution Events',[{t:'Date'},{t:'Time'},{t:'Symbol'},{t:'Side'},{t:'Qty',right:1},{t:'Entry',right:1},{t:'Exit',right:1},{t:'P&L',right:1},{t:'Status'}],rowsFromTrades(),empty('&#9889;','No execution events found','Execution records will appear after orders are submitted.'),'Latest session'),sidePanel('Manual Review Panel',[['Current State',status],['Block Reason',d.execution&&d.execution.reason?txt(d.execution.reason):'None'],['Next Action',status==='Blocked'?'Review checks':'Monitor'],['Last Check',txt(d.updatedAt||'Not available')]]));return;
+    standardPage('Executions','Review execution lifecycle, readiness checks, failures, and manual review items.',[kpi('Execution State',status,pill(status,status==='Blocked'?'bad':status==='Ready'?'ok':'warn'),'&#9889;'),kpi('Token',tokenOk?'Valid':'Required',pill(tokenOk?'OK':'Required',tokenOk?'ok':'bad'),'&#10003;'),kpi('Broker',brokerOk?'Connected':'Not synced',pill(brokerOk?'OK':'Issue',brokerOk?'ok':'bad'),'&#9679;'),kpi('Feed','Latest status',pill(d.bot&&d.bot.isAlive?'Live':'No heartbeat',d.bot&&d.bot.isAlive?'ok':'warn'),'&#9719;'),kpi('Manual Review','0',pill('Clear','ok'),'&#9711;')],'<section class="ws-card"><div class="ws-card-b"><div class="workflow-line"><span>Token '+(tokenOk?'OK':'Required')+'</span><span>Broker '+(brokerOk?'OK':'Issue')+'</span><span>Feed '+(d.bot&&d.bot.isAlive?'Fresh':'Stale')+'</span><span>Account '+(synced?'Synced':'Not synced')+'</span><span>Execution '+status+'</span></div></div></section>',tableCard('Execution Events',[{t:'Date'},{t:'Time'},{t:'Symbol'},{t:'Side'},{t:'Qty',right:1},{t:'Entry',right:1},{t:'Exit',right:1},{t:'P&L',right:1},{t:'Status'}],rowsFromTrades('today'),empty('&#9889;','No execution events found','Execution records will appear after orders are submitted.'),'Latest session',rowsFromTrades('all')),sidePanel('Manual Review Panel',[['Current State',status],['Block Reason',d.execution&&d.execution.reason?txt(d.execution.reason):'None'],['Next Action',status==='Blocked'?'Review checks':'Monitor'],['Last Check',txt(d.updatedAt||'Not available')]]));return;
   }
   if(PAGE==='trade-history'){
     const pnlTotal=trades.reduce((a,t)=>a+Number(t.pnl||0),0);
-    standardPage('Trade History','Analyze completed 10:30 futures trades by date, symbol, status, and outcome.',[kpi('Trades',String(trades.length),pill('Futures only','ok'),'&#9636;'),kpi('Total P&L',rs(pnlTotal),pill(pnlTotal>=0?'Profit':'Loss',pnlTotal>=0?'ok':'bad'),'&#8377;'),kpi('Wins',String(trades.filter(t=>Number(t.pnl||0)>0).length),pill('Closed','ok'),'&#8599;'),kpi('Losses',String(trades.filter(t=>Number(t.pnl||0)<0).length),pill('Closed','bad'),'&#8600;'),kpi('Latest',trades[0]?txt(trades[0].date):'No session',pill('Session','warn'),'&#9719;')],filterBar('<select><option>All Trades</option><option>Profit</option><option>Loss</option></select>'),tableCard('Trade History',[{t:'Date'},{t:'Time'},{t:'Symbol'},{t:'Side'},{t:'Qty',right:1},{t:'Entry',right:1},{t:'Exit',right:1},{t:'P&L',right:1},{t:'Status'}],rowsFromTrades(),empty('&#9636;','No futures trades found','No 10:30 futures trades exist for this selected range.'),' '+trades.length+' records'),sidePanel('Trade Insights',[['Best Trade',trades.length?rs(Math.max.apply(null,trades.map(t=>Number(t.pnl||0)))):'No data'],['Worst Trade',trades.length?rs(Math.min.apply(null,trades.map(t=>Number(t.pnl||0)))):'No data'],['Average',trades.length?rs(pnlTotal/trades.length):'No data'],['Data Scope','10:30 futures only']]));return;
+    standardPage('Trade History','Analyze completed 10:30 futures trades by date, symbol, status, and outcome.',[kpi('Trades',String(tradeRowsFor('today').length),pill('Today','ok'),'&#9636;'),kpi('Total P&L',rs(tradeRowsFor('today').reduce((a,t)=>a+Number(t.pnl||0),0)),pill('Today','ok'),'&#8377;'),kpi('Wins',String(tradeRowsFor('today').filter(t=>Number(t.pnl||0)>0).length),pill('Closed','ok'),'&#8599;'),kpi('Losses',String(tradeRowsFor('today').filter(t=>Number(t.pnl||0)<0).length),pill('Closed','bad'),'&#8600;'),kpi('Latest',tradeRowsFor('today')[0]?txt(tradeRowsFor('today')[0].date):'No session',pill('Today','warn'),'&#9719;')],filterBar('<select><option>All Trades</option><option>Profit</option><option>Loss</option></select>'),tableCard('Trade History',[{t:'Date'},{t:'Time'},{t:'Symbol'},{t:'Side'},{t:'Qty',right:1},{t:'Entry',right:1},{t:'Exit',right:1},{t:'P&L',right:1},{t:'Status'}],rowsFromTrades('today'),empty('&#9636;','No futures trades found','No 10:30 futures trades exist for this selected range.'),' '+trades.length+' records',rowsFromTrades('all')),sidePanel('Trade Insights',[['Best Trade',trades.length?rs(Math.max.apply(null,trades.map(t=>Number(t.pnl||0)))):'No data'],['Worst Trade',trades.length?rs(Math.min.apply(null,trades.map(t=>Number(t.pnl||0)))):'No data'],['Average',trades.length?rs(pnlTotal/trades.length):'No data'],['Data Scope','10:30 futures only']]));return;
   }
   if(PAGE==='candle-logs'){
-    const rows=candles.map(c=>'<tr><td class="right">'+txt(c.idx||'')+'</td><td>'+txt(c.time)+'</td><td class="right">'+txt(c.open)+'</td><td class="right">'+txt(c.high)+'</td><td class="right">'+txt(c.low)+'</td><td class="right">'+txt(c.close)+'</td><td>'+pill(c.status||'Recorded',String(c.status||'').includes('Entry')?'ok':'')+'</td><td class="right">'+(c.entry==null?'--':txt(c.entry))+'</td><td>'+txt(c.dir||'--')+'</td><td class="right">'+(c.sl==null?'--':txt(c.sl))+'</td><td class="right '+(Number(c.pnlRs||0)>=0?'ok':'bad')+'">'+(c.pnlRs==null?'--':rs(c.pnlRs))+'</td><td>'+txt(c.note||'')+'</td></tr>').join('');
-    standardPage('Candle Logs','Inspect BANKNIFTY 10:30 shadow candles with entry state and P&L at every candle close.',[kpi('Candles',String(candles.length),pill(candles.length?'Recorded':'No data',candles.length?'ok':'warn'),'&#9636;'),kpi('Timeframe','5m',pill('BANKNIFTY','ok'),'&#9719;'),kpi('Trade Entry',candles.find(c=>c.entry!=null)?txt(candles.find(c=>c.entry!=null).entry):'No entry',pill('Shadow batch','ok'),'&#8594;'),kpi('Latest Candle P&L',candles[0]&&candles[0].pnlRs!=null?rs(candles[0].pnlRs):'--',pill('At close','warn'),'&#8377;'),kpi('Last Candle',candles[0]?txt(candles[0].time):'No candle',pill('Latest','warn'),'&#9719;')],filterBar('<select><option>5m</option><option>All Candles</option><option>Entry Candles</option><option>In Trade</option></select>'),tableCard('Candle Records',[{t:'#',right:1},{t:'Time'},{t:'Open',right:1},{t:'High',right:1},{t:'Low',right:1},{t:'Close',right:1},{t:'State'},{t:'Entry',right:1},{t:'Dir'},{t:'SL',right:1},{t:'P&L @ Close',right:1},{t:'Note'}],rows,empty('&#9636;','No 5m candles recorded','Check feed or backfill candles.',{href:'/tradeops/health',label:'Check Feed'}),' '+candles.length+' candles'),sidePanel('Candle Trade Context',[['Data Scope','10:30 shadow live only'],['Entry Direction',candles.find(c=>c.dir&&c.dir!=='--')?txt(candles.find(c=>c.dir&&c.dir!=='--').dir):'No entry'],['Latest Candle',candles[0]?txt(candles[0].time):'Not available'],['P&L Formula','Index close vs entry x qty']]));return;
+    const rows=candles.map(c=>{const closePnl=c.closePnlRs!=null?c.closePnlRs:c.pnlRs;return '<tr><td class="right">'+txt(c.idx||'')+'</td><td>'+txt(c.time)+'</td><td class="right">'+txt(c.open)+'</td><td class="right">'+txt(c.high)+'</td><td class="right">'+txt(c.low)+'</td><td class="right">'+txt(c.close)+'</td><td>'+pill(c.status||'Recorded',String(c.status||'').includes('entry')||String(c.status||'').includes('Entry')?'ok':String(c.status||'').includes('hit')?'bad':String(c.status||'').includes('trail')?'warn':'')+'</td><td class="right">'+(c.entry==null?'--':txt(c.entry))+'</td><td>'+txt(c.dir||'--')+'</td><td class="right">'+(c.sl==null?'--':txt(c.sl))+'</td><td class="right '+(closePnl==null?'muted':Number(closePnl)>=0?'ok':'bad')+'">'+(closePnl==null?'--':rs(closePnl))+'</td><td style="white-space:normal;overflow:visible;text-overflow:clip;min-width:320px;line-height:1.45">'+txt(c.note||'')+'</td></tr>'}).join('');
+    standardPage('Candle Logs','Inspect BANKNIFTY 10:30 futures 15m candles with entry state and P&L at every candle close.',[kpi('Candles',String(candles.length),pill(candles.length?'Recorded':'No data',candles.length?'ok':'warn'),'&#9636;'),kpi('Timeframe','15m',pill('BANKNIFTY','ok'),'&#9719;'),kpi('Trade Entry',candles.find(c=>c.entry!=null)?txt(candles.find(c=>c.entry!=null).entry):'No entry',pill('10:30 futures','ok'),'&#8594;'),kpi('Latest Candle P&L',candles[0]&&candles[0].pnlRs!=null?rs(candles[0].pnlRs):'--',pill('At close','warn'),'&#8377;'),kpi('Last Candle',candles[0]?txt(candles[0].time):'No candle',pill('Latest','warn'),'&#9719;')],filterBar('<select><option>15m</option><option>All Candles</option><option>Entry Candles</option><option>In Trade</option></select>'),tableCard('15m Candle Records',[{t:'#',right:1},{t:'Time'},{t:'Open',right:1},{t:'High',right:1},{t:'Low',right:1},{t:'Close',right:1},{t:'State'},{t:'Entry',right:1},{t:'Dir'},{t:'SL',right:1},{t:'P&L @ Close',right:1},{t:'Note'}],rows,empty('&#9636;','No 15m candles recorded','Today 10:30 futures candle log is not available from the bot heartbeat yet.',{href:'/tradeops/health',label:'Check Feed'}),' '+candles.length+' candles'),'');return;
   }
   if(PAGE==='server-logs'){
     const grouped=[];logs.forEach(l=>{const prev=grouped[grouped.length-1];const key=String(l.level||'')+'|'+String(l.message||'').replace(/attempt \d+/i,'attempt #');if(prev&&prev.key===key){prev.count++}else grouped.push({key,count:1,row:l})});
     const logControls='<section class="ws-card log-filter-card"><div class="ws-card-b"><div class="filter-bar"><select><option>All Levels</option><option>INFO</option><option>WARN</option><option>ERROR</option></select><input placeholder="Search server logs..."><button class="btn primary" type="button">Apply Filter</button><button class="btn" type="button">Reset</button><button class="btn" type="button" onclick="load()">Refresh Logs</button></div></div></section>';
     const consoleHtml='<section class="ws-card server-log-full"><div class="ws-card-h"><span>Server Log Console <span class="dot ok"></span> <span class="ok">Live</span></span><div class="log-actions"><button class="btn" id="pauseLogsPage" type="button">Pause</button><button class="btn" id="clearLogsPage" type="button">Clear Preview</button><button class="btn" type="button" onclick="load()">Refresh</button></div></div><div class="ws-card-b"><div class="console full"><div id="workspaceLogs" class="logs">'+(grouped.length?grouped.slice(0,120).map(g=>{const l=g.row;const msg=g.count>1?l.message+' repeated '+g.count+' times':l.message;return '<div><span class="muted">'+txt(l.time)+'</span> <span class="'+(l.level==='ERROR'?'error':l.level==='WARN'?'warn':'info')+'">['+txt(l.level)+']</span> '+txt(msg)+'</div>'}).join(''):'<div class="muted">No server logs recorded yet</div>')+'</div></div></div></section>';
     standardPage('Server Logs','Review bot, broker, feed, alert, and execution service logs in a full console view.',[kpi('Log Lines',String(logs.length),pill('Preview','ok'),'&#9636;'),kpi('Errors',String(logs.filter(l=>l.level==='ERROR').length),pill('Watch','bad'),'&#10005;'),kpi('Warnings',String(logs.filter(l=>l.level==='WARN').length),pill('Review','warn'),'&#9888;'),kpi('Info',String(logs.filter(l=>l.level==='INFO').length),pill('Normal','ok'),'&#10003;'),kpi('Source','Server',pill('Live','ok'),'&#9719;')],logControls,consoleHtml,sidePanel('Console Controls',[['Filters','Level + search'],['Date Range','Not required'],['Service','TradeOps / bot logs'],['Grouping','Repeated errors grouped']]));setTimeout(()=>{const p=document.getElementById('pauseLogsPage');if(p&&!p._wired){p._wired=true;p.onclick=function(){paused=!paused;p.textContent=paused?'Resume':'Pause'}}const c=document.getElementById('clearLogsPage');if(c&&!c._wired){c._wired=true;c.onclick=function(){const x=document.getElementById('workspaceLogs');if(x)x.innerHTML='<div class="muted">Preview cleared. Refresh to reload server logs.</div>'}}},0);return;
+  }
+  if(PAGE==='bot-config'){
+    const mc=d.modeControl||{};
+    const nc=d.notificationControl||{};
+    const issueList=Array.isArray(mc.safetyIssues)?mc.safetyIssues:[];
+    const hasHeartbeat=issueList.some(x=>/heartbeat/i.test(x));
+    const hasAudit=issueList.some(x=>/audit/i.test(x));
+    const hasOpen=issueList.some(x=>/active/i.test(x));
+    const issueHtml=issueList.length?'<div class="ws-empty compact"><div class="ws-empty-icon">&#9888;</div><div><b>LIVE is blocked</b><span>'+issueList.map(txt).join('<br>')+'</span></div></div>':'<div class="ws-empty compact"><div class="ws-empty-icon">&#10003;</div><div><b>LIVE safety checks clear</b><span>Toggle LIVE only when you want real futures orders.</span></div></div>';
+    const checked=String(mc.runningMode||mc.envMode||'SHADOW').toUpperCase()==='LIVE'?'checked':'';
+    const tgChecked=nc.telegramEnabled?'checked':'';
+    const panel='<section class="ws-card"><div class="ws-card-h"><span>10:30 Futures Mode</span>'+pill(String(mc.runningMode||mc.envMode||'SHADOW').toUpperCase(),mc.runningMode==='LIVE'?'bad':'ok')+'</div><div class="ws-card-b"><div class="identity-grid"><div class="identity-cell"><label>Switch Scope</label><b>10:30 Futures only</b></div><div class="identity-cell"><label>Configured Mode</label><b>'+txt(mc.envMode||'SHADOW')+'</b></div><div class="identity-cell"><label>Order Effect</label><b>'+((mc.runningMode==='LIVE')?'Real broker futures orders':'Shadow futures tracking')+'</b></div><div class="identity-cell"><label>Quantity</label><b>30</b></div></div><label style="display:inline-flex;align-items:center;gap:10px;margin-top:16px;padding:10px 14px;border:1px solid #d7e4f4;border-radius:999px;background:#fff;font-weight:800;cursor:pointer"><span>SHADOW</span><input id="tt1030ModeToggle" type="checkbox" '+checked+' onchange="setTradeOpsMode(this.checked?&quot;LIVE&quot;:&quot;SHADOW&quot;)" style="width:42px;height:22px;accent-color:#16a34a"><span>LIVE</span></label><div id="modeResult" class="account-warn" style="display:none"></div></div></section>'
+      +'<section class="ws-card"><div class="ws-card-h"><span>Telegram Alerts</span>'+pill(nc.telegramEnabled?'ON':'OFF',nc.telegramEnabled?'ok':'warn')+'</div><div class="ws-card-b"><div class="identity-grid"><div class="identity-cell"><label>Alert Scope</label><b>10:30 Futures only</b></div><div class="identity-cell"><label>Telegram Token</label><b>'+(nc.tokenConfigured?'Configured':'Missing')+'</b></div><div class="identity-cell"><label>Chat ID</label><b>'+(nc.chatConfigured?'Configured':'Missing')+'</b></div><div class="identity-cell"><label>Drishti Alerts</label><b>Off in TradeOps</b></div></div><label style="display:inline-flex;align-items:center;gap:10px;margin-top:16px;padding:10px 14px;border:1px solid #d7e4f4;border-radius:999px;background:#fff;font-weight:800;cursor:pointer"><span>OFF</span><input id="tt1030TelegramToggle" type="checkbox" '+tgChecked+' onchange="setTradeOpsTelegram(this.checked)" style="width:42px;height:22px;accent-color:#16a34a"><span>ON</span></label><div class="muted" style="margin-top:10px">Sends entry, exit, stop-loss/reversal, and EOD close alerts for 10:30 futures using the existing bot Telegram token.</div><div id="telegramResult" class="account-warn" style="display:none"></div></div></section>';
+    standardPage('Bot Config','TradeOps controls only the 10:30 futures strategy. Other ZeroScreen shadow strategies are not part of TradeOps.',[kpi('10:30 Futures',txt(mc.runningMode||mc.envMode||'SHADOW'),pill(mc.restartRequired?'Reload needed':'Configured',mc.restartRequired?'warn':'ok'),'&#9889;'),kpi('Switch Scope','10:30 Futures only',pill('Isolated','ok'),'&#9636;'),kpi('Configured Mode',txt(mc.envMode||'SHADOW'),pill('TT1030_FUTURES_MODE','ok'),'&#10003;'),kpi('Telegram',nc.telegramEnabled?'On':'Off',pill(nc.tokenConfigured&&nc.chatConfigured?'Ready':'Check token',nc.tokenConfigured&&nc.chatConfigured?'ok':'warn'),'&#9993;'),kpi('LIVE Gate',mc.liveAllowed?'Clear':'Blocked',pill(mc.liveAllowed?'Eligible':'Blocked',mc.liveAllowed?'ok':'bad'),'&#8377;')],'',panel,sidePanel('10:30 Futures Safety',[['10:30 heartbeat',hasHeartbeat?'Issue':'Confirmed',hasHeartbeat?'bad':'ok'],['10:30 audit',hasAudit?'Blocked':'OK',hasAudit?'bad':'ok'],['Open Trade',hasOpen?'Blocked':'Flat',hasOpen?'bad':'ok'],['Telegram scope','10:30 futures only','ok']])+issueHtml);return;
   }
   const genericTitle=titleCase(PAGE);
   const subtitles={health:'Monitor service health, broker connectivity, feed freshness, and execution safety.',alerts:'Review alert delivery, failed notifications, and channel status.',audit:'Review user actions, emergency-stop checks, config changes, and account events.','admin-config':'Manage users, roles, access, token/account status, and admin controls.','bot-config':'Control bot state, safety checklist, token/feed/sync controls, and control history.',settings:'Configure TradeOps preferences, display options, alerts, and audit notes.'};
@@ -7171,15 +7663,18 @@ function wireWorkspaceControls(){
   }
   document.querySelectorAll('.workspace-table-card').forEach(function(card){
     const tbody=card.querySelector('tbody');
-    if(!tbody || tbody.querySelector('.ws-empty-row')) return;
-    if(!card._allRows){card._allRows=Array.from(tbody.querySelectorAll('tr')).map(function(r){return r.outerHTML});card._page=1;card._query='';card._range='today';card._terms=[]}
+    if(!tbody) return;
+    const tplRows=card.querySelector('.ws-all-rows');
+    if(tbody.querySelector('.ws-empty-row')&&!tplRows) return;
+    if(!card._allRows){const tpl=card.querySelector('.ws-all-rows');card._allRows=tpl?Array.from(tpl.content.querySelectorAll('tr')).map(function(r){return r.outerHTML}):Array.from(tbody.querySelectorAll('tr')).map(function(r){return r.outerHTML});card._page=1;card._query='';card._range=card.getAttribute('data-default-range')||'today';card._terms=[]}
     const pageSize=Number(card.getAttribute('data-page-size')||10);
     const pageInfo=card.querySelector('.ws-page-info');
     const totalEl=card.querySelector('.ws-page-total');
     const prev=card.querySelector('.ws-prev');
     const next=card.querySelector('.ws-next');
-    function rowDate(html){const m=String(html||'').match(/(20\d{2}-\d{2}-\d{2})|(\d{1,2}\s+[A-Za-z]{3,9}\s+20\d{2})/);if(!m)return null;const raw=m[0];if(/^\d{4}-/.test(raw))return new Date(raw+'T00:00:00');const d=new Date(raw);return isNaN(d.getTime())?null:d}
-    function filtered(){const q=String(card._query||'').toLowerCase().trim();const terms=Array.isArray(card._terms)?card._terms.map(function(x){return String(x||'').toLowerCase().trim()}).filter(Boolean):[];const all=card._allRows.slice();let latest=null;all.forEach(function(html){const d=rowDate(html);if(d&&(!latest||d>latest))latest=d});const today=new Date();today.setHours(0,0,0,0);return all.filter(function(html){const low=html.toLowerCase();if(q&&!low.includes(q))return false;if(terms.some(function(t){return !low.includes(t)}))return false;const range=card._range||'today';const d=rowDate(html);if(!d)return true;d.setHours(0,0,0,0);if(range==='latest-session'&&latest){const x=new Date(latest);x.setHours(0,0,0,0);return d.getTime()===x.getTime()}if(range==='today')return d.getTime()===today.getTime();if(range==='weekly')return (today.getTime()-d.getTime())<=7*86400000&&d<=today;if(range==='monthly')return d.getFullYear()===today.getFullYear()&&d.getMonth()===today.getMonth();return true})}
+    function rowDateKey(html){html=String(html||'');const dm=html.match(/data-date=["']([^"']+)["']/i);if(dm&&dm[1])return String(dm[1]).slice(0,10);const cells=html.match(/<td[^>]*>\s*(20\d{2}-\d{2}-\d{2})\s*<\/td>/i);if(cells&&cells[1])return cells[1].slice(0,10);const m=html.match(/(20\d{2}-\d{2}-\d{2})|(\d{1,2}\s+[A-Za-z]{3,9}\s+20\d{2})/);if(!m)return '';const raw=m[0];if(/^\d{4}-/.test(raw))return raw.slice(0,10);const d=new Date(raw);return isNaN(d.getTime())?'':d.toISOString().slice(0,10)}
+    function addDaysKey(key,days){const d=new Date(key+'T00:00:00Z');if(isNaN(d.getTime()))return '';d.setUTCDate(d.getUTCDate()+days);return d.toISOString().slice(0,10)}
+    function filtered(){const q=String(card._query||'').toLowerCase().trim();const terms=Array.isArray(card._terms)?card._terms.map(function(x){return String(x||'').toLowerCase().trim()}).filter(Boolean):[];const all=card._allRows.slice();let latest='';all.forEach(function(html){const k=rowDateKey(html);if(k&&(!latest||k>latest))latest=k});const today=String(tradeOpsSessionDate||latest||new Date().toISOString().slice(0,10)).slice(0,10);const weekStart=addDaysKey(today,-7);return all.filter(function(html){const low=html.toLowerCase();if(q&&!low.includes(q))return false;if(terms.some(function(t){return !low.includes(t)}))return false;const range=String(card._range||'today').toLowerCase();const k=rowDateKey(html);if(!k)return range!=='weekly'&&range!=='monthly';if(range==='latest-session')return latest?k===latest:k===today;if(range==='today')return k===today;if(range==='weekly')return k>=weekStart&&k<=today;if(range==='monthly')return k.slice(0,7)===today.slice(0,7);return false})}
     function draw(){const rows=filtered();const total=rows.length;const pages=Math.max(1,Math.ceil(total/pageSize));card._page=Math.min(Math.max(1,card._page||1),pages);const start=(card._page-1)*pageSize;tbody.innerHTML=rows.slice(start,start+pageSize).join('');if(pageInfo)pageInfo.textContent='Page '+card._page+' of '+pages;if(totalEl)totalEl.textContent='Showing '+(total?start+1:0)+'-'+Math.min(start+pageSize,total)+' of '+total;if(prev)prev.disabled=card._page<=1;if(next)next.disabled=card._page>=pages;wireOrderRows()}
     if(prev&&!prev._wired){prev._wired=true;prev.onclick=function(){card._page=(card._page||1)-1;draw()}}
     if(next&&!next._wired){next._wired=true;next.onclick=function(){card._page=(card._page||1)+1;draw()}}
@@ -7195,7 +7690,7 @@ function wireWorkspaceControls(){
     const reset=Array.from(bar.querySelectorAll('.btn')).find(function(b){return !b.classList.contains('primary') && /reset/i.test(b.textContent||'')});
     const cards=Array.from(document.querySelectorAll('.workspace-table-card'));
     function activeRange(){const seg=bar.querySelector('.seg.active');const t=String(seg&&seg.textContent||'today').toLowerCase().trim().replace(/\s+/g,'-');return t||'today'}
-    function selectedTerms(){return selects.map(function(s){return String(s.value||s.options[s.selectedIndex]?.text||'').trim()}).filter(function(v){return v&&!/^all\b/i.test(v)&&!/^(today|latest session|weekly|monthly|yearly|custom|5m)$/i.test(v)})}
+    function selectedTerms(){return selects.map(function(s){return String(s.value||s.options[s.selectedIndex]?.text||'').trim()}).filter(function(v){return v&&!/^all\b/i.test(v)&&!/^(today|latest session|weekly|monthly|yearly|custom|5m|15m)$/i.test(v)})}
     function run(){const opts={query:input?input.value:'',range:activeRange(),terms:selectedTerms()};cards.forEach(function(card){if(card._applyFilters)card._applyFilters(opts);else if(card._applySearch)card._applySearch(opts.query)})}
     if(apply)apply.onclick=run;
     if(input)input.onkeydown=function(e){if(e.key==='Enter')run()};
@@ -7206,8 +7701,44 @@ function wireWorkspaceControls(){
   const syncPage=document.getElementById('syncAccountBtnPage'); if(syncPage&&!syncPage._wired){syncPage._wired=true;syncPage.onclick=async function(){const old=syncPage.textContent;syncPage.textContent='Syncing...';syncPage.disabled=true;await load();syncPage.textContent='Synced';setTimeout(function(){syncPage.textContent=old;syncPage.disabled=false},1200)}}
   const syncPage2=document.getElementById('syncAccountBtn2'); if(syncPage2&&!syncPage2._wired){syncPage2._wired=true;syncPage2.onclick=function(){const b=document.getElementById('syncAccountBtnPage'); if(b)b.click(); else load();}}
 }
-function showLoadError(message){const root=document.getElementById('detailGrid');const title=PAGE.replace(/-/g,' ').replace(/\b\w/g,function(m){return m.toUpperCase()});if(root&&PAGE!=='dashboard'){root.innerHTML='<section class="ws-card" style="grid-column:1/-1"><div class="ws-card-h"><span>'+title+'</span><button class="btn" onclick="load()">Retry</button></div><div class="ws-card-b"><b class="bad">Could not load workspace data</b><p class="muted">'+txt(message||'Status API request failed')+'</p></div></section>'}}
-async function load(){try{const r=await fetch('/api/tradeops/status',{cache:'no-store',credentials:'same-origin',headers:{'Accept':'application/json'}});const ct=r.headers.get('content-type')||'';if(!r.ok)throw new Error('Status API HTTP '+r.status);if(!ct.includes('application/json'))throw new Error('Status API returned non-JSON');const j=await r.json();if(!j||j.ok===false)throw new Error(j&&j.error?j.error:'Status API failed');render(j)}catch(e){console.error(e);showLoadError(e&&e.message?e.message:'Request failed')}}const emergencyBtn=document.getElementById('emergencyBtn');if(emergencyBtn)emergencyBtn.onclick=()=>document.getElementById('modal')?.classList.add('open');const cancelStop=document.getElementById('cancelStop');if(cancelStop)cancelStop.onclick=()=>document.getElementById('modal')?.classList.remove('open');const sendStop=document.getElementById('sendStop');if(sendStop)sendStop.onclick=async()=>{const out=document.getElementById('emergencyResult');if(out)out.innerHTML='Fetching open positions...<br>Sending exit orders...';try{const r=await fetch('/api/tradeops/emergency-stop',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({confirm:document.getElementById('confirmBox')?.checked,phrase:document.getElementById('confirmPhrase')?.value,pin:document.getElementById('pin')?.value})});const j=await r.json();if(out)out.innerHTML=(j.ok?'Closed positions count: '+(j.closed?j.closed.length:0)+'<br>Failed exits count: 0<br>':'Failed exits count: 1<br>')+(j.message||j.error||'Done');await load()}catch(e){if(out)out.textContent=e.message||'Request failed'}};const pauseLogs=document.getElementById('pauseLogs');if(pauseLogs)pauseLogs.onclick=()=>{paused=!paused;pauseLogs.textContent=paused?'Resume':'Pause'};const clearLogs=document.getElementById('clearLogs');if(clearLogs)clearLogs.onclick=()=>{const logsEl=document.getElementById('logs');if(logsEl)logsEl.innerHTML='<div class="muted">Preview cleared. New logs will appear on refresh.</div>'};const refreshTokenBtn=document.getElementById('refreshTokenBtn');if(refreshTokenBtn)refreshTokenBtn.onclick=()=>{refreshTokenBtn.textContent='Opening Token Page...';refreshTokenBtn.disabled=true;location.href='/admin/signals'};const syncAccountBtn=document.getElementById('syncAccountBtn');if(syncAccountBtn)syncAccountBtn.onclick=async()=>{const old=syncAccountBtn.textContent;syncAccountBtn.textContent='Syncing...';syncAccountBtn.disabled=true;await load();syncAccountBtn.textContent='Synced';setTimeout(()=>{syncAccountBtn.textContent=old;syncAccountBtn.disabled=false},1200)};if(INITIAL_STATUS&&INITIAL_STATUS.ok){try{render(INITIAL_STATUS)}catch(e){console.error(e);showLoadError(e&&e.message?e.message:"Initial render failed")}}load();setInterval(load,5000);
+async function setTradeOpsMode(mode){
+  const out=document.getElementById('modeResult');
+  const toggle=document.getElementById('tt1030ModeToggle');
+  const body={mode:mode,restartBot:false};
+  if(mode==='LIVE'){
+    if(!confirm('Enable LIVE for 10:30 futures? This can place real Zerodha futures orders using real account cash.')){if(toggle)toggle.checked=false;return;}
+    body.phrase='ENABLE LIVE TRADING';
+    body.understandRealMoney=true;
+  }
+  if(out){out.style.display='block';out.textContent='Saving 10:30 futures mode: '+mode+'...';}
+  try{
+    const r=await fetch('/api/tradeops/mode',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+    const j=await r.json();
+    if(!r.ok||!j.ok)throw new Error(j.error||'Mode change failed');
+    if(out)out.textContent=j.message||('Mode changed to '+mode);
+    await load();
+  }catch(e){
+    if(out)out.textContent=(e&&e.message)||'Mode change failed';
+    if(toggle)toggle.checked=mode!=='LIVE';
+  }
+}
+async function setTradeOpsTelegram(enabled){
+  const out=document.getElementById('telegramResult');
+  const toggle=document.getElementById('tt1030TelegramToggle');
+  if(out){out.style.display='block';out.textContent=(enabled?'Enabling':'Disabling')+' 10:30 futures Telegram alerts...';}
+  try{
+    const r=await fetch('/api/tradeops/notifications',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({telegramEnabled:!!enabled})});
+    const j=await r.json();
+    if(!r.ok||!j.ok)throw new Error(j.error||'Notification change failed');
+    if(out)out.textContent=j.message||('Telegram alerts '+(enabled?'enabled':'disabled'));
+    await load();
+  }catch(e){
+    if(out)out.textContent=(e&&e.message)||'Notification change failed';
+    if(toggle)toggle.checked=!enabled;
+  }
+}
+function showLoadError(message){hideLoader();const root=document.getElementById(PAGE==='dashboard'?'dashboard':'detailGrid');const title=PAGE.replace(/-/g,' ').replace(/\b\w/g,function(m){return m.toUpperCase()});if(root){const html='<section class="ws-card" style="grid-column:1/-1"><div class="ws-card-h"><span>'+title+'</span><button class="btn" onclick="load()">Retry</button></div><div class="ws-card-b"><b class="bad">Could not load workspace data</b><p class="muted">'+txt(message||'Status API request failed')+'</p></div></section>';if(PAGE==='dashboard')root.innerHTML=html;else root.innerHTML=html;}}
+async function load(){const ctrl=new AbortController();const timer=setTimeout(()=>ctrl.abort(),8000);try{const r=await fetch('/api/tradeops/status',{cache:'no-store',credentials:'same-origin',signal:ctrl.signal,headers:{'Accept':'application/json'}});const ct=r.headers.get('content-type')||'';if(!r.ok)throw new Error('Status API HTTP '+r.status);if(!ct.includes('application/json'))throw new Error('Status API returned non-JSON');const j=await r.json();if(!j||j.ok===false)throw new Error(j&&j.error?j.error:'Status API failed');render(j)}catch(e){console.error(e);if(!lastStatus)showLoadError(e&&e.name==='AbortError'?'Status API timeout':e&&e.message?e.message:'Request failed')}finally{clearTimeout(timer)}}setupSidebar();const emergencyBtn=document.getElementById('emergencyBtn');if(emergencyBtn)emergencyBtn.onclick=()=>document.getElementById('modal')?.classList.add('open');const cancelStop=document.getElementById('cancelStop');if(cancelStop)cancelStop.onclick=()=>document.getElementById('modal')?.classList.remove('open');const sendStop=document.getElementById('sendStop');if(sendStop)sendStop.onclick=async()=>{const out=document.getElementById('emergencyResult');if(out)out.innerHTML='Fetching open positions...<br>Sending exit orders...';try{const r=await fetch('/api/tradeops/emergency-stop',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({confirm:document.getElementById('confirmBox')?.checked,phrase:document.getElementById('confirmPhrase')?.value,pin:document.getElementById('pin')?.value})});const j=await r.json();if(out)out.innerHTML=(j.ok?'Closed positions count: '+(j.closed?j.closed.length:0)+'<br>Failed exits count: 0<br>':'Failed exits count: 1<br>')+(j.message||j.error||'Done');await load()}catch(e){if(out)out.textContent=e.message||'Request failed'}};const pauseLogs=document.getElementById('pauseLogs');if(pauseLogs)pauseLogs.onclick=()=>{paused=!paused;pauseLogs.textContent=paused?'Resume':'Pause'};const clearLogs=document.getElementById('clearLogs');if(clearLogs)clearLogs.onclick=()=>{const logsEl=document.getElementById('logs');if(logsEl)logsEl.innerHTML='<div class="muted">Preview cleared. New logs will appear on next tick.</div>'};const refreshTokenBtn=document.getElementById('refreshTokenBtn');if(refreshTokenBtn)refreshTokenBtn.onclick=()=>{refreshTokenBtn.textContent='Opening Token Page...';refreshTokenBtn.disabled=true;location.href='/admin/signals'};const syncAccountBtn=document.getElementById('syncAccountBtn');if(syncAccountBtn)syncAccountBtn.onclick=async()=>{const old=syncAccountBtn.textContent;syncAccountBtn.textContent='Syncing...';syncAccountBtn.disabled=true;await load();syncAccountBtn.textContent='Synced';setTimeout(()=>{syncAccountBtn.textContent=old;syncAccountBtn.disabled=false},1200)};document.querySelectorAll('#chartTabs button[data-tf]').forEach(btn=>{btn.onclick=()=>{chartTf=btn.dataset.tf||'15m';document.querySelectorAll('#chartTabs button[data-tf]').forEach(b=>b.classList.toggle('active',b===btn));if(lastStatus)render(lastStatus);}});if(INITIAL_STATUS&&INITIAL_STATUS.ok){try{render(INITIAL_STATUS)}catch(e){console.error(e);showLoadError(e&&e.message?e.message:"Initial render failed")}}load();loadLogs();if(PAGE==='dashboard'||PAGE==='account')setInterval(load,5000);setInterval(loadLogs,1000);
 </script>
 </body></html>`;
 }
@@ -12825,6 +13356,7 @@ initDb().then(async () => {
     startScheduler();
   });
 }).catch(err => { console.error("DB init failed:", err); process.exit(1); });
+
 
 
 

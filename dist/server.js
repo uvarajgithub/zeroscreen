@@ -7111,18 +7111,97 @@ async function buildTradeOpsStatus() {
         return m ? Number(m[1]) * 60 + Number(m[2]) : -1;
     };
     const eventDir = (x) => String(x?.dir || x?.direction || "").toUpperCase();
-    const entryEvents = hb1030Log.filter(x => x?.entry != null).map((x, i) => ({ ...x, _mins: eventMinute(x), _seq: i })).sort((a, b) => a._mins - b._mins || a._seq - b._seq);
-    const exitEvents = hb1030Log.filter(x => x?.exit != null || x?.pnlRs != null || x?.pts != null).map((x, i) => ({ ...x, _mins: eventMinute(x), _seq: i })).sort((a, b) => a._mins - b._mins || a._seq - b._seq);
+    const entryEvents = hb1030Log.map((x, i) => ({ ...x, _mins: eventMinute(x), _seq: i })).filter(x => x?.entry != null && x?.exit == null && x?.pnlRs == null && x?.pts == null).sort((a, b) => a._mins - b._mins || a._seq - b._seq);
+    const exitEvents = hb1030Log.map((x, i) => ({ ...x, _mins: eventMinute(x), _seq: i })).filter(x => x?.exit != null || x?.pnlRs != null || x?.pts != null).sort((a, b) => a._mins - b._mins || a._seq - b._seq);
+    function tt1030DisplayLockedProfitPts(maxFavPts, trailAfterPts = 300) {
+        if (!(trailAfterPts > 0) || !(maxFavPts >= trailAfterPts))
+            return 0;
+        return trailAfterPts;
+    }
+    function protectedTrailFor(entry, dir, mins) {
+        const entryPrice = tradeOpsMaybeNum(entry?.entry);
+        const entryMins = Number(entry?._mins);
+        if (entryPrice === null || !Number.isFinite(entryMins) || mins < entryMins)
+            return { sl: null, hitMinute: null };
+        const isShort = dir === "PE" || dir === "SHORT" || dir === "SELL";
+        let protectedSl = null;
+        let protectedPts = 0;
+        let protectedMinute = null;
+        let hitMinute = null;
+        const chronological = [...candleLogSource].sort((a, b) => (minFromTimeText(a?.time || a?.at || a?.date) ?? 9999) - (minFromTimeText(b?.time || b?.at || b?.date) ?? 9999));
+        for (const row of chronological) {
+            const rowMins = minFromTimeText(row?.time || row?.at || row?.date);
+            if (rowMins === null || rowMins < entryMins || rowMins > mins)
+                continue;
+            const high = tradeOpsMaybeNum(row?.high ?? row?.h);
+            const low = tradeOpsMaybeNum(row?.low ?? row?.l);
+            const favPts = isShort ? (low === null ? null : entryPrice - low) : (high === null ? null : high - entryPrice);
+            const lockedPts = favPts === null ? 0 : tt1030DisplayLockedProfitPts(favPts, 300);
+            if (lockedPts > protectedPts) {
+                protectedPts = lockedPts;
+                protectedSl = isShort ? entryPrice - lockedPts : entryPrice + lockedPts;
+                protectedMinute = rowMins;
+            }
+            if (protectedSl !== null && protectedMinute !== null && rowMins > protectedMinute) {
+                const breached = isShort ? high !== null && high >= protectedSl : low !== null && low <= protectedSl;
+                if (breached) {
+                    hitMinute = rowMins;
+                    break;
+                }
+            }
+        }
+        return { sl: protectedSl, hitMinute, lockedPts: protectedPts };
+    }
     function candleTradeContext(c, mins) {
         const rawDir = eventDir(c);
         const sameDir = (x) => !rawDir || eventDir(x) === rawDir;
-        const exit = [...exitEvents].reverse().find(x => x._mins >= 0 && x._mins <= mins && sameDir(x));
-        const entry = [...entryEvents].reverse().find(x => x._mins >= 0 && x._mins <= mins && sameDir(x))
-            || [...entryEvents].reverse().find(x => x._mins >= 0 && x._mins <= mins);
-        const dir = rawDir || eventDir(entry) || eventDir(exit) || candleDir || "--";
-        const entryPrice = tradeOpsMaybeNum(c?.entry ?? entry?.entry ?? exit?.entry ?? candleEntryPrice);
-        const exitPrice = tradeOpsMaybeNum(c?.exit ?? exit?.exit);
-        const pnlRs = tradeOpsMaybeNum(c?.pnlRs ?? (exit && exit._mins === mins ? exit.pnlRs : null));
+        if (mins < 0)
+            return { dir: rawDir || "--", entryPrice: tradeOpsMaybeNum(c?.entry), exitPrice: tradeOpsMaybeNum(c?.exit), pnlRs: tradeOpsMaybeNum(c?.pnlRs) };
+        const statusText = String(c?.status || c?.note || "").toLowerCase();
+        const directEntry = tradeOpsMaybeNum(c?.entry);
+        const directExit = tradeOpsMaybeNum(c?.exit);
+        const directPnl = tradeOpsMaybeNum(c?.pnlRs);
+        const entries = entryEvents.filter(x => x._mins >= 0 && x._mins <= mins && sameDir(x));
+        const exits = exitEvents.filter(x => x._mins >= 0 && x._mins <= mins && sameDir(x));
+        const entry = entries[entries.length - 1] || null;
+        const exit = exits[exits.length - 1] || null;
+        if (entry) {
+            const dir = rawDir || eventDir(entry) || "--";
+            const protectedTrail = protectedTrailFor(entry, dir, mins);
+            if (protectedTrail.hitMinute !== null && mins > protectedTrail.hitMinute)
+                return { dir: rawDir || "--", entryPrice: directEntry, exitPrice: directExit, pnlRs: directPnl, protectedSl: protectedTrail.sl, protectedPts: protectedTrail.lockedPts };
+            if (protectedTrail.hitMinute !== null && mins === protectedTrail.hitMinute) {
+                const entryPrice = tradeOpsMaybeNum(directEntry ?? entry.entry);
+                const protectedPnl = protectedTrail.sl === null || entryPrice === null ? null : Math.round(((dir === "PE" || dir === "SHORT" || dir === "SELL") ? entryPrice - protectedTrail.sl : protectedTrail.sl - entryPrice) * candleQty);
+                return { dir, entryPrice, exitPrice: protectedTrail.sl, pnlRs: protectedPnl, protectedSl: protectedTrail.sl, protectedPts: protectedTrail.lockedPts, protectedExit: true };
+            }
+        }
+        const exitAfterEntry = exit && (!entry || exit._mins > entry._mins || (exit._mins === entry._mins && exit._seq > entry._seq));
+        if (exitAfterEntry) {
+            const isExitCandle = exit._mins === mins || /exit|sl[_ -]?hit|stop/.test(statusText);
+            if (!isExitCandle)
+                return { dir: rawDir || "--", entryPrice: directEntry, exitPrice: directExit, pnlRs: directPnl };
+            const entryPrice = tradeOpsMaybeNum(directEntry ?? exit.entry);
+            const exitPrice = tradeOpsMaybeNum(directExit ?? exit.exit);
+            return { dir: rawDir || eventDir(exit) || "--", entryPrice, exitPrice, pnlRs: directPnl ?? tradeOpsMaybeNum(exit.pnlRs) };
+        }
+        if (entry) {
+            const entryPrice = tradeOpsMaybeNum(directEntry ?? entry.entry);
+            const dir = rawDir || eventDir(entry) || "--";
+            const protectedTrail = protectedTrailFor(entry, dir, mins);
+            return { dir, entryPrice, exitPrice: directExit, pnlRs: directPnl, protectedSl: protectedTrail.sl, protectedPts: protectedTrail.lockedPts };
+        }
+        const firstEntry = entryEvents.find(x => x._mins >= 0);
+        if (directEntry !== null || directExit !== null || directPnl !== null) {
+            const entryAllowed = !firstEntry || mins >= firstEntry._mins;
+            return { dir: entryAllowed ? (rawDir || candleDir || "--") : (rawDir || "--"), entryPrice: entryAllowed ? directEntry : null, exitPrice: directExit, pnlRs: entryAllowed ? directPnl : null };
+        }
+        const entryMinute = eventMinute(hb1030Entry);
+        const allowHeartbeatFallback = entryMinute >= 0 && mins >= entryMinute;
+        const entryPrice = allowHeartbeatFallback ? tradeOpsMaybeNum(candleEntryPrice) : null;
+        const dir = entryPrice !== null ? (rawDir || candleDir || "--") : (rawDir || "--");
+        const exitPrice = null;
+        const pnlRs = null;
         return { dir, entryPrice, exitPrice, pnlRs };
     }
     const candleLog = candleLogSource.slice(-50).reverse().map((c, idx) => {
@@ -7160,14 +7239,14 @@ async function buildTradeOpsStatus() {
             close,
             volume: tradeOpsNum(c?.volume ?? c?.v),
             closeOnly,
-            status: c?.status || (candleEntryTime && String(hhmmText).slice(0, 5) === candleEntryTime ? "Entry candle" : entryActive ? "In trade" : "Monitoring"),
+            status: ctx.protectedExit ? "sl_hit" : (c?.status || (candleEntryTime && String(hhmmText).slice(0, 5) === candleEntryTime ? "Entry candle" : entryActive ? "In trade" : "Monitoring")),
             entry: ctx.entryPrice,
             exit: ctx.exitPrice,
             dir: ctx.dir || "--",
-            sl: tradeOpsMaybeNum(c?.sl ?? hb?.tt1030SL),
+            sl: ctx.protectedSl ?? tradeOpsMaybeNum(c?.sl ?? hb?.tt1030SL),
             pnlPts,
             pnlRs: ctx.pnlRs !== null ? ctx.pnlRs : (pnlPts === null ? null : Math.round(pnlPts * candleQty)),
-            note: tradeOpsSanitizeLog(c?.note || c?.reason || ""),
+            note: tradeOpsSanitizeLog((c?.note || c?.reason || "") + (ctx.protectedSl != null ? ` Protected +${ctx.protectedPts || 300} SL ${ctx.protectedSl}.` : "")),
         };
     });
     const feedFresh = isAlive && candleLog.length > 0 && (heartbeatAgeSec === null || heartbeatAgeSec < 180);
@@ -7706,6 +7785,88 @@ html,body{font-size:12px!important;overflow-x:hidden!important}
 .candle-note{max-width:260px!important;min-width:180px!important}
 .modal .dialog{width:calc(100vw - 24px)!important;max-width:none!important;margin:12px!important}
 }
+/* TradeOps responsive correction: desktop >=1024 unchanged, tablet collapsed, phone single column. */
+@media(min-width:1024px){
+body:not(.tradeops-collapsed) .side{width:216px!important}
+body:not(.tradeops-collapsed) .main{margin-left:216px!important}
+body:not(.tradeops-collapsed) .top{left:216px!important}
+body:not(.tradeops-collapsed) .brand-copy,body:not(.tradeops-collapsed) .nav-section,body:not(.tradeops-collapsed) .nav span,body:not(.tradeops-collapsed) .help span{display:initial!important}
+body:not(.tradeops-collapsed) .nav{align-items:stretch!important;flex-direction:column!important}
+body:not(.tradeops-collapsed) .nav a{width:auto!important;min-width:0!important;max-width:none!important;justify-content:flex-start!important;padding:0 12px!important}
+}
+@media(min-width:768px) and (max-width:1023px){
+html,body{overflow-x:hidden!important}
+.app{display:block!important}
+.side{position:fixed!important;left:0!important;top:0!important;bottom:0!important;width:74px!important;height:100dvh!important;padding:14px 10px!important;z-index:40!important;overflow:hidden!important}
+.brand{display:grid!important;justify-items:center!important;gap:10px!important;margin:0 0 12px!important;padding-bottom:12px!important}
+.brand-mark{width:40px!important;height:40px!important}
+.brand-copy,.nav-section,.nav span,.help span,.collapse-btn span,.nav-badge,.nav-dot{display:none!important}
+.nav{align-items:center!important;overflow-y:auto!important;overflow-x:hidden!important}
+.nav a{width:44px!important;min-width:44px!important;max-width:44px!important;height:44px!important;justify-content:center!important;padding:0!important;margin:0 0 8px!important}
+.main{margin-left:74px!important;min-width:0!important}
+.top{left:74px!important;height:auto!important;min-height:72px!important;padding:10px 14px!important;gap:8px!important;flex-wrap:wrap!important;overflow:visible!important}
+.status-group{order:2!important;flex:1 0 100%!important;display:flex!important;gap:8px!important;overflow-x:auto!important;overflow-y:hidden!important;padding-bottom:2px!important}
+.action-group{order:1!important;margin-left:auto!important}
+.status-chip{height:34px!important;flex:0 0 auto!important}
+.mode-chip{display:inline-flex!important}
+.content{padding:12px!important}
+.dashboard{grid-template-columns:minmax(0,1fr) minmax(0,1fr)!important;grid-template-areas:"workflow workflow" "pnl chart" "account quick" "ready orders" "positions recent" "logs logs"!important;gap:12px!important}
+.dashboard>.card{min-width:0!important;width:100%!important;max-width:100%!important}
+.workflow.card{display:flex!important;overflow-x:auto!important;overflow-y:hidden!important;gap:8px!important;padding:10px!important;min-height:74px!important;align-items:center!important}
+.flow-step{flex:0 0 178px!important;min-width:178px!important;height:52px!important}.flow-step:after{display:none!important}
+.flow-actions{flex:0 0 118px!important;margin-left:0!important}
+.chart-box{height:260px!important;max-height:260px!important}.metric-grid{grid-template-columns:repeat(2,minmax(0,1fr))!important}
+.ws-grid,.account-layout{grid-template-columns:1fr!important}.ws-summary{grid-template-columns:repeat(2,minmax(0,1fr))!important}
+}
+@media(max-width:767px){
+*,*::before,*::after{box-sizing:border-box!important}
+html,body{width:100%!important;max-width:100%!important;overflow-x:hidden!important;background:#f3f7fd!important}
+.app{display:block!important;min-width:0!important;width:100%!important}
+.side{position:fixed!important;left:10px!important;right:10px!important;bottom:10px!important;top:auto!important;width:auto!important;height:62px!important;z-index:70!important;padding:7px!important;border:1px solid rgba(148,163,184,.22)!important;border-radius:20px!important;background:rgba(2,21,44,.96)!important;box-shadow:0 18px 42px rgba(2,8,23,.30)!important;overflow:hidden!important}
+.brand,.side-bottom,.nav-section,.help,.collapse-btn{display:none!important}
+.nav{height:48px!important;display:flex!important;flex-direction:row!important;align-items:center!important;gap:7px!important;overflow-x:auto!important;overflow-y:hidden!important;padding:0!important;scrollbar-width:none!important}
+.nav::-webkit-scrollbar{display:none!important}
+.nav a{width:48px!important;min-width:48px!important;max-width:48px!important;height:48px!important;flex:0 0 48px!important;margin:0!important;padding:0!important;border-radius:15px!important;justify-content:center!important}
+.nav a span,.nav-badge,.nav-dot{display:none!important}.nav a svg{width:21px!important;height:21px!important}.nav a.active:before{display:none!important}
+.main,body.tradeops-collapsed .main{margin-left:0!important;width:100%!important;min-width:0!important;padding-bottom:86px!important}
+.top,body.tradeops-collapsed .top{left:0!important;right:0!important;top:0!important;position:sticky!important;z-index:55!important;height:auto!important;min-height:112px!important;max-height:130px!important;padding:9px 10px 8px!important;display:flex!important;flex-wrap:wrap!important;gap:8px!important;overflow:hidden!important}
+.action-group{order:1!important;width:100%!important;display:grid!important;grid-template-columns:minmax(94px,1fr) minmax(136px,auto) 40px!important;align-items:center!important;gap:8px!important}
+.status-group{order:2!important;width:100%!important;flex:0 0 100%!important;display:flex!important;flex-wrap:nowrap!important;gap:8px!important;overflow-x:auto!important;overflow-y:hidden!important;padding:0 0 2px!important;scrollbar-width:none!important}
+.status-group::-webkit-scrollbar{display:none!important}
+.status-chip{height:32px!important;flex:0 0 auto!important;max-width:190px!important;min-width:max-content!important;padding:0 10px!important;font-size:11px!important;border-radius:11px!important;overflow:hidden!important}
+.mode-chip{display:inline-flex!important}
+.updated-chip{grid-column:auto!important}
+.account-switcher{height:36px!important;max-width:none!important;min-width:0!important;width:100%!important}
+.btn.danger{height:38px!important;width:100%!important;padding:0 10px!important;font-size:12px!important;border-radius:12px!important}
+.profile-block{height:38px!important;justify-content:flex-end!important}.profile-block .user{display:none!important}.avatar{width:36px!important;height:36px!important}
+.content{padding:10px!important;max-width:100%!important;overflow-x:hidden!important}
+.dashboard{display:grid!important;grid-template-columns:minmax(0,1fr)!important;grid-template-areas:"workflow" "pnl" "chart" "account" "ready" "orders" "quick" "positions" "recent" "logs"!important;gap:12px!important;width:100%!important;max-width:100%!important}
+.dashboard>.card,.card,.ws-card{width:100%!important;max-width:100%!important;min-width:0!important;border-radius:15px!important;overflow:hidden!important}
+.card-h,.ws-card-h{padding:14px 16px 0!important;min-height:40px!important}.card-b,.ws-card-b{padding:16px!important}
+.workflow.card{display:flex!important;min-height:78px!important;padding:10px!important;gap:8px!important;overflow-x:auto!important;overflow-y:hidden!important;align-items:center!important;scrollbar-width:none!important}
+.workflow.card::-webkit-scrollbar{display:none!important}
+.flow-step{flex:0 0 148px!important;min-width:148px!important;height:52px!important;padding:0 10px!important;border-radius:14px!important;gap:8px!important}
+.flow-step:after{display:none!important}.flow-icon{width:30px!important;height:30px!important}.flow-text b{font-size:11.5px!important}.flow-text span{display:none!important}.flow-ok{left:auto!important;right:8px!important;bottom:8px!important}
+.flow-actions{flex:0 0 188px!important;display:grid!important;grid-template-columns:1fr 1fr!important;gap:8px!important;margin:0!important;min-width:188px!important}.flow-actions .btn{height:34px!important}
+.pnl{min-height:0!important}.pnl-value{font-size:42px!important;line-height:1.02!important;letter-spacing:-1px!important}.profit-pill{height:30px!important;padding:0 12px!important}
+.metric-grid{grid-template-columns:repeat(2,minmax(0,1fr))!important;gap:8px!important}.metric{min-width:0!important;min-height:64px!important;padding:10px!important}.metric label,.mini-stat label{font-size:11px!important}.metric b,.mini-stat b{font-size:13px!important;word-break:break-word!important;white-space:normal!important}
+.pnl-foot{height:auto!important;display:grid!important;grid-template-columns:1fr!important;gap:6px!important;font-size:11.5px!important}
+.chart{min-height:0!important}.chart-box{height:320px!important;max-height:340px!important;width:100%!important;overflow:hidden!important}.chart-top{gap:8px!important}.ltp{font-size:22px!important}
+.tabs{display:flex!important;overflow-x:auto!important;flex-wrap:nowrap!important;gap:8px!important;scrollbar-width:none!important}.tabs::-webkit-scrollbar{display:none!important}.chart-footer{flex:0 0 100%!important;white-space:normal!important;text-align:left!important;margin-left:0!important}
+.account-ident,.identity-grid{grid-template-columns:1fr!important}.kv{grid-template-columns:minmax(0,1fr) auto!important}.kv b,.kv strong{max-width:150px!important}
+.dashboard .mini-grid,.execution-gate .mini-grid{grid-template-columns:repeat(2,minmax(0,1fr))!important;gap:8px!important}.dashboard .mini-stat{min-height:66px!important}
+.dashboard .order-bubbles,.order-bubbles{grid-template-columns:repeat(3,minmax(0,1fr))!important;gap:8px!important}.order-bubble{min-height:56px!important}
+.quick-grid{grid-template-columns:1fr!important}.quick-row{min-width:0!important}
+.dashboard .positions .table-wrap,.dashboard .recent .table-wrap{height:auto!important;max-height:none!important;overflow:visible!important;padding:0 16px 16px!important}
+.dashboard .positions .table,.dashboard .recent .table,.dashboard .positions thead,.dashboard .recent thead,.dashboard .positions tbody,.dashboard .recent tbody,.dashboard .positions tr,.dashboard .recent tr,.dashboard .positions td,.dashboard .recent td{display:block!important;width:100%!important;min-width:0!important}
+.dashboard .positions thead,.dashboard .recent thead{display:none!important}
+.dashboard .positions tr,.dashboard .recent tr{border:1px solid #e3edf8!important;border-radius:12px!important;padding:10px!important;margin-bottom:8px!important;background:#fff!important}
+.dashboard .positions td,.dashboard .recent td{height:auto!important;border:0!important;padding:4px 0!important;white-space:normal!important;text-overflow:clip!important;overflow:visible!important}
+.logs{height:170px!important}.logs-card .log-actions{display:flex!important;gap:6px!important;overflow-x:auto!important}
+.workspace-page{width:100%!important;max-width:100%!important;overflow-x:hidden!important}.workspace-head{display:grid!important;grid-template-columns:1fr!important;gap:10px!important;padding:2px!important}.workspace-head h1{font-size:24px!important}.workspace-actions{display:grid!important;grid-template-columns:1fr 1fr!important;gap:8px!important;width:100%!important}.workspace-actions .btn{width:100%!important}
+.ws-grid,.account-layout,.settings-grid{grid-template-columns:1fr!important}.ws-summary,.account-summary,.candle-log-page .ws-summary{grid-template-columns:1fr!important}.filter-bar{display:grid!important;grid-template-columns:1fr 1fr!important}.filter-bar input,.filter-bar select{grid-column:1/-1!important;min-width:0!important;width:100%!important}
+.ws-table-wrap{overflow-x:auto!important;max-width:100%!important}.ws-table{min-width:680px!important}.server-log-full .console.full .logs{height:360px!important}
+}
 .dashboard.hidden{display:none!important}
 .detail.active{display:block!important}
 .detail:not(.active){display:none!important}
@@ -7851,6 +8012,37 @@ body:has(.dashboard) .console{margin:0 14px 12px!important}
 body:has(.dashboard) .logs{height:76px!important;font-size:11.5px!important;line-height:1.35!important}
 @media(max-width:1366px){body:has(.dashboard) .dashboard{grid-template-columns:1fr 1fr!important;grid-template-areas:"workflow workflow" "pnl chart" "account quick" "ready orders" "recent recent" "logs logs"!important}body:has(.dashboard) .pnl,body:has(.dashboard) .chart,body:has(.dashboard) .account{height:310px!important}}
 @media(max-width:780px){.side{width:68px!important;min-width:68px!important;padding:12px 8px!important}.main{margin-left:68px!important;width:calc(100vw - 68px)!important}.top{left:68px!important;width:calc(100vw - 68px)!important;padding:0 10px!important;height:58px!important;gap:8px!important}.content{padding:10px!important}.brand{display:grid!important;justify-items:center!important;gap:8px!important;margin:0 0 10px!important;padding:0 0 10px!important}.brand-mark{width:38px!important;height:38px!important}.brand-copy,.brand-name,.brand-chip,.nav-section,.nav span,.help span,.collapse-btn span,.nav-badge,.nav-dot,.user{display:none!important}.brand>.collapse-btn{margin:0!important;width:42px!important;height:38px!important;padding:0!important}.nav{align-items:center!important;padding-top:4px!important;overflow-y:auto!important;overflow-x:hidden!important}.nav a{width:42px!important;min-width:42px!important;max-width:42px!important;height:42px!important;flex:0 0 42px!important;margin:0 0 8px!important;padding:0!important;border-radius:13px!important;justify-content:center!important;gap:0!important}.nav a svg{width:20px!important;height:20px!important}.nav a.active:before{left:-3px!important;top:9px!important;height:24px!important}.side-bottom{align-items:center!important}.help,.collapse-btn{width:42px!important;height:42px!important;justify-content:center!important;padding:0!important}.dashboard{grid-template-columns:1fr!important;grid-template-areas:"workflow" "pnl" "chart" "account" "ready" "orders" "quick" "positions" "recent" "logs"!important}.workspace-head{padding:4px 0!important}.workspace-head h1{font-size:24px!important}.workspace-actions{width:100%!important;justify-content:flex-start!important}.filter-bar input,.filter-bar select{min-width:0!important;width:100%!important}.ws-summary{grid-template-columns:1fr!important}.ws-grid,.account-layout,.settings-grid{grid-template-columns:1fr!important}.identity-grid{grid-template-columns:1fr!important}body:has(.dashboard) .side{width:68px!important;padding:12px 8px!important}body:has(.dashboard) .main{margin-left:68px!important;width:calc(100vw - 68px)!important}body:has(.dashboard) .top{left:68px!important;width:calc(100vw - 68px)!important;height:58px!important;padding:0 10px!important}body:has(.dashboard) .dashboard{grid-template-columns:1fr!important;grid-template-areas:"workflow" "pnl" "chart" "account" "ready" "orders" "quick" "recent" "logs"!important}body:has(.dashboard) .pnl,body:has(.dashboard) .chart,body:has(.dashboard) .account,body:has(.dashboard) .ready.mini-card,body:has(.dashboard) .orders.mini-card,body:has(.dashboard) .quick.mini-card,body:has(.dashboard) .recent,body:has(.dashboard) .logs-card{height:auto!important;min-height:0!important}}
+/* TradeOps final mobile/tablet guard: keep desktop density pass from forcing a cropped shell. */
+@media(min-width:768px) and (max-width:1023px){
+html body:has(.dashboard) .side{left:0!important;top:0!important;bottom:0!important;width:74px!important;min-width:74px!important;max-width:74px!important;height:100dvh!important}
+html body:has(.dashboard) .main{margin-left:74px!important;width:calc(100vw - 74px)!important;min-width:0!important}
+html body:has(.dashboard) .top{left:74px!important;width:calc(100vw - 74px)!important;height:auto!important;min-height:72px!important;max-height:none!important}
+html body:has(.dashboard) .status-chip span,html body:has(.dashboard) .status-chip span:not(#marketLabel):not(#brokerLabel):not(#botLabel):not(#lastUpdated){display:inline!important}
+html body:has(.dashboard) .mode-chip{display:inline-flex!important}
+html body:has(.dashboard) .dashboard{grid-template-columns:minmax(0,1fr) minmax(0,1fr)!important;grid-template-areas:"workflow workflow" "pnl chart" "account quick" "ready orders" "recent recent" "logs logs"!important}
+html body:has(.dashboard) .chart-box{height:300px!important;min-height:300px!important;max-height:320px!important}
+html body:has(.dashboard) .chart .tabs{display:flex!important;flex-wrap:nowrap!important;overflow-x:auto!important;position:static!important;margin-top:8px!important}
+html body:has(.dashboard) .chart .tabs button{flex:0 0 auto!important;width:auto!important;min-width:44px!important;max-width:96px!important;height:32px!important}
+}
+@media(max-width:767px){
+html body:has(.dashboard) .side{position:fixed!important;left:10px!important;right:10px!important;top:auto!important;bottom:10px!important;width:calc(100vw - 20px)!important;min-width:0!important;max-width:calc(100vw - 20px)!important;height:62px!important;padding:7px!important;border-radius:20px!important}
+html body:has(.dashboard) .brand,html body:has(.dashboard) .side-bottom,html body:has(.dashboard) .nav-section,html body:has(.dashboard) .help,html body:has(.dashboard) .collapse-btn{display:none!important}
+html body:has(.dashboard) .nav{height:48px!important;display:flex!important;flex-direction:row!important;align-items:center!important;gap:7px!important;overflow-x:auto!important;overflow-y:hidden!important;padding:0!important}
+html body:has(.dashboard) .nav a{width:48px!important;min-width:48px!important;max-width:48px!important;height:48px!important;flex:0 0 48px!important;margin:0!important;padding:0!important}
+html body:has(.dashboard) .main{margin-left:0!important;width:100%!important;min-width:0!important;padding-bottom:86px!important}
+html body:has(.dashboard) .top{left:0!important;width:100%!important;height:auto!important;min-height:112px!important;max-height:130px!important;padding:9px 10px 8px!important;display:flex!important;flex-wrap:wrap!important;gap:8px!important}
+html body:has(.dashboard) .status-group{order:2!important;width:100%!important;flex:0 0 100%!important;display:flex!important;flex-wrap:nowrap!important;gap:8px!important;overflow-x:auto!important;overflow-y:hidden!important}
+html body:has(.dashboard) .status-chip span,html body:has(.dashboard) .status-chip span:not(#marketLabel):not(#brokerLabel):not(#botLabel):not(#lastUpdated){display:inline!important}
+html body:has(.dashboard) .mode-chip{display:inline-flex!important}
+html body:has(.dashboard) .action-group{order:1!important;width:100%!important;display:grid!important;grid-template-columns:minmax(94px,1fr) minmax(136px,auto) 40px!important;gap:8px!important}
+html body:has(.dashboard) .dashboard{grid-template-columns:minmax(0,1fr)!important;grid-template-areas:"workflow" "pnl" "chart" "account" "ready" "orders" "quick" "recent" "logs"!important;width:100%!important;max-width:100%!important}
+html body:has(.dashboard) .dashboard>.card{width:100%!important;max-width:100%!important;min-width:0!important}
+html body:has(.dashboard) .pnl,html body:has(.dashboard) .chart,html body:has(.dashboard) .account,html body:has(.dashboard) .ready.mini-card,html body:has(.dashboard) .orders.mini-card,html body:has(.dashboard) .quick.mini-card,html body:has(.dashboard) .recent,html body:has(.dashboard) .logs-card{height:auto!important;min-height:0!important}
+html body:has(.dashboard) .chart-box{height:320px!important;min-height:320px!important;max-height:340px!important;width:100%!important}
+html body:has(.dashboard) .chart .tabs{display:flex!important;flex-wrap:nowrap!important;overflow-x:auto!important;position:static!important;margin-top:8px!important}
+html body:has(.dashboard) .chart .tabs button{flex:0 0 auto!important;width:auto!important;min-width:44px!important;max-width:96px!important;height:32px!important}
+html body:has(.dashboard) .metric-grid{grid-template-columns:repeat(2,minmax(0,1fr))!important}
+}
 
 </style>
 </head>
