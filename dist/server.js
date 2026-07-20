@@ -6938,15 +6938,14 @@ async function buildTradeOpsStatus() {
     const persistedDayRs = tradeOpsDateKey(tt1030State?.date || today) === today ? tradeOpsMaybeNum(tt1030State?.dayRs) : null;
     const heartbeatHas1030Session = (Array.isArray(hb?.tt1030TradeLog) && hb.tt1030TradeLog.length > 0) || tradeOpsNum(hb?.tt1030Trades) > 0;
     const liveNetCandidate = heartbeatHas1030Session ? tradeOpsMaybeNum(hb?.tt1030PnL) : persistedDayRs;
-    const liveClosedCandidate = heartbeatHas1030Session ? tradeOpsMaybeNum(hb?.tt1030ClosedPnL) : persistedDayRs;
     const liveUnrealizedCandidate = tradeOpsMaybeNum(hb?.tt1030UnrealizedPnL);
-    const live1030Closed = liveClosedCandidate ?? todayPnl;
-    const live1030Net = liveNetCandidate ?? live1030Closed + (liveUnrealizedCandidate ?? 0);
+    const live1030Closed = todayPnl;
+    const live1030Net = live1030Closed + (liveUnrealizedCandidate ?? 0);
     const realized = displaySession === today ? live1030Closed : todayPnl;
     const unrealized = displaySession === today ? (liveUnrealizedCandidate ?? (openTrade ? live1030Net - live1030Closed : 0)) : 0;
     const netPnl = displaySession === today ? live1030Net : todayPnl;
     const pnlSource = displaySession === today
-        ? (liveNetCandidate !== null ? "10:30 futures heartbeat" : liveClosedCandidate !== null ? "10:30 futures closed P&L" : "10:30 futures trade history")
+        ? (liveUnrealizedCandidate !== null ? "10:30 futures trades + live open P&L" : "10:30 futures trade history")
         : "latest completed session";
     const todayRangePnls = displayClosed.map(t => tradeOpsPnl(t)).reduce((arr, n) => {
         arr.push((arr[arr.length - 1] || 0) + n);
@@ -7075,7 +7074,9 @@ async function buildTradeOpsStatus() {
         note: tradeOpsSanitizeLog(t?.reasonExit || t?.status || t?.source || ""),
         source: t?.source || t?.type || "trades_json",
     }));
-    const hb1030Log = Array.isArray(hb?.tt1030TradeLog) ? hb.tt1030TradeLog : [];
+    const persisted1030Log = Array.isArray(tt1030State?.log) ? tt1030State.log : [];
+    const heartbeat1030Log = Array.isArray(hb?.tt1030TradeLog) ? hb.tt1030TradeLog : [];
+    const hb1030Log = persisted1030Log.length ? persisted1030Log : heartbeat1030Log;
     const hb1030Entry = [...hb1030Log].reverse().find((x) => x?.entry != null && x?.exit == null) || hb1030Log.find((x) => x?.entry != null) || {};
     const hb1030Exit = [...hb1030Log].reverse().find((x) => x?.exit != null || x?.pnlRs != null) || {};
     const candleEntryPrice = tradeOpsMaybeNum(hb1030Entry?.entry ?? hb?.tt1030Entry);

@@ -6592,15 +6592,14 @@ async function buildTradeOpsStatus() {
   const persistedTrades = tradeOpsDateKey(tt1030State?.date || today) === today ? tradeOpsMaybeNum(tt1030State?.trades) : null;
   const heartbeatHas1030Session = (Array.isArray(hb?.tt1030TradeLog) && hb.tt1030TradeLog.length > 0) || tradeOpsNum(hb?.tt1030Trades) > 0;
   const liveNetCandidate = heartbeatHas1030Session ? tradeOpsMaybeNum(hb?.tt1030PnL) : persistedDayRs;
-  const liveClosedCandidate = heartbeatHas1030Session ? tradeOpsMaybeNum(hb?.tt1030ClosedPnL) : persistedDayRs;
   const liveUnrealizedCandidate = tradeOpsMaybeNum(hb?.tt1030UnrealizedPnL);
-  const live1030Closed = liveClosedCandidate ?? todayPnl;
-  const live1030Net = liveNetCandidate ?? live1030Closed + (liveUnrealizedCandidate ?? 0);
+  const live1030Closed = todayPnl;
+  const live1030Net = live1030Closed + (liveUnrealizedCandidate ?? 0);
   const realized = displaySession === today ? live1030Closed : todayPnl;
   const unrealized = displaySession === today ? (liveUnrealizedCandidate ?? (openTrade ? live1030Net - live1030Closed : 0)) : 0;
   const netPnl = displaySession === today ? live1030Net : todayPnl;
   const pnlSource = displaySession === today
-    ? (liveNetCandidate !== null ? "10:30 futures heartbeat" : liveClosedCandidate !== null ? "10:30 futures closed P&L" : "10:30 futures trade history")
+    ? (liveUnrealizedCandidate !== null ? "10:30 futures trades + live open P&L" : "10:30 futures trade history")
     : "latest completed session";
   const pnls = displayClosed.map(t => tradeOpsPnl(t)).reduce((arr: number[], n) => {
     arr.push((arr[arr.length - 1] || 0) + n);
