@@ -1825,7 +1825,56 @@ async function tt1030WaitForBrokerOrder(orderId) {
     }
     throw new Error(`Order ${orderId} not completed by broker`);
 }
+async function tt1030AssertLiveMargin(symbol, transaction, qty) {
+    let required = 0;
+    let available = 0;
+    try {
+        const margins = await kite.orderMargins([{
+                exchange: "NFO",
+                tradingsymbol: symbol,
+                transaction_type: transaction,
+                variety: "regular",
+                product: "MIS",
+                order_type: "MARKET",
+                quantity: qty,
+                price: 0,
+                trigger_price: 0,
+            }], "compact");
+        required = Number(margins?.[0]?.total || 0);
+    }
+    catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        throw new Error(`Unable to verify live margin before order: ${msg}`);
+    }
+    try {
+        const brokerMargins = await kite.getMargins("equity");
+        const equity = brokerMargins?.equity || brokerMargins;
+        available = Number(equity?.available?.cash ?? equity?.available?.live_balance ?? equity?.available?.opening_balance ?? 0);
+    }
+    catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        throw new Error(`Unable to read available broker margin before order: ${msg}`);
+    }
+    const buffer = Math.max(1000, Math.ceil(required * 0.02));
+    const needed = required + buffer;
+    appendTT1030Audit("live_margin_precheck", {
+        symbol,
+        transaction,
+        qty,
+        requiredMargin: Math.round(required),
+        safetyBuffer: Math.round(buffer),
+        neededMargin: Math.round(needed),
+        availableMargin: Math.round(available),
+    }, available >= needed ? "info" : "error");
+    if (!(required > 0)) {
+        throw new Error("Broker returned invalid required margin for futures order");
+    }
+    if (available < needed) {
+        throw new Error(`Insufficient margin before order: available Rs.${Math.round(available)}, required Rs.${Math.round(needed)} including buffer`);
+    }
+}
 async function tt1030PlaceLiveFuturesOrder(symbol, transaction, qty, event) {
+    await tt1030AssertLiveMargin(symbol, transaction, qty);
     const resp = await kite.placeOrder("regular", {
         exchange: "NFO",
         tradingsymbol: symbol,
