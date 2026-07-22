@@ -15,7 +15,54 @@ const config_1 = require("./config");
 const readline_1 = __importDefault(require("readline"));
 const logger_1 = require("./logger");
 const notifier_1 = require("./notifier");
-const sendTelegram = (msg) => _tgSilenced ? Promise.resolve() : (0, notifier_1.sendTelegram)(msg);
+function readRuntimeEnvValue(key) {
+    try {
+        const raw = fs_1.default.existsSync(".env") ? fs_1.default.readFileSync(".env", "utf8") : "";
+        const m = raw.match(new RegExp(`^${key}=(.*)$`, "m"));
+        if (m)
+            return String(m[1] || "").trim();
+    }
+    catch (_) { }
+    return String(process.env[key] || "").trim();
+}
+function readRuntimeEnvFlag(key, fallback = false) {
+    const value = readRuntimeEnvValue(key).toUpperCase();
+    if (["1", "TRUE", "YES", "ON", "ENABLED"].includes(value))
+        return true;
+    if (["0", "FALSE", "NO", "OFF", "DISABLED"].includes(value))
+        return false;
+    return fallback;
+}
+function tt1030RuntimeMode() {
+    const value = readRuntimeEnvValue("TT1030_FUTURES_MODE").toUpperCase();
+    return value === "LIVE" ? "LIVE" : "SHADOW";
+}
+function isTT1030TelegramMessage(msg) {
+    return /10:30 Futures|TT1030|TEN_THIRTY/i.test(String(msg || ""));
+}
+const sendTelegram = (msg) => {
+    if (_tgSilenced)
+        return Promise.resolve();
+    if (isTT1030TelegramMessage(msg)) {
+        return readRuntimeEnvFlag("TT1030_TELEGRAM_ENABLED", false) ? (0, notifier_1.sendTelegram)(msg) : Promise.resolve();
+    }
+    return readRuntimeEnvFlag("DRISHTI_TELEGRAM_ENABLED", false) ? (0, notifier_1.sendTelegram)(msg) : Promise.resolve();
+};
+function tt1030AlertText(value) {
+    return String(value ?? "").replace(/[_*`[\]()~>#=|{}.!-]/g, " ").replace(/\s+/g, " ").trim();
+}
+function tt1030IsFreshAlertTime(hhmm) {
+    const m = String(hhmm || "").match(/^(\d{1,2}):(\d{2})$/);
+    if (!m)
+        return false;
+    const now = new Date();
+    const ist = new Date(now.toLocaleString("en-US", { timeZone: "Asia/Kolkata" }));
+    const nowMin = ist.getHours() * 60 + ist.getMinutes();
+    const eventMin = Number(m[1]) * 60 + Number(m[2]);
+    const diff = nowMin - eventMin;
+    return diff >= 0 && diff <= 30;
+}
+const notifyTT1030Telegram = (msg) => sendTelegram(`10:30 Futures\n${msg}`);
 const report_1 = require("./report");
 // ─── Structured logger ───────────────────────────────────
 function log(event, details = {}) {
@@ -145,6 +192,28 @@ let mainEntryDone = false;
 let pyramidDone = false; // Upgrade 1: pyramid scale-in
 let lastTradeProfit = false;
 let consecutiveLosses = 0;
+let drishtiConsecutiveLossStopLogged = false;
+let latestDrishtiBlockReason = "No block";
+let latestHybridBlockReason = "No block";
+const PROCESS_STARTED_AT = Date.now();
+function isCandleSignalStale(c, maxDelayMs = 120000) {
+    const startMs = new Date(c?.date || 0).getTime();
+    if (Number.isFinite(startMs) && startMs > 0 && PROCESS_STARTED_AT > startMs + (15 * 60 * 1000) + maxDelayMs)
+        return true;
+    try {
+        const label = tt1030CandleTime(c);
+        const m = String(label || "").match(/^(\d{2}):(\d{2})$/);
+        if (!m)
+            return false;
+        const ist = new Date(PROCESS_STARTED_AT + 5.5 * 3600000);
+        const nowMin = ist.getUTCHours() * 60 + ist.getUTCMinutes();
+        const candleCloseMin = Number(m[1]) * 60 + Number(m[2]) + 15;
+        return (nowMin - candleCloseMin) * 60000 > maxDelayMs;
+    }
+    catch {
+        return false;
+    }
+}
 let drishtiWins = 0;
 let drishtiLosses = 0;
 let drishtiDTE = 23; // days-to-expiry at last entry, for real Rs calc
@@ -166,32 +235,23 @@ let drishtiFutSymbolCache = "";
 let drishtiFutSymbolCacheAt = 0;
 let optRecentTrades = [];
 let entryPrice = 0;
-// ── BODY_HOLD Shadow (S1=Fixed200SL, S2=CandleSL) ────────────────────────────
-interface BHState { inTrade: boolean; dir: 'CE'|'PE'|null; entryIdx: number; entryPrem: number; optSym: string; sl: number; slPrem: number; waitDir: 'CE'|'PE'|null; dayFutPts: number; dayOptPts: number; dayFutRs: number; dayOptRs: number; winsFut: number; lossFut: number; winsOpt: number; lossOpt: number; }
-const BH_EMPTY = (): BHState => ({ inTrade: false, dir: null, entryIdx: 0, entryPrem: 0, optSym: '', sl: 0, slPrem: 0, waitDir: null, dayFutPts: 0, dayOptPts: 0, dayFutRs: 0, dayOptRs: 0, winsFut: 0, lossFut: 0, winsOpt: 0, lossOpt: 0 });
-let bhs1: BHState = BH_EMPTY();
-let bhs2: BHState = BH_EMPTY();
-let bhPrevCandle: { open: number; high: number; low: number; close: number } | null = null;
-let bhCandleNum = 0;
-// 10:30 index breakout shadow. Paper-only; never calls broker order functions.
-interface TT1030TradeLog { time: string; dir: 'CE'|'PE'; entry: number; exit?: number; pts?: number; pnlRs?: number; reason?: string; premIn?: number; premOut?: number; symbol?: string; }
-interface TT1030State {
-    day: string; inTrade: boolean; dir: 'CE'|'PE'|null; entry: number; entryTime: string; sl: number;
-    optSym: string; optEntryPrem: number; optLivePrem: number; refHigh: number; refLow: number;
-    tenHigh: number; tenLow: number; tenTime: string; trades: number; wins: number; losses: number;
-    dayPts: number; dayRs: number; log: TT1030TradeLog[]; candleLog: any[]; seen: Set<string>;
+function setDrishtiBlockReason(reason) {
+    latestDrishtiBlockReason = reason && reason.trim() ? reason : "No block";
 }
+function setHybridBlockReason(reason) {
+    latestHybridBlockReason = reason && reason.trim() ? reason : "No block";
+}
+const BH_EMPTY = () => ({ inTrade: false, dir: null, entryIdx: 0, entryPrem: 0, optSym: '', sl: 0, slPrem: 0, waitDir: null, dayFutPts: 0, dayOptPts: 0, dayFutRs: 0, dayOptRs: 0, winsFut: 0, lossFut: 0, winsOpt: 0, lossOpt: 0 });
+let bhs1 = BH_EMPTY();
+let bhs2 = BH_EMPTY();
+let bhPrevCandle = null;
+let bhCandleNum = 0;
 const TT1030_INDEX_TOKEN = 260105;
 const TT1030_BOTH_SIDE_CLOSE_BUFFER = 25;
-const TT1030_LIVE_AUDIT_FILE = 'tt1030-live-audit.jsonl';
-const TT1030_LIVE_AUDIT_STATE_FILE = 'tt1030-live-audit-state.json';
-const TT1030_MAX_SIGNAL_DELAY_MS = 2 * 60 * 1000;
-const TT1030_MAX_ENTRY_SLIPPAGE_PTS = Number(config_1.config.risk?.maxAllowedSlippagePts ?? 50);
-const TT1030_WARN_RISK_PTS = Number(config_1.config.risk?.maxFuturesLossPts ?? 150);
-const TT1030_EMPTY = (): TT1030State => ({ day: '', inTrade: false, dir: null, entry: 0, entryTime: '', sl: 0, optSym: '', optEntryPrem: 0, optLivePrem: 0, refHigh: 0, refLow: 0, tenHigh: 0, tenLow: 0, tenTime: '', trades: 0, wins: 0, losses: 0, dayPts: 0, dayRs: 0, log: [], candleLog: [], seen: new Set<string>() });
-let tt1030: TT1030State = TT1030_EMPTY();
-let tt1030AuditIssues: any[] = [];
-let tt1030LastSignalKey = "";
+const TT1030_EMPTY = () => ({ day: '', inTrade: false, dir: null, entry: 0, entryTime: '', sl: 0, optSym: '', optEntryPrem: 0, optLivePrem: 0, refHigh: 0, refLow: 0, tenHigh: 0, tenLow: 0, tenTime: '', trades: 0, wins: 0, losses: 0, dayPts: 0, dayRs: 0, log: [], candleLog: [], seen: new Set(), trendMode: false, trendBreakPts: 0, trendBodyPct: 0, liveMode: 'SHADOW', futSym: '', futEntryPrice: 0, futLivePrice: 0, liveQty: 0, entryOrderId: '', exitOrderId: '' });
+let tt1030 = TT1030_EMPTY();
+const HYBRID_EMPTY = () => ({ day: '', phase: 'SCANNING', dir: null, entry: 0, entryIdx: -1, entryTime: '', sl: 0, peak: 0, optSym: '', optEntryPrem: 0, optLivePrem: 0, optDayPts: 0, optDayRs: 0, t1Pts: 0, rePts: 0, dayPts: 0, dayRs: 0, trades: 0, wins: 0, losses: 0, log: [], candleLog: [], seen: new Set() });
+let hybridShadow = HYBRID_EMPTY();
 let tradeSymbol = "";
 let tradeDirection = null;
 let earlyQty = 0;
@@ -232,6 +292,7 @@ let candleSL = 0; // Candle-based SL: low of breakout candle (CE) or high (PE); 
 //                          Step3 — if Trade1 SL hit → enter Trade2 in opposite direction
 //                                  SL = that candle's low (CE) or high (PE)  Max 2 trades total
 const ACTIVE_STRATEGY = config_1.config.activeStrategy ?? "BODY_BREAKOUT";
+const TRADEOPS_ONLY = String(process.env.TRADEOPS_ONLY || process.env.TT1030_ONLY || "OFF").toUpperCase() === "ON";
 let rcWaiting = false; // true when breakout seen — waiting for RC to form
 let rcBreakoutDir = null; // direction of the detected breakout
 let rcTrade2Active = false; // true when we are in Trade 2 (trend trade after T1 SL)
@@ -253,6 +314,40 @@ let drishtiLastCandleKey = "";
 let drishtiIntradayPeak = 0; // updated every 60s by LTP monitor
 let ltpMonitorInterval = null;
 let DrishtiCandleLog = [];
+function persistDrishtiCandleLog() {
+    try {
+        const istNow = new Date(new Date().getTime() + 5.5 * 3600000);
+        fs_1.default.writeFileSync('candle-log.json', JSON.stringify({ date: istNow.toISOString().slice(0, 10), log: DrishtiCandleLog }));
+    }
+    catch (_e) { }
+}
+function upsertDrishtiCandleLog(idx, candle, patch = {}) {
+    try {
+        const d = candle.date ? new Date(candle.date) : new Date();
+        const ist = new Date(d.getTime() + 5.5 * 3600000);
+        const time = ist.getUTCHours().toString().padStart(2, '0') + ':' + ist.getUTCMinutes().toString().padStart(2, '0');
+        const bodyPct = (candle.high - candle.low) > 0 ? Math.round((candle.close - candle.open) / (candle.high - candle.low) * 100) : 0;
+        const base = {
+            idx,
+            time,
+            open: candle.open,
+            high: candle.high,
+            low: candle.low,
+            close: candle.close,
+            bodyPct,
+            signal: null,
+            reason: 'no_signal',
+        };
+        const existingIdx = DrishtiCandleLog.findIndex(e => e.idx === idx);
+        if (existingIdx >= 0)
+            DrishtiCandleLog[existingIdx] = { ...base, ...DrishtiCandleLog[existingIdx], ...patch };
+        else
+            DrishtiCandleLog.push({ ...base, ...patch });
+        DrishtiCandleLog.sort((a, b) => (a.idx ?? 0) - (b.idx ?? 0));
+        persistDrishtiCandleLog();
+    }
+    catch (_e) { }
+}
 let entryPremium = 0; // option LTP at trade entry
 let lastOptionLTP = 0; // option LTP updated every monitor cycle
 let itmHoldPositions = [];
@@ -471,20 +566,20 @@ async function monitorCandleBreakouts() {
                     strategyCtx = `In Trade (${tradeDirection}) | ${_bCtx}\n`
                         + `Entry: ${entryPrice.toFixed(0)} | ${_bSLlabel}: ${_bSL}\n`
                         + `P&L: ${_bUS}${_bu.toFixed(0)} pts | Peak: ${DrishtiState.peakPts.toFixed(0)} pts\n`
-                        + `Day: ${_bSign}${dailyPnL.toFixed(0)} | ${drishtiWins}W ${drishtiLosses}L | T:${tradeCount}/8`;
+                        + `Day: ${_bSign}${dailyPnL.toFixed(0)} | ${drishtiWins}W ${drishtiLosses}L | T:${tradeCount}/${DRISHTI_MAX_TRADES_PER_DAY}`;
                 }
                 else if (DrishtiState.firstDone && !DrishtiState.inTrade) {
                     const _reNum = DrishtiState.reCount + 1;
                     const _re = DrishtiState.reCount < 8
                         ? `⏳ Watching RE #${_reNum}` : `✅ All trades done`;
                     strategyCtx = `${_re}\n`
-                        + `Day: ${_bSign}${dailyPnL.toFixed(0)} pts | Rs${dailyRealRs >= 0 ? '+' : ''}${dailyRealRs.toLocaleString('en-IN')} | ${drishtiWins}W ${drishtiLosses}L | T:${tradeCount}/8`;
+                        + `Day: ${_bSign}${dailyPnL.toFixed(0)} pts | Rs${dailyRealRs >= 0 ? '+' : ''}${dailyRealRs.toLocaleString('en-IN')} | ${drishtiWins}W ${drishtiLosses}L | T:${tradeCount}/${DRISHTI_MAX_TRADES_PER_DAY}`;
                 }
                 else {
                     strategyCtx = `Watching | Candle #${drishtiTodayCandles.length}\n`
                         + `PDH: ${_bPH} | PDL: ${_bPL} | ${_bCtx}\n`
                         + `Live: ${price} | SL: 100 pts\n`
-                        + `Day: ${_bSign}${dailyPnL.toFixed(0)} | T:${tradeCount}/8`;
+                        + `Day: ${_bSign}${dailyPnL.toFixed(0)} | T:${tradeCount}/${DRISHTI_MAX_TRADES_PER_DAY}`;
                 }
             }
             // TG_LABEL
@@ -512,6 +607,28 @@ async function monitorCandleBreakouts() {
                 (ACTIVE_STRATEGY === "HYBRID_REVERSE" && hybridState.firstDone && !hybridState.waitReEntry && !(activeTrade || mainEntryDone || earlyEntryDone)) ||
                 (ACTIVE_STRATEGY === "HYBRID_REVERSE" && stopForDay && !activeTrade);
             if (_doneForDay) {
+                if (ACTIVE_STRATEGY === "DRISHTI_V1") {
+                    if (_noTradeAllDay) {
+                        setDrishtiBlockReason("DONE_FOR_DAY (DRISHTI: no-trade after C20)");
+                    }
+                    else if (stopForDay && !DrishtiState.inTrade) {
+                        setDrishtiBlockReason("DONE_FOR_DAY (DRISHTI: stop-for-day)");
+                    }
+                    else {
+                        setDrishtiBlockReason("DONE_FOR_DAY");
+                    }
+                }
+                if (ACTIVE_STRATEGY === "HYBRID_REVERSE") {
+                    if (hybridState.firstDone && !hybridState.waitReEntry && !(activeTrade || mainEntryDone || earlyEntryDone)) {
+                        setHybridBlockReason("DONE_FOR_DAY (HYBRID first trade done)");
+                    }
+                    else if (stopForDay && !activeTrade) {
+                        setHybridBlockReason("DONE_FOR_DAY (HYBRID stop-for-day)");
+                    }
+                    else {
+                        setHybridBlockReason("DONE_FOR_DAY");
+                    }
+                }
                 log("CANDLE_STATUS", { status, candle: finalPrev, price, skipped: _noTradeAllDay ? "no_trade_day_c20+" : "done_for_day" });
                 return;
             }
@@ -672,7 +789,14 @@ function restoreTradeState() {
         drishtiDTE = s.drishtiDTE ?? 26;
         drishtiFuturesEntry = s.drishtiFuturesEntry ?? 0;
         // Restore options shadow state
-        if (s.optInTrade && s.optSymbol && (s.optEntryPrem ?? 0) > 0) {
+        if (DRISHTI_FUTURES_ONLY_REAL_TRACKING) {
+            optInTrade = false;
+            optDir = null;
+            optSymbol = "";
+            optEntryPrem = 0;
+            optEntryTime = 0;
+        }
+        else if (s.optInTrade && s.optSymbol && (s.optEntryPrem ?? 0) > 0) {
             optInTrade = true;
             optDir = s.optDir ?? null;
             optSymbol = s.optSymbol ?? "";
@@ -766,7 +890,12 @@ function printStatus() {
         const _pdH = drishtiPrevDayCandles.length > 0 ? Math.max(...drishtiPrevDayCandles.map((c) => c.high)).toFixed(0) : "?";
         const _pdL = drishtiPrevDayCandles.length > 0 ? Math.min(...drishtiPrevDayCandles.map((c) => c.low)).toFixed(0) : "?";
         const _hhmm = ist.split(',')[1]?.trim().slice(0, 8) ?? ist;
-        console.log(String.fromCharCode(68,82,73,83,72,84,73,32,82,69,65,76,58,32,70,117,116,32,82,115,32) + dailyRealRs + String.fromCharCode(32,124,32,79,112,116,32,82,115,32) + optDailyRs + String.fromCharCode(32,124,32,67,111,109,98,105,110,101,100,32,82,115,32) + combinedRealRs() + String.fromCharCode(32,124,32,83,116,114,97,116,101,103,121,80,116,115,32) + livePnL.toFixed(0) + String.fromCharCode(32,124,32,84,58) + tradeCount + String.fromCharCode(47) + MAX_TRADES + String.fromCharCode(32,124,32) + tradeStatus);
+        if (DRISHTI_FUTURES_ONLY_REAL_TRACKING) {
+            console.log(String.fromCharCode(68, 82, 73, 83, 72, 84, 73, 32, 82, 69, 65, 76, 58, 32, 70, 117, 116, 32, 82, 115, 32) + dailyRealRs + String.fromCharCode(32, 124, 32, 67, 111, 109, 98, 105, 110, 101, 100, 32, 82, 115, 32) + combinedRealRs() + String.fromCharCode(32, 124, 32, 83, 116, 114, 97, 116, 101, 103, 121, 80, 116, 115, 32) + livePnL.toFixed(0) + String.fromCharCode(32, 124, 32, 84, 58) + tradeCount + String.fromCharCode(47) + MAX_TRADES + String.fromCharCode(32, 124, 32) + tradeStatus);
+        }
+        else {
+            console.log(String.fromCharCode(68, 82, 73, 83, 72, 84, 73, 32, 82, 69, 65, 76, 58, 32, 70, 117, 116, 32, 82, 115, 32) + dailyRealRs + String.fromCharCode(32, 124, 32, 79, 112, 116, 32, 82, 115, 32) + optDailyRs + String.fromCharCode(32, 124, 32, 67, 111, 109, 98, 105, 110, 101, 100, 32, 82, 115, 32) + combinedRealRs() + String.fromCharCode(32, 124, 32, 83, 116, 114, 97, 116, 101, 103, 121, 80, 116, 115, 32) + livePnL.toFixed(0) + String.fromCharCode(32, 124, 32, 84, 58) + tradeCount + String.fromCharCode(47) + MAX_TRADES + String.fromCharCode(32, 124, 32) + tradeStatus);
+        }
     }
     else {
     }
@@ -957,6 +1086,7 @@ async function runHybridReverseBot() {
         entryTime = 0;
         drishtiWins = 0;
         drishtiLosses = 0;
+        setHybridBlockReason("No block");
         log("STATE_RESET", { strategy: "HYBRID_REVERSE" });
         // Fetch previous day high/low for PDH/PDL context (non-blocking)
         pdhHigh = 0;
@@ -995,8 +1125,10 @@ async function runHybridReverseBot() {
         }
         return;
     }
-    if (stopForDay && !activeTrade)
+    if (stopForDay && !activeTrade) {
+        setHybridBlockReason("DONE_FOR_DAY");
         return;
+    }
     // ── Intrabar SL monitoring — exit immediately when price touches SL ────────
     // (Hybrid reverse is decided at candle close; intrabar = plain exit only)
     if (activeTrade && hybridState.inTrade && hybridState.sl > 0 && tradeSymbol) {
@@ -1091,10 +1223,12 @@ async function runHybridReverseBot() {
             case "ENTER": {
                 // PDH/PDL context filter – only trade in direction of day bias
                 if (pdhContext === "BULLISH" && sig.dir === "PE") {
+                    setHybridBlockReason(`PDH_BLOCKED (${pdhContext} vs ${sig.dir})`);
                     log("PDH_BLOCKED", { dir: sig.dir, pdhContext, price: sig.price });
                     break;
                 }
                 if (pdhContext === "BEARISH" && sig.dir === "CE") {
+                    setHybridBlockReason(`PDH_BLOCKED (${pdhContext} vs ${sig.dir})`);
                     log("PDH_BLOCKED", { dir: sig.dir, pdhContext, price: sig.price });
                     break;
                 }
@@ -1145,6 +1279,7 @@ async function runHybridReverseBot() {
                     ]);
                 }
                 catch (e) {
+                    setHybridBlockReason("OPTION_SELECT_FAIL");
                     log("OPTION_SELECT_FAIL", { error: String(e) });
                     hybridState = (0, strategy_1.createHybridState)(); // reset so we can re-try next signal
                     return;
@@ -1162,6 +1297,7 @@ async function runHybridReverseBot() {
                     const order = await (0, order_1.placeTrade)(sym, freshPrice, config_1.config.quantity);
                     tradeInProgress = false;
                     if (!order || order.status !== "COMPLETE" || order.filled_quantity <= 0) {
+                        setHybridBlockReason("ORDER_NOT_FILLED");
                         log("ORDER_NOT_FILLED", { order });
                         mainEntryDone = false;
                         activeTrade = false;
@@ -1174,6 +1310,7 @@ async function runHybridReverseBot() {
                     }
                 }
                 catch (e) {
+                    setHybridBlockReason("ORDER_REJECTED");
                     tradeInProgress = false;
                     log("ORDER_REJECTED", { error: e instanceof Error ? e.message : String(e) });
                     mainEntryDone = false;
@@ -1318,8 +1455,9 @@ const HR_SL_PTS_LOCAL = 100;
 // Polls current price every 60s while in a DRISHTI trade.
 // Updates intraday peak and fires exit if trail or SL is hit between candle closes.
 // This eliminates the candle-close exit discrepancy and matches backtest V15 logic.
-const DRISHTI_TRAIL_GAP = 10; // LOCK10 — same as backtest_verify.js V15 config
-const DRISHTI_SL_PTS = 100; // Hard SL — matches SL_PTS in drishti_strategy.ts
+const DRISHTI_TRAIL_ACTIVATE_PTS = 300; // Trail starts only after +300 pts to avoid chop exits
+const DRISHTI_TRAIL_GAP = 10; // Once +300 is reached, lock peak - 10
+const DRISHTI_SL_PTS = 100; // Hard SL ? matches SL_PTS in drishti_strategy.ts
 const REAL_DAILY_LOSS_CAP_RS = Number.POSITIVE_INFINITY; // disabled: no real daily loss stop
 const REAL_FUTURES_SL_PTS = Number(config_1.config.risk?.maxFuturesLossPts ?? 150);
 const REAL_OPTIONS_SL_PTS = Number(config_1.config.risk?.maxOptionsLossPts ?? 150);
@@ -1327,7 +1465,19 @@ const REAL_EXIT_TOLERANCE_PTS = Number(config_1.config.risk?.maxAllowedSlippageP
 // Stop new entries before the hard daily cap so slippage/fast moves do not push the day far past maxDailyLossRs.
 const REAL_ENTRY_BLOCK_RS = Number(config_1.config.risk?.realEntryBlockRs ?? Math.round(REAL_DAILY_LOSS_CAP_RS * 0.75));
 const REAL_INTRADAY_EXIT_RS = Number.POSITIVE_INFINITY; // disabled: no real intraday daily-loss exit
-function combinedRealRs() { return Math.round((dailyRealRs || 0) + (optDailyRs || 0)); }
+const DRISHTI_FUTURES_ONLY_REAL_TRACKING = true;
+const DRISHTI_TRACK_OPTIONS_PREMIUM = true; // tracking only; DRISHTI still executes futures, not options
+const DRISHTI_REAL_FUTURES_LOCK10 = true; // live risk/trail uses real futures LTP basis
+const DRISHTI_MAX_CONSECUTIVE_LOSSES = 2;
+const DRISHTI_MAX_TRADES_PER_DAY = 2; // Entry + one re-entry only
+const DRISHTI_MAX_REENTRIES = 1;
+const HYBRID_C2_MIN_BODY_PTS = 70;
+const HYBRID_C2_MIN_BREAK_PTS = 25;
+function combinedRealRs() {
+    return DRISHTI_FUTURES_ONLY_REAL_TRACKING
+        ? Math.round(dailyRealRs || 0)
+        : Math.round((dailyRealRs || 0) + (optDailyRs || 0));
+}
 function realLossLimitHit() { return false; } // disabled: no daily real-loss stop; per-trade SL/trail remains active
 function realEntryBlocked() { return false; } // disabled: do not block entries from daily real P&L
 function appendRealPremiumAudit(row) {
@@ -1364,7 +1514,7 @@ async function executeDrishtiLTPExit(ltp, pts, reason) {
     const capturedPeak = drishtiIntradayPeak;
     const capturedPremiumEntry = entryPremium;
     const capturedPremiumExit = lastOptionLTP;
-    const capturedOptInTrade = optInTrade;
+    const capturedOptInTrade = DRISHTI_TRACK_OPTIONS_PREMIUM && optInTrade;
     const capturedOptDir = optDir;
     const capturedOptSymbol = optSymbol;
     const capturedOptEntryPrem = optEntryPrem;
@@ -1378,15 +1528,6 @@ async function executeDrishtiLTPExit(ltp, pts, reason) {
     catch (e) {
         log("EXIT_FAIL", { error: e instanceof Error ? e.message : String(e) });
     }
-    dailyPnL += pts;
-    if (pts > 0) {
-        consecutiveLosses = 0;
-        drishtiWins++;
-    }
-    else {
-        consecutiveLosses++;
-        drishtiLosses++;
-    }
     const _futEntryPrice = drishtiFuturesEntry > 0 ? drishtiFuturesEntry : capturedEntry;
     const _futExitRaw = exitOptionLTP > 0 ? exitOptionLTP : 0;
     const _futExitFair = _futEntryPrice + (capturedDir === "PE" ? -pts : pts);
@@ -1396,6 +1537,16 @@ async function executeDrishtiLTPExit(ltp, pts, reason) {
     const _futExitSource = _futExitRaw > 0 ? "ACTUAL_FUTURES_LTP" : "FALLBACK_FAIR_MISSING_LTP";
     const _futRealPts = capturedDir === "PE" ? (_futEntryPrice - _futExitPrice) : (_futExitPrice - _futEntryPrice);
     const _futRealRs = Math.round(_futRealPts * capturedQty);
+    dailyPnL += _futRealPts;
+    if (_futRealPts > 0) {
+        consecutiveLosses = 0;
+        drishtiConsecutiveLossStopLogged = false;
+        drishtiWins++;
+    }
+    else {
+        consecutiveLosses++;
+        drishtiLosses++;
+    }
     dailyRealRs += _futRealRs;
     appendRealPremiumAudit({ event: "futures_exit", reason, symbol: capturedSymbol, direction: capturedDir, entry: _futEntryPrice, exit: _futExitPrice, rawExit: _futExitRaw, fairExit: _futExitFair, exitSource: _futExitSource, indexPts: pts, realPts: _futRealPts, realRs: _futRealRs });
     log("REAL_LTP_EXIT_FUTURES", { reason, entryFut: _futEntryPrice.toFixed(1), exitFut: _futExitPrice.toFixed(1), exitRaw: _futExitRaw.toFixed(1), exitFair: _futExitFair.toFixed(1), exitSource: _futExitSource, realPts: _futRealPts.toFixed(1), realRs: _futRealRs, strategyPts: pts.toFixed(1) });
@@ -1422,6 +1573,9 @@ async function executeDrishtiLTPExit(ltp, pts, reason) {
             appendRealPremiumAudit({ event: "options_exit", reason, symbol: capturedOptSymbol, direction: capturedOptDir, entry: capturedOptEntryPrem, exit: optExitLTP, realPts: optPts, realRs: optRs });
             log("REAL_LTP_EXIT_OPTIONS", { reason, symbol: capturedOptSymbol, entryPrem: capturedOptEntryPrem.toFixed(1), exitPrem: optExitLTP.toFixed(1), optPts: optPts.toFixed(1), optRs });
         }
+        else {
+            log("REAL_LTP_EXIT_OPTIONS_MISSING", { reason, symbol: capturedOptSymbol, entryPrem: capturedOptEntryPrem });
+        }
         optInTrade = false;
         optDir = null;
         optSymbol = "";
@@ -1445,7 +1599,7 @@ async function executeDrishtiLTPExit(ltp, pts, reason) {
     entryPremium = 0;
     lastOptionLTP = 0;
     saveTradeState();
-    await notifyExit(ltp, pts, reason, { dir: capturedDir, entry: capturedEntry, symbol: capturedSymbol, qty: capturedQty }).catch(() => { });
+    await notifyExit(ltp, _futRealPts, reason, { dir: capturedDir, entry: capturedEntry, symbol: capturedSymbol, qty: capturedQty }).catch(() => { });
     (0, logger_1.logTrade)({ date: new Date().toISOString(), type: "DRISHTI_V1", direction: capturedDir ?? "CE", symbol: capturedSymbol,
         premiumEntry: _futEntryPrice, premiumExit: _futExitPrice, qty: capturedQty,
         entryPrice: _futEntryPrice, exitPrice: _futExitPrice,
@@ -1475,29 +1629,50 @@ function startDrishtiLTPMonitor() {
             const pts = sign * (ltp - entryPrice);
             const futLTP = tradeSymbol ? await (0, market_1.getOptionLTP)(tradeSymbol).catch(() => 0) : 0;
             const realFutPts = drishtiFuturesEntry > 0 && futLTP > 0 ? sign * (futLTP - drishtiFuturesEntry) : pts;
-            if (optInTrade && optSymbol) {
+            if (DRISHTI_TRACK_OPTIONS_PREMIUM && optInTrade && optSymbol) {
                 const optLive = await (0, market_1.getOptionLTP)(optSymbol).catch(() => 0);
                 if (optLive > 0)
                     lastOptionLTP = optLive;
             }
-            const realOptPts = optInTrade && optEntryPrem > 0 && lastOptionLTP > 0 ? lastOptionLTP - optEntryPrem : 0;
+            const realOptPts = DRISHTI_TRACK_OPTIONS_PREMIUM && optInTrade && optEntryPrem > 0 && lastOptionLTP > 0
+                ? lastOptionLTP - optEntryPrem
+                : 0;
             const liveFutRs = Math.round(realFutPts * config_1.config.quantity);
-            const liveOptRs = optInTrade && optEntryPrem > 0 && lastOptionLTP > 0 ? Math.round(realOptPts * config_1.config.quantity) : 0;
+            const liveOptRs = DRISHTI_TRACK_OPTIONS_PREMIUM && optInTrade && optEntryPrem > 0 && lastOptionLTP > 0 ? Math.round(realOptPts * config_1.config.quantity) : 0;
             const projectedCombinedRs = combinedRealRs() + liveFutRs + liveOptRs;
             if (projectedCombinedRs <= -REAL_INTRADAY_EXIT_RS) {
                 await executeDrishtiLTPExit(ltp, pts, `real_daily_intraday_stop_${REAL_INTRADAY_EXIT_RS}rs`);
                 return;
             }
-            // LTP monitor is now a hard real-risk guard only.
-            // Strategy SL/trail exits must remain candle-close based via updateDrishtiTrail(),
-            // otherwise live exits no longer match the backtest.
+            if (DRISHTI_REAL_FUTURES_LOCK10) {
+                drishtiIntradayPeak = Math.max(drishtiIntradayPeak, realFutPts);
+                DrishtiState.peakPts = Math.max(Number(DrishtiState.peakPts || 0), drishtiIntradayPeak);
+                if (drishtiIntradayPeak >= DRISHTI_TRAIL_ACTIVATE_PTS) {
+                    DrishtiState.trailStop = Math.max(Number(DrishtiState.trailStop || -DRISHTI_SL_PTS), drishtiIntradayPeak - DRISHTI_TRAIL_GAP);
+                }
+            }
             const currentTrail = DrishtiState.trailStop;
-            log("LTP_RISK_MONITOR", { ltp, indexPts: pts.toFixed(1), candlePeak: Number(DrishtiState.peakPts || 0).toFixed(1), candleTrail: currentTrail, dir: tradeDirection, futLTP, realFutPts: realFutPts.toFixed(1), optLTP: lastOptionLTP, realOptPts: realOptPts.toFixed(1), projectedCombinedRs });
+            log("LTP_RISK_MONITOR", {
+                ltp,
+                indexPts: pts.toFixed(1),
+                candlePeak: Number(DrishtiState.peakPts || 0).toFixed(1),
+                candleTrail: currentTrail,
+                dir: tradeDirection,
+                futLTP,
+                realFutPts: realFutPts.toFixed(1),
+                realFutPeak: drishtiIntradayPeak.toFixed(1),
+                ...(DRISHTI_TRACK_OPTIONS_PREMIUM ? { optLTP: lastOptionLTP, realOptPts: realOptPts.toFixed(1) } : {}),
+                projectedCombinedRs
+            });
             if (realFutPts <= -REAL_FUTURES_SL_PTS) {
                 await executeDrishtiLTPExit(ltp, pts, `real_futures_sl_${REAL_FUTURES_SL_PTS}pts`);
                 return;
             }
-            if (optInTrade && optEntryPrem > 0 && lastOptionLTP > 0 && realOptPts <= -REAL_OPTIONS_SL_PTS) {
+            if (DRISHTI_REAL_FUTURES_LOCK10 && drishtiIntradayPeak >= DRISHTI_TRAIL_ACTIVATE_PTS && realFutPts <= DrishtiState.trailStop) {
+                await executeDrishtiLTPExit(ltp, realFutPts, `real_futures_lock10_trail`);
+                return;
+            }
+            if (DRISHTI_TRACK_OPTIONS_PREMIUM && optInTrade && optEntryPrem > 0 && lastOptionLTP > 0 && realOptPts <= -REAL_OPTIONS_SL_PTS) {
                 await executeDrishtiLTPExit(ltp, pts, `real_options_sl_${REAL_OPTIONS_SL_PTS}pts`);
                 return;
             }
@@ -1506,7 +1681,7 @@ function startDrishtiLTPMonitor() {
             log("LTP_MONITOR_ERR", { error: e instanceof Error ? e.message : String(e) });
         }
     }, 5 * 1000); // hard real-risk guard only; strategy trail exits on 15-min candle close
-    log("LTP_RISK_MONITOR_START", { entry: entryPrice, dir: tradeDirection, futuresEntry: drishtiFuturesEntry, hardFuturesSL: REAL_FUTURES_SL_PTS, hardOptionsSL: REAL_OPTIONS_SL_PTS });
+    log("LTP_RISK_MONITOR_START", { entry: entryPrice, dir: tradeDirection, futuresEntry: drishtiFuturesEntry, hardFuturesSL: REAL_FUTURES_SL_PTS, trailActivatePts: DRISHTI_TRAIL_ACTIVATE_PTS, trailGapPts: DRISHTI_TRAIL_GAP, realFuturesLock10: DRISHTI_REAL_FUTURES_LOCK10, trackOptionsPremium: DRISHTI_TRACK_OPTIONS_PREMIUM, ...(DRISHTI_TRACK_OPTIONS_PREMIUM ? { hardOptionsSL: REAL_OPTIONS_SL_PTS } : {}) });
 }
 // ═══════════════════════════════════════════════════════════════════════════
 // DRISHTI V1 — PDH/PDL Context + LOCK10 Trail (live bot)
@@ -1618,7 +1793,68 @@ function tt1030CandleTime(c) {
     const d = c.date ? new Date(c.date) : new Date();
     return tt1030ISTParts(d).hhmm;
 }
-function appendTT1030Audit(event: string, details: any = {}, severity: 'info'|'warn'|'error' = 'info') {
+const TT1030_CANDLE_LOG_FILE = 'tt1030-candle-log.json';
+const TT1030_STATE_FILE = 'tt1030-state.json';
+const TT1030_LIVE_AUDIT_FILE = 'tt1030-live-audit.jsonl';
+const TT1030_LIVE_AUDIT_STATE_FILE = 'tt1030-live-audit-state.json';
+const TT1030_MAX_SIGNAL_DELAY_MS = 2 * 60 * 1000;
+const TT1030_MAX_ENTRY_SLIPPAGE_PTS = Number(config_1.config.risk?.maxAllowedSlippagePts ?? 50);
+const TT1030_WARN_RISK_PTS = Number(config_1.config.risk?.maxFuturesLossPts ?? 150);
+const TT1030_TREND_BREAK_PTS = Number(config_1.config.risk?.tt1030TrendBreakPts ?? 25);
+const TT1030_TREND_BODY_PCT = Number(config_1.config.risk?.tt1030TrendBodyPct ?? 30);
+let tt1030AuditIssues = [];
+let tt1030LastSignalKey = "";
+let tt1030RunInFlight = false;
+const STRATEGY_MONTHLY_HISTORY_FILE = 'strategy-monthly-history.json';
+function tt1030FuturesMode() {
+    return String(process.env.TT1030_FUTURES_MODE || "SHADOW").toUpperCase() === "LIVE" ? "LIVE" : "SHADOW";
+}
+function tt1030IsLiveFutures() {
+    return tt1030FuturesMode() === "LIVE";
+}
+async function tt1030WaitForBrokerOrder(orderId) {
+    let latest = null;
+    for (let i = 0; i < 6; i++) {
+        await new Promise(r => setTimeout(r, i === 0 ? 500 : 1500));
+        const orders = await kite.getOrders();
+        latest = orders.find(o => o.order_id === orderId) || latest;
+        if (latest?.status === "COMPLETE")
+            return latest;
+        if (latest?.status === "REJECTED" || latest?.status === "CANCELLED")
+            throw new Error(`Order ${orderId} ${latest.status}: ${latest.status_message || "No broker reason"}`);
+    }
+    throw new Error(`Order ${orderId} not completed by broker`);
+}
+async function tt1030PlaceLiveFuturesOrder(symbol, transaction, qty, event) {
+    const resp = await kite.placeOrder("regular", {
+        exchange: "NFO",
+        tradingsymbol: symbol,
+        transaction_type: transaction,
+        quantity: qty,
+        order_type: "MARKET",
+        product: "MIS",
+    });
+    const orderId = resp?.order_id || "";
+    if (!orderId)
+        throw new Error("Broker did not return order_id");
+    const order = await tt1030WaitForBrokerOrder(orderId);
+    const filledQty = Number(order?.filled_quantity || 0);
+    if (filledQty <= 0)
+        throw new Error(`Order ${orderId} completed with zero filled quantity`);
+    appendTT1030Audit(event, {
+        futuresMode: "LIVE",
+        orderId,
+        symbol,
+        transaction,
+        qty,
+        filledQty,
+        averagePrice: Number(order?.average_price || 0),
+        brokerStatus: order?.status || null,
+    });
+    log("TT1030_LIVE_ORDER_FILLED", { event, orderId, symbol, transaction, qty, filledQty, averagePrice: order?.average_price || 0 });
+    return order;
+}
+function appendTT1030Audit(event, details = {}, severity = 'info') {
     try {
         const rec = {
             ts: new Date().toISOString(),
@@ -1626,6 +1862,7 @@ function appendTT1030Audit(event: string, details: any = {}, severity: 'info'|'w
             severity,
             event,
             mode: (config_1.config.mode || "LIVE").toUpperCase(),
+            futuresMode: tt1030FuturesMode(),
             ...details,
         };
         fs_1.default.appendFileSync(TT1030_LIVE_AUDIT_FILE, JSON.stringify(rec) + "\n");
@@ -1639,7 +1876,7 @@ function appendTT1030Audit(event: string, details: any = {}, severity: 'info'|'w
     }
     catch (_e) { }
 }
-function tt1030AuditIssue(code: string, message: string, details: any = {}, severity: 'warn'|'error' = 'warn') {
+function tt1030AuditIssue(code, message, details = {}, severity = 'warn') {
     const issue = {
         ts: new Date().toISOString(),
         day: tt1030.day || tt1030ISTParts().ymd,
@@ -1653,13 +1890,14 @@ function tt1030AuditIssue(code: string, message: string, details: any = {}, seve
     appendTT1030Audit("issue", issue, severity);
     log("TT1030_AUDIT_ISSUE", { severity, code, message });
 }
-function tt1030AuditSignal(dir: 'CE'|'PE', entry: number, sl: number, ref: any, reason: string, optSym: string, optPrem: number) {
+function tt1030AuditSignal(dir, entry, sl, ref, reason, optSym, optPrem) {
     const signalTime = tt1030CandleTime(ref);
     const signalKey = `${tt1030.day}|${signalTime}|${dir}|${entry.toFixed(1)}|${reason}`;
     const riskPts = dir === "CE" ? entry - sl : sl - entry;
     const refStartMs = ref?.date ? new Date(ref.date).getTime() : NaN;
     const delayMs = Number.isFinite(refStartMs) ? Date.now() - (refStartMs + 15 * 60 * 1000) : 0;
     const issuesBefore = tt1030AuditIssues.length;
+    const errorsBefore = tt1030AuditIssues.filter(x => x.severity === "error").length;
     if (signalKey === tt1030LastSignalKey) {
         tt1030AuditIssue("DUPLICATE_SIGNAL_KEY", "same TT1030 signal key fired again", { signalKey, dir, entry, reason }, "error");
     }
@@ -1683,6 +1921,7 @@ function tt1030AuditSignal(dir: 'CE'|'PE', entry: number, sl: number, ref: any, 
     }
     tt1030LastSignalKey = signalKey;
     const newIssueCount = tt1030AuditIssues.length - issuesBefore;
+    const newErrorCount = tt1030AuditIssues.filter(x => x.severity === "error").length - errorsBefore;
     appendTT1030Audit("signal_preflight", {
         signalKey,
         signalTime,
@@ -1696,16 +1935,222 @@ function tt1030AuditSignal(dir: 'CE'|'PE', entry: number, sl: number, ref: any, 
         delayMs,
         maxEntrySlippagePts: TT1030_MAX_ENTRY_SLIPPAGE_PTS,
         status: newIssueCount ? "WARN" : "OK",
-    }, newIssueCount ? "warn" : "info");
+    }, newErrorCount ? "error" : (newIssueCount ? "warn" : "info"));
+    return { ok: newErrorCount === 0, issueCount: newIssueCount, errorCount: newErrorCount, signalKey };
+}
+function persistStrategyMonthlyHistory(strategy, day, payload) {
+    try {
+        const month = String(day || tt1030ISTParts().ymd).slice(0, 7);
+        let root = { months: {} };
+        try {
+            root = JSON.parse(fs_1.default.readFileSync(STRATEGY_MONTHLY_HISTORY_FILE, 'utf-8'));
+            if (!root || typeof root !== 'object')
+                root = { months: {} };
+        }
+        catch (_e) { }
+        if (!root.months)
+            root.months = {};
+        if (!root.months[month])
+            root.months[month] = {};
+        if (!root.months[month][strategy])
+            root.months[month][strategy] = { days: {} };
+        if (!root.months[month][strategy].days)
+            root.months[month][strategy].days = {};
+        root.months[month][strategy].days[day] = {
+            ...(root.months[month][strategy].days[day] || {}),
+            ...payload,
+            updatedAt: new Date().toISOString(),
+        };
+        fs_1.default.writeFileSync(STRATEGY_MONTHLY_HISTORY_FILE, JSON.stringify(root, null, 2));
+    }
+    catch (_e) { }
+}
+function updateTT1030MonthlyHistory() {
+    try {
+        const qty = Number(config_1.config.quantity || 30);
+        const optPts = tt1030.log.reduce((s, t) => s + ((t.premIn && t.premOut) ? Number(t.premOut - t.premIn) : 0), 0);
+        persistStrategyMonthlyHistory('TEN_THIRTY', tt1030.day || tt1030ISTParts().ymd, {
+            summary: {
+                futuresPts: parseFloat((tt1030.dayPts || 0).toFixed(1)),
+                futuresRs: Math.round(tt1030.dayRs || 0),
+                optionsPts: parseFloat(optPts.toFixed(1)),
+                optionsRs: Math.round(optPts * qty),
+                trades: tt1030.trades || 0,
+                wins: tt1030.wins || 0,
+                losses: tt1030.losses || 0,
+            },
+            trades: tt1030.log,
+            candles: tt1030.candleLog,
+        });
+    }
+    catch (_e) { }
+}
+function tt1030CandleKey(day, candleOrTime) {
+    const t = typeof candleOrTime === "string" ? candleOrTime : tt1030CandleTime(candleOrTime);
+    return `${day}|${t}`;
+}
+function rebuildTT1030SeenFromLog() {
+    tt1030.seen = new Set((tt1030.candleLog || []).filter(r => r && r.time).map(r => tt1030CandleKey(tt1030.day || tt1030ISTParts().ymd, r.time)));
+}
+function persistTT1030State() {
+    try {
+        fs_1.default.writeFileSync(TT1030_STATE_FILE, JSON.stringify({
+            date: tt1030.day || tt1030ISTParts().ymd,
+            savedAt: new Date().toISOString(),
+            inTrade: tt1030.inTrade,
+            dir: tt1030.dir,
+            entry: tt1030.entry,
+            entryTime: tt1030.entryTime,
+            sl: tt1030.sl,
+            optSym: tt1030.optSym,
+            optEntryPrem: tt1030.optEntryPrem,
+            optLivePrem: tt1030.optLivePrem,
+            refHigh: tt1030.refHigh,
+            refLow: tt1030.refLow,
+            tenHigh: tt1030.tenHigh,
+            tenLow: tt1030.tenLow,
+            tenTime: tt1030.tenTime,
+            trades: tt1030.trades,
+            wins: tt1030.wins,
+            losses: tt1030.losses,
+            dayPts: tt1030.dayPts,
+            dayRs: tt1030.dayRs,
+            log: tt1030.log || [],
+            candleLog: tt1030.candleLog || [],
+            lastSignalKey: tt1030LastSignalKey,
+            trendMode: !!tt1030.trendMode,
+            trendBreakPts: Number(tt1030.trendBreakPts || 0),
+            trendBodyPct: Number(tt1030.trendBodyPct || 0),
+            liveMode: tt1030.liveMode || "SHADOW",
+            futSym: tt1030.futSym || "",
+            futEntryPrice: Number(tt1030.futEntryPrice || 0),
+            futLivePrice: Number(tt1030.futLivePrice || 0),
+            liveQty: Number(tt1030.liveQty || 0),
+            entryOrderId: tt1030.entryOrderId || "",
+            exitOrderId: tt1030.exitOrderId || "",
+        }, null, 2));
+    }
+    catch (e) {
+        log("TT1030_STATE_SAVE_FAIL", { error: e instanceof Error ? e.message : String(e) });
+    }
+}
+function loadTT1030State(day) {
+    try {
+        const saved = JSON.parse(fs_1.default.readFileSync(TT1030_STATE_FILE, 'utf-8'));
+        if (saved.date !== day)
+            return null;
+        return saved;
+    }
+    catch (_e) {
+        return null;
+    }
+}
+function restoreTT1030State(day, fallbackCandleLog) {
+    const saved = loadTT1030State(day);
+    tt1030 = TT1030_EMPTY();
+    tt1030.day = day;
+    if (saved) {
+        tt1030.inTrade = !!saved.inTrade;
+        tt1030.dir = saved.dir ?? null;
+        tt1030.entry = Number(saved.entry || 0);
+        tt1030.entryTime = saved.entryTime || "";
+        tt1030.sl = Number(saved.sl || 0);
+        tt1030.optSym = saved.optSym || "";
+        tt1030.optEntryPrem = Number(saved.optEntryPrem || 0);
+        tt1030.optLivePrem = Number(saved.optLivePrem || 0);
+        tt1030.refHigh = Number(saved.refHigh || 0);
+        tt1030.refLow = Number(saved.refLow || 0);
+        tt1030.tenHigh = Number(saved.tenHigh || 0);
+        tt1030.tenLow = Number(saved.tenLow || 0);
+        tt1030.tenTime = saved.tenTime || "";
+        tt1030.trades = Number(saved.trades || 0);
+        tt1030.wins = Number(saved.wins || 0);
+        tt1030.losses = Number(saved.losses || 0);
+        tt1030.dayPts = Number(saved.dayPts || 0);
+        tt1030.dayRs = Number(saved.dayRs || 0);
+        tt1030.log = Array.isArray(saved.log) ? saved.log : [];
+        tt1030.candleLog = Array.isArray(saved.candleLog) ? saved.candleLog : fallbackCandleLog;
+        tt1030LastSignalKey = saved.lastSignalKey || "";
+        tt1030.trendMode = !!saved.trendMode;
+        tt1030.trendBreakPts = Number(saved.trendBreakPts || 0);
+        tt1030.trendBodyPct = Number(saved.trendBodyPct || 0);
+        tt1030.liveMode = saved.liveMode || "SHADOW";
+        tt1030.futSym = saved.futSym || "";
+        tt1030.futEntryPrice = Number(saved.futEntryPrice || 0);
+        tt1030.futLivePrice = Number(saved.futLivePrice || 0);
+        tt1030.liveQty = Number(saved.liveQty || 0);
+        tt1030.entryOrderId = saved.entryOrderId || "";
+        tt1030.exitOrderId = saved.exitOrderId || "";
+        if (tt1030FuturesMode() === "LIVE" && tt1030.inTrade && (!tt1030.futSym || !tt1030.entryOrderId || tt1030.liveMode !== "LIVE")) {
+            appendTT1030Audit("stale_shadow_state_cleared", { savedAt: saved.savedAt, dir: tt1030.dir, entry: tt1030.entry, reason: "LIVE mode cannot restore shadow-only TT1030 open trade without broker order id" }, "warn");
+            tt1030.inTrade = false;
+            tt1030.dir = null;
+            tt1030.entry = 0;
+            tt1030.entryTime = "";
+            tt1030.sl = 0;
+            tt1030.optSym = "";
+            tt1030.optEntryPrem = 0;
+            tt1030.optLivePrem = 0;
+            tt1030.liveMode = "LIVE";
+            tt1030.futSym = "";
+            tt1030.futEntryPrice = 0;
+            tt1030.futLivePrice = 0;
+            tt1030.liveQty = 0;
+            tt1030.entryOrderId = "";
+            tt1030.exitOrderId = "";
+        }
+        rebuildTT1030SeenFromLog();
+        appendTT1030Audit("state_restore", { source: "tt1030-state", savedAt: saved.savedAt, candleRows: tt1030.candleLog.length, trades: tt1030.trades, inTrade: tt1030.inTrade });
+        persistTT1030State();
+        return true;
+    }
+    tt1030.candleLog = fallbackCandleLog;
+    rebuildTT1030SeenFromLog();
+    appendTT1030Audit("state_restore", { source: "candle-log-only", candleRows: tt1030.candleLog.length });
+    persistTT1030State();
+    return false;
+}
+function loadTT1030CandleLog(day) {
+    try {
+        const saved = JSON.parse(fs_1.default.readFileSync(TT1030_CANDLE_LOG_FILE, 'utf-8'));
+        if (saved.date === day && Array.isArray(saved.log))
+            return saved.log;
+    }
+    catch (_e) { }
+    return [];
+}
+function persistTT1030CandleLog() {
+    try {
+        fs_1.default.writeFileSync(TT1030_CANDLE_LOG_FILE, JSON.stringify({ date: tt1030.day || tt1030ISTParts().ymd, log: tt1030.candleLog }, null, 2));
+        persistTT1030State();
+        updateTT1030MonthlyHistory();
+    }
+    catch (_e) { }
+}
+function upsertTT1030CandleLog(row) {
+    try {
+        const idx = tt1030.candleLog.findIndex(e => e.idx === row.idx);
+        if (idx >= 0)
+            tt1030.candleLog[idx] = { ...tt1030.candleLog[idx], ...row };
+        else
+            tt1030.candleLog.push(row);
+        tt1030.candleLog.sort((a, b) => (a.idx ?? 0) - (b.idx ?? 0));
+        persistTT1030CandleLog();
+    }
+    catch (_e) { }
 }
 function tt1030ResetIfNewDay() {
     const today = tt1030ISTParts().ymd;
     if (tt1030.day !== today) {
-        tt1030 = TT1030_EMPTY();
-        tt1030.day = today;
+        const savedCandleLog = loadTT1030CandleLog(today);
+        hybridShadow = HYBRID_EMPTY();
+        hybridShadow.day = tt1030ISTParts().ymd;
         tt1030AuditIssues = [];
-        tt1030LastSignalKey = "";
-        appendTT1030Audit("day_reset");
+        restoreTT1030State(today, savedCandleLog);
+        appendTT1030Audit("day_reset", { savedCandleRows: savedCandleLog.length, restoredTrades: tt1030.trades, restoredInTrade: tt1030.inTrade });
+        if (!savedCandleLog.length)
+            persistTT1030CandleLog();
+        persistHybridCandleLog();
     }
 }
 async function getTodayIndex15mCandles() {
@@ -1719,12 +2164,47 @@ async function getTodayIndex15mCandles() {
         date: typeof c.date === "string" ? c.date : new Date(c.date).toISOString(),
     }));
 }
-function tt1030CloseTrade(c, exit, reason, premOut) {
+function tt1030CandleBodyPct(c) {
+    const range = Math.max(1, Number(c.high || 0) - Number(c.low || 0));
+    return Math.abs(Number(c.close || 0) - Number(c.open || 0)) / range * 100;
+}
+function tt1030TrendBreakPts(dir, c) {
+    return dir === "CE" ? Number(c.close || 0) - Number(tt1030.tenHigh || 0) : Number(tt1030.tenLow || 0) - Number(c.close || 0);
+}
+function tt1030ShouldUseTrendTrail(dir, c) {
+    const breakPts = tt1030TrendBreakPts(dir, c);
+    const bodyPct = tt1030CandleBodyPct(c);
+    const bodyDirectionOk = dir === "CE" ? Number(c.close || 0) > Number(c.open || 0) : Number(c.close || 0) < Number(c.open || 0);
+    return { trendMode: breakPts >= TT1030_TREND_BREAK_PTS && bodyPct >= TT1030_TREND_BODY_PCT && bodyDirectionOk, breakPts, bodyPct };
+}
+async function tt1030CloseTrade(c, exit, reason, premOut) {
     if (!tt1030.inTrade || !tt1030.dir)
         return 0;
     const qty = Number(config_1.config.quantity || 30);
     const pts = tt1030.dir === "CE" ? exit - tt1030.entry : tt1030.entry - exit;
     const pnlRs = Math.round(pts * qty);
+    const liveMode = tt1030.liveMode === "LIVE" && !!tt1030.futSym;
+    let liveExitOrder = null;
+    if (liveMode) {
+        try {
+            const exitTransaction = tt1030.dir === "PE" ? "BUY" : "SELL";
+            liveExitOrder = await tt1030PlaceLiveFuturesOrder(tt1030.futSym, exitTransaction, Number(tt1030.liveQty || qty), "live_exit_order");
+            tt1030.exitOrderId = liveExitOrder?.order_id || "";
+        }
+        catch (e) {
+            const msg = e instanceof Error ? e.message : String(e);
+            tt1030AuditIssue("LIVE_EXIT_ORDER_FAILED", "TT1030 live futures exit order failed; position may still be open", { symbol: tt1030.futSym, dir: tt1030.dir, reason, error: msg }, "error");
+            log("TT1030_LIVE_EXIT_FAILED", { symbol: tt1030.futSym, dir: tt1030.dir, error: msg });
+            notifyTT1030Telegram(`TT1030 LIVE EXIT FAILED
+Symbol: ${tt1030.futSym}
+Dir: ${tt1030.dir}
+Reason: ${reason}
+Error: ${msg}
+CHECK ZERODHA POSITION MANUALLY`).catch(() => { });
+            persistTT1030State();
+            return 0;
+        }
+    }
     tt1030.dayPts += pts;
     tt1030.dayRs += pnlRs;
     tt1030.trades++;
@@ -1736,10 +2216,14 @@ function tt1030CloseTrade(c, exit, reason, premOut) {
         time: tt1030CandleTime(c), dir: tt1030.dir, entry: tt1030.entry, exit,
         pts: parseFloat(pts.toFixed(1)), pnlRs, reason,
         premIn: tt1030.optEntryPrem || undefined, premOut: premOut || undefined, symbol: tt1030.optSym || undefined,
+        futuresSymbol: tt1030.futSym || undefined,
+        entryOrderId: tt1030.entryOrderId || undefined,
+        exitOrderId: tt1030.exitOrderId || undefined,
+        liveMode: tt1030.liveMode || "SHADOW",
     };
     tt1030.log.push(row);
     tt1030.log = tt1030.log.slice(-20);
-    (0, logger_1.logTrade)({ date: new Date().toISOString(), type: "TEN_THIRTY_INDEX", direction: row.dir, symbol: "BANKNIFTY_INDEX_SHADOW", entryPrice: row.entry, exitPrice: row.exit, pnl: row.pts, pnlRs: row.pnlRs, reasonEntry: "ten_thirty_breakout", reasonExit: reason, aiScore: 1, slippage: 0, duration: 0, qty });
+    (0, logger_1.logTrade)({ date: new Date().toISOString(), type: liveMode ? "TEN_THIRTY_FUTURES_LIVE" : "TEN_THIRTY_INDEX", direction: row.dir, symbol: liveMode ? tt1030.futSym : "BANKNIFTY_INDEX_SHADOW", entryPrice: liveMode ? Number(tt1030.futEntryPrice || row.entry) : row.entry, exitPrice: liveMode ? Number(liveExitOrder?.average_price || row.exit) : row.exit, pnl: row.pts, pnlRs: row.pnlRs, reasonEntry: liveMode ? "ten_thirty_futures_live" : "ten_thirty_breakout", reasonExit: reason, aiScore: 1, slippage: liveMode ? Math.abs(Number(liveExitOrder?.average_price || row.exit) - row.exit) : 0, duration: 0, qty: liveMode ? Number(tt1030.liveQty || qty) : qty, brokerOrderId: liveMode ? tt1030.exitOrderId : undefined, entryOrderId: liveMode ? tt1030.entryOrderId : undefined });
     if (row.premIn && row.premOut)
         (0, logger_1.logTrade)({ date: new Date().toISOString(), type: "TEN_THIRTY_OPT", direction: row.dir, symbol: row.symbol, entryPrice: row.premIn, exitPrice: row.premOut, premiumEntry: row.premIn, premiumExit: row.premOut, pnl: parseFloat((row.premOut - row.premIn).toFixed(1)), pnlRs: Math.round((row.premOut - row.premIn) * qty), reasonEntry: "ten_thirty_opt_shadow", reasonExit: reason, aiScore: 1, slippage: 0, duration: 0, qty });
     appendTT1030Audit("exit", {
@@ -1753,10 +2237,27 @@ function tt1030CloseTrade(c, exit, reason, premOut) {
         premIn: row.premIn || null,
         premOut: row.premOut || null,
         premiumPts: row.premIn && row.premOut ? parseFloat((row.premOut - row.premIn).toFixed(1)) : null,
+        trendMode: !!tt1030.trendMode,
+        trendBreakPts: Number(tt1030.trendBreakPts || 0),
+        trendBodyPct: Number(tt1030.trendBodyPct || 0),
+        liveMode: tt1030.liveMode || "SHADOW",
+        futuresSymbol: tt1030.futSym || null,
+        entryOrderId: tt1030.entryOrderId || null,
+        exitOrderId: tt1030.exitOrderId || null,
+        liveExitPrice: liveMode ? Number(liveExitOrder?.average_price || 0) : null,
     });
     if (row.premIn && !row.premOut) {
         tt1030AuditIssue("EXIT_PREMIUM_MISSING", "option LTP was not available at TT1030 exit", { symbol: row.symbol, reason }, "warn");
     }
+    if (tt1030IsFreshAlertTime(row.time))
+        notifyTT1030Telegram(`EXIT ${row.dir} | Mode: ${tt1030RuntimeMode()}
+Reason: ${tt1030AlertText(reason)}
+Entry: ${row.entry} | Exit: ${row.exit}
+P&L: ${row.pts} pts / Rs.${row.pnlRs}
+Day: ${tt1030.dayPts.toFixed(1)} pts / Rs.${Math.round(tt1030.dayRs)}
+Trades: ${tt1030.trades} | Wins: ${tt1030.wins} | Losses: ${tt1030.losses}
+Time: ${row.time}`).catch(() => { });
+    updateTT1030MonthlyHistory();
     tt1030.inTrade = false;
     tt1030.dir = null;
     tt1030.entry = 0;
@@ -1764,12 +2265,54 @@ function tt1030CloseTrade(c, exit, reason, premOut) {
     tt1030.optSym = "";
     tt1030.optEntryPrem = 0;
     tt1030.optLivePrem = 0;
+    tt1030.trendMode = false;
+    tt1030.trendBreakPts = 0;
+    tt1030.trendBodyPct = 0;
+    tt1030.liveMode = "SHADOW";
+    tt1030.futSym = "";
+    tt1030.futEntryPrice = 0;
+    tt1030.futLivePrice = 0;
+    tt1030.liveQty = 0;
+    tt1030.entryOrderId = "";
+    tt1030.exitOrderId = "";
+    persistTT1030State();
     return pts;
 }
 async function tt1030Enter(dir, entry, sl, ref, reason) {
     const optSym = await getDrishtiATMOptionSymbol(dir, ref.close).catch(() => "");
     const optPrem = optSym ? await (0, market_1.getOptionLTP)(optSym).catch(() => 0) : 0;
-    tt1030AuditSignal(dir, entry, sl, ref, reason, optSym, optPrem);
+    const preflight = tt1030AuditSignal(dir, entry, sl, ref, reason, optSym, optPrem);
+    const liveRequested = tt1030IsLiveFutures();
+    let futSym = "";
+    let futLtp = 0;
+    let liveOrder = null;
+    if (liveRequested) {
+        if (!preflight.ok) {
+            appendTT1030Audit("live_entry_blocked", { dir, entry, sl, reason, errorCount: preflight.errorCount, signalKey: preflight.signalKey }, "error");
+            log("TT1030_LIVE_ENTRY_BLOCKED", { dir, entry, sl, reason, errorCount: preflight.errorCount });
+            return false;
+        }
+        try {
+            futSym = await Promise.race([
+                getDrishtiFuturesSymbol(),
+                new Promise((_, rej) => setTimeout(() => rej(new Error("futures symbol timeout")), 10000)),
+            ]);
+            futLtp = await (0, market_1.getOptionLTP)(futSym).catch(() => Number(ref.close || entry));
+            const transaction = dir === "PE" ? "SELL" : "BUY";
+            liveOrder = await tt1030PlaceLiveFuturesOrder(futSym, transaction, Number(config_1.config.quantity || 30), "live_entry_order");
+        }
+        catch (e) {
+            const msg = e instanceof Error ? e.message : String(e);
+            tt1030AuditIssue("LIVE_ENTRY_ORDER_FAILED", "TT1030 live futures entry order failed; no strategy position opened", { dir, entry, sl, reason, futuresSymbol: futSym || null, error: msg }, "error");
+            log("TT1030_LIVE_ENTRY_FAILED", { dir, entry, sl, reason, futuresSymbol: futSym, error: msg });
+            notifyTT1030Telegram(`TT1030 LIVE ENTRY FAILED
+Dir: ${dir}
+Entry: ${entry} | SL: ${sl}
+Error: ${msg}`).catch(() => { });
+            persistTT1030State();
+            return false;
+        }
+    }
     tt1030.inTrade = true;
     tt1030.dir = dir;
     tt1030.entry = entry;
@@ -1780,6 +2323,17 @@ async function tt1030Enter(dir, entry, sl, ref, reason) {
     tt1030.optSym = optSym;
     tt1030.optEntryPrem = optPrem;
     tt1030.optLivePrem = optPrem;
+    tt1030.liveMode = liveRequested ? "LIVE" : "SHADOW";
+    tt1030.futSym = liveRequested ? futSym : "";
+    tt1030.futEntryPrice = liveRequested ? Number(liveOrder?.average_price || futLtp || ref.close || entry) : 0;
+    tt1030.futLivePrice = tt1030.futEntryPrice;
+    tt1030.liveQty = liveRequested ? Number(liveOrder?.filled_quantity || config_1.config.quantity || 30) : 0;
+    tt1030.entryOrderId = liveRequested ? (liveOrder?.order_id || "") : "";
+    tt1030.exitOrderId = "";
+    const trendTrail = tt1030ShouldUseTrendTrail(dir, ref);
+    tt1030.trendMode = trendTrail.trendMode;
+    tt1030.trendBreakPts = trendTrail.breakPts;
+    tt1030.trendBodyPct = trendTrail.bodyPct;
     tt1030.log.push({ time: tt1030.entryTime, dir, entry, reason, premIn: optPrem || undefined, symbol: optSym || undefined });
     tt1030.log = tt1030.log.slice(-20);
     appendTT1030Audit("entry", {
@@ -1791,148 +2345,227 @@ async function tt1030Enter(dir, entry, sl, ref, reason) {
         symbol: optSym || null,
         premium: optPrem || null,
         mode: (config_1.config.mode || "LIVE").toUpperCase(),
+        trendMode: !!tt1030.trendMode,
+        trendBreakPts: parseFloat((tt1030.trendBreakPts || 0).toFixed(1)),
+        trendBodyPct: parseFloat((tt1030.trendBodyPct || 0).toFixed(1)),
+        trailAfterPts: 0,
+        liveMode: tt1030.liveMode,
+        futuresSymbol: tt1030.futSym || null,
+        entryOrderId: tt1030.entryOrderId || null,
+        futuresEntryPrice: tt1030.futEntryPrice || null,
+        liveQty: tt1030.liveQty || null,
     });
-    log("TT1030_ENTRY", { dir, entry: entry.toFixed(1), sl: sl.toFixed(1), optSym, optPrem });
+    log("TT1030_ENTRY", { dir, entry: entry.toFixed(1), sl: sl.toFixed(1), optSym, optPrem, trendMode: !!tt1030.trendMode, trendBreakPts: (tt1030.trendBreakPts || 0).toFixed(1), trendBodyPct: (tt1030.trendBodyPct || 0).toFixed(1), trailAfterPts: 0 });
+    if (tt1030IsFreshAlertTime(tt1030.entryTime))
+        notifyTT1030Telegram(`ENTRY ${dir} | Mode: ${tt1030RuntimeMode()}
+Reason: ${tt1030AlertText(reason)}
+Entry: ${entry} | SL: ${sl} | Risk: ${Math.abs(entry - sl).toFixed(1)} pts
+Qty: ${Number(config_1.config.quantity || 30)}
+Option Ref: ${tt1030AlertText(optSym || "not available")}${optPrem ? ` @ ${optPrem}` : ""}
+Futures: ${tt1030.liveMode === "LIVE" ? `${tt1030.futSym} @ ${tt1030.futEntryPrice} | Order ${tt1030.entryOrderId}` : "SHADOW ONLY"}
+Time: ${tt1030.entryTime}`).catch(() => { });
+    persistTT1030State();
+    return true;
 }
-async function runTenThirtyShadow(isEOD) {
-    tt1030ResetIfNewDay();
-    const candles = await getTodayIndex15mCandles();
-    if (!candles.length)
+async function runTenThirtyTradeOps(isEOD) {
+    if (tt1030RunInFlight) {
+        log("TT1030_SKIP_OVERLAP", {});
         return;
-    for (let i = 0; i < candles.length; i++) {
-        const c = candles[i];
-        const candleStartMs = new Date(c.date).getTime();
-        const candleIsClosed = Number.isFinite(candleStartMs)
-            ? Date.now() >= candleStartMs + (15 * 60 * 1000)
-            : true;
-        // Do not lock a 15-minute candle until its full window has closed.
-        if (!candleIsClosed)
-            continue;
-        const key = c.date || `${c.high}_${c.low}`;
-        if (tt1030.seen.has(key))
-            continue;
-        tt1030.seen.add(key);
-        const num = i + 1;
-        const t = tt1030CandleTime(c);
-        const clog = { idx: num, time: t, open: c.open, high: c.high, low: c.low, close: c.close, status: "watching", dir: tt1030.dir, sl: tt1030.sl || null, note: "" };
-        if (num === 6 && !tt1030.tenHigh) {
-            tt1030.tenHigh = c.high;
-            tt1030.tenLow = c.low;
-            tt1030.tenTime = t;
-            clog.status = "marked_1030";
-            clog.note = `range ${c.high.toFixed(1)} / ${c.low.toFixed(1)}`;
-            tt1030.candleLog.push(clog);
-            tt1030.candleLog = tt1030.candleLog.slice(-30);
-            log("TT1030_MARKED", { high: c.high, low: c.low, time: t });
-            continue;
-        }
-        if (!tt1030.tenHigh) {
-            clog.status = "pre_1030";
-            clog.note = "waiting for 10:30 candle";
-            tt1030.candleLog.push(clog);
-            tt1030.candleLog = tt1030.candleLog.slice(-30);
-            continue;
-        }
-        const eodCandle = t >= "15:15" || isEOD;
-        if (tt1030.inTrade && tt1030.dir) {
-            const premOut = tt1030.optSym ? await (0, market_1.getOptionLTP)(tt1030.optSym).catch(() => 0) : 0;
-            tt1030.optLivePrem = premOut || tt1030.optLivePrem;
-            const slHit = tt1030.dir === "CE" ? c.close <= tt1030.sl : c.close >= tt1030.sl;
-            if (slHit) {
-                const oldDir = tt1030.dir;
-                const exit = tt1030.sl;
-                tt1030CloseTrade(c, exit, "sl_hit", premOut);
-                clog.status = "sl_hit";
-                clog.dir = oldDir;
-                clog.sl = exit;
-                clog.note = `SL hit at ${exit.toFixed(1)}`;
-                if (tt1030.trades < 2 && !eodCandle) {
-                    const revDir = oldDir === "CE" ? "PE" : "CE";
-                    await tt1030Enter(revDir, exit, revDir === "CE" ? c.low : c.high, c, "reverse_after_sl");
-                    clog.note += `; reversed ${revDir}`;
+    }
+    tt1030RunInFlight = true;
+    try {
+        tt1030ResetIfNewDay();
+        const candles = await getTodayIndex15mCandles();
+        if (!candles.length)
+            return;
+        for (let i = 0; i < candles.length; i++) {
+            const c = candles[i];
+            const candleStartMs = new Date(c.date).getTime();
+            const candleIsClosed = Number.isFinite(candleStartMs)
+                ? Date.now() >= candleStartMs + (15 * 60 * 1000)
+                : true;
+            // Do not lock a 15-minute candle until its full window has closed.
+            if (!candleIsClosed)
+                continue;
+            const num = i + 1;
+            const t = tt1030CandleTime(c);
+            const key = tt1030CandleKey(tt1030.day || tt1030ISTParts().ymd, t);
+            if (tt1030.seen.has(key))
+                continue;
+            tt1030.seen.add(key);
+            const clog = { idx: num, time: t, open: c.open, high: c.high, low: c.low, close: c.close, status: "watching", dir: tt1030.dir, sl: tt1030.sl || null, note: "" };
+            if (num === 6 && !tt1030.tenHigh) {
+                tt1030.tenHigh = c.high;
+                tt1030.tenLow = c.low;
+                tt1030.tenTime = t;
+                clog.status = "marked_1030";
+                clog.note = `range ${c.high.toFixed(1)} / ${c.low.toFixed(1)}`;
+                upsertTT1030CandleLog(clog);
+                log("TT1030_MARKED", { high: c.high, low: c.low, time: t });
+                continue;
+            }
+            if (!tt1030.tenHigh) {
+                clog.status = "pre_1030";
+                clog.note = "waiting for 10:30 candle";
+                upsertTT1030CandleLog(clog);
+                continue;
+            }
+            const eodCandle = t >= "15:15" || isEOD;
+            if (tt1030.inTrade && tt1030.dir) {
+                const premOut = tt1030.optSym ? await (0, market_1.getOptionLTP)(tt1030.optSym).catch(() => 0) : 0;
+                tt1030.optLivePrem = premOut || tt1030.optLivePrem;
+                if (tt1030.futSym)
+                    tt1030.futLivePrice = await (0, market_1.getOptionLTP)(tt1030.futSym).catch(() => tt1030.futLivePrice || 0);
+                const tt1030OpenPts = tt1030.dir === "CE" ? c.close - tt1030.entry : tt1030.entry - c.close;
+                clog.pnlPts = parseFloat(tt1030OpenPts.toFixed(1));
+                clog.pnlRs = Math.round(tt1030OpenPts * Number(config_1.config.quantity || 30));
+                const slHit = tt1030.dir === "CE" ? c.close <= tt1030.sl : c.close >= tt1030.sl;
+                if (slHit) {
+                    const oldDir = tt1030.dir;
+                    const exit = tt1030.sl;
+                    await tt1030CloseTrade(c, exit, "sl_hit", premOut);
+                    if (tt1030.inTrade) {
+                        clog.status = "exit_failed";
+                        clog.dir = oldDir;
+                        clog.sl = exit;
+                        clog.note = `Live exit failed at ${exit.toFixed(1)}; check broker position`;
+                        upsertTT1030CandleLog(clog);
+                        continue;
+                    }
+                    clog.status = "sl_hit";
+                    clog.dir = oldDir;
+                    clog.sl = exit;
+                    clog.exit = exit;
+                    clog.pnlPts = parseFloat((oldDir === "CE" ? exit - (tt1030.log[tt1030.log.length - 1]?.entry || exit) : (tt1030.log[tt1030.log.length - 1]?.entry || exit) - exit).toFixed(1));
+                    clog.pnlRs = Math.round(clog.pnlPts * Number(config_1.config.quantity || 30));
+                    clog.note = `SL hit at ${exit.toFixed(1)}`;
+                    if (tt1030.trades < 2 && !eodCandle)
+                        clog.note += "; waiting for confirmed reverse/re-entry";
+                    upsertTT1030CandleLog(clog);
+                    continue;
                 }
-                tt1030.candleLog.push(clog);
-                tt1030.candleLog = tt1030.candleLog.slice(-30);
+                if (eodCandle) {
+                    await tt1030CloseTrade(c, c.close, "exit_eod", premOut);
+                    if (tt1030.inTrade) {
+                        clog.status = "exit_failed";
+                        clog.note = `Live EOD exit failed at ${c.close.toFixed(1)}; check broker position`;
+                        upsertTT1030CandleLog(clog);
+                        continue;
+                    }
+                    clog.status = "exit_eod";
+                    clog.exit = c.close;
+                    clog.pnlPts = parseFloat(tt1030OpenPts.toFixed(1));
+                    clog.pnlRs = Math.round(tt1030OpenPts * Number(config_1.config.quantity || 30));
+                    clog.note = `EOD exit ${c.close.toFixed(1)}`;
+                    upsertTT1030CandleLog(clog);
+                    continue;
+                }
+                if (tt1030.dir === "CE" && c.close > tt1030.refHigh) {
+                    const previousSL = Number(tt1030.sl || 0);
+                    tt1030.sl = Math.max(previousSL, c.low);
+                    tt1030.refHigh = c.high;
+                    tt1030.refLow = c.low;
+                    clog.status = "trail";
+                    clog.dir = "CE";
+                    clog.sl = tt1030.sl;
+                    clog.note = `V2 standard trail active; SL -> ${tt1030.sl.toFixed(1)}`;
+                    log("TT1030_V2_TRAIL", { dir: "CE", sl: tt1030.sl, candleLow: c.low, openPts: tt1030OpenPts, refHigh: c.high, close: c.close });
+                    persistTT1030State();
+                }
+                else if (tt1030.dir === "PE" && c.close < tt1030.refLow) {
+                    const previousSL = Number(tt1030.sl || Number.POSITIVE_INFINITY);
+                    tt1030.sl = Math.min(previousSL, c.high);
+                    tt1030.refHigh = c.high;
+                    tt1030.refLow = c.low;
+                    clog.status = "trail";
+                    clog.dir = "PE";
+                    clog.sl = tt1030.sl;
+                    clog.note = `V2 standard trail active; SL -> ${tt1030.sl.toFixed(1)}`;
+                    log("TT1030_V2_TRAIL", { dir: "PE", sl: tt1030.sl, candleHigh: c.high, openPts: tt1030OpenPts, refLow: c.low, close: c.close });
+                    persistTT1030State();
+                }
+                else {
+                    clog.status = "hold";
+                    clog.dir = tt1030.dir;
+                    clog.sl = tt1030.sl || null;
+                    clog.note = "V2 trail waiting";
+                }
+                upsertTT1030CandleLog(clog);
                 continue;
             }
-            if (eodCandle) {
-                tt1030CloseTrade(c, c.close, "exit_eod", premOut);
-                clog.status = "exit_eod";
-                clog.note = `EOD exit ${c.close.toFixed(1)}`;
-                tt1030.candleLog.push(clog);
-                tt1030.candleLog = tt1030.candleLog.slice(-30);
-                continue;
+            if (!tt1030.inTrade && tt1030.trades < 2 && !eodCandle && num > 6) {
+                if (isCandleSignalStale(c)) {
+                    clog.status = "stale_signal_skip";
+                    clog.note = "restart replay guard: skipped stale TT1030 entry signal";
+                    upsertTT1030CandleLog(clog);
+                    continue;
+                }
+                const brokeHigh = c.close > tt1030.tenHigh;
+                const brokeLow = c.close < tt1030.tenLow;
+                let breakoutDir = null;
+                let breakoutReason = "";
+                if (brokeHigh) {
+                    breakoutDir = "CE";
+                    breakoutReason = "close_break_1030_high";
+                }
+                else if (brokeLow) {
+                    breakoutDir = "PE";
+                    breakoutReason = "close_break_1030_low";
+                }
+                if (breakoutDir === "CE") {
+                    const entered = await tt1030Enter("CE", tt1030.tenHigh, c.low, c, breakoutReason);
+                    if (entered) {
+                        clog.status = "entry";
+                        clog.dir = "CE";
+                        clog.entry = tt1030.tenHigh;
+                        clog.sl = c.low;
+                        clog.pnlPts = parseFloat((c.close - tt1030.tenHigh).toFixed(1));
+                        clog.pnlRs = Math.round(clog.pnlPts * Number(config_1.config.quantity || 30));
+                        clog.note = `close broke 10:30 high ${tt1030.tenHigh.toFixed(1)}${tt1030.liveMode === "LIVE" ? "; live futures order filled" : ""}`;
+                    }
+                    else {
+                        clog.status = "entry_blocked";
+                        clog.dir = "CE";
+                        clog.entry = tt1030.tenHigh;
+                        clog.sl = c.low;
+                        clog.note = `CE signal blocked; no ${tt1030FuturesMode()} order opened`;
+                    }
+                }
+                else if (breakoutDir === "PE") {
+                    const entered = await tt1030Enter("PE", tt1030.tenLow, c.high, c, breakoutReason);
+                    if (entered) {
+                        clog.status = "entry";
+                        clog.dir = "PE";
+                        clog.entry = tt1030.tenLow;
+                        clog.sl = c.high;
+                        clog.pnlPts = parseFloat((tt1030.tenLow - c.close).toFixed(1));
+                        clog.pnlRs = Math.round(clog.pnlPts * Number(config_1.config.quantity || 30));
+                        clog.note = `close broke 10:30 low ${tt1030.tenLow.toFixed(1)}${tt1030.liveMode === "LIVE" ? "; live futures order filled" : ""}`;
+                    }
+                    else {
+                        clog.status = "entry_blocked";
+                        clog.dir = "PE";
+                        clog.entry = tt1030.tenLow;
+                        clog.sl = c.high;
+                        clog.note = `PE signal blocked; no ${tt1030FuturesMode()} order opened`;
+                    }
+                }
+                else {
+                    clog.status = "watching";
+                    clog.note = c.high > tt1030.tenHigh || c.low < tt1030.tenLow
+                        ? "wick crossed 10:30 range; waiting for close confirmation"
+                        : "inside 10:30 range";
+                }
             }
-            if (tt1030.dir === "CE" && c.close > tt1030.refHigh) {
-                tt1030.sl = c.low;
-                tt1030.refHigh = c.high;
-                tt1030.refLow = c.low;
-                clog.status = "trail";
-                clog.dir = "CE";
-                clog.sl = tt1030.sl;
-                clog.note = `close broke ref high; SL -> ${tt1030.sl.toFixed(1)}`;
-                log("TT1030_TRAIL", { dir: "CE", sl: c.low, refHigh: c.high, close: c.close });
+            else if (!tt1030.inTrade) {
+                clog.status = eodCandle ? "eod_no_trade" : "done";
+                clog.note = eodCandle ? "EOD/no new entry" : "max trades reached";
             }
-            else if (tt1030.dir === "PE" && c.close < tt1030.refLow) {
-                tt1030.sl = c.high;
-                tt1030.refHigh = c.high;
-                tt1030.refLow = c.low;
-                clog.status = "trail";
-                clog.dir = "PE";
-                clog.sl = tt1030.sl;
-                clog.note = `close broke ref low; SL -> ${tt1030.sl.toFixed(1)}`;
-                log("TT1030_TRAIL", { dir: "PE", sl: c.high, refLow: c.low, close: c.close });
-            }
-            else {
-                clog.status = "hold";
-                clog.dir = tt1030.dir;
-                clog.sl = tt1030.sl || null;
-                clog.note = "in trade; no SL/trail";
-            }
-            tt1030.candleLog.push(clog);
-            tt1030.candleLog = tt1030.candleLog.slice(-30);
-            continue;
+            upsertTT1030CandleLog(clog);
         }
-        if (!tt1030.inTrade && tt1030.trades < 2 && !eodCandle && num > 6) {
-            const brokeHigh = c.close > tt1030.tenHigh;
-            const brokeLow = c.close < tt1030.tenLow;
-            let breakoutDir = null;
-            let breakoutReason = "";
-            if (brokeHigh) {
-                breakoutDir = "CE";
-                breakoutReason = "close_break_1030_high";
-            }
-            else if (brokeLow) {
-                breakoutDir = "PE";
-                breakoutReason = "close_break_1030_low";
-            }
-            if (breakoutDir === "CE") {
-                await tt1030Enter("CE", tt1030.tenHigh, c.low, c, breakoutReason);
-                clog.status = "entry";
-                clog.dir = "CE";
-                clog.sl = c.low;
-                clog.note = `close broke 10:30 high ${tt1030.tenHigh.toFixed(1)}`;
-            }
-            else if (breakoutDir === "PE") {
-                await tt1030Enter("PE", tt1030.tenLow, c.high, c, breakoutReason);
-                clog.status = "entry";
-                clog.dir = "PE";
-                clog.sl = c.high;
-                clog.note = `close broke 10:30 low ${tt1030.tenLow.toFixed(1)}`;
-            }
-            else {
-                clog.status = "watching";
-                clog.note = c.high > tt1030.tenHigh || c.low < tt1030.tenLow
-                    ? "wick crossed 10:30 range; waiting for close confirmation"
-                    : "inside 10:30 range";
-            }
-        }
-        else if (!tt1030.inTrade) {
-            clog.status = eodCandle ? "eod_no_trade" : "done";
-            clog.note = eodCandle ? "EOD/no new entry" : "max trades reached";
-        }
-        tt1030.candleLog.push(clog);
-        tt1030.candleLog = tt1030.candleLog.slice(-30);
+    }
+    finally {
+        tt1030RunInFlight = false;
     }
 }
 function tt1030HeartbeatFields() {
@@ -1940,11 +2573,21 @@ function tt1030HeartbeatFields() {
     const unrealPts = tt1030.inTrade && tt1030.dir && liveIdx
         ? (tt1030.dir === "CE" ? liveIdx - tt1030.entry : tt1030.entry - liveIdx)
         : 0;
+    const qty = Number(config_1.config.quantity || 30);
+    const unrealOptPts = tt1030.inTrade && tt1030.dir && tt1030.optEntryPrem > 0 && tt1030.optLivePrem > 0
+        ? (tt1030.optLivePrem - tt1030.optEntryPrem)
+        : 0;
+    const closedOptPts = tt1030.log.reduce((s, t) => s + ((t.premIn && t.premOut) ? Number(t.premOut - t.premIn) : 0), 0);
+    const totalOptPts = closedOptPts + unrealOptPts;
     return {
-        tt1030Strategy: "TEN_THIRTY_INDEX_SHADOW",
+        tt1030Strategy: tt1030FuturesMode() === "LIVE" ? "TEN_THIRTY_FUTURES_LIVE" : "TEN_THIRTY_INDEX_SHADOW",
+        tt1030FuturesMode: tt1030FuturesMode(),
+        drishtiBlockReason: latestDrishtiBlockReason,
         tt1030PnL: Math.round(tt1030.dayRs + (unrealPts * Number(config_1.config.quantity || 30))),
         tt1030ClosedPnL: tt1030.dayRs,
         tt1030Pts: parseFloat((tt1030.dayPts + unrealPts).toFixed(1)),
+        tt1030OptPts: parseFloat(totalOptPts.toFixed(1)),
+        tt1030OptPnL: Math.round(totalOptPts * qty),
         tt1030Trades: tt1030.trades,
         tt1030Wins: tt1030.wins,
         tt1030Losses: tt1030.losses,
@@ -1956,12 +2599,304 @@ function tt1030HeartbeatFields() {
         tt1030OptionSymbol: tt1030.optSym || null,
         tt1030OptionEntry: tt1030.optEntryPrem || null,
         tt1030OptionLive: tt1030.optLivePrem || null,
+        tt1030FuturesSymbol: tt1030.futSym || null,
+        tt1030FuturesEntry: tt1030.futEntryPrice || null,
+        tt1030FuturesLive: tt1030.futLivePrice || null,
+        tt1030LiveQty: tt1030.liveQty || null,
+        tt1030EntryOrderId: tt1030.entryOrderId || null,
+        tt1030ExitOrderId: tt1030.exitOrderId || null,
         tt1030High: tt1030.tenHigh || null,
         tt1030Low: tt1030.tenLow || null,
         tt1030AuditStatus: tt1030AuditIssues.some(x => x.severity === "error") ? "BLOCKED" : (tt1030AuditIssues.length ? "WARN" : "OK"),
         tt1030AuditIssues: tt1030AuditIssues.slice(-10),
         tt1030TradeLog: tt1030.log.slice(-20),
-        tt1030CandleLog: tt1030.candleLog.slice(-30),
+        tt1030CandleLog: tt1030.candleLog,
+    };
+}
+function hybridResetIfNewDay() {
+    const ymd = tt1030ISTParts().ymd;
+    if (hybridShadow.day !== ymd) {
+        const savedCandleLog = loadHybridCandleLog(ymd);
+        hybridShadow = HYBRID_EMPTY();
+        hybridShadow.day = ymd;
+        hybridShadow.candleLog = savedCandleLog;
+        if (!savedCandleLog.length)
+            persistHybridCandleLog();
+    }
+}
+const HYBRID_CANDLE_LOG_FILE = 'hybrid-candle-log.json';
+function loadHybridCandleLog(day) {
+    try {
+        const saved = JSON.parse(fs_1.default.readFileSync(HYBRID_CANDLE_LOG_FILE, 'utf-8'));
+        if (saved.date === day && Array.isArray(saved.log))
+            return saved.log;
+    }
+    catch (_e) { }
+    return [];
+}
+function persistHybridCandleLog() {
+    try {
+        fs_1.default.writeFileSync(HYBRID_CANDLE_LOG_FILE, JSON.stringify({ date: hybridShadow.day || tt1030ISTParts().ymd, log: hybridShadow.candleLog }, null, 2));
+        updateHybridMonthlyHistory();
+    }
+    catch (_e) { }
+}
+function updateHybridMonthlyHistory() {
+    try {
+        persistStrategyMonthlyHistory('HYBRID_BODY', hybridShadow.day || tt1030ISTParts().ymd, {
+            summary: {
+                futuresPts: parseFloat((hybridShadow.dayPts || 0).toFixed(1)),
+                futuresRs: Math.round(hybridShadow.dayRs || 0),
+                optionsPts: parseFloat((hybridShadow.optDayPts || 0).toFixed(1)),
+                optionsRs: Math.round(hybridShadow.optDayRs || 0),
+                trades: hybridShadow.trades || 0,
+                wins: hybridShadow.wins || 0,
+                losses: hybridShadow.losses || 0,
+                phase: hybridShadow.phase,
+            },
+            trades: hybridShadow.log,
+            candles: hybridShadow.candleLog,
+        });
+    }
+    catch (_e) { }
+}
+function upsertHybridCandleLog(row) {
+    try {
+        const rowIdx = row.idx ?? row.num;
+        const idx = hybridShadow.candleLog.findIndex(e => (e.idx ?? e.num) === rowIdx);
+        const clean = { ...row, idx: rowIdx };
+        if (idx >= 0)
+            hybridShadow.candleLog[idx] = { ...hybridShadow.candleLog[idx], ...clean };
+        else
+            hybridShadow.candleLog.push(clean);
+        hybridShadow.candleLog.sort((a, b) => ((a.idx ?? a.num ?? 0) - (b.idx ?? b.num ?? 0)));
+        persistHybridCandleLog();
+    }
+    catch (_e) { }
+}
+function hybridBody(c) {
+    return Math.abs(Number(c.close || 0) - Number(c.open || 0));
+}
+async function hybridCloseTrade(c, exit, reason) {
+    if (!hybridShadow.dir || !hybridShadow.entry)
+        return 0;
+    const pts = hybridShadow.dir === "CE" ? exit - hybridShadow.entry : hybridShadow.entry - exit;
+    const qty = Number(config_1.config.quantity || 30);
+    const pnlRs = Math.round(pts * qty);
+    const premOut = hybridShadow.optSym ? await (0, market_1.getOptionLTP)(hybridShadow.optSym).catch(() => 0) : 0;
+    const optPts = hybridShadow.optEntryPrem > 0 && premOut > 0 ? premOut - hybridShadow.optEntryPrem : 0;
+    const optRs = Math.round(optPts * qty);
+    hybridShadow.dayPts = parseFloat((hybridShadow.dayPts + pts).toFixed(1));
+    hybridShadow.dayRs += pnlRs;
+    hybridShadow.optDayPts = parseFloat((hybridShadow.optDayPts + optPts).toFixed(1));
+    hybridShadow.optDayRs += optRs;
+    hybridShadow.trades += 1;
+    if (pts > 0)
+        hybridShadow.wins += 1;
+    else
+        hybridShadow.losses += 1;
+    hybridShadow.log.push({ time: tt1030CandleTime(c), dir: hybridShadow.dir, entry: hybridShadow.entry, exit, pts: parseFloat(pts.toFixed(1)), pnlRs, reason, leg: hybridShadow.phase === "IN_RE" ? "RE" : "T1", premIn: hybridShadow.optEntryPrem || undefined, premOut: premOut || undefined, symbol: hybridShadow.optSym || undefined });
+    hybridShadow.log = hybridShadow.log.slice(-30);
+    (0, logger_1.logTrade)({ date: new Date().toISOString(), type: "HYBRID_BODY_INDEX", direction: hybridShadow.dir, symbol: "BANKNIFTY_INDEX_SHADOW", entryPrice: hybridShadow.entry, exitPrice: exit, pnl: parseFloat(pts.toFixed(1)), pnlRs, reasonEntry: hybridShadow.phase === "IN_RE" ? "hybrid_reversal_entry" : "hybrid_c2_body_entry", reasonExit: reason, aiScore: 1, slippage: 0, duration: 0, qty });
+    if (hybridShadow.optEntryPrem > 0 && premOut > 0)
+        (0, logger_1.logTrade)({ date: new Date().toISOString(), type: "HYBRID_BODY_OPT", direction: hybridShadow.dir, symbol: hybridShadow.optSym, entryPrice: hybridShadow.optEntryPrem, exitPrice: premOut, premiumEntry: hybridShadow.optEntryPrem, premiumExit: premOut, pnl: parseFloat(optPts.toFixed(1)), pnlRs: optRs, reasonEntry: hybridShadow.phase === "IN_RE" ? "hybrid_reversal_opt" : "hybrid_c2_body_opt", reasonExit: reason, aiScore: 1, slippage: 0, duration: 0, qty });
+    updateHybridMonthlyHistory();
+    log("HYBRID_BODY_EXIT", { dir: hybridShadow.dir, entry: hybridShadow.entry, exit, pts: pts.toFixed(1), pnlRs, reason });
+    hybridShadow.dir = null;
+    hybridShadow.entry = 0;
+    hybridShadow.entryIdx = -1;
+    hybridShadow.entryTime = "";
+    hybridShadow.sl = 0;
+    hybridShadow.peak = 0;
+    hybridShadow.optSym = "";
+    hybridShadow.optEntryPrem = 0;
+    hybridShadow.optLivePrem = 0;
+    return pts;
+}
+async function hybridEnter(dir, entry, sl, c, phase, reason, num) {
+    const optSym = await getDrishtiATMOptionSymbol(dir, c.close).catch(() => "");
+    const optPrem = optSym ? await (0, market_1.getOptionLTP)(optSym).catch(() => 0) : 0;
+    hybridShadow.phase = phase;
+    hybridShadow.dir = dir;
+    hybridShadow.entry = entry;
+    hybridShadow.entryIdx = num;
+    hybridShadow.entryTime = tt1030CandleTime(c);
+    hybridShadow.sl = sl;
+    hybridShadow.peak = 0;
+    hybridShadow.optSym = optSym;
+    hybridShadow.optEntryPrem = optPrem;
+    hybridShadow.optLivePrem = optPrem;
+    log("HYBRID_BODY_ENTRY", { phase, dir, entry, sl, time: hybridShadow.entryTime, reason, num, optSym, optPrem });
+}
+async function runHybridBodyShadow(isEOD) {
+    hybridResetIfNewDay();
+    const candles = await getTodayIndex15mCandles();
+    if (!candles || candles.length < 2)
+        return;
+    for (let i = 0; i < candles.length; i++) {
+        const c = candles[i];
+        const key = tt1030CandleTime(c);
+        if (hybridShadow.seen.has(key))
+            continue;
+        hybridShadow.seen.add(key);
+        const num = i + 1;
+        const eodCandle = isEOD || key.includes("15:15") || key.includes("15:30");
+        const livePts = hybridShadow.dir && hybridShadow.entry ? (hybridShadow.dir === "CE" ? c.close - hybridShadow.entry : hybridShadow.entry - c.close) : 0;
+        const clog = { time: key, num, open: c.open, high: c.high, low: c.low, close: c.close, phase: hybridShadow.phase, status: "watch", note: "" };
+        if (hybridShadow.phase === "SCANNING") {
+            if (num < 2) {
+                clog.status = "wait_c2";
+                clog.note = "waiting for C2 body break";
+            }
+            else if (num === 2) {
+                const p = candles[0];
+                const bodyHigh = Math.max(p.open, p.close);
+                const bodyLow = Math.min(p.open, p.close);
+                const c2Body = hybridBody(c);
+                const upBreak = c.close - bodyHigh;
+                const downBreak = bodyLow - c.close;
+                if (c.close > bodyHigh && c2Body >= HYBRID_C2_MIN_BODY_PTS && upBreak >= HYBRID_C2_MIN_BREAK_PTS) {
+                    if (isCandleSignalStale(c)) {
+                        hybridShadow.phase = "DONE";
+                        clog.status = "stale_signal_skip";
+                        clog.note = "restart replay guard: skipped stale HYBRID C2 CE signal";
+                        setHybridBlockReason(clog.note);
+                    }
+                    else {
+                        await hybridEnter("CE", c.close, p.low, c, "IN_T1", "c2_break_c1_body_high", num);
+                        clog.status = "entry";
+                        clog.dir = "CE";
+                        clog.sl = p.low;
+                        clog.note = `C2 strong close broke C1 body high ${bodyHigh.toFixed(1)} (body ${c2Body.toFixed(1)}, break ${upBreak.toFixed(1)})`;
+                    }
+                }
+                else if (c.close < bodyLow && c2Body >= HYBRID_C2_MIN_BODY_PTS && downBreak >= HYBRID_C2_MIN_BREAK_PTS) {
+                    if (isCandleSignalStale(c)) {
+                        hybridShadow.phase = "DONE";
+                        clog.status = "stale_signal_skip";
+                        clog.note = "restart replay guard: skipped stale HYBRID C2 PE signal";
+                        setHybridBlockReason(clog.note);
+                    }
+                    else {
+                        await hybridEnter("PE", c.close, p.high, c, "IN_T1", "c2_break_c1_body_low", num);
+                        clog.status = "entry";
+                        clog.dir = "PE";
+                        clog.sl = p.high;
+                        clog.note = `C2 strong close broke C1 body low ${bodyLow.toFixed(1)} (body ${c2Body.toFixed(1)}, break ${downBreak.toFixed(1)})`;
+                    }
+                }
+                else {
+                    hybridShadow.phase = "DONE";
+                    clog.status = "no_trade";
+                    clog.note = `C2 failed strength filter (body ${c2Body.toFixed(1)}/${HYBRID_C2_MIN_BODY_PTS}, break ${Math.max(upBreak, downBreak).toFixed(1)}/${HYBRID_C2_MIN_BREAK_PTS})`;
+                    setHybridBlockReason(clog.note);
+                }
+            }
+            else {
+                hybridShadow.phase = "DONE";
+                clog.status = "missed_c2";
+                clog.note = "C2 decision window closed";
+                setHybridBlockReason(clog.note);
+            }
+        }
+        else if (hybridShadow.phase === "IN_T1" && hybridShadow.dir) {
+            hybridShadow.peak = Math.max(hybridShadow.peak, livePts);
+            const p = candles[i - 1];
+            const prevBodyHigh = p ? Math.max(p.open, p.close) : 0;
+            const prevBodyLow = p ? Math.min(p.open, p.close) : 0;
+            const body = hybridBody(c);
+            const bullReverse = hybridShadow.dir === "PE" && livePts <= -50 && body >= 100 && c.close > prevBodyHigh && c.close > c.open;
+            const bearReverse = hybridShadow.dir === "CE" && livePts <= -50 && body >= 100 && c.close < prevBodyLow && c.close < c.open;
+            if (eodCandle) {
+                hybridShadow.t1Pts += await hybridCloseTrade(c, c.close, "exit_eod");
+                hybridShadow.phase = "DONE";
+                clog.status = "exit_eod";
+                clog.note = `EOD T1 exit ${c.close.toFixed(1)}`;
+            }
+            else if (num >= 8 && hybridShadow.peak < 50) {
+                hybridShadow.t1Pts += await hybridCloseTrade(c, c.close, "no_follow_c8_peak_lt_50");
+                hybridShadow.phase = "DONE";
+                clog.status = "no_follow_exit";
+                clog.note = `C8 no-follow exit; peak ${hybridShadow.peak.toFixed(1)}`;
+            }
+            else if (bullReverse || bearReverse) {
+                const oldDir = hybridShadow.dir;
+                const oldPts = await hybridCloseTrade(c, c.close, "reverse_body_break");
+                hybridShadow.t1Pts += oldPts;
+                const revDir = oldDir === "CE" ? "PE" : "CE";
+                await hybridEnter(revDir, c.close, revDir === "CE" ? c.low : c.high, c, "IN_RE", "opposite_body_reverse", num);
+                clog.status = "reverse";
+                clog.dir = revDir;
+                clog.sl = hybridShadow.sl;
+                clog.note = `T1 ${oldDir} ${oldPts.toFixed(1)} pts; reversed to ${revDir}`;
+            }
+            else {
+                clog.status = "hold_t1";
+                clog.dir = hybridShadow.dir;
+                clog.sl = hybridShadow.sl;
+                clog.pts = parseFloat(livePts.toFixed(1));
+                clog.note = `T1 hold; peak ${hybridShadow.peak.toFixed(1)}`;
+            }
+        }
+        else if (hybridShadow.phase === "IN_RE" && hybridShadow.dir) {
+            hybridShadow.peak = Math.max(hybridShadow.peak, livePts);
+            const slHit = hybridShadow.dir === "CE" ? c.close <= hybridShadow.sl : c.close >= hybridShadow.sl;
+            if (slHit || eodCandle) {
+                const reason = eodCandle ? "exit_eod" : "exit_sl_close";
+                hybridShadow.rePts += await hybridCloseTrade(c, c.close, reason);
+                hybridShadow.phase = "DONE";
+                clog.status = reason;
+                clog.note = `${reason} at ${c.close.toFixed(1)}`;
+            }
+            else {
+                clog.status = "hold_re";
+                clog.dir = hybridShadow.dir;
+                clog.sl = hybridShadow.sl;
+                clog.pts = parseFloat(livePts.toFixed(1));
+                clog.note = `reverse hold; peak ${hybridShadow.peak.toFixed(1)}`;
+            }
+        }
+        else {
+            clog.status = "done";
+            clog.note = "strategy done for day";
+        }
+        upsertHybridCandleLog(clog);
+    }
+}
+function getHybridBlockReasonForHeartbeat() {
+    if (latestHybridBlockReason !== "No block")
+        return latestHybridBlockReason;
+    const reasonRow = [...(hybridShadow.candleLog || [])].reverse().find(c => c && (c.status === "no_trade" || c.status === "missed_c2" || c.status === "blocked") && c.note && c.note !== "strategy done for day");
+    return reasonRow ? reasonRow.note : latestHybridBlockReason;
+}
+function hybridShadowHeartbeatFields() {
+    const liveIdx = lastKnownPrice || null;
+    const unrealPts = hybridShadow.dir && hybridShadow.entry && liveIdx
+        ? (hybridShadow.dir === "CE" ? liveIdx - hybridShadow.entry : hybridShadow.entry - liveIdx)
+        : 0;
+    return {
+        hybridShadowStrategy: "HYBRID_BODY_INDEX_SHADOW",
+        hybridBlockReason: getHybridBlockReasonForHeartbeat(),
+        hybridShadowPnL: Math.round(hybridShadow.dayRs + (unrealPts * Number(config_1.config.quantity || 30))),
+        hybridShadowClosedPnL: hybridShadow.dayRs,
+        hybridShadowPts: parseFloat((hybridShadow.dayPts + unrealPts).toFixed(1)),
+        hybridShadowTrades: hybridShadow.trades,
+        hybridShadowWins: hybridShadow.wins,
+        hybridShadowLosses: hybridShadow.losses,
+        hybridShadowInTrade: !!hybridShadow.dir,
+        hybridShadowPhase: hybridShadow.phase,
+        hybridShadowDir: hybridShadow.dir,
+        hybridShadowEntry: hybridShadow.entry || null,
+        hybridShadowSL: hybridShadow.sl || null,
+        hybridShadowLive: liveIdx,
+        hybridShadowPeak: parseFloat((hybridShadow.peak || 0).toFixed(1)),
+        hybridShadowOptPnL: hybridShadow.optDayRs,
+        hybridShadowOptPts: parseFloat((hybridShadow.optDayPts || 0).toFixed(1)),
+        hybridShadowOptionSymbol: hybridShadow.optSym || null,
+        hybridShadowOptionEntry: hybridShadow.optEntryPrem || null,
+        hybridShadowOptionLive: hybridShadow.optLivePrem || null,
+        hybridShadowTradeLog: hybridShadow.log.slice(-20),
+        hybridShadowCandleLog: hybridShadow.candleLog,
     };
 }
 // ── BODY_HOLD Shadow runner ───────────────────────────────────────────────────
@@ -1969,28 +2904,26 @@ function tt1030HeartbeatFields() {
 // S1: same-color body breakout, SL = ±200 pts (index for FUT, premium for OPT), hold EOD
 // S2: same entry, SL = prev candle low (CE) or high (PE) on index, hold EOD
 // Re-entry: after SL hit, only same-direction breakout allowed until EOD
-async function runBodyHoldShadow(bc: { open: number; high: number; low: number; close: number }, isEOD: boolean) {
-    const qty = (config_1.config.quantity as number) || 30;
-    const S1_IDX_SL = 200;   // index pts SL for S1 futures
-    const S1_PREM_SL = 200;  // premium pts SL for S1 options
-
-    const logBHTrade = (name: string, state: BHState, exitIdx: number, exitPrem: number, reason: string) => {
+async function runBodyHoldShadow(bc, isEOD) {
+    const qty = config_1.config.quantity || 30;
+    const S1_IDX_SL = 200; // index pts SL for S1 futures
+    const S1_PREM_SL = 200; // premium pts SL for S1 options
+    const logBHTrade = (name, state, exitIdx, exitPrem, reason) => {
         const futPts = state.dir === 'CE' ? exitIdx - state.entryIdx : state.entryIdx - exitIdx;
         const optPts = (state.entryPrem > 0 && exitPrem > 0)
             ? (state.dir === 'CE' ? exitPrem - state.entryPrem : state.entryPrem - exitPrem)
             : 0;
         if (state.entryIdx > 0)
-            (0, logger_1.logTrade)({ date: new Date().toISOString(), type: `${name}_FUT`, direction: state.dir!, symbol: 'BANKNIFTY_FUT_SHADOW',
+            (0, logger_1.logTrade)({ date: new Date().toISOString(), type: `${name}_FUT`, direction: state.dir, symbol: 'BANKNIFTY_FUT_SHADOW',
                 entryPrice: state.entryIdx, exitPrice: exitIdx, pnl: parseFloat(futPts.toFixed(1)), pnlRs: Math.round(futPts * qty),
                 reasonEntry: `${name.toLowerCase()}_entry`, reasonExit: reason, aiScore: 1, slippage: 0, duration: 0, qty });
         if (state.entryPrem > 0 && exitPrem > 0)
-            (0, logger_1.logTrade)({ date: new Date().toISOString(), type: `${name}_OPT`, direction: state.dir!, symbol: state.optSym,
+            (0, logger_1.logTrade)({ date: new Date().toISOString(), type: `${name}_OPT`, direction: state.dir, symbol: state.optSym,
                 entryPrice: state.entryPrem, exitPrice: exitPrem, premiumEntry: state.entryPrem, premiumExit: exitPrem,
                 pnl: parseFloat(optPts.toFixed(1)), pnlRs: Math.round(optPts * qty),
                 reasonEntry: `${name.toLowerCase()}_opt_entry`, reasonExit: reason, aiScore: 1, slippage: 0, duration: 0, qty });
         return { futPts, optPts };
     };
-
     // ── S1 exit check ─────────────────────────────────────────────────────────
     if (bhs1.inTrade && bhs1.dir) {
         const exitPrem = bhs1.optSym ? await (0, market_1.getOptionLTP)(bhs1.optSym).catch(() => 0) : 0;
@@ -1999,16 +2932,25 @@ async function runBodyHoldShadow(bc: { open: number; high: number; low: number; 
         if (idxSLHit || premSLHit || isEOD) {
             const reason = isEOD ? 'exit_eod' : 'exit_sl';
             const { futPts, optPts } = logBHTrade('BH_S1', bhs1, bc.close, exitPrem, reason);
-            bhs1.dayFutPts += futPts; bhs1.dayFutRs += Math.round(futPts * qty);
-            bhs1.dayOptPts += optPts; bhs1.dayOptRs += Math.round(optPts * qty);
-            if (futPts > 0) bhs1.winsFut++; else bhs1.lossFut++;
-            if (optPts > 0) bhs1.winsOpt++; else bhs1.lossOpt++;
-            if (!isEOD && futPts <= 0) bhs1.waitDir = bhs1.dir; // re-entry same dir only
+            bhs1.dayFutPts += futPts;
+            bhs1.dayFutRs += Math.round(futPts * qty);
+            bhs1.dayOptPts += optPts;
+            bhs1.dayOptRs += Math.round(optPts * qty);
+            if (futPts > 0)
+                bhs1.winsFut++;
+            else
+                bhs1.lossFut++;
+            if (optPts > 0)
+                bhs1.winsOpt++;
+            else
+                bhs1.lossOpt++;
+            if (!isEOD && futPts <= 0)
+                bhs1.waitDir = bhs1.dir; // re-entry same dir only
             log('BH_S1_EXIT', { reason, futPts: futPts.toFixed(1), optPts: optPts.toFixed(1), dayFutPts: bhs1.dayFutPts.toFixed(1), dayFutRs: bhs1.dayFutRs });
-            bhs1.inTrade = false; bhs1.dir = null;
+            bhs1.inTrade = false;
+            bhs1.dir = null;
         }
     }
-
     // ── S2 exit check ─────────────────────────────────────────────────────────
     if (bhs2.inTrade && bhs2.dir) {
         const exitPrem = bhs2.optSym ? await (0, market_1.getOptionLTP)(bhs2.optSym).catch(() => 0) : 0;
@@ -2016,38 +2958,52 @@ async function runBodyHoldShadow(bc: { open: number; high: number; low: number; 
         if (slHit || isEOD) {
             const reason = isEOD ? 'exit_eod' : 'exit_sl';
             const { futPts, optPts } = logBHTrade('BH_S2', bhs2, bc.close, exitPrem, reason);
-            bhs2.dayFutPts += futPts; bhs2.dayFutRs += Math.round(futPts * qty);
-            bhs2.dayOptPts += optPts; bhs2.dayOptRs += Math.round(optPts * qty);
-            if (futPts > 0) bhs2.winsFut++; else bhs2.lossFut++;
-            if (optPts > 0) bhs2.winsOpt++; else bhs2.lossOpt++;
-            if (!isEOD && futPts <= 0) bhs2.waitDir = bhs2.dir;
+            bhs2.dayFutPts += futPts;
+            bhs2.dayFutRs += Math.round(futPts * qty);
+            bhs2.dayOptPts += optPts;
+            bhs2.dayOptRs += Math.round(optPts * qty);
+            if (futPts > 0)
+                bhs2.winsFut++;
+            else
+                bhs2.lossFut++;
+            if (optPts > 0)
+                bhs2.winsOpt++;
+            else
+                bhs2.lossOpt++;
+            if (!isEOD && futPts <= 0)
+                bhs2.waitDir = bhs2.dir;
             log('BH_S2_EXIT', { reason, futPts: futPts.toFixed(1), optPts: optPts.toFixed(1), dayFutPts: bhs2.dayFutPts.toFixed(1), dayFutRs: bhs2.dayFutRs });
-            bhs2.inTrade = false; bhs2.dir = null;
+            bhs2.inTrade = false;
+            bhs2.dir = null;
         }
     }
-
-    if (isEOD) { bhPrevCandle = bc; return; }
-
+    if (isEOD) {
+        bhPrevCandle = bc;
+        return;
+    }
     // ── Entry signal: same-color body breakout from candle 2 onward ──────────
     bhCandleNum++;
     if (bhCandleNum >= 2 && bhPrevCandle) {
         const p = bhPrevCandle;
         const prevGreen = p.close > p.open, prevRed = p.close < p.open;
-        const curGreen  = bc.close > bc.open, curRed  = bc.close < bc.open;
+        const curGreen = bc.close > bc.open, curRed = bc.close < bc.open;
         const prevBodyH = Math.max(p.open, p.close);
         const prevBodyL = Math.min(p.open, p.close);
-
-        let bhSig: 'CE'|'PE'|null = null;
-        if (curGreen && prevGreen && bc.close > prevBodyH) bhSig = 'CE';
-        else if (curRed && prevRed && bc.close < prevBodyL)  bhSig = 'PE';
-
+        let bhSig = null;
+        if (curGreen && prevGreen && bc.close > prevBodyH)
+            bhSig = 'CE';
+        else if (curRed && prevRed && bc.close < prevBodyL)
+            bhSig = 'PE';
         if (bhSig) {
             // S1 entry
             if (!bhs1.inTrade && (bhs1.waitDir === null || bhs1.waitDir === bhSig)) {
                 const optSym = await getDrishtiATMOptionSymbol(bhSig, bc.close).catch(() => '');
                 const optPrem = optSym ? await (0, market_1.getOptionLTP)(optSym).catch(() => 0) : 0;
-                bhs1.inTrade = true; bhs1.dir = bhSig; bhs1.entryIdx = bc.close;
-                bhs1.entryPrem = optPrem; bhs1.optSym = optSym;
+                bhs1.inTrade = true;
+                bhs1.dir = bhSig;
+                bhs1.entryIdx = bc.close;
+                bhs1.entryPrem = optPrem;
+                bhs1.optSym = optSym;
                 bhs1.sl = bhSig === 'CE' ? bc.close - S1_IDX_SL : bc.close + S1_IDX_SL;
                 bhs1.slPrem = optPrem > 0 ? optPrem - S1_PREM_SL : 0;
                 bhs1.waitDir = null;
@@ -2057,8 +3013,11 @@ async function runBodyHoldShadow(bc: { open: number; high: number; low: number; 
             if (!bhs2.inTrade && (bhs2.waitDir === null || bhs2.waitDir === bhSig)) {
                 const optSym = await getDrishtiATMOptionSymbol(bhSig, bc.close).catch(() => '');
                 const optPrem = optSym ? await (0, market_1.getOptionLTP)(optSym).catch(() => 0) : 0;
-                bhs2.inTrade = true; bhs2.dir = bhSig; bhs2.entryIdx = bc.close;
-                bhs2.entryPrem = optPrem; bhs2.optSym = optSym;
+                bhs2.inTrade = true;
+                bhs2.dir = bhSig;
+                bhs2.entryIdx = bc.close;
+                bhs2.entryPrem = optPrem;
+                bhs2.optSym = optSym;
                 bhs2.sl = bhSig === 'CE' ? p.low : p.high; // prev candle low/high
                 bhs2.slPrem = 0;
                 bhs2.waitDir = null;
@@ -2111,9 +3070,20 @@ async function runDrishtiBot() {
         optDir = null;
         optSymbol = "";
         optEntryPrem = 0;
-        bhs1 = BH_EMPTY(); bhs2 = BH_EMPTY(); bhPrevCandle = null; bhCandleNum = 0;
+        bhs1 = BH_EMPTY();
+        bhs2 = BH_EMPTY();
+        bhPrevCandle = null;
+        bhCandleNum = 0;
+        const savedTT1030CandleLog = loadTT1030CandleLog(tt1030ISTParts().ymd);
         tt1030 = TT1030_EMPTY();
+        hybridShadow = HYBRID_EMPTY();
+        hybridShadow.day = tt1030ISTParts().ymd;
         tt1030.day = tt1030ISTParts().ymd;
+        tt1030.candleLog = savedTT1030CandleLog;
+        if (!savedTT1030CandleLog.length)
+            persistTT1030CandleLog();
+        persistHybridCandleLog();
+        setDrishtiBlockReason("No block");
         log("STATE_RESET", { strategy: "DRISHTI_V1" });
         // Load previous day candles (non-blocking)
         (0, market_1.getPrevDayCandles)().then(candles => {
@@ -2175,10 +3145,17 @@ async function runDrishtiBot() {
         }
         return;
     }
-    if (stopForDay && !activeTrade)
+    const shadowIsEOD = h > 15 || (h === 15 && m >= 30);
+    runTenThirtyTradeOps(shadowIsEOD).catch(e => log('TT1030_RUN_ERR', { error: String(e) }));
+    runHybridBodyShadow(shadowIsEOD).catch(e => log('HYBRID_SHADOW_ERR', { error: String(e) }));
+    if (stopForDay && !activeTrade) {
+        setDrishtiBlockReason("DONE_FOR_DAY");
         return;
-    if (tradeCount >= 8 && !activeTrade)
-        return; // max 8 trades — but still trail/exit if in trade
+    }
+    if (tradeCount >= DRISHTI_MAX_TRADES_PER_DAY && !activeTrade) {
+        setDrishtiBlockReason(`DRISHTI_TRADE_CAP (reached ${tradeCount}/${DRISHTI_MAX_TRADES_PER_DAY})`);
+        return;
+    } // max 8 trades — but still trail/exit if in trade
     // ── Detect new 15-min candle ─────────────────────────────────────────
     const candle = await (0, market_1.getPreviousCandle)();
     if (!candle || !candle.open || !candle.close) {
@@ -2198,7 +3175,9 @@ async function runDrishtiBot() {
     // New candle closed — push to today stack
     const bc = { open: candle.open, high: candle.high, low: candle.low, close: candle.close };
     drishtiTodayCandles.push(bc);
-    runTenThirtyShadow(h > 15 || (h === 15 && m >= 30)).catch(e => log('TT1030_SHADOW_ERR', { error: String(e) }));
+    upsertDrishtiCandleLog(drishtiTodayCandles.length - 1, candle);
+    runTenThirtyTradeOps(h > 15 || (h === 15 && m >= 30)).catch(e => log('TT1030_RUN_ERR', { error: String(e) }));
+    runHybridBodyShadow(h > 15 || (h === 15 && m >= 30)).catch(e => log('HYBRID_SHADOW_ERR', { error: String(e) }));
     // Run BODY_HOLD shadow strategies on every candle (fire-and-forget)
     runBodyHoldShadow(bc, h > 15 || (h === 15 && m >= 30)).catch(e => log('BH_SHADOW_ERR', { error: String(e) }));
     // EOD at 3:30 PM close (3:15-3:30 candle) — matches backtest last candle exactly
@@ -2246,6 +3225,7 @@ async function runDrishtiBot() {
             dailyPnL += realPts;
             if (realPts > 0) {
                 consecutiveLosses = 0;
+                drishtiConsecutiveLossStopLogged = false;
                 drishtiWins++;
             }
             else {
@@ -2255,7 +3235,7 @@ async function runDrishtiBot() {
             appendRealPremiumAudit({ event: "futures_exit", reason: trail.action.toLowerCase(), symbol: capturedSymbol, direction: capturedDir, entry: _futEntryPrice, exit: _futExitPrice, rawExit: _futExitRaw, fairExit: _futExitFair, exitSource: _futExitSource, indexPts: pts, realRs: _tradeRealRs });
             log("FUTURES_PNL", { entryFut: _futEntryPrice.toFixed(0), exitFut: _futExitPrice.toFixed(0), exitActual: _futExitRaw.toFixed(0), exitSource: _futExitSource, indexPts: pts.toFixed(1), realRs: _tradeRealRs, tolerancePts: REAL_EXIT_TOLERANCE_PTS });
             // ── Close shadow options trade ────────────────────────────────────────
-            if (optInTrade && optSymbol && optEntryPrem > 0) {
+            if (DRISHTI_TRACK_OPTIONS_PREMIUM && optInTrade && optSymbol && optEntryPrem > 0) {
                 try {
                     const optRawLTP = await (0, market_1.getOptionLTP)(optSymbol).catch(() => 0);
                     if (optRawLTP > 0) {
@@ -2312,6 +3292,7 @@ async function runDrishtiBot() {
                 optDir = null;
                 optSymbol = "";
                 optEntryPrem = 0;
+                optEntryTime = 0;
             }
             if (realLossLimitHit()) {
                 await stopForRealLoss("closed_trade_real_loss");
@@ -2357,19 +3338,37 @@ async function runDrishtiBot() {
         }
         return; // always return after trail check (don't look for new entries in same tick)
     }
-    if (isEOD)
+    if (isEOD) {
+        setDrishtiBlockReason("DRISHTI_EOD");
         return; // no new entries after EOD
-    if (tradeCount >= 8)
+    }
+    if (tradeCount >= DRISHTI_MAX_TRADES_PER_DAY) {
+        setDrishtiBlockReason(`DRISHTI_TRADE_CAP (reached ${tradeCount}/${DRISHTI_MAX_TRADES_PER_DAY})`);
         return;
+    }
+    if (consecutiveLosses >= DRISHTI_MAX_CONSECUTIVE_LOSSES) {
+        if (!drishtiConsecutiveLossStopLogged) {
+            setDrishtiBlockReason(`DRISHTI_CONSEC_LOSS_STOP (${consecutiveLosses}/${DRISHTI_MAX_CONSECUTIVE_LOSSES})`);
+            drishtiConsecutiveLossStopLogged = true;
+            log("DRISHTI_CONSEC_LOSS_STOP", { consecutiveLosses, limit: DRISHTI_MAX_CONSECUTIVE_LOSSES, tradeCount, dailyRealRs, dailyPnL: dailyPnL.toFixed(1) });
+            await sendTelegram(`🛑 *DRISHTI paused for today*\nReason: ${consecutiveLosses} consecutive losses\nTrades: ${tradeCount}/${DRISHTI_MAX_TRADES_PER_DAY}\nFutures P&L: ₹${Math.round(dailyRealRs).toLocaleString("en-IN")}`).catch(() => { });
+            saveTradeState();
+        }
+        return;
+    }
     if (realEntryBlocked()) {
         if (!stopForDay) {
+            setDrishtiBlockReason("DRISHTI_REAL_ENTRY_BLOCK");
             await stopForRealLoss(`entry_block_real_loss_${REAL_ENTRY_BLOCK_RS}rs`);
+        }
+        else {
+            setDrishtiBlockReason("DRISHTI_REAL_ENTRY_BLOCK");
         }
         return;
     }
     // ── Find entry signal ─────────────────────────────────────────────────
     let entrySig = null;
-    const maxDrishtiReEntries = Math.max(0, MAX_TRADES - 1);
+    const maxDrishtiReEntries = DRISHTI_MAX_REENTRIES;
     if (DrishtiState.firstDone && DrishtiState.reCount < maxDrishtiReEntries && DrishtiState.lastExitIdx >= 0 && DrishtiState.lastExitDir) {
         // Re-entry: look for strong candle after last exit — always allow reverse (REV_UNLOCK=0)
         // NOTE: prevDayCandles NOT required for re-entry (findDrishtiReEntry uses only today candles)
@@ -2387,6 +3386,7 @@ async function runDrishtiBot() {
     else if (!DrishtiState.firstDone) {
         // First entry: needs prevDayCandles for PDH/PDL context — guard here, not before re-entry block
         if (!drishtiPrevDayCandles || drishtiPrevDayCandles.length === 0) {
+            setDrishtiBlockReason(`DRISHTI_NO_PREV_DAY (candles: ${drishtiTodayCandles.length})`);
             log("DRISHTI_NO_PREV_DAY", { candles: drishtiTodayCandles.length });
             return;
         }
@@ -2395,6 +3395,9 @@ async function runDrishtiBot() {
         const _pdrL = Math.min(...drishtiPrevDayCandles.map((c) => c.low));
         if (_pdrH - _pdrL >= 150) {
             entrySig = (0, drishti_strategy_1.findDrishtiEntry)(drishtiTodayCandles, drishtiPrevDayCandles);
+        }
+        else {
+            setDrishtiBlockReason(`DRISHTI_CANDLE (prev-day range ${Math.round(_pdrH - _pdrL)} < 150)`);
         }
     }
     // ── Log candle evaluation ─────────────────────────────────────────────
@@ -2460,22 +3463,19 @@ async function runDrishtiBot() {
         }
         return 'No signal — prev day levels not loaded yet';
     })();
-    DrishtiCandleLog.push({
-        idx: drishtiTodayCandles.length - 1,
-        time: _drishtiTime,
-        close: bc.close,
-        bodyPct: _drishtiBodyPct,
+    upsertDrishtiCandleLog(drishtiTodayCandles.length - 1, { ...bc, date: candle.date }, {
         signal: entrySig ? entrySig.side : null,
         reason: entrySig ? entrySig.reason : _drishtiNoSigReason,
         // offline omitted (undefined) = bot was live for this candle
     });
-    // Persist log to disk so restarts don't lose live evaluations
-    try {
-        fs_1.default.writeFileSync('candle-log.json', JSON.stringify({ date: _drishtiIst.toISOString().slice(0, 10), log: DrishtiCandleLog }));
-    }
-    catch (_e) { }
     if (!entrySig) {
+        setDrishtiBlockReason(`DRISHTI_NO_SIGNAL: ${_drishtiNoSigReason}`);
         log("DRISHTI_CANDLE", { idx: drishtiTodayCandles.length - 1, close: bc.close, no_signal: true });
+        return;
+    }
+    if (isCandleSignalStale(candle)) {
+        setDrishtiBlockReason("DRISHTI_STALE_SIGNAL_SKIP");
+        log("DRISHTI_STALE_SIGNAL_SKIP", { side: entrySig.side, reason: entrySig.reason, candleClose: bc.close, candleDate: candle.date ?? null });
         return;
     }
     const signalDetectedAt = Date.now();
@@ -2496,6 +3496,7 @@ async function runDrishtiBot() {
         log("DRISHTI_SYMBOL_READY", { symbol: sym, symbolLookupMs });
     }
     catch (e) {
+        setDrishtiBlockReason("DRISHTI_SYMBOL_FAIL");
         log("FUTURES_SYMBOL_FAIL", { error: String(e) });
         return;
     }
@@ -2549,6 +3550,7 @@ async function runDrishtiBot() {
         tradeInProgress = false;
         log("DRISHTI_ENTRY_TIMING", { idx: signalCandleIdx, side: entrySig.side, reason: entrySig.reason, symbol: sym, signalToOrderStartMs: orderStartAt - signalDetectedAt, symbolLookupMs, futuresLtpMs, orderPlacementMs, totalSignalToOrderDoneMs: Date.now() - signalDetectedAt });
         if (!order || order.status !== "COMPLETE" || order.filled_quantity <= 0) {
+            setDrishtiBlockReason("DRISHTI_ORDER_NOT_FILLED");
             stopDrishtiLTPMonitor(); // trade failed Γö stop LTP monitor
             log("ORDER_NOT_FILLED", { order });
             mainEntryDone = false;
@@ -2568,6 +3570,7 @@ async function runDrishtiBot() {
         log("ENTRY_PRICE_UPDATE", { indexCandle: bc.close.toFixed(1), futuresFill: actualFillPrice.toFixed(1), diff: (actualFillPrice - bc.close).toFixed(1), source: (order.average_price ? "order_average" : "fresh_futures_ltp") });
     }
     catch (e) {
+        setDrishtiBlockReason("ORDER_REJECTED");
         tradeInProgress = false;
         stopDrishtiLTPMonitor(); // trade rejected — stop LTP monitor
         log("ORDER_REJECTED", { error: e instanceof Error ? e.message : String(e) });
@@ -2587,21 +3590,25 @@ async function runDrishtiBot() {
     // ── Options shadow — MONITORING ONLY (disabled for live: 5yr backtest shows net LOSS)
     // Options P&L = -₹1.4L over 5yr due to delta=0.5 + theta + spread eroding small wins.
     // Keep tracking for comparison data but DO NOT execute trades.
-    try {
-        const optSym = await getDrishtiATMOptionSymbol(entrySig.side, actualFillPrice || freshPrice);
-        const optLTP = await (0, market_1.getOptionLTP)(optSym).catch(() => 0);
-        if (optLTP > 0) {
-            // Record for monitoring dashboard — not a real trade
-            optInTrade = true;
-            optDir = entrySig.side;
-            optSymbol = optSym;
-            optEntryPrem = optLTP;
-            optEntryTime = Date.now();
-            appendRealPremiumAudit({ event: "options_entry", symbol: optSym, direction: entrySig.side, premium: optLTP, indexEntry: bc.close, futuresEntry: actualFillPrice || freshPrice, note: "monitoring_only_not_live" });
-            log("OPT_MONITOR", { symbol: optSym, ltp: optLTP, dir: entrySig.side, indexEntry: bc.close.toFixed(0), futuresEntry: (actualFillPrice || freshPrice).toFixed(0), note: "monitoring_only_not_live" });
+    if (DRISHTI_TRACK_OPTIONS_PREMIUM) {
+        try {
+            const optSym = await getDrishtiATMOptionSymbol(entrySig.side, actualFillPrice || freshPrice);
+            const optLTP = await (0, market_1.getOptionLTP)(optSym).catch(() => 0);
+            if (optLTP > 0) {
+                // Record for monitoring dashboard — not a real trade
+                optInTrade = true;
+                optDir = entrySig.side;
+                optSymbol = optSym;
+                optEntryPrem = optLTP;
+                optEntryTime = Date.now();
+                appendRealPremiumAudit({ event: "options_entry", symbol: optSym, direction: entrySig.side, premium: optLTP, indexEntry: bc.close, futuresEntry: actualFillPrice || freshPrice, note: "monitoring_only_not_live" });
+                log("OPT_MONITOR", { symbol: optSym, ltp: optLTP, dir: entrySig.side, indexEntry: bc.close.toFixed(0), futuresEntry: (actualFillPrice || freshPrice).toFixed(0), note: "monitoring_only_not_live" });
+            }
+        }
+        catch (_e) {
+            /* options monitoring failure — ignore */
         }
     }
-    catch (_e) { /* options monitoring failure — ignore */ }
     tradeCount++;
     saveTradeState();
     const slLevel = entrySig.side === "CE" ? bc.close - 150 : bc.close + 150;
@@ -2626,6 +3633,18 @@ async function runDrishtiBot() {
 async function runBot() {
     if (!isMarketHours())
         return; // Weekend + off-hours guard
+    if (TRADEOPS_ONLY) {
+        const ist = new Date(new Date().toLocaleString("en-US", { timeZone: "Asia/Kolkata" }));
+        const h = ist.getHours();
+        const m = ist.getMinutes();
+        if (!(0, strategy_1.isWithinTime)(9, 15, 15, 30))
+            return;
+        const price = await (0, market_1.getCurrentPrice)().catch(() => 0);
+        if (price && price > 0)
+            lastKnownPrice = price;
+        await runTenThirtyTradeOps(h > 15 || (h === 15 && m >= 30));
+        return;
+    }
     // ── ITM_HOLD: completely separate strategy — route and return ──────────────
     if (ACTIVE_STRATEGY === "ITM_HOLD") {
         await runITMHoldBot();
@@ -2726,8 +3745,17 @@ async function runBot() {
         hybridState = (0, strategy_1.createHybridState)();
         hybridPrevCandle = null;
         hybridLastCandleKey = "";
+        const savedTT1030CandleLog = loadTT1030CandleLog(tt1030ISTParts().ymd);
         tt1030 = TT1030_EMPTY();
+        hybridShadow = HYBRID_EMPTY();
+        hybridShadow.day = tt1030ISTParts().ymd;
         tt1030.day = tt1030ISTParts().ymd;
+        tt1030.candleLog = savedTT1030CandleLog;
+        if (!savedTT1030CandleLog.length)
+            persistTT1030CandleLog();
+        persistHybridCandleLog();
+        setDrishtiBlockReason("No block");
+        setHybridBlockReason("No block");
         _dailyPnlLogSaved = false; // reset for the new day
         _tokenAutoRefreshing = false; // allow fresh auto-refresh next day if needed
         _candleHealthAlerted = false; // allow fresh candle health check next day
@@ -2863,20 +3891,20 @@ async function runBot() {
             // Inside bar (signal === null) → prevCandleForEntry unchanged (10:30 stays as reference)
         }
         // ── Heartbeat every cycle ─────────────────────────
-        const _inTrade = !!(mainEntryDone || earlyEntryDone);
+        const _inTrade = TRADEOPS_ONLY ? false : !!(mainEntryDone || earlyEntryDone);
         const livePnL = _inTrade && entryPrice > 0 && tradeDirection
             ? (tradeDirection === "CE" ? price - entryPrice : entryPrice - price)
             : dailyPnL;
         try {
             fs_1.default.writeFileSync("bot-heartbeat.json", JSON.stringify({
                 at: new Date().toISOString(),
-                status: _inTrade ? `IN TRADE · ${tradeDirection}` : "RUNNING · FLAT",
+                status: TRADEOPS_ONLY ? (tt1030.inTrade ? `TRADEOPS ${tt1030.dir}` : "TRADEOPS MONITORING") : (_inTrade ? `IN TRADE ${tradeDirection}` : "RUNNING FLAT"),
                 price,
                 dailyPnL: parseFloat(livePnL.toFixed(0)),
                 unrealisedPnL: _inTrade ? parseFloat(livePnL.toFixed(0)) : 0,
                 tradeCount, qty: config_1.config.quantity,
                 slPts: ACTIVE_STRATEGY === "DRISHTI_V1" ? 150 : (config_1.config.tradeManagement?.stopLossPoints ?? 100),
-                dailyCapPts: null, mode: config_1.config.mode,
+                dailyCapPts: null, strategy: TRADEOPS_ONLY ? "TEN_THIRTY_FUTURES" : ACTIVE_STRATEGY, mode: config_1.config.mode,
                 inTrade: _inTrade,
                 direction: tradeDirection ?? null,
                 entryPrice: entryPrice || null,
@@ -2886,6 +3914,7 @@ async function runBot() {
                 livePremium: _inTrade ? lastOptionLTP || null : null,
                 sl: _inTrade ? (tradeDirection === "CE" ? entryPrice - 100 : entryPrice + 100) : null,
                 ...tt1030HeartbeatFields(),
+                ...hybridShadowHeartbeatFields(),
             }));
         }
         catch (_) { }
@@ -3264,6 +4293,15 @@ async function runBot() {
 }
 // --- Pre-Start Config Screen ---
 function printConfigSummary(cfg) {
+    if (TRADEOPS_ONLY) {
+        console.log("===== TRADEOPS BOT CONFIG =====");
+        console.log(`Mode: ${cfg.mode}`);
+        console.log("Strategy: TEN_THIRTY_FUTURES only");
+        console.log("Scope: TradeOps 10:30 futures state only; DRISHTI restore/monitor disabled");
+        console.log(`Qty: ${cfg.quantity}`);
+        console.log("");
+        return;
+    }
     const stratName = ACTIVE_STRATEGY === "RC_CONFIRM"
         ? "RC Confirm (wait for reversal candle, max 2 trades)"
         : ACTIVE_STRATEGY === "ITM_HOLD"
@@ -3301,7 +4339,7 @@ function printConfigSummary(cfg) {
     }
     console.log(`SL: index-price based (RC strategy) | option-premium based (breakout)`);
     console.log(`Premium range: ${cfg.optionSelection.minPremium}–${cfg.optionSelection.maxPremium}`);
-    console.log(String.fromCharCode(68,97,105,108,121,32,108,111,115,115,32,99,97,112,58,32,68,73,83,65,66,76,69,68));
+    console.log(String.fromCharCode(68, 97, 105, 108, 121, 32, 108, 111, 115, 115, 32, 99, 97, 112, 58, 32, 68, 73, 83, 65, 66, 76, 69, 68));
     console.log("");
 }
 async function preStartPrompt() {
@@ -3331,7 +4369,22 @@ async function preStartPrompt() {
     console.log("[DEBUG] User confirmed start. Initializing bot...");
     try {
         // Restore any saved trade state from a previous run (same day only)
-        const restored = restoreTradeState();
+        let restored = false;
+        if (TRADEOPS_ONLY) {
+            const today = tt1030ISTParts().ymd;
+            restoreTT1030State(today, loadTT1030CandleLog(today));
+            activeTrade = false;
+            mainEntryDone = false;
+            earlyEntryDone = false;
+            tradeDirection = null;
+            tradeSymbol = "";
+            entryPrice = 0;
+            DrishtiState.inTrade = false;
+            log("TRADEOPS_ONLY_START", { message: "DRISHTI state ignored; 10:30 futures state restored from tt1030-state only" });
+        }
+        else {
+            restored = restoreTradeState();
+        }
         if (restored) {
             justRestored = true;
             if (activeTrade && tradeSymbol && entryPrice > 0)
@@ -3354,20 +4407,23 @@ async function preStartPrompt() {
             }
         }
         // Restore ITM_HOLD positions (multi-day, survive across restarts)
-        if (ACTIVE_STRATEGY === "ITM_HOLD") {
+        if (!TRADEOPS_ONLY && ACTIVE_STRATEGY === "ITM_HOLD") {
             restoreITMHoldState();
             if (itmHoldPositions.length) {
                 console.log(`\n⚠️  Recovered ${itmHoldPositions.length} ITM Hold position(s): ${itmHoldPositions.map(p => p.symbol).join(", ")}`);
             }
         }
         // On startup, sync broker state
-        await syncBotWithBroker();
+        if (!TRADEOPS_ONLY)
+            await syncBotWithBroker();
         // Every 5 minutes, sync broker state
-        brokerSyncInterval = setInterval(() => {
-            syncBotWithBroker().catch(e => log("BROKER_SYNC_INTERVAL_ERR", { error: e?.message ?? String(e) }));
-        }, 5 * 60 * 1000);
+        if (!TRADEOPS_ONLY) {
+            brokerSyncInterval = setInterval(() => {
+                syncBotWithBroker().catch(e => log("BROKER_SYNC_INTERVAL_ERR", { error: e?.message ?? String(e) }));
+            }, 5 * 60 * 1000);
+        }
         // Load prev day + today candles at startup for DRISHTI_V1 (handles mid-day restarts) (handles mid-day restarts)
-        if (ACTIVE_STRATEGY === "DRISHTI_V1") {
+        if (!TRADEOPS_ONLY && ACTIVE_STRATEGY === "DRISHTI_V1") {
             // Load both prev-day AND today candles together so prev candles are available when evaluating backfill signals
             Promise.all([(0, market_1.getPrevDayCandles)(), (0, market_1.getTodayCandles)()]).then(([prevCandles, candles]) => {
                 drishtiPrevDayCandles = prevCandles;
@@ -3527,13 +4583,13 @@ async function preStartPrompt() {
                 return;
             // Write heartbeat immediately so dashboards know the bot is alive even when flat/idle
             try {
-                const _inTrade = !!(mainEntryDone || earlyEntryDone);
+                const _inTrade = TRADEOPS_ONLY ? false : !!(mainEntryDone || earlyEntryDone);
                 const _unrealised = _inTrade && entryPrice > 0 && lastKnownPrice > 0
                     ? parseFloat((tradeDirection === "CE" ? lastKnownPrice - entryPrice : entryPrice - lastKnownPrice).toFixed(0))
                     : 0;
                 fs_1.default.writeFileSync("bot-heartbeat.json", JSON.stringify({
                     at: new Date().toISOString(),
-                    status: _inTrade ? `IN TRADE · ${tradeDirection}` : "RUNNING · FLAT",
+                    status: TRADEOPS_ONLY ? (tt1030.inTrade ? `TRADEOPS ${tt1030.dir}` : "TRADEOPS MONITORING") : (_inTrade ? `IN TRADE ${tradeDirection}` : "RUNNING FLAT"),
                     dailyPnL,
                     dailyRealRs,
                     optInTrade, optDir, optSymbol,
@@ -3545,7 +4601,7 @@ async function preStartPrompt() {
                     unrealisedPnL: _unrealised,
                     tradeCount, qty: config_1.config.quantity,
                     slPts: ACTIVE_STRATEGY === "DRISHTI_V1" ? 150 : (config_1.config.tradeManagement?.stopLossPoints ?? 100),
-                    dailyCapPts: null, strategy: ACTIVE_STRATEGY,
+                    dailyCapPts: null, strategy: TRADEOPS_ONLY ? "TEN_THIRTY_FUTURES" : ACTIVE_STRATEGY,
                     mode: config_1.config.mode,
                     inTrade: _inTrade,
                     direction: tradeDirection ?? null,
@@ -3557,11 +4613,12 @@ async function preStartPrompt() {
                     sl: _inTrade ? (ACTIVE_STRATEGY === "DRISHTI_V1"
                         ? (tradeDirection === "CE" ? entryPrice - 100 : entryPrice + 100)
                         : (tradeDirection === "CE" ? entryPrice - 100 : entryPrice + 100)) : null,
-                    drishtiPrevDayHigh: ACTIVE_STRATEGY === "DRISHTI_V1" && drishtiPrevDayCandles.length > 0 ? Math.max(...drishtiPrevDayCandles.map((c) => c.high)) : undefined,
-                    drishtiPrevDayLow: ACTIVE_STRATEGY === "DRISHTI_V1" && drishtiPrevDayCandles.length > 0 ? Math.min(...drishtiPrevDayCandles.map((c) => c.low)) : undefined,
-                    DrishtiCandles: ACTIVE_STRATEGY === "DRISHTI_V1" ? drishtiTodayCandles.length : undefined,
-                    DrishtiCandleLog: ACTIVE_STRATEGY === "DRISHTI_V1" ? DrishtiCandleLog : undefined,
+                    drishtiPrevDayHigh: !TRADEOPS_ONLY && ACTIVE_STRATEGY === "DRISHTI_V1" && drishtiPrevDayCandles.length > 0 ? Math.max(...drishtiPrevDayCandles.map((c) => c.high)) : undefined,
+                    drishtiPrevDayLow: !TRADEOPS_ONLY && ACTIVE_STRATEGY === "DRISHTI_V1" && drishtiPrevDayCandles.length > 0 ? Math.min(...drishtiPrevDayCandles.map((c) => c.low)) : undefined,
+                    DrishtiCandles: !TRADEOPS_ONLY && ACTIVE_STRATEGY === "DRISHTI_V1" ? drishtiTodayCandles.length : undefined,
+                    DrishtiCandleLog: !TRADEOPS_ONLY && ACTIVE_STRATEGY === "DRISHTI_V1" ? DrishtiCandleLog : undefined,
                     ...tt1030HeartbeatFields(),
+                    ...hybridShadowHeartbeatFields(),
                 }));
             }
             catch (_) { }
@@ -3596,18 +4653,18 @@ async function preStartPrompt() {
                 }
                 // Still write heartbeat so dashboards know the bot is alive
                 try {
-                    const _inTrade2 = !!(mainEntryDone || earlyEntryDone);
+                    const _inTrade2 = TRADEOPS_ONLY ? false : !!(mainEntryDone || earlyEntryDone);
                     const _unrealised2 = _inTrade2 && entryPrice > 0 && lastKnownPrice > 0
                         ? parseFloat((tradeDirection === "CE" ? lastKnownPrice - entryPrice : entryPrice - lastKnownPrice).toFixed(0))
                         : 0;
                     fs_1.default.writeFileSync("bot-heartbeat.json", JSON.stringify({
                         at: new Date().toISOString(),
-                        status: _inTrade2 ? `IN TRADE · ${tradeDirection}` : "RUNNING · FLAT",
+                        status: TRADEOPS_ONLY ? (tt1030.inTrade ? `TRADEOPS ${tt1030.dir}` : "TRADEOPS MONITORING") : (_inTrade2 ? `IN TRADE ${tradeDirection}` : "RUNNING FLAT"),
                         dailyPnL,
                         unrealisedPnL: _unrealised2,
                         tradeCount, qty: config_1.config.quantity,
                         slPts: ACTIVE_STRATEGY === "DRISHTI_V1" ? 150 : (config_1.config.tradeManagement?.stopLossPoints ?? 100),
-                        dailyCapPts: null, mode: config_1.config.mode,
+                        dailyCapPts: null, strategy: TRADEOPS_ONLY ? "TEN_THIRTY_FUTURES" : ACTIVE_STRATEGY, mode: config_1.config.mode,
                         inTrade: _inTrade2,
                         direction: tradeDirection ?? null,
                         entryPrice: entryPrice || null,
@@ -3617,6 +4674,7 @@ async function preStartPrompt() {
                         livePremium: _inTrade2 ? lastOptionLTP || null : null,
                         sl: _inTrade2 ? (tradeDirection === "CE" ? entryPrice - 100 : entryPrice + 100) : null,
                         ...tt1030HeartbeatFields(),
+                        ...hybridShadowHeartbeatFields(),
                     }));
                 }
                 catch (_) { }
@@ -3624,9 +4682,10 @@ async function preStartPrompt() {
                 .finally(() => { clearTimeout(timeout); runBotActive = false; });
         }, 15000);
         // Candle breakout monitor — runs every 15s, independent of trading logic
-        setInterval(() => { monitorCandleBreakouts().catch(() => { }); }, 15000);
+        if (!TRADEOPS_ONLY)
+            setInterval(() => { monitorCandleBreakouts().catch(() => { }); }, 15000);
         // Fire-and-forget startup Telegram — failure must not prevent trading
-        if (restored && activeTrade && tradeDirection && entryPrice > 0) {
+        if (!TRADEOPS_ONLY && restored && activeTrade && tradeDirection && entryPrice > 0) {
             // ── Restart with ACTIVE trade — show position details
             const slLevel = tradeDirection === "CE" ? entryPrice - 100 : entryPrice + 100;
             const entryIST = entryTime > 0
@@ -3644,7 +4703,7 @@ async function preStartPrompt() {
                 `⏰ ${new Date().toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata" })}\n` +
                 `🔑 [Refresh Token](https://139-59-18-52.nip.io/login)`).catch(e => console.error("[Telegram restart notify failed]", e?.message ?? e));
         }
-        else if (restored) {
+        else if (!TRADEOPS_ONLY && restored) {
             // ── Restart with no active trade — show flat state with day's P&L so far
             const waitReEntryInfo = hybridState.waitReEntry && hybridState.dir && hybridState.refHigh > 0
                 ? `\n⏳ Waiting RE-ENTRY · ${hybridState.dir} | Trigger: close ${hybridState.dir === "CE" ? ">" : "<"} ${hybridState.refHigh}`
@@ -3656,7 +4715,7 @@ async function preStartPrompt() {
                 `Mode: ${config_1.config.mode.toUpperCase()} | Qty: ${config_1.config.quantity}\n` +
                 `[Token Refresh](https://139-59-18-52.nip.io/login)`).catch(e => console.error("[Telegram restart notify failed]", e?.message ?? e));
         }
-        else {
+        else if (!TRADEOPS_ONLY) {
             // ── Fresh start — send full Bot Started message
             sendTelegram(`🟢 *BANKNIFTY Bot Started*\n` +
                 `━━━━━━━━━━━━━━━━━━━━━\n` +
@@ -3721,7 +4780,10 @@ process.on("unhandledRejection", async (reason) => {
 });
 // ─── Graceful shutdown helper ─────────────────────────
 async function gracefulShutdown(reason, isError = false) {
-    if (!isMarketHours()) { console.log(String.fromCharCode(83,72,85,84,68,79,87,78,95,78,79,95,84,71,95,65,70,84,69,82,95,72,79,85,82,83) + String.fromCharCode(58,32) + reason); return; }
+    if (!isMarketHours()) {
+        console.log(String.fromCharCode(83, 72, 85, 84, 68, 79, 87, 78, 95, 78, 79, 95, 84, 71, 95, 65, 70, 84, 69, 82, 95, 72, 79, 85, 82, 83) + String.fromCharCode(58, 32) + reason);
+        return;
+    }
     const pnlSign = dailyPnL >= 0 ? "+" : "";
     const emoji = isError ? "💥" : "🔴";
     try {
