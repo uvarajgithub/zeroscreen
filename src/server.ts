@@ -7095,7 +7095,11 @@ app.post("/api/tradeops/mode", requireAdmin, async (req: Request, res: Response)
     }) + "\n");
     let restarted = false;
     if (req.body?.restartBot === true) {
-      execSync("pm2 reload trading-bot", { cwd: TRADEOPS_BOT_DIR, stdio: "pipe" });
+      execSync("pm2 reload trading-bot --update-env", {
+        cwd: TRADEOPS_BOT_DIR,
+        stdio: "pipe",
+        env: { ...process.env, TT1030_FUTURES_MODE: target },
+      });
       restarted = true;
     }
     res.json({
