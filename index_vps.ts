@@ -1849,7 +1849,16 @@ async function tt1030AssertLiveMargin(symbol, transaction, qty) {
     try {
         const brokerMargins = await kite.getMargins("equity");
         const equity = brokerMargins?.equity || brokerMargins;
-        available = Number(equity?.available?.cash ?? equity?.available?.live_balance ?? equity?.available?.opening_balance ?? 0);
+        const a = equity?.available || {};
+        const candidates = [
+            a.live_balance,
+            a.cash,
+            a.opening_balance,
+            a.adhoc_margin,
+            a.collateral,
+            equity?.net,
+        ].map(Number).filter((v) => Number.isFinite(v));
+        available = candidates.find((v) => v > 0) ?? candidates[0] ?? 0;
     }
     catch (e) {
         const msg = e instanceof Error ? e.message : String(e);
