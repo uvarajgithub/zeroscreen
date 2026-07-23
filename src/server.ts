@@ -82,15 +82,15 @@ const STRATEGIES: Strategy[] = [
     desc: "High insider ownership — skin in the game",
     params: { minPromoter: "65", minRoce: "15", sortBy: "promoter" } },
   { id: "smallcap",   icon: "??", label: "Small Cap Gems",
-    desc: "High-quality small caps under ?5,000 Cr",
+    desc: "High-quality small caps under ₹5,000 Cr",
     params: { maxPrice: "300", minRoce: "20", allProfit: "1", sortBy: "roce" } },
 
   // -- Trading-style presets -------------------------------------------------
   { id: "penny",      icon: "??", label: "Penny Stocks",
-    desc: "Low-price stocks under ?50 with decent volume — high risk, high reward",
+    desc: "Low-price stocks under ₹50 with decent volume — high risk, high reward",
     params: { maxPrice: "50", minVolume: "100000", sortBy: "volume" } },
   { id: "highvalue",  icon: "???", label: "High Value Blue Chips",
-    desc: "Premium-priced quality stocks above ?500 with strong fundamentals",
+    desc: "Premium-priced quality stocks above ₹500 with strong fundamentals",
     params: { minPrice: "500", minRoce: "15", allProfit: "1", sortBy: "price" } },
   { id: "longterm",   icon: "??", label: "Long Term Compounders",
     desc: "Consistent profits, low debt, high ROCE — hold for 3-5 years",
@@ -325,7 +325,7 @@ async function sendSmsOtp(mobile: string, otp: string): Promise<boolean> {
 // -- Razorpay ------------------------------------------------------------------
 const RAZORPAY_KEY_ID     = process.env.RAZORPAY_KEY_ID     || "";
 const RAZORPAY_KEY_SECRET = process.env.RAZORPAY_KEY_SECRET || "";
-const PREMIUM_PRICE_PAISE = 49900; // ?499
+const PREMIUM_PRICE_PAISE = 49900; // ₹499
 
 // -- Template helper ------------------------------------------------------------
 function fmt(n: number | null | undefined, decimals = 2): string {
@@ -723,7 +723,7 @@ app.get("/signup", featureGate("registration_open", "New Registrations"), (req: 
         <div style="background:linear-gradient(135deg,rgba(16,185,129,0.15),rgba(16,185,129,0.05));border:1px solid rgba(16,185,129,0.35);border-radius:14px;padding:14px 16px;margin-bottom:20px">
           <div style="font-size:12px;font-weight:800;color:#34d399;letter-spacing:0.4px;text-transform:uppercase;margin-bottom:6px">?? New to Trading?</div>
           <div style="font-size:14px;font-weight:700;color:#f1f5f9;margin-bottom:6px">Afraid of losing real money?<br>Let's learn together — zero risk.</div>
-          <div style="font-size:12px;color:rgba(255,255,255,0.6);line-height:1.6">Start with ?1,00,000 virtual money. Practice on real NSE stocks, discover your strategy, and get confident before you ever risk a single rupee.</div>
+          <div style="font-size:12px;color:rgba(255,255,255,0.6);line-height:1.6">Start with ₹1,00,000 virtual money. Practice on real NSE stocks, discover your strategy, and get confident before you ever risk a single rupee.</div>
           <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px">
             <span style="background:rgba(16,185,129,0.2);color:#34d399;font-size:11px;font-weight:700;padding:4px 10px;border-radius:99px;border:1px solid rgba(16,185,129,0.3)">? No real money needed</span>
             <span style="background:rgba(16,185,129,0.2);color:#34d399;font-size:11px;font-weight:700;padding:4px 10px;border-radius:99px;border:1px solid rgba(16,185,129,0.3)">?? Real market prices</span>
@@ -737,10 +737,10 @@ app.get("/signup", featureGate("registration_open", "New Registrations"), (req: 
             <span class="sfc-badge hot">?? HOT</span>
             <div class="sfc-icon">??</div>
             <div class="sfc-title">My Paper Trade</div>
-            <div class="sfc-desc">?1,00,000 virtual portfolio. Trade any NSE stock in real market hours.</div>
+            <div class="sfc-desc">₹1,00,000 virtual portfolio. Trade any NSE stock in real market hours.</div>
             <div class="sfc-pnl-preview">
               <div>
-                <div class="sfc-pnl-num green">+?4,320</div>
+                <div class="sfc-pnl-num green">+₹4,320</div>
                 <div class="sfc-pnl-label">Your P&amp;L today</div>
               </div>
               <div class="sfc-mini-bars" style="margin-left:auto">
@@ -839,7 +839,7 @@ app.get("/signup", featureGate("registration_open", "New Registrations"), (req: 
         </form>
         <div style="margin-top:18px;padding:14px 16px;background:linear-gradient(135deg,rgba(16,185,129,0.08),rgba(59,130,246,0.08));border:1px solid rgba(16,185,129,0.2);border-radius:10px;font-size:0.8rem;color:var(--text-muted);line-height:1.6">
           ? <strong style="color:var(--text)">What you unlock instantly:</strong><br>
-          ?? ?1L personal paper trade portfolio &nbsp;·&nbsp; ? Unlimited watchlists<br>
+          ?? ₹1L personal paper trade portfolio &nbsp;·&nbsp; ? Unlimited watchlists<br>
           ?? Email alerts on your custom filters &nbsp;·&nbsp; ?? Full bot analytics
         </div>
         <p class="auth-switch" style="margin-top:16px">Already have an account? <a href="/login">Sign in</a></p>
@@ -1094,7 +1094,7 @@ app.get("/login", (req: Request, res: Response) => {
           </a>
           <a href="/my-paper-trade" class="zl-card zl-card-trade">
             <div class="zl-card-icon">??</div>
-            <div><div class="zl-card-title">Paper Trading</div><div class="zl-card-desc">?1L virtual · any NSE stock</div><div class="zl-card-pill pill-hot">?? HOT</div></div>
+            <div><div class="zl-card-title">Paper Trading</div><div class="zl-card-desc">₹1L virtual · any NSE stock</div><div class="zl-card-pill pill-hot">?? HOT</div></div>
           </a>
           <a href="/" class="zl-card zl-card-screen">
             <div class="zl-card-icon">??</div>
@@ -1204,21 +1204,21 @@ app.get("/login", (req: Request, res: Response) => {
     rszF(); window.addEventListener('resize',rszF);
 
     var DATA = [
-      {t:'+?12,450',c:'#34d399'},{t:'BANKNIFTY ? 1.24%',c:'#60a5fa'},
-      {t:'BUY CE',c:'#34d399'},{t:'-?3,200',c:'#f87171'},
+      {t:'+₹12,450',c:'#34d399'},{t:'BANKNIFTY ? 1.24%',c:'#60a5fa'},
+      {t:'BUY CE',c:'#34d399'},{t:'-₹3,200',c:'#f87171'},
       {t:'Win Rate 68%',c:'#a78bfa'},{t:'RELIANCE ? 0.87%',c:'#34d399'},
       {t:'NIFTY ? 0.62%',c:'#60a5fa'},{t:'SELL PE',c:'#f87171'},
-      {t:'+?8,900',c:'#34d399'},{t:'TCS ? 0.31%',c:'#f87171'},
-      {t:'P&L +?42,100',c:'#34d399'},{t:'INFY ? 1.05%',c:'#34d399'},
-      {t:'-?1,800',c:'#f87171'},{t:'Signal: BUY',c:'#34d399'},
-      {t:'+?5,670',c:'#34d399'},{t:'52W HIGH ?',c:'#fbbf24'},
-      {t:'+?21,300',c:'#34d399'},{t:'WIPRO ? 2.18%',c:'#34d399'},
-      {t:'-?4,500',c:'#f87171'},{t:'BREAKOUT!',c:'#fbbf24'},
-      {t:'TATAMOTORS ? 3.21%',c:'#34d399'},{t:'Profit ?68,200',c:'#34d399'},
-      {t:'SBIN ? 0.45%',c:'#f87171'},{t:'+?9,850',c:'#34d399'},
+      {t:'+₹8,900',c:'#34d399'},{t:'TCS ? 0.31%',c:'#f87171'},
+      {t:'P&L +₹42,100',c:'#34d399'},{t:'INFY ? 1.05%',c:'#34d399'},
+      {t:'-₹1,800',c:'#f87171'},{t:'Signal: BUY',c:'#34d399'},
+      {t:'+₹5,670',c:'#34d399'},{t:'52W HIGH ?',c:'#fbbf24'},
+      {t:'+₹21,300',c:'#34d399'},{t:'WIPRO ? 2.18%',c:'#34d399'},
+      {t:'-₹4,500',c:'#f87171'},{t:'BREAKOUT!',c:'#fbbf24'},
+      {t:'TATAMOTORS ? 3.21%',c:'#34d399'},{t:'Profit ₹68,200',c:'#34d399'},
+      {t:'SBIN ? 0.45%',c:'#f87171'},{t:'+₹9,850',c:'#34d399'},
       {t:'RSI Breakout',c:'#a78bfa'},{t:'Paper WIN',c:'#34d399'},
-      {t:'-?2,100',c:'#f87171'},{t:'Momentum BUY',c:'#60a5fa'},
-      {t:'ITC +0.39%',c:'#34d399'},{t:'-?700',c:'#f87171'}
+      {t:'-₹2,100',c:'#f87171'},{t:'Momentum BUY',c:'#60a5fa'},
+      {t:'ITC +0.39%',c:'#34d399'},{t:'-₹700',c:'#f87171'}
     ];
 
     function mkF(i){
@@ -1996,23 +1996,23 @@ app.get("/", async (req: Request, res: Response) => {
               <div class="filter-range-row">
                 <select name="minPrice" title="Min Price">
                   <option value="">? Min</option>
-                  <option value="10"   ${q.minPrice==="10"   ?"selected":""}>= ?10</option>
-                  <option value="50"   ${q.minPrice==="50"   ?"selected":""}>= ?50</option>
-                  <option value="100"  ${q.minPrice==="100"  ?"selected":""}>= ?100</option>
-                  <option value="200"  ${q.minPrice==="200"  ?"selected":""}>= ?200</option>
-                  <option value="500"  ${q.minPrice==="500"  ?"selected":""}>= ?500</option>
-                  <option value="1000" ${q.minPrice==="1000" ?"selected":""}>= ?1,000</option>
-                  <option value="5000" ${q.minPrice==="5000" ?"selected":""}>= ?5,000</option>
+                  <option value="10"   ${q.minPrice==="10"   ?"selected":""}>= ₹10</option>
+                  <option value="50"   ${q.minPrice==="50"   ?"selected":""}>= ₹50</option>
+                  <option value="100"  ${q.minPrice==="100"  ?"selected":""}>= ₹100</option>
+                  <option value="200"  ${q.minPrice==="200"  ?"selected":""}>= ₹200</option>
+                  <option value="500"  ${q.minPrice==="500"  ?"selected":""}>= ₹500</option>
+                  <option value="1000" ${q.minPrice==="1000" ?"selected":""}>= ₹1,000</option>
+                  <option value="5000" ${q.minPrice==="5000" ?"selected":""}>= ₹5,000</option>
                 </select>
                 <select name="maxPrice" title="Max Price">
                   <option value="">? Max</option>
-                  <option value="50"    ${q.maxPrice==="50"    ?"selected":""}>= ?50</option>
-                  <option value="100"   ${q.maxPrice==="100"   ?"selected":""}>= ?100</option>
-                  <option value="200"   ${q.maxPrice==="200"   ?"selected":""}>= ?200</option>
-                  <option value="500"   ${q.maxPrice==="500"   ?"selected":""}>= ?500</option>
-                  <option value="1000"  ${q.maxPrice==="1000"  ?"selected":""}>= ?1,000</option>
-                  <option value="5000"  ${q.maxPrice==="5000"  ?"selected":""}>= ?5,000</option>
-                  <option value="10000" ${q.maxPrice==="10000" ?"selected":""}>= ?10,000</option>
+                  <option value="50"    ${q.maxPrice==="50"    ?"selected":""}>= ₹50</option>
+                  <option value="100"   ${q.maxPrice==="100"   ?"selected":""}>= ₹100</option>
+                  <option value="200"   ${q.maxPrice==="200"   ?"selected":""}>= ₹200</option>
+                  <option value="500"   ${q.maxPrice==="500"   ?"selected":""}>= ₹500</option>
+                  <option value="1000"  ${q.maxPrice==="1000"  ?"selected":""}>= ₹1,000</option>
+                  <option value="5000"  ${q.maxPrice==="5000"  ?"selected":""}>= ₹5,000</option>
+                  <option value="10000" ${q.maxPrice==="10000" ?"selected":""}>= ₹10,000</option>
                 </select>
               </div>
             </div>
@@ -2034,10 +2034,10 @@ app.get("/", async (req: Request, res: Response) => {
               <label>Cap Size</label>
               <select id="capSizeSelect" onchange="applyCapSize(this.value)">
                 <option value="">All Cap Sizes</option>
-                <option value="large" ${q.minMc==="20000" && !q.maxMc          ?"selected":""}>?? Large Cap (= ?20k Cr)</option>
-                <option value="mid"   ${q.minMc==="5000"  && q.maxMc==="20000" ?"selected":""}>?? Mid Cap (?5k–20k Cr)</option>
-                <option value="small" ${!q.minMc           && q.maxMc==="5000"  ?"selected":""}>?? Small Cap (= ?5k Cr)</option>
-                <option value="micro" ${!q.minMc           && q.maxMc==="1000"  ?"selected":""}>?? Micro Cap (= ?1k Cr)</option>
+                <option value="large" ${q.minMc==="20000" && !q.maxMc          ?"selected":""}>?? Large Cap (= ₹20k Cr)</option>
+                <option value="mid"   ${q.minMc==="5000"  && q.maxMc==="20000" ?"selected":""}>?? Mid Cap (₹5k–20k Cr)</option>
+                <option value="small" ${!q.minMc           && q.maxMc==="5000"  ?"selected":""}>?? Small Cap (= ₹5k Cr)</option>
+                <option value="micro" ${!q.minMc           && q.maxMc==="1000"  ?"selected":""}>?? Micro Cap (= ₹1k Cr)</option>
               </select>
               <input type="hidden" id="minMcInput" name="minMc" value="${q.minMc || ""}">
               <input type="hidden" id="maxMcInput" name="maxMc" value="${q.maxMc || ""}">
@@ -4809,7 +4809,7 @@ app.get("/strategy-builder", featureGate("feature_strategy_builder", "Strategy B
         <span class="sb-example">Top gainers today above 2%</span>
         <span class="sb-example">Dividend paying blue chips</span>
         <span class="sb-example">Near 52-week high with strong fundamentals</span>
-        <span class="sb-example">Banking stocks below ?500</span>
+        <span class="sb-example">Banking stocks below ₹500</span>
       </div>
       <button class="sb-btn-parse" id="sb-parse-btn" onclick="parseStrategy()">Parse Strategy ?</button>
     </div>
@@ -4828,7 +4828,7 @@ app.get("/strategy-builder", featureGate("feature_strategy_builder", "Strategy B
     <div class="sb-tips">
       <h3>?? Tips for better results</h3>
       <ul>
-        <li>Use numbers: <code>ROCE above 20</code>, <code>PE below 25</code>, <code>price below ?500</code></li>
+        <li>Use numbers: <code>ROCE above 20</code>, <code>PE below 25</code>, <code>price below ₹500</code></li>
         <li>Mention company size: <code>large cap</code>, <code>mid cap</code>, <code>small cap</code></li>
         <li>Reference sectors: <code>pharma</code>, <code>IT</code>, <code>banking</code>, <code>auto</code>, <code>FMCG</code></li>
         <li>Use quality terms: <code>debt free</code>, <code>profitable</code>, <code>growing profit</code></li>
@@ -5093,13 +5093,13 @@ app.get("/strategy-builder", featureGate("feature_strategy_builder", "Strategy B
 
     // -- Market Cap -------------------------------------------------------------
     if (/large.?cap|bluechip|blue.?chip|nifty 50/i.test(t)) {
-      params.minPrice = '500'; labels['Large Cap (Price = ?500)'] = true;
+      params.minPrice = '500'; labels['Large Cap (Price = ₹500)'] = true;
     } else if (/mid.?cap/i.test(t)) {
-      params.minPrice = '100'; params.maxPrice = '1500'; labels['Mid Cap (?100–1500)'] = true;
+      params.minPrice = '100'; params.maxPrice = '1500'; labels['Mid Cap (₹100–1500)'] = true;
     } else if (/small.?cap/i.test(t)) {
-      params.maxPrice = '300'; labels['Small Cap (Price = ?300)'] = true;
+      params.maxPrice = '300'; labels['Small Cap (Price = ₹300)'] = true;
     } else if (/micro.?cap|penny/i.test(t)) {
-      params.maxPrice = '50'; labels['Micro Cap / Penny (Price = ?50)'] = true;
+      params.maxPrice = '50'; labels['Micro Cap / Penny (Price = ₹50)'] = true;
     }
 
     // -- Profitability ----------------------------------------------------------
@@ -5769,7 +5769,7 @@ app.get("/today", async (req: Request, res: Response) => {
               <strong>${title} picks are ${requiredTier}-only</strong>
               <p>${requiredTier === 'Free' ? 'Sign in' : 'Upgrade to Premium'} to unlock entry zones, targets, and stop losses for ${title.toLowerCase()} trades.</p>
             </div>
-            <a href="${requiredTier === 'Free' ? '/login' : '/premium'}" class="btn-upgrade">${requiredTier === 'Free' ? 'Sign In Free ?' : 'Upgrade ?499/mo ?'}</a>
+            <a href="${requiredTier === 'Free' ? '/login' : '/premium'}" class="btn-upgrade">${requiredTier === 'Free' ? 'Sign In Free ?' : 'Upgrade ₹499/mo ?'}</a>
           </div>
         </div>
       </div>`;
@@ -6019,7 +6019,7 @@ app.get("/premium", async (req: Request, res: Response) => {
 
     <!-- Pricing card -->
     <div class="premium-pricing-card">
-      <div class="pricing-amount">?499 <span class="pricing-period">/month</span></div>
+      <div class="pricing-amount">₹499 <span class="pricing-period">/month</span></div>
       <div class="pricing-label">Cancel anytime · Instant activation</div>
       <ul class="pricing-features">
         <li>? Live active position — exact entry &amp; stop loss</li>
@@ -6028,7 +6028,7 @@ app.get("/premium", async (req: Request, res: Response) => {
       </ul>
       ${isLoggedIn
         ? razorpayEnabled
-          ? `<button id="pay-btn" class="btn-premium-cta" onclick="startPayment()">? Upgrade Now — ?499/month</button>`
+          ? `<button id="pay-btn" class="btn-premium-cta" onclick="startPayment()">? Upgrade Now — ₹499/month</button>`
           : `<div class="premium-coming-soon">?? Payment system coming soon<br><small>Contact us to get early access</small></div>`
         : `<a href="/login?next=/premium" class="btn-premium-cta">Sign In to Upgrade</a>`}
     </div>
@@ -6085,13 +6085,13 @@ app.get("/premium", async (req: Request, res: Response) => {
           } else {
             alert('Payment verification failed. Contact support.');
             btn.disabled = false;
-            btn.textContent = '? Upgrade Now — ?499/month';
+            btn.textContent = '? Upgrade Now — ₹499/month';
           }
         },
         modal: {
           ondismiss: function() {
             btn.disabled = false;
-            btn.textContent = '? Upgrade Now — ?499/month';
+            btn.textContent = '? Upgrade Now — ₹499/month';
           }
         }
       };
@@ -6100,7 +6100,7 @@ app.get("/premium", async (req: Request, res: Response) => {
     } catch(e) {
       alert('Could not start payment. Please try again.');
       btn.disabled = false;
-      btn.textContent = '? Upgrade Now — ?499/month';
+      btn.textContent = '? Upgrade Now — ₹499/month';
     }
   }
   </script>` : ""}
@@ -8170,7 +8170,7 @@ app.get("/paper-trade", featureGate("feature_paper_trade_bot", "Paper Trade"), a
     <div class="pt2-hero">
       <div>
         <h1 class="pt2-hero-title">Paper Trade</h1>
-        <p class="pt2-hero-sub">Practice trading any NSE stock with ?1,00,000 virtual money · Zero risk</p>
+        <p class="pt2-hero-sub">Practice trading any NSE stock with ₹1,00,000 virtual money · Zero risk</p>
       </div>
       ${isLoggedIn ? `<a href="/my-paper-trade" style="display:inline-flex;align-items:center;gap:8px;background:var(--card-bg);border:1px solid var(--border);border-radius:10px;padding:10px 18px;font-weight:700;font-size:0.88rem;text-decoration:none;color:var(--text)">My Portfolio ?</a>` : ""}
     </div>
@@ -8189,7 +8189,7 @@ app.get("/paper-trade", featureGate("feature_paper_trade_bot", "Paper Trade"), a
     <div class="pt2-credits" style="opacity:.85">
       <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
         <span style="color:var(--text-muted);font-weight:700">Guest - <a href="/login?next=/paper-trade" style="color:#7c3aed;font-weight:800">Sign in free</a> to place trades &amp; track P&amp;L</span>
-        <span style="font-size:0.8rem;color:var(--text-muted)">Virtual cash: <strong>?1,00,000</strong></span>
+        <span style="font-size:0.8rem;color:var(--text-muted)">Virtual cash: <strong>₹1,00,000</strong></span>
       </div>
       <span class="${marketOpen ? "pt2-mh-open" : "pt2-mh-closed"}">${marketOpen ? "Market Open" : "Market Closed"}</span>
     </div>
@@ -8833,7 +8833,7 @@ app.get("/paper-trade", featureGate("feature_paper_trade_bot", "Paper Trade"), a
       ${!isLoggedIn ? `
       <div style="margin-top:20px;background:linear-gradient(135deg,rgba(124,58,237,.12),rgba(99,102,241,.08));border:1px solid rgba(124,58,237,.25);border-radius:14px;padding:20px 22px;text-align:center">
         <div style="font-size:1rem;font-weight:800;margin-bottom:6px">?? Trade alongside the bot — free</div>
-        <div style="font-size:0.85rem;color:var(--text-muted);margin-bottom:14px">Create a free account to paper trade any NSE stock with ?1,00,000 virtual cash</div>
+        <div style="font-size:0.85rem;color:var(--text-muted);margin-bottom:14px">Create a free account to paper trade any NSE stock with ₹1,00,000 virtual cash</div>
         <div style="display:flex;gap:10px;justify-content:center;flex-wrap:wrap">
           <a href="/signup" style="background:linear-gradient(135deg,#7c3aed,#6366f1);color:#fff;border-radius:9px;padding:10px 24px;font-weight:700;font-size:0.9rem;text-decoration:none">? Sign Up Free ?</a>
           <a href="/login?next=/paper-trade" style="background:var(--bg2);border:1px solid var(--border);color:var(--text);border-radius:9px;padding:10px 24px;font-weight:700;font-size:0.9rem;text-decoration:none">Sign In</a>
@@ -9469,7 +9469,7 @@ async function paperPortfolioPage(req: Request, res: Response) {
     <div class="mpt-hero">
       <div>
         <div class="mpt-hero-title">My Portfolio</div>
-        <div class="mpt-hero-sub">Virtual trading dashboard · ?1,00,000 starting capital · Zero real risk</div>
+        <div class="mpt-hero-sub">Virtual trading dashboard · ₹1,00,000 starting capital · Zero real risk</div>
       </div>
       <div style="text-align:right;display:flex;flex-direction:column;align-items:flex-end;gap:10px">
         <a href="/paper-trade" style="display:inline-flex;align-items:center;gap:8px;background:#10b981;color:#fff;border-radius:10px;padding:10px 20px;font-weight:700;font-size:0.9rem;text-decoration:none">?? New Trade ?</a>
@@ -9732,7 +9732,7 @@ async function paperPortfolioPage(req: Request, res: Response) {
     <!-- RESET -->
     <div style="margin-top:32px; padding-top:20px; border-top:1px solid var(--border); display:flex; align-items:center; gap:16px; flex-wrap:wrap">
       <form method="POST" action="/my-paper-trade/reset" onsubmit="return confirm('Reset your entire paper portfolio? This cannot be undone.')">
-        <button type="submit" class="mpt-btn-reset">?? Reset Portfolio (restart with ?1,00,000)</button>
+        <button type="submit" class="mpt-btn-reset">?? Reset Portfolio (restart with ₹1,00,000)</button>
       </form>
       <span style="font-size:0.8rem; color:var(--text-muted)">Hi ${esc(userName.split(" ")[0])} · Your portfolio is saved to your account</span>
     </div>
@@ -10985,9 +10985,9 @@ app.get("/my-paper-trade/upgrade", requireAuth, async (req: Request, res: Respon
       <div class="upg-feat">Market hours enforcement (9:15 AM – 3:30 PM IST)</div>
       <div class="upg-feat">Custom strategy configurations (SL%, Target%, Max positions)</div>
     </div>
-    <div class="upg-price">?499<span style="font-size:1rem;font-weight:400">/month</span></div>
+    <div class="upg-price">₹499<span style="font-size:1rem;font-weight:400">/month</span></div>
     <div class="upg-period">Monthly subscription — cancel anytime</div>
-    ${!isPremium ? `<a href="/subscribe" class="upg-btn">Subscribe Now</a>` : `<a href="/my-paper-trade" class="upg-btn">Back to Portfolio</a>`}
+    ${!isPremium ? `<a href="/premium" class="upg-btn">Subscribe Now</a>` : `<a href="/my-paper-trade" class="upg-btn">Back to Portfolio</a>`}
     <p style="font-size:0.82rem;color:var(--text-muted);margin-top:16px">Have questions? <a href="/contact">Contact us</a></p>
   </div>
 </div>
@@ -11241,7 +11241,7 @@ app.get("/dashboard", featureGate("feature_dashboard", "Dashboard"), async (req:
         <strong>Unlock 5-Year Backtest Analytics</strong>
         <p>See full monthly breakdown, Model A vs Model B performance, all 60 months of data — exclusively for Premium members.</p>
       </div>
-      <a href="/premium" class="btn-upgrade">Upgrade — ?499/mo</a>
+      <a href="/premium" class="btn-upgrade">Upgrade — ₹499/mo</a>
     </div>
 
     <!-- Preview (blurred) -->
@@ -12867,21 +12867,21 @@ const HOLDINGS: HoldingStock[] = [
   // -- ?? HIGH PRIORITY ------------------------------------------------------
   { symbol:"NSE:BHEL",       name:"BHEL",                qty:40,  avgPrice:253,    invested:10120, currentVal:16342, targetAlloc:25000, addAmountINR:5000, priority:"?? HIGH",
     dipAlerts:[{pct:-10,label:"10% correction — start buying",urgency:"??",buyMultiplier:1},{pct:-18,label:"18% deep correction — accumulate",urgency:"???",buyMultiplier:1.5}],
-    absoluteAlerts:[], thesis:"Power sector capex + defense + railways — massive ?1.2L Cr order book, PSU re-rating play" },
+    absoluteAlerts:[], thesis:"Power sector capex + defense + railways — massive ₹1.2L Cr order book, PSU re-rating play" },
   { symbol:"NSE:LT",         name:"L&T",                 qty:9,   avgPrice:3652,   invested:32867, currentVal:35339, targetAlloc:45000, addAmountINR:5000, priority:"?? HIGH",
     dipAlerts:[{pct:-8,label:"8% dip — add to largest holding",urgency:"??",buyMultiplier:1}],
-    absoluteAlerts:[{price:3200,label:"Below ?3,200 — support zone",urgency:"??",buyMultiplier:1},{price:3000,label:"Below ?3,000 — strong accumulate",urgency:"???",buyMultiplier:1.5}],
-    thesis:"India #1 infra conglomerate — record ?5L Cr order book, defense exports, IT services" },
+    absoluteAlerts:[{price:3200,label:"Below ₹3,200 — support zone",urgency:"??",buyMultiplier:1},{price:3000,label:"Below ₹3,000 — strong accumulate",urgency:"???",buyMultiplier:1.5}],
+    thesis:"India #1 infra conglomerate — record ₹5L Cr order book, defense exports, IT services" },
   { symbol:"NSE:SUZLON",     name:"Suzlon Energy",       qty:230, avgPrice:45.2,   invested:10396, currentVal:12363, targetAlloc:25000, addAmountINR:5000, priority:"?? HIGH",
     dipAlerts:[{pct:-12,label:"12% dip — start adding",urgency:"??",buyMultiplier:1},{pct:-20,label:"20% deep dip — add more",urgency:"???",buyMultiplier:1.5}],
     absoluteAlerts:[], thesis:"Wind energy — India 500GW target, only integrated wind turbine maker, debt-free turnaround" },
   { symbol:"NSE:HAL",        name:"HAL",                 qty:1,   avgPrice:3973,   invested:3973,  currentVal:4368,  targetAlloc:15000, addAmountINR:4500, priority:"?? HIGH",
     dipAlerts:[{pct:-8,label:"8% dip — accumulate",urgency:"??",buyMultiplier:1},{pct:-15,label:"15% dip — buy aggressively",urgency:"???",buyMultiplier:2}],
-    absoluteAlerts:[{price:4000,label:"Below ?4,000 — strong buy",urgency:"???",buyMultiplier:1.5}],
-    thesis:"Defense PSU — ?94,000Cr order book, 15yr revenue visibility, LCA Tejas + helicopters" },
+    absoluteAlerts:[{price:4000,label:"Below ₹4,000 — strong buy",urgency:"???",buyMultiplier:1.5}],
+    thesis:"Defense PSU — ₹94,000Cr order book, 15yr revenue visibility, LCA Tejas + helicopters" },
   { symbol:"NSE:HDFCBANK",   name:"HDFC Bank",           qty:11,  avgPrice:912.2,  invested:10034, currentVal:8435,  targetAlloc:20000, addAmountINR:5000, priority:"?? HIGH",
     dipAlerts:[{pct:-5,label:"5% further dip — average down",urgency:"??",buyMultiplier:1}],
-    absoluteAlerts:[{price:1600,label:"Below ?1,600 — value zone",urgency:"??",buyMultiplier:1},{price:1550,label:"Below ?1,550 — strong accumulation",urgency:"???",buyMultiplier:1.5}],
+    absoluteAlerts:[{price:1600,label:"Below ₹1,600 — value zone",urgency:"??",buyMultiplier:1},{price:1550,label:"Below ₹1,550 — strong accumulation",urgency:"???",buyMultiplier:1.5}],
     thesis:"India largest private bank — HDFC merger overhang fading, NIM recovery in progress" },
   // -- ? MEDIUM PRIORITY -----------------------------------------------------
   { symbol:"NSE:NIFTYBEES",  name:"Nifty BeES (ETF)",   qty:86,  avgPrice:263.85, invested:22691, currentVal:23143, targetAlloc:50000, addAmountINR:5000, priority:"? MEDIUM",
@@ -12892,53 +12892,53 @@ const HOLDINGS: HoldingStock[] = [
     absoluteAlerts:[], thesis:"Gold ETF — hedge against INR depreciation + geopolitical risk. 10-15% portfolio allocation target." },
   { symbol:"NSE:ICICIBANK",  name:"ICICI Bank",          qty:5,   avgPrice:1216,   invested:6078,  currentVal:6322,  targetAlloc:15000, addAmountINR:3000, priority:"? MEDIUM",
     dipAlerts:[{pct:-8,label:"8% dip — add",urgency:"??",buyMultiplier:1},{pct:-15,label:"15% dip — buy aggressively",urgency:"???",buyMultiplier:1.5}],
-    absoluteAlerts:[{price:1100,label:"Below ?1,100 — strong buy",urgency:"???",buyMultiplier:1.5}],
+    absoluteAlerts:[{price:1100,label:"Below ₹1,100 — strong buy",urgency:"???",buyMultiplier:1.5}],
     thesis:"Best-run private bank — tech-first, strong retail + corporate mix, consistent 15%+ RoE. Better than HDFC Bank right now." },
   { symbol:"NSE:CDSL",       name:"CDSL",                qty:4,   avgPrice:1169,   invested:4674,  currentVal:4816,  targetAlloc:10000, addAmountINR:2000, priority:"? MEDIUM",
     dipAlerts:[{pct:-15,label:"15% dip — demat growth story",urgency:"??",buyMultiplier:1},{pct:-25,label:"25% deep correction — buy more",urgency:"???",buyMultiplier:1.5}],
-    absoluteAlerts:[{price:1000,label:"Below ?1,000 — excellent entry",urgency:"???",buyMultiplier:1.5}],
+    absoluteAlerts:[{price:1000,label:"Below ₹1,000 — excellent entry",urgency:"???",buyMultiplier:1.5}],
     thesis:"Demat account monopoly — every new investor adds recurring revenue. Duopoly with NSDL. Beneficiary of India financialization." },
   { symbol:"NSE:BSE",        name:"BSE Ltd",             qty:1,   avgPrice:3563,   invested:3563,  currentVal:4194,  targetAlloc:10000, addAmountINR:3000, priority:"? MEDIUM",
     dipAlerts:[{pct:-10,label:"10% dip — add to position",urgency:"??",buyMultiplier:1}],
-    absoluteAlerts:[{price:3800,label:"Below ?3,800 — SEBI noise creates opportunity",urgency:"??",buyMultiplier:1}],
+    absoluteAlerts:[{price:3800,label:"Below ₹3,800 — SEBI noise creates opportunity",urgency:"??",buyMultiplier:1}],
     thesis:"Exchange moat — SME IPO boom 80% YoY growth, derivatives comeback" },
   { symbol:"NSE:M&M",        name:"M&M",                 qty:1,   avgPrice:3205,   invested:3205,  currentVal:3081,  targetAlloc:10000, addAmountINR:3500, priority:"? MEDIUM",
     dipAlerts:[{pct:-8,label:"8% dip — watch and accumulate",urgency:"??",buyMultiplier:1}],
-    absoluteAlerts:[{price:2700,label:"Below ?2,700 — add",urgency:"???",buyMultiplier:1},{price:2500,label:"Below ?2,500 — deep value",urgency:"???",buyMultiplier:1.5}],
+    absoluteAlerts:[{price:2700,label:"Below ₹2,700 — add",urgency:"???",buyMultiplier:1},{price:2500,label:"Below ₹2,500 — deep value",urgency:"???",buyMultiplier:1.5}],
     thesis:"SUV market leader + EV platform launch (BE 6e, XEV 9e) + tractor recovery upcoming" },
   // -- ?? LOW PRIORITY (hold; only buy on clear signals) ---------------------
   { symbol:"NSE:PIDILITIND", name:"Pidilite Industries", qty:1,   avgPrice:1357,   invested:1357,  currentVal:1478,  targetAlloc:5000,  addAmountINR:2000, priority:"?? LOW",
     dipAlerts:[{pct:-10,label:"10% dip — quality compounder",urgency:"??",buyMultiplier:1},{pct:-18,label:"18% dip — add strongly",urgency:"???",buyMultiplier:1.5}],
-    absoluteAlerts:[{price:1200,label:"Below ?1,200 — compelling entry",urgency:"???",buyMultiplier:1.5}],
+    absoluteAlerts:[{price:1200,label:"Below ₹1,200 — compelling entry",urgency:"???",buyMultiplier:1.5}],
     thesis:"Fevicol monopoly — 70% market share in adhesives. Pricing power + rural distribution moat. Quality compounder." },
   { symbol:"NSE:RELIANCE",   name:"Reliance Industries", qty:7,   avgPrice:1410,   invested:9867,  currentVal:9482,  targetAlloc:15000, addAmountINR:3000, priority:"?? LOW",
     dipAlerts:[{pct:-8,label:"8% dip — minor add",urgency:"??",buyMultiplier:1}],
-    absoluteAlerts:[{price:1250,label:"Below ?1,250 — deep value zone",urgency:"???",buyMultiplier:1}],
+    absoluteAlerts:[{price:1250,label:"Below ₹1,250 — deep value zone",urgency:"???",buyMultiplier:1}],
     thesis:"Wait for Jio IPO announcement — that is the real trigger. Buy major dips only." },
   { symbol:"NSE:TITAN",      name:"Titan Company",       qty:1,   avgPrice:4526,   invested:4526,  currentVal:4080,  targetAlloc:8000,  addAmountINR:3000, priority:"?? LOW",
     dipAlerts:[{pct:-15,label:"15% dip — PE normalizing",urgency:"??",buyMultiplier:1},{pct:-22,label:"22% deep correction — good PE entry",urgency:"???",buyMultiplier:1.5}],
-    absoluteAlerts:[{price:2800,label:"Below ?2,800 — compelling entry",urgency:"???",buyMultiplier:1}],
+    absoluteAlerts:[{price:2800,label:"Below ₹2,800 — compelling entry",urgency:"???",buyMultiplier:1}],
     thesis:"Jewelry + watches brand (Tanishq) — wait for wedding season recovery" },
   { symbol:"NSE:INFY",       name:"Infosys",             qty:1,   avgPrice:1315,   invested:1315,  currentVal:1175,  targetAlloc:10000, addAmountINR:4000, priority:"?? LOW",
     dipAlerts:[{pct:-10,label:"IT sector selloff — buy bigger or exit",urgency:"??",buyMultiplier:1}],
-    absoluteAlerts:[{price:1400,label:"Below ?1,400 — IT value zone",urgency:"??",buyMultiplier:1}],
-    thesis:"Tier-1 IT — position too small. Either commit ?10K total or exit and redeploy." },
+    absoluteAlerts:[{price:1400,label:"Below ₹1,400 — IT value zone",urgency:"??",buyMultiplier:1}],
+    thesis:"Tier-1 IT — position too small. Either commit ₹10K total or exit and redeploy." },
   { symbol:"NSE:ONGC",       name:"ONGC",                qty:1,   avgPrice:265.15, invested:265,   currentVal:290,   targetAlloc:3000,  addAmountINR:1000, priority:"?? LOW",
     dipAlerts:[{pct:-10,label:"10% dip — dividend PSU",urgency:"??",buyMultiplier:1}],
-    absoluteAlerts:[{price:240,label:"Below ?240 — add for dividend",urgency:"??",buyMultiplier:1}],
+    absoluteAlerts:[{price:240,label:"Below ₹240 — add for dividend",urgency:"??",buyMultiplier:1}],
     thesis:"PSU oil producer — 4%+ dividend yield. Hold for income. Add on major corrections only." },
   { symbol:"NSE:COALINDIA",  name:"Coal India",          qty:1,   avgPrice:435.7,  invested:436,   currentVal:457,   targetAlloc:3000,  addAmountINR:1000, priority:"?? LOW",
     dipAlerts:[{pct:-10,label:"10% dip — dividend play",urgency:"??",buyMultiplier:1}],
-    absoluteAlerts:[{price:400,label:"Below ?400 — strong dividend buy",urgency:"??",buyMultiplier:1}],
+    absoluteAlerts:[{price:400,label:"Below ₹400 — strong dividend buy",urgency:"??",buyMultiplier:1}],
     thesis:"Coal monopoly PSU — 6%+ dividend yield, thermal power demand stays elevated. Income holding." },
   { symbol:"NSE:DABUR",      name:"Dabur India",         qty:1,   avgPrice:445.05, invested:445,   currentVal:451,   targetAlloc:3000,  addAmountINR:1000, priority:"?? LOW",
     dipAlerts:[{pct:-10,label:"10% dip — FMCG dip buy",urgency:"??",buyMultiplier:1}],
-    absoluteAlerts:[{price:400,label:"Below ?400 — FMCG value zone",urgency:"??",buyMultiplier:1}],
+    absoluteAlerts:[{price:400,label:"Below ₹400 — FMCG value zone",urgency:"??",buyMultiplier:1}],
     thesis:"Ayurvedic FMCG — rural recovery play. Consistent dividend, low volatility. Small position, hold." },
   { symbol:"NSE:POWERGRID",  name:"Power Grid",          qty:1,   avgPrice:318.7,  invested:319,   currentVal:294,   targetAlloc:3000,  addAmountINR:1000, priority:"?? LOW",
     dipAlerts:[{pct:-10,label:"10% further dip — avg down",urgency:"??",buyMultiplier:1}],
-    absoluteAlerts:[{price:270,label:"Below ?270 — strong dividend buy",urgency:"???",buyMultiplier:1.5}],
-    thesis:"Transmission monopoly — regulated 15%+ ROE, 4% dividend yield. Dip from ?318. Add on weakness." },
+    absoluteAlerts:[{price:270,label:"Below ₹270 — strong dividend buy",urgency:"???",buyMultiplier:1.5}],
+    thesis:"Transmission monopoly — regulated 15%+ ROE, 4% dividend yield. Dip from ₹318. Add on weakness." },
 ];
 
 const STOCK_ALERTS_DIR    = process.env.STOCK_ALERTS_DIR    || "/root/stock-alerts";
@@ -13375,7 +13375,7 @@ app.get("/holdings", requireAdmin, (_req: Request, res: Response) => {
         <td style="color:#64748b;width:28px">\${i+1}</td>
         <td class="tdname">\${s.name}<small>\${s.symbol} <span class="pri \${priCls(s.priority)}">\${s.priority.replace(/[^\w\s]/g,'').trim()}</span></small></td>
         <td style="color:#94a3b8">\${s.qty}</td>
-        <td style="color:#94a3b8">\${inrd(s.avgPrice,s.avgPrice<100?2:0)}</td>
+        <td style="color:#94a3b8">\${inrd(s.avgPrice,s.avgPrice<100₹2:0)}</td>
         <td>\${inr(s.invested)}</td>
         <td>\${pxHtml}</td>
         <td style="color:\${pnlClr}">\${inr(lv)}</td>
@@ -13470,7 +13470,7 @@ app.get("/holdings", requireAdmin, (_req: Request, res: Response) => {
   renderTable(staticData);
   mktStatus();
   load();
-  setInterval(()=>{load();mktStatus();}, isMO()?60000:300000);
+  setInterval(()=>{load();mktStatus();}, isMO()₹60000:300000);
   </script>
 </body>
 </html>`);
