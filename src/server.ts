@@ -6922,7 +6922,7 @@ async function buildTradeOpsStatus() {
     margin: pendingExecution ? !!marginReady : true,
   };
   const failedChecks = Object.entries(executionChecks).filter(([, ok]) => !ok).map(([key]) => key);
-  const executionStatus = latestRejection ? "Blocked" : !pendingExecution ? "Idle" : failedChecks.length ? "Blocked" : "Ready";
+  const executionStatus = latestRejection ? "Blocked" : failedChecks.length ? "Blocked" : !pendingExecution ? "Idle" : "Ready";
   const executionBlockReason = executionStatus === "Idle"
     ? "No pending execution. Waiting for next order request."
     : latestRejection
