@@ -6864,6 +6864,20 @@ async function buildTradeOpsStatus() {
   const candleLogSource = heartbeatCandleLog.length ? heartbeatCandleLog : persistedCandleLog;
   candleLogSourceForState = candleLogSource;
   const failureNote = latestRejection ? tradeOpsAuditMessage(latestRejection) : "";
+  const rawBlockedCandle = (c: any) => /blocked|rejected|failed|insufficient margin|no LIVE order|not opened/i.test(String(c?.status || "") + " " + String(c?.note || c?.reason || ""));
+  const firstBlockedRows = new WeakSet<object>();
+  const seenBlockedKeys = new Set<string>();
+  for (const row of candleLogSource) {
+    if (!row || typeof row !== "object" || !rawBlockedCandle(row)) continue;
+    const key = [
+      String(row?.dir || row?.direction || "").toUpperCase(),
+      String(row?.entry ?? ""),
+      String(row?.note || row?.reason || row?.status || "").replace(/\d{1,2}:\d{2}/g, "").trim().toLowerCase(),
+    ].join("|");
+    if (seenBlockedKeys.has(key)) continue;
+    seenBlockedKeys.add(key);
+    firstBlockedRows.add(row);
+  }
   const candleLog = candleLogSource.slice(-50).reverse().map((c: any, idx: number) => {
     const closeOnly = c?.open == null && c?.high == null && c?.low == null && c?.close != null;
     const close = tradeOpsNum(c?.close ?? c?.c);
@@ -6880,7 +6894,9 @@ async function buildTradeOpsStatus() {
       }
     }
     const hhmmText = String(rawTime || timeText || "").match(/(\d{1,2}:\d{2})/)?.[1] || timeText;
-    const blockedCandle = /blocked|rejected|failed|insufficient margin|no LIVE order|not opened/i.test(String(c?.status || "") + " " + String(c?.note || c?.reason || ""));
+    const blockedCandle = rawBlockedCandle(c);
+    const firstBlockedCandle = blockedCandle && c && typeof c === "object" && firstBlockedRows.has(c);
+    const carriedBlockedCandle = blockedCandle && !firstBlockedCandle;
     const tradeAtClose = blockedCandle ? null : candleTradeState(c, String(hhmmText).slice(0, 5), close, c?.sl ?? hb?.tt1030SL);
     const protectedNote = tradeAtClose?.protectedSl !== null && tradeAtClose?.protectedSl !== undefined
       ? ` Protected +${tradeAtClose.protectedPts || 300} SL: ${tradeAtClose.protectedSl}.`
@@ -6895,7 +6911,7 @@ async function buildTradeOpsStatus() {
       close,
       volume: tradeOpsNum(c?.volume ?? c?.v),
       closeOnly,
-      status: blockedCandle ? "Entry blocked" : (c?.status || (tradeAtClose ? "In trade" : "Monitoring")),
+      status: firstBlockedCandle ? "Entry blocked" : carriedBlockedCandle ? "Blocked context" : (c?.status || (tradeAtClose ? "In trade" : "Monitoring")),
       entry: blockedCandle ? null : (tradeAtClose?.entry ?? null),
       dir: blockedCandle ? (c?.dir || c?.direction || "--") : (tradeAtClose?.dir || "--"),
       sl: blockedCandle ? null : (tradeAtClose?.sl ?? null),
@@ -7777,7 +7793,7 @@ function render(d){
     document.getElementById('thApply').onclick=applyTradeHistory;document.getElementById('thReset').onclick=resetTradeHistory;document.getElementById('thDayApply').onclick=function(){state.day=document.getElementById('thDay').value||baseDate;state.range='day';state.page=1;drawTradeHistory()};document.getElementById('thMonth').onchange=function(){state.month=this.value||defaultMonth;state.range='monthly';state.page=1;drawTradeHistory()};document.getElementById('thSearch').onkeydown=function(e){if(e.key==='Enter')applyTradeHistory()};document.getElementById('thPrev').onclick=function(){state.page--;drawTradeHistory()};document.getElementById('thNext').onclick=function(){state.page++;drawTradeHistory()};drawTradeHistory();return;
   }
   if(PAGE==='candle-logs'){
-    const rows=candles.map(c=>{const blocked=/blocked|rejected|failed|insufficient|no live order/i.test(String(c.status||'')+' '+String(c.note||''));const closePnl=blocked?null:(c.closePnlRs!=null?c.closePnlRs:c.pnlRs);const statusCls=blocked?'bad':String(c.status||'').includes('entry')||String(c.status||'').includes('Entry')?'ok':String(c.status||'').includes('hit')?'bad':String(c.status||'').includes('trail')?'warn':'';return '<tr><td class="right">'+txt(c.idx||'')+'</td><td>'+txt(c.time)+'</td><td class="right">'+txt(c.open)+'</td><td class="right">'+txt(c.high)+'</td><td class="right">'+txt(c.low)+'</td><td class="right">'+txt(c.close)+'</td><td>'+pill(blocked?'Entry blocked':(c.status||'Recorded'),statusCls)+'</td><td class="right">'+(blocked||c.entry==null?'--':txt(c.entry))+'</td><td>'+txt(c.dir||'--')+'</td><td class="right">'+(blocked||c.sl==null?'--':txt(c.sl))+'</td><td class="right '+(closePnl==null?'muted':Number(closePnl)>=0?'ok':'bad')+'">'+(closePnl==null?'--':rs(closePnl))+'</td><td style="white-space:normal;overflow:visible;text-overflow:clip;min-width:320px;line-height:1.45">'+txt(c.note||'')+'</td></tr>'}).join('');
+    const rows=candles.map(c=>{const blocked=/^(entry_blocked|entry blocked)$/i.test(String(c.status||''));const context=/blocked context/i.test(String(c.status||''));const closePnl=blocked||context?null:(c.closePnlRs!=null?c.closePnlRs:c.pnlRs);const statusCls=blocked?'bad':context?'warn':String(c.status||'').includes('entry')||String(c.status||'').includes('Entry')?'ok':String(c.status||'').includes('hit')?'bad':String(c.status||'').includes('trail')?'warn':'';return '<tr><td class="right">'+txt(c.idx||'')+'</td><td>'+txt(c.time)+'</td><td class="right">'+txt(c.open)+'</td><td class="right">'+txt(c.high)+'</td><td class="right">'+txt(c.low)+'</td><td class="right">'+txt(c.close)+'</td><td>'+pill(blocked?'Entry blocked':context?'Blocked context':(c.status||'Recorded'),statusCls)+'</td><td class="right">'+(blocked||context||c.entry==null?'--':txt(c.entry))+'</td><td>'+txt(c.dir||'--')+'</td><td class="right">'+(blocked||context||c.sl==null?'--':txt(c.sl))+'</td><td class="right '+(closePnl==null?'muted':Number(closePnl)>=0?'ok':'bad')+'">'+(closePnl==null?'--':rs(closePnl))+'</td><td style="white-space:normal;overflow:visible;text-overflow:clip;min-width:320px;line-height:1.45">'+txt(c.note||'')+'</td></tr>'}).join('');
     standardPage('Candle Logs','Inspect BANKNIFTY 10:30 futures 15m candles with entry state and P&L at every candle close.',[kpi('Candles',String(candles.length),pill(candles.length?'Recorded':'No data',candles.length?'ok':'warn'),'&#9636;'),kpi('Timeframe','15m',pill('BANKNIFTY','ok'),'&#9719;'),kpi('Trade Entry',candles.find(c=>c.entry!=null)?txt(candles.find(c=>c.entry!=null).entry):'No entry',pill('10:30 futures','ok'),'&#8594;'),kpi('Latest Candle P&L',candles[0]&&candles[0].pnlRs!=null?rs(candles[0].pnlRs):'--',pill('At close','warn'),'&#8377;'),kpi('Last Candle',candles[0]?txt(candles[0].time):'No candle',pill('Latest','warn'),'&#9719;')],filterBar('<select><option>15m</option><option>All Candles</option><option>Entry Candles</option><option>In Trade</option></select>'),tableCard('15m Candle Records',[{t:'#',right:1},{t:'Time'},{t:'Open',right:1},{t:'High',right:1},{t:'Low',right:1},{t:'Close',right:1},{t:'State'},{t:'Entry',right:1},{t:'Dir'},{t:'SL',right:1},{t:'P&L @ Close',right:1},{t:'Note'}],rows,empty('&#9636;','No 15m candles recorded','Today 10:30 futures candle log is not available from the bot heartbeat yet.',{href:'/tradeops/health',label:'Check Feed'}),' '+candles.length+' candles'),'');return;
   }
   if(PAGE==='server-logs'){
