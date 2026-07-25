@@ -6653,13 +6653,25 @@ async function buildTradeOpsStatus() {
     strategyTradeMap.set(key, t);
   }
   const strategyTrades = Array.from(strategyTradeMap.values()).sort((a: any, b: any) => new Date(a?.date || a?.exitTime || a?.entryTime || 0).getTime() - new Date(b?.date || b?.exitTime || b?.entryTime || 0).getTime());
-  const displaySession = today;
+  const todayHasTrades = strategyTrades.some(t => tradeOpsDateKey(t?.date || t?.exitTime || t?.entryTime) === today);
+  const latestTradeSession = strategyTrades.map(t => tradeOpsDateKey(t?.date || t?.exitTime || t?.entryTime)).filter(Boolean).sort().pop() || today;
+  const botSessionDate = tradeOpsDateKey(tt1030State?.date || tt1030CandleFile?.date || hb?.at || today);
+  const botSessionHasOperationalData = !!botSessionDate && (
+    (Array.isArray(tt1030State?.candleLog) && tt1030State.candleLog.length > 0)
+    || (Array.isArray(tt1030CandleFile?.log) && tt1030CandleFile.log.length > 0)
+    || tradeOpsDateKey(hb?.at) === botSessionDate
+  );
+  const latestKnownSession = botSessionHasOperationalData && (!latestTradeSession || botSessionDate >= latestTradeSession)
+    ? botSessionDate
+    : latestTradeSession;
+  const displaySession = (tradeOpsMarketStartedToday() || todayHasTrades) ? today : latestKnownSession;
   const displayTrades = strategyTrades.filter(t => tradeOpsDateKey(t?.date || t?.exitTime || t?.entryTime) === displaySession);
   const displayClosed = displayTrades.filter(t => tradeOpsNum(t?.exitPrice) > 0 || tradeOpsNum(t?.premiumExit) > 0);
   const todayPnl = displayClosed.reduce((sum, t) => sum + tradeOpsPnl(t), 0);
-  const persistedDayRs = tradeOpsDateKey(tt1030State?.date || today) === today ? tradeOpsMaybeNum(tt1030State?.dayRs) : null;
-  const persistedTrades = tradeOpsDateKey(tt1030State?.date || today) === today ? tradeOpsMaybeNum(tt1030State?.trades) : null;
-  const heartbeatHas1030Session = openTrade || (Array.isArray(hb?.tt1030TradeLog) && hb.tt1030TradeLog.length > 0) || tradeOpsNum(hb?.tt1030Trades) > 0;
+  const persistedDayRs = tradeOpsDateKey(tt1030State?.date || today) === displaySession ? tradeOpsMaybeNum(tt1030State?.dayRs) : null;
+  const persistedTrades = tradeOpsDateKey(tt1030State?.date || today) === displaySession ? tradeOpsMaybeNum(tt1030State?.trades) : null;
+  const heartbeatHas1030Session = displaySession === tradeOpsDateKey(hb?.at)
+    && (openTrade || (Array.isArray(hb?.tt1030TradeLog) && hb.tt1030TradeLog.length > 0) || tradeOpsNum(hb?.tt1030Trades) > 0);
   const liveNetCandidate = heartbeatHas1030Session ? tradeOpsMaybeNum(hb?.tt1030PnL) : persistedDayRs;
   const liveClosedCandidate = tradeOpsMaybeNum(hb?.tt1030ClosedPnL) ?? persistedDayRs ?? todayPnl;
   const liveUnrealizedCandidate = tradeOpsMaybeNum(hb?.tt1030UnrealizedPnL)
@@ -6669,9 +6681,10 @@ async function buildTradeOpsStatus() {
   const realized = displaySession === today ? live1030Closed : todayPnl;
   const unrealized = displaySession === today ? (liveUnrealizedCandidate ?? (openTrade ? live1030Net - live1030Closed : 0)) : 0;
   const netPnl = displaySession === today ? live1030Net : todayPnl;
+  const displayHadTrade = displayClosed.length > 0 || heartbeatHas1030Session || openTrade;
   const pnlSource = displaySession === today
     ? (liveNetCandidate !== null ? "10:30 futures heartbeat" : "10:30 futures trade history")
-    : "latest completed session";
+    : (displayHadTrade ? "latest completed session" : "latest blocked/no-trade session");
   const pnls = displayClosed.map(t => tradeOpsPnl(t)).reduce((arr: number[], n) => {
     arr.push((arr[arr.length - 1] || 0) + n);
     return arr;
