@@ -7369,7 +7369,7 @@ app.post("/api/tradeops/token-refresh", requireAdmin, async (_req: Request, res:
       `cd ${TRADEOPS_BOT_DIR}`,
       "mkdir -p logs",
       `echo "[tradeops] manual token refresh requested at $(date -Is)" >> ${TRADEOPS_AUTO_TOKEN_LOG}`,
-      `nohup node ${TRADEOPS_AUTO_TOKEN_SCRIPT} >> ${TRADEOPS_AUTO_TOKEN_LOG} 2>&1 < /dev/null &`,
+      `nohup timeout 180s node ${TRADEOPS_AUTO_TOKEN_SCRIPT} >> ${TRADEOPS_AUTO_TOKEN_LOG} 2>&1 < /dev/null &`,
     ].join(" && ");
     execSync(`bash -lc ${JSON.stringify(refreshCmd)}`, { stdio: "ignore", timeout: 5000 });
     res.json({
