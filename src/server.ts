@@ -6248,6 +6248,122 @@ app.post("/api/bot/action", requireAdmin, (req: Request, res: Response) => {
 type TradeOpsKiteCreds = { apiKey: string; token: string };
 const TRADEOPS_BOT_DIR = "/home/ubuntu/trading-bot";
 const TRADEOPS_BOT_ENV = `${TRADEOPS_BOT_DIR}/.env`;
+const TRADEOPS_AUTO_TOKEN_SCRIPT = `${TRADEOPS_BOT_DIR}/auto_token.js`;
+const TRADEOPS_AUTO_TOKEN_LOG = `${TRADEOPS_BOT_DIR}/logs/auto_token_manual.log`;
+const TRADEOPS_STRATEGY_CONFIG_FILE = path.join(process.cwd(), "tradeops-strategies.json");
+
+type TradeOpsStrategyMode = "LIVE" | "SHADOW";
+type TradeOpsStrategyConfig = {
+  id: string;
+  name: string;
+  enabled: boolean;
+  mode: TradeOpsStrategyMode;
+  instrument: string;
+  product: string;
+  entryTime: string;
+  quantity: number;
+  sl: string;
+  target: string;
+  maxDailyLoss: string;
+  status: string;
+  liveCapable: boolean;
+  source: "tt1030" | "placeholder";
+  config: Record<string, any>;
+};
+
+const TRADEOPS_DEFAULT_STRATEGIES: TradeOpsStrategyConfig[] = [
+  {
+    id: "tt1030-futures",
+    name: "10:30 Futures",
+    enabled: true,
+    mode: "SHADOW",
+    instrument: "BANKNIFTY",
+    product: "Futures",
+    entryTime: "10:30",
+    quantity: 30,
+    sl: "Breakout candle / strategy SL",
+    target: "EOD / strategy exit",
+    maxDailyLoss: "Broker/risk gate",
+    status: "Running",
+    liveCapable: true,
+    source: "tt1030",
+    config: { strategyCode: "TEN_THIRTY_INDEX_FUTURES", timeframe: "15m" },
+  },
+  {
+    id: "tt1000-futures-shadow",
+    name: "10:00 Futures",
+    enabled: true,
+    mode: "SHADOW",
+    instrument: "BANKNIFTY",
+    product: "Futures",
+    entryTime: "10:00",
+    quantity: 30,
+    sl: "Strategy SL",
+    target: "EOD / strategy exit",
+    maxDailyLoss: "Not live enabled",
+    status: "Waiting",
+    liveCapable: false,
+    source: "placeholder",
+    config: { strategyCode: "TEN_OCLOCK_INDEX_FUTURES", timeframe: "15m" },
+  },
+  {
+    id: "normal-breakout-shadow",
+    name: "Normal Breakout",
+    enabled: true,
+    mode: "SHADOW",
+    instrument: "BANKNIFTY",
+    product: "Options",
+    entryTime: "Dynamic",
+    quantity: 30,
+    sl: "Breakout/previous candle low",
+    target: "EOD",
+    maxDailyLoss: "Not live enabled",
+    status: "Waiting",
+    liveCapable: false,
+    source: "placeholder",
+    config: { strategyCode: "NORMAL_CANDLE_BREAKOUT", timeframe: "15m" },
+  },
+];
+
+function tradeOpsReadStrategyOverrides(): Record<string, Partial<TradeOpsStrategyConfig>> {
+  try {
+    const parsed = JSON.parse(fs.readFileSync(TRADEOPS_STRATEGY_CONFIG_FILE, "utf8"));
+    return parsed && typeof parsed === "object" ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+function tradeOpsStrategyList(): TradeOpsStrategyConfig[] {
+  const env = tradeOpsReadBotEnv().map;
+  const overrides = tradeOpsReadStrategyOverrides();
+  return TRADEOPS_DEFAULT_STRATEGIES.map((base) => {
+    const saved = overrides[base.id] || {};
+    const merged: TradeOpsStrategyConfig = {
+      ...base,
+      ...saved,
+      config: { ...(base.config || {}), ...((saved as any).config || {}) },
+    };
+    if (base.id === "tt1030-futures") {
+      merged.mode = String(env.TT1030_FUTURES_MODE || merged.mode || "SHADOW").toUpperCase() === "LIVE" ? "LIVE" : "SHADOW";
+      merged.status = merged.enabled ? "Running" : "Disabled";
+    }
+    if (!merged.liveCapable) merged.mode = "SHADOW";
+    return merged;
+  });
+}
+
+function tradeOpsResolveStrategy(value?: any) {
+  const strategies = tradeOpsStrategyList();
+  const requested = String(value || "").trim();
+  return strategies.find((s) => s.id === requested) || strategies.find((s) => s.enabled) || strategies[0];
+}
+
+function tradeOpsWriteStrategyOverride(id: string, patch: Partial<TradeOpsStrategyConfig>) {
+  const current = tradeOpsReadStrategyOverrides();
+  current[id] = { ...(current[id] || {}), ...patch };
+  fs.writeFileSync(TRADEOPS_STRATEGY_CONFIG_FILE, JSON.stringify(current, null, 2) + "\n");
+}
 
 async function tradeOpsReadKiteCreds(): Promise<TradeOpsKiteCreds> {
   const settingsToken = await getSetting("kite_access_token").catch(() => "");
@@ -6343,6 +6459,13 @@ function tradeOpsMarketOpen() {
   const day = now.getDay();
   const mins = now.getHours() * 60 + now.getMinutes();
   return day >= 1 && day <= 5 && mins >= 9 * 60 + 15 && mins <= 15 * 60 + 30;
+}
+
+function tradeOpsMarketStartedToday() {
+  const now = tradeOpsISTNow();
+  const day = now.getDay();
+  const mins = now.getHours() * 60 + now.getMinutes();
+  return day >= 1 && day <= 5 && mins >= 9 * 60 + 15;
 }
 
 function tradeOpsNum(v: any, fallback = 0) {
@@ -6623,7 +6746,9 @@ function buildTradeOpsLogPreview() {
   ].slice(-30).reverse();
 }
 
-async function buildTradeOpsStatus() {
+async function buildTradeOpsStatus(strategyId = "") {
+  const strategies = tradeOpsStrategyList();
+  const selectedStrategy = strategies.find((s) => s.id === String(strategyId || "").trim()) || strategies.find((s) => s.enabled) || strategies[0];
   const hb = readBotJSON("bot-heartbeat.json", {}) || {};
   const state = readBotJSON("trade-state.json", {}) || {};
   const tt1030State = readBotJSON("tt1030-state.json", {}) || {};
@@ -6653,26 +6778,43 @@ async function buildTradeOpsStatus() {
     strategyTradeMap.set(key, t);
   }
   const strategyTrades = Array.from(strategyTradeMap.values()).sort((a: any, b: any) => new Date(a?.date || a?.exitTime || a?.entryTime || 0).getTime() - new Date(b?.date || b?.exitTime || b?.entryTime || 0).getTime());
-  const displaySession = today;
+  const todayHasTrades = strategyTrades.some(t => tradeOpsDateKey(t?.date || t?.exitTime || t?.entryTime) === today);
+  const latestTradeSession = strategyTrades.map(t => tradeOpsDateKey(t?.date || t?.exitTime || t?.entryTime)).filter(Boolean).sort().pop() || today;
+  const botSessionDate = tradeOpsDateKey(tt1030State?.date || tt1030CandleFile?.date || hb?.at || today);
+  const botSessionHasOperationalData = !!botSessionDate && (
+    (Array.isArray(tt1030State?.candleLog) && tt1030State.candleLog.length > 0)
+    || (Array.isArray(tt1030CandleFile?.log) && tt1030CandleFile.log.length > 0)
+    || tradeOpsDateKey(hb?.at) === botSessionDate
+  );
+  const latestKnownSession = botSessionHasOperationalData && (!latestTradeSession || botSessionDate >= latestTradeSession)
+    ? botSessionDate
+    : latestTradeSession;
+  const displaySession = (tradeOpsMarketStartedToday() || todayHasTrades) ? today : latestKnownSession;
   const displayTrades = strategyTrades.filter(t => tradeOpsDateKey(t?.date || t?.exitTime || t?.entryTime) === displaySession);
   const displayClosed = displayTrades.filter(t => tradeOpsNum(t?.exitPrice) > 0 || tradeOpsNum(t?.premiumExit) > 0);
-  const todayPnl = displayClosed.reduce((sum, t) => sum + tradeOpsPnl(t), 0);
-  const persistedDayRs = tradeOpsDateKey(tt1030State?.date || today) === today ? tradeOpsMaybeNum(tt1030State?.dayRs) : null;
-  const persistedTrades = tradeOpsDateKey(tt1030State?.date || today) === today ? tradeOpsMaybeNum(tt1030State?.trades) : null;
-  const heartbeatHas1030Session = openTrade || (Array.isArray(hb?.tt1030TradeLog) && hb.tt1030TradeLog.length > 0) || tradeOpsNum(hb?.tt1030Trades) > 0;
+  const todayTrades = strategyTrades.filter(t => tradeOpsDateKey(t?.date || t?.exitTime || t?.entryTime) === today);
+  const todayClosed = todayTrades.filter(t => tradeOpsNum(t?.exitPrice) > 0 || tradeOpsNum(t?.premiumExit) > 0);
+  const todayPnl = todayClosed.reduce((sum, t) => sum + tradeOpsPnl(t), 0);
+  const todayStateActive = tradeOpsDateKey(tt1030State?.date || today) === today;
+  const todayHeartbeatActive = tradeOpsDateKey(hb?.at) === today;
+  const persistedDayRs = todayStateActive ? tradeOpsMaybeNum(tt1030State?.dayRs) : null;
+  const persistedTrades = todayStateActive ? tradeOpsMaybeNum(tt1030State?.trades) : null;
+  const heartbeatHas1030Session = todayHeartbeatActive
+    && (openTrade || (Array.isArray(hb?.tt1030TradeLog) && hb.tt1030TradeLog.length > 0) || tradeOpsNum(hb?.tt1030Trades) > 0);
   const liveNetCandidate = heartbeatHas1030Session ? tradeOpsMaybeNum(hb?.tt1030PnL) : persistedDayRs;
-  const liveClosedCandidate = tradeOpsMaybeNum(hb?.tt1030ClosedPnL) ?? persistedDayRs ?? todayPnl;
-  const liveUnrealizedCandidate = tradeOpsMaybeNum(hb?.tt1030UnrealizedPnL)
+  const liveClosedCandidate = (todayHeartbeatActive ? tradeOpsMaybeNum(hb?.tt1030ClosedPnL) : null) ?? persistedDayRs ?? todayPnl;
+  const liveUnrealizedCandidate = (todayHeartbeatActive ? tradeOpsMaybeNum(hb?.tt1030UnrealizedPnL) : null)
     ?? (liveNetCandidate !== null ? liveNetCandidate - liveClosedCandidate : null);
   const live1030Closed = liveClosedCandidate;
   const live1030Net = liveNetCandidate ?? (live1030Closed + (liveUnrealizedCandidate ?? 0));
-  const realized = displaySession === today ? live1030Closed : todayPnl;
-  const unrealized = displaySession === today ? (liveUnrealizedCandidate ?? (openTrade ? live1030Net - live1030Closed : 0)) : 0;
-  const netPnl = displaySession === today ? live1030Net : todayPnl;
-  const pnlSource = displaySession === today
-    ? (liveNetCandidate !== null ? "10:30 futures heartbeat" : "10:30 futures trade history")
-    : "latest completed session";
-  const pnls = displayClosed.map(t => tradeOpsPnl(t)).reduce((arr: number[], n) => {
+  const realized = live1030Closed;
+  const unrealized = liveUnrealizedCandidate ?? (openTrade && todayHeartbeatActive ? live1030Net - live1030Closed : 0);
+  const netPnl = live1030Net;
+  const todayHadTrade = todayClosed.length > 0 || heartbeatHas1030Session || (openTrade && todayHeartbeatActive);
+  const pnlSource = todayHadTrade
+    ? (liveNetCandidate !== null ? "today TradeOps heartbeat" : "today TradeOps trade history")
+    : "today reset/no trade";
+  const pnls = todayClosed.map(t => tradeOpsPnl(t)).reduce((arr: number[], n) => {
     arr.push((arr[arr.length - 1] || 0) + n);
     return arr;
   }, []);
@@ -6840,6 +6982,20 @@ async function buildTradeOpsStatus() {
   const candleLogSource = heartbeatCandleLog.length ? heartbeatCandleLog : persistedCandleLog;
   candleLogSourceForState = candleLogSource;
   const failureNote = latestRejection ? tradeOpsAuditMessage(latestRejection) : "";
+  const rawBlockedCandle = (c: any) => /blocked|rejected|failed|insufficient margin|no LIVE order|not opened/i.test(String(c?.status || "") + " " + String(c?.note || c?.reason || ""));
+  const firstBlockedRows = new WeakSet<object>();
+  const seenBlockedKeys = new Set<string>();
+  for (const row of candleLogSource) {
+    if (!row || typeof row !== "object" || !rawBlockedCandle(row)) continue;
+    const key = [
+      String(row?.dir || row?.direction || "").toUpperCase(),
+      String(row?.entry ?? ""),
+      String(row?.note || row?.reason || row?.status || "").replace(/\d{1,2}:\d{2}/g, "").trim().toLowerCase(),
+    ].join("|");
+    if (seenBlockedKeys.has(key)) continue;
+    seenBlockedKeys.add(key);
+    firstBlockedRows.add(row);
+  }
   const candleLog = candleLogSource.slice(-50).reverse().map((c: any, idx: number) => {
     const closeOnly = c?.open == null && c?.high == null && c?.low == null && c?.close != null;
     const close = tradeOpsNum(c?.close ?? c?.c);
@@ -6856,7 +7012,9 @@ async function buildTradeOpsStatus() {
       }
     }
     const hhmmText = String(rawTime || timeText || "").match(/(\d{1,2}:\d{2})/)?.[1] || timeText;
-    const blockedCandle = /blocked|rejected|failed|insufficient margin|no LIVE order|not opened/i.test(String(c?.status || "") + " " + String(c?.note || c?.reason || ""));
+    const blockedCandle = rawBlockedCandle(c);
+    const firstBlockedCandle = blockedCandle && c && typeof c === "object" && firstBlockedRows.has(c);
+    const carriedBlockedCandle = blockedCandle && !firstBlockedCandle;
     const tradeAtClose = blockedCandle ? null : candleTradeState(c, String(hhmmText).slice(0, 5), close, c?.sl ?? hb?.tt1030SL);
     const protectedNote = tradeAtClose?.protectedSl !== null && tradeAtClose?.protectedSl !== undefined
       ? ` Protected +${tradeAtClose.protectedPts || 300} SL: ${tradeAtClose.protectedSl}.`
@@ -6871,7 +7029,7 @@ async function buildTradeOpsStatus() {
       close,
       volume: tradeOpsNum(c?.volume ?? c?.v),
       closeOnly,
-      status: blockedCandle ? "Entry blocked" : (c?.status || (tradeAtClose ? "In trade" : "Monitoring")),
+      status: firstBlockedCandle ? "Entry blocked" : carriedBlockedCandle ? "Blocked context" : (c?.status || (tradeAtClose ? "In trade" : "Monitoring")),
       entry: blockedCandle ? null : (tradeAtClose?.entry ?? null),
       dir: blockedCandle ? (c?.dir || c?.direction || "--") : (tradeAtClose?.dir || "--"),
       sl: blockedCandle ? null : (tradeAtClose?.sl ?? null),
@@ -6898,7 +7056,7 @@ async function buildTradeOpsStatus() {
     margin: pendingExecution ? !!marginReady : true,
   };
   const failedChecks = Object.entries(executionChecks).filter(([, ok]) => !ok).map(([key]) => key);
-  const executionStatus = latestRejection ? "Blocked" : !pendingExecution ? "Idle" : failedChecks.length ? "Blocked" : "Ready";
+  const executionStatus = latestRejection ? "Blocked" : failedChecks.length ? "Blocked" : !pendingExecution ? "Idle" : "Ready";
   const executionBlockReason = executionStatus === "Idle"
     ? "No pending execution. Waiting for next order request."
     : latestRejection
@@ -6909,7 +7067,7 @@ async function buildTradeOpsStatus() {
 
   const serverLogs = buildTradeOpsLogPreview();
 
-  return {
+  const baseStatus = {
     ok: true,
     updatedAt: new Date().toISOString(),
     validations: {
@@ -7012,7 +7170,7 @@ async function buildTradeOpsStatus() {
       marginReady,
       orderValue: openPositions.reduce((s: number, p: any) => s + Math.abs(p.qty * p.ltp), 0),
       openCount: openPositions.length,
-      closedToday: displayClosed.length,
+      closedToday: todayClosed.length,
       rejectedToday: rejectionRows.length,
       lastRejection: latestRejection ? {
         time: tradeOpsTime(latestRejection.ts || latestRejection.at),
@@ -7041,23 +7199,187 @@ async function buildTradeOpsStatus() {
     candles: candleLog,
     logs: serverLogs,
   };
+
+  return tradeOpsApplySelectedStrategy(baseStatus, selectedStrategy, strategies);
 }
 
-app.get("/api/tradeops/status", requireAdmin, async (_req: Request, res: Response) => {
+function tradeOpsStrategySummary(strategies: TradeOpsStrategyConfig[]) {
+  return strategies.map((s) => ({
+    id: s.id,
+    name: s.name,
+    enabled: !!s.enabled,
+    mode: s.mode,
+    instrument: s.instrument,
+    product: s.product,
+    entryTime: s.entryTime,
+    quantity: s.quantity,
+    sl: s.sl,
+    target: s.target,
+    maxDailyLoss: s.maxDailyLoss,
+    status: s.enabled ? s.status : "Disabled",
+    liveCapable: !!s.liveCapable,
+    restartRequired: false,
+    config: s.config || {},
+  }));
+}
+
+function tradeOpsApplySelectedStrategy(baseStatus: any, selected: TradeOpsStrategyConfig, strategies: TradeOpsStrategyConfig[]) {
+  const summary = tradeOpsStrategySummary(strategies);
+  const selectedMeta = summary.find((s) => s.id === selected.id) || summary[0];
+  const withSelection = {
+    ...baseStatus,
+    selectedStrategyId: selectedMeta.id,
+    strategies: summary,
+    strategy: {
+      ...(baseStatus.strategy || {}),
+      id: selectedMeta.id,
+      name: selectedMeta.name,
+      label: selectedMeta.name,
+      mode: selectedMeta.mode,
+      instrument: selectedMeta.instrument,
+      product: selectedMeta.product,
+      enabled: selectedMeta.enabled,
+      status: selectedMeta.status,
+      config: selectedMeta.config,
+    },
+  };
+  if (selected.source === "tt1030") return withSelection;
+
+  const waiting = selected.enabled ? "Waiting" : "Disabled";
+  const note = selected.enabled
+    ? `${selected.name} is configured as SHADOW, but the bot runtime is not yet writing separate strategy files.`
+    : `${selected.name} is disabled.`;
+  return {
+    ...withSelection,
+    validations: {
+      ...(withSelection.validations || {}),
+      feed: { ok: false, label: "Strategy feed not connected", source: `${selected.id}/candle-log.json`, lastCandle: null, candleCount: 0, error: note },
+    },
+    strategy: { ...withSelection.strategy, source: "strategy-config", status: waiting },
+    modeControl: {
+      scope: selected.id,
+      runningMode: "SHADOW",
+      envMode: "SHADOW",
+      restartRequired: false,
+      liveAllowed: false,
+      safetyIssues: selected.liveCapable ? [] : ["LIVE is not enabled for this strategy yet."],
+    },
+    pnl: { ...(withSelection.pnl || {}), net: 0, realized: 0, unrealized: 0, todayHigh: 0, todayLow: 0, dayRangeAvailable: false, spark: "", source: note },
+    execution: { ...(withSelection.execution || {}), ready: false, status: waiting, pending: false, blockReason: note, orderValue: 0, openCount: 0, closedToday: 0, rejectedToday: 0, lastRejection: null },
+    positions: [],
+    trades: [],
+    rejections: [],
+    candles: [],
+    history: { source: "strategy_scoped_empty", total: 0, displaySession: withSelection.market?.latestSession || getTodayIST(), todayShadowTrades: 0 },
+    logs: [{ time: tradeOpsTime(new Date().toISOString()), level: selected.enabled ? "WARN" : "INFO", message: note }, ...(Array.isArray(withSelection.logs) ? withSelection.logs.slice(0, 12) : [])],
+  };
+}
+
+app.get("/api/tradeops/status", requireAdmin, async (req: Request, res: Response) => {
   try {
     res.setHeader("Cache-Control", "no-store");
-    res.json(await buildTradeOpsStatus());
+    res.json(await buildTradeOpsStatus(String(req.query.strategy || "")));
   } catch (e: any) {
     res.status(500).json({ ok: false, error: e?.message || "Status unavailable" });
   }
 });
 
-app.get("/api/tradeops/logs", requireAdmin, async (_req: Request, res: Response) => {
+app.get("/api/tradeops/logs", requireAdmin, async (req: Request, res: Response) => {
   try {
     res.setHeader("Cache-Control", "no-store");
+    const selected = tradeOpsResolveStrategy(String(req.query.strategy || ""));
+    if (selected.source !== "tt1030") {
+      const note = selected.enabled ? `${selected.name} shadow runtime logs are waiting for separate strategy files.` : `${selected.name} is disabled.`;
+      return res.json({ ok: true, updatedAt: new Date().toISOString(), logs: [{ time: tradeOpsTime(new Date().toISOString()), level: "WARN", message: note }] });
+    }
     res.json({ ok: true, updatedAt: new Date().toISOString(), logs: buildTradeOpsLogPreview() });
   } catch (e: any) {
     res.status(500).json({ ok: false, error: e?.message || "Logs unavailable" });
+  }
+});
+
+app.post("/api/tradeops/strategy-config", requireAdmin, async (req: Request, res: Response) => {
+  try {
+    const id = String(req.body?.strategyId || req.body?.id || "").trim();
+    const strategies = tradeOpsStrategyList();
+    const existing = strategies.find((s) => s.id === id);
+    if (!existing) return res.status(404).json({ ok: false, error: "Unknown strategy" });
+    const nextMode = String(req.body?.mode || existing.mode || "SHADOW").toUpperCase() === "LIVE" ? "LIVE" : "SHADOW";
+    if (nextMode === "LIVE" && !existing.liveCapable) {
+      return res.status(400).json({ ok: false, error: "LIVE is not enabled for this strategy yet. Keep it in SHADOW." });
+    }
+    const otherLive = strategies.find((s) => s.id !== id && s.mode === "LIVE");
+    if (nextMode === "LIVE" && otherLive) {
+      return res.status(400).json({ ok: false, error: `${otherLive.name} is already LIVE. Only one LIVE strategy is allowed initially.` });
+    }
+    const enabled = req.body?.enabled === undefined ? existing.enabled : !!req.body.enabled;
+    if (!enabled && existing.mode === "LIVE") {
+      const hb = readBotJSON("bot-heartbeat.json", {}) || {};
+      if (existing.id === "tt1030-futures" && hb?.tt1030InTrade) {
+        return res.status(400).json({ ok: false, error: "Cannot disable while the LIVE strategy has an active trade." });
+      }
+    }
+    tradeOpsWriteStrategyOverride(id, {
+      enabled,
+      mode: nextMode as TradeOpsStrategyMode,
+      instrument: String(req.body?.instrument || existing.instrument),
+      product: String(req.body?.product || existing.product),
+      entryTime: String(req.body?.entryTime || existing.entryTime),
+      quantity: tradeOpsNum(req.body?.quantity, existing.quantity),
+      sl: String(req.body?.sl || existing.sl),
+      target: String(req.body?.target || existing.target),
+      maxDailyLoss: String(req.body?.maxDailyLoss || existing.maxDailyLoss),
+      config: { ...(existing.config || {}), ...(req.body?.config || {}) },
+    });
+    res.json({ ok: true, strategy: tradeOpsStrategyList().find((s) => s.id === id), restartRequired: true });
+  } catch (e: any) {
+    res.status(500).json({ ok: false, error: e?.message || "Strategy config save failed" });
+  }
+});
+
+app.post("/api/tradeops/strategy-mode", requireAdmin, async (req: Request, res: Response) => {
+  try {
+    const id = String(req.body?.strategyId || req.body?.id || "").trim();
+    const mode = String(req.body?.mode || "SHADOW").toUpperCase() === "LIVE" ? "LIVE" : "SHADOW";
+    const strategies = tradeOpsStrategyList();
+    const existing = strategies.find((s) => s.id === id);
+    if (!existing) return res.status(404).json({ ok: false, error: "Unknown strategy" });
+    if (mode === "LIVE" && !existing.liveCapable) return res.status(400).json({ ok: false, error: "LIVE is not enabled for this strategy yet. Keep it in SHADOW." });
+    const otherLive = strategies.find((s) => s.id !== id && s.mode === "LIVE");
+    if (mode === "LIVE" && otherLive) return res.status(400).json({ ok: false, error: `${otherLive.name} is already LIVE. Only one LIVE strategy is allowed initially.` });
+    tradeOpsWriteStrategyOverride(id, { enabled: true, mode: mode as TradeOpsStrategyMode });
+    res.json({ ok: true, strategy: tradeOpsStrategyList().find((s) => s.id === id), restartRequired: true });
+  } catch (e: any) {
+    res.status(500).json({ ok: false, error: e?.message || "Strategy mode save failed" });
+  }
+});
+
+app.post("/api/tradeops/token-refresh", requireAdmin, async (_req: Request, res: Response) => {
+  try {
+    if (!fs.existsSync(TRADEOPS_AUTO_TOKEN_SCRIPT)) {
+      res.status(500).json({ ok: false, error: "Auto token script not found on VPS" });
+      return;
+    }
+    const running = execSync("pgrep -af 'node .*auto_token.js' || true", { encoding: "utf8", timeout: 3000 }).trim();
+    if (running) {
+      res.json({ ok: true, running: true, message: "Token refresh is already running. Dashboard will resync when it completes." });
+      return;
+    }
+    const refreshCmd = [
+      `cd ${TRADEOPS_BOT_DIR}`,
+      "mkdir -p logs",
+      `echo "[tradeops] manual token refresh requested at $(date -Is)" >> ${TRADEOPS_AUTO_TOKEN_LOG}`,
+      `nohup node ${TRADEOPS_AUTO_TOKEN_SCRIPT} >> ${TRADEOPS_AUTO_TOKEN_LOG} 2>&1 < /dev/null &`,
+    ].join(" && ");
+    execSync(`bash -lc ${JSON.stringify(refreshCmd)}`, { stdio: "ignore", timeout: 5000 });
+    res.json({
+      ok: true,
+      running: true,
+      message: "Auto token refresh started. Zerodha login/TOTP is running on VPS; TradeOps will update after the token is written.",
+      log: TRADEOPS_AUTO_TOKEN_LOG,
+    });
+  } catch (e: any) {
+    res.status(500).json({ ok: false, error: e?.message || "Could not start auto token refresh" });
   }
 });
 
@@ -7222,7 +7544,7 @@ function tradeOpsInitialWorkspaceHTML(page: string, status: any) {
     const brokerName = broker.connected ? "Zerodha" : "Not synced";
     const lastSync = h(status?.updatedAt || status?.lastUpdated || "Not synced");
     const rows = `<tr><td colspan="10" class="muted" style="text-align:center;padding:24px"><b>No account ledger records available</b><br>Broker account statement has not been synced yet. Trade P&L records are available separately in Trade History.<div style="margin-top:12px;display:flex;gap:8px;justify-content:center"><button id="syncAccountBtnEmpty" class="btn">Sync Account</button><a class="btn" href="/tradeops/trade-history">View Trade History</a></div></td></tr>`;
-    return `<section class="workspace-page account-workspace"><div class="workspace-head"><div><h1>Account</h1><p>Monitor broker balance, margins, ledger, and reconciliation.</p></div><div class="workspace-actions"><button id="syncAccountBtn" class="btn">Sync Account</button><a class="btn" href="/admin/signals">Refresh Token</a><button class="btn disabled-action" disabled>Export Statement</button><a class="btn" href="/tradeops">Back to Dashboard</a></div></div><div class="ws-summary account-summary"><section class="ws-card ws-kpi"><div class="ws-kpi-icon">&#8377;</div><div><label>Account Balance</label><b>${balance}</b>${syncChip}</div></section><section class="ws-card ws-kpi"><div class="ws-kpi-icon">&#8377;</div><div><label>Available Margin</label><b>${available}</b>${synced ? '<span class="ws-pill ok">Broker value</span>' : '<span class="ws-pill warn">Not synced</span>'}</div></section><section class="ws-card ws-kpi"><div class="ws-kpi-icon">&#8377;</div><div><label>Used Margin</label><b>${used}</b><span class="ws-pill warn">Live risk</span></div></section><section class="ws-card ws-kpi"><div class="ws-kpi-icon">&#8377;</div><div><label>Buying Power</label><b>${buying}</b>${syncChip}</div></section><section class="ws-card ws-kpi"><div class="ws-kpi-icon">&#8377;</div><div><label>Reconciliation</label><b>${synced ? "Not checked" : "Not synced"}</b><span class="ws-pill ${synced ? "warn" : "warn"}">${synced ? "Pending" : "Not synced"}</span></div></section></div><div class="ws-grid account-layout"><div class="ws-main"><section class="ws-card"><div class="ws-card-h"><span>Account Identity</span></div><div class="ws-card-b"><div class="identity-grid"><div class="identity-cell"><label>Account ID</label><b>${accountId}</b></div><div class="identity-cell"><label>Account Holder</label><b>${holder}</b></div><div class="identity-cell"><label>Broker</label><b>${h(brokerName)}</b></div><div class="identity-cell"><label>Account Type</label><b>Live</b></div><div class="identity-cell"><label>Token Status</label><b>${broker.tokenOK ? "Valid" : "Required"}</b></div><div class="identity-cell"><label>Last Broker Sync</label><b>${lastSync}</b></div></div></div></section><section class="ws-card"><div class="ws-card-b"><div class="filter-bar"><button class="seg active">Today</button><button class="seg">Weekly</button><button class="seg">Monthly</button><button class="seg">Yearly</button><button class="seg">Custom</button><select><option>All Types</option><option>Money In</option><option>Money Out</option><option>Charges</option><option>P&L</option></select><input placeholder="Search by broker ref / order ID / notes..."><button class="btn primary">Apply Filter</button><button class="btn">Reset</button></div></div></section><section class="ws-card account-statement"><div class="ws-card-h"><span>Account Statement</span><span class="muted">0 ledger records</span></div><div class="ws-card-b"><div class="ws-table-wrap"><table class="ws-table"><thead><tr><th>Date / Time</th><th>Type</th><th class="right">Money In</th><th class="right">Money Out</th><th class="right">Charges</th><th class="right">Realized P&L</th><th class="right">Running Balance</th><th>Broker Ref ID</th><th>Status</th><th>Notes</th></tr></thead><tbody>${rows}</tbody></table></div><div class="statement-pagination"><span>Rows per page 10</span><span>Showing 0 ledger records</span><button class="btn">1</button></div></div></section></div><aside class="ws-side"><section class="ws-card"><div class="ws-card-h"><span>Reconciliation</span></div><div class="ws-card-b side-list"><div class="side-row"><label>Broker Reported Balance</label><b>${balance}</b></div><div class="side-row"><label>App Ledger Balance</label><b>${synced ? "Not checked" : "Not synced"}</b></div><div class="side-row"><label>Difference</label><b>${synced ? "Not checked" : "Not synced"}</b></div><div class="side-row"><label>Last Reconciled</label><b>${synced ? "Pending" : "Not synced"}</b></div><div class="side-row"><label>Status</label><b>${synced ? "Not checked" : "Not synced"}</b></div><button class="btn primary disabled-action" disabled title="Ledger data required">Reconcile Now</button></div></section><section class="ws-card"><div class="ws-card-h"><span>Charges Breakdown</span><span class="muted">Today</span></div><div class="ws-card-b side-list"><div class="side-row"><label>Brokerage</label><b>Pending</b></div><div class="side-row"><label>Exchange Fees</label><b>Pending</b></div><div class="side-row"><label>GST</label><b>Pending</b></div><div class="side-row"><label>STT</label><b>Pending</b></div><div class="side-row"><label>Total Charges</label><b class="bad">${pnl.charges == null ? "Pending" : h(rs(pnl.charges))}</b></div></div></section><section class="ws-card"><div class="ws-card-h"><span>Quick Actions</span></div><div class="ws-card-b quick-actions"><button id="syncAccountBtn2" class="btn">Sync Account</button><a class="btn" href="/tradeops/trade-history">View Trade History</a><button class="btn disabled-action" disabled title="Ledger data required">Download CSV</button><button class="btn disabled-action" disabled title="Ledger data required">Download PDF</button></div></section></aside></div></section>`;
+    return `<section class="workspace-page account-workspace"><div class="workspace-head"><div><h1>Account</h1><p>Monitor broker balance, margins, ledger, and reconciliation.</p></div><div class="workspace-actions"><button id="syncAccountBtn" class="btn">Sync Account</button><button class="btn tokenRefreshAction" type="button">Fix Token</button><button class="btn disabled-action" disabled>Export Statement</button><a class="btn" href="/tradeops">Back to Dashboard</a></div></div><div class="ws-summary account-summary"><section class="ws-card ws-kpi"><div class="ws-kpi-icon">&#8377;</div><div><label>Account Balance</label><b>${balance}</b>${syncChip}</div></section><section class="ws-card ws-kpi"><div class="ws-kpi-icon">&#8377;</div><div><label>Available Margin</label><b>${available}</b>${synced ? '<span class="ws-pill ok">Broker value</span>' : '<span class="ws-pill warn">Not synced</span>'}</div></section><section class="ws-card ws-kpi"><div class="ws-kpi-icon">&#8377;</div><div><label>Used Margin</label><b>${used}</b><span class="ws-pill warn">Live risk</span></div></section><section class="ws-card ws-kpi"><div class="ws-kpi-icon">&#8377;</div><div><label>Buying Power</label><b>${buying}</b>${syncChip}</div></section><section class="ws-card ws-kpi"><div class="ws-kpi-icon">&#8377;</div><div><label>Reconciliation</label><b>${synced ? "Not checked" : "Not synced"}</b><span class="ws-pill ${synced ? "warn" : "warn"}">${synced ? "Pending" : "Not synced"}</span></div></section></div><div class="ws-grid account-layout"><div class="ws-main"><section class="ws-card"><div class="ws-card-h"><span>Account Identity</span></div><div class="ws-card-b"><div class="identity-grid"><div class="identity-cell"><label>Account ID</label><b>${accountId}</b></div><div class="identity-cell"><label>Account Holder</label><b>${holder}</b></div><div class="identity-cell"><label>Broker</label><b>${h(brokerName)}</b></div><div class="identity-cell"><label>Account Type</label><b>Live</b></div><div class="identity-cell"><label>Token Status</label><b>${broker.tokenOK ? "Valid" : "Required"}</b></div><div class="identity-cell"><label>Last Broker Sync</label><b>${lastSync}</b></div></div></div></section><section class="ws-card"><div class="ws-card-b"><div class="filter-bar"><button class="seg active">Today</button><button class="seg">Weekly</button><button class="seg">Monthly</button><button class="seg">Yearly</button><button class="seg">Custom</button><select><option>All Types</option><option>Money In</option><option>Money Out</option><option>Charges</option><option>P&L</option></select><input placeholder="Search by broker ref / order ID / notes..."><button class="btn primary">Apply Filter</button><button class="btn">Reset</button></div></div></section><section class="ws-card account-statement"><div class="ws-card-h"><span>Account Statement</span><span class="muted">0 ledger records</span></div><div class="ws-card-b"><div class="ws-table-wrap"><table class="ws-table"><thead><tr><th>Date / Time</th><th>Type</th><th class="right">Money In</th><th class="right">Money Out</th><th class="right">Charges</th><th class="right">Realized P&L</th><th class="right">Running Balance</th><th>Broker Ref ID</th><th>Status</th><th>Notes</th></tr></thead><tbody>${rows}</tbody></table></div><div class="statement-pagination"><span>Rows per page 10</span><span>Showing 0 ledger records</span><button class="btn">1</button></div></div></section></div><aside class="ws-side"><section class="ws-card"><div class="ws-card-h"><span>Reconciliation</span></div><div class="ws-card-b side-list"><div class="side-row"><label>Broker Reported Balance</label><b>${balance}</b></div><div class="side-row"><label>App Ledger Balance</label><b>${synced ? "Not checked" : "Not synced"}</b></div><div class="side-row"><label>Difference</label><b>${synced ? "Not checked" : "Not synced"}</b></div><div class="side-row"><label>Last Reconciled</label><b>${synced ? "Pending" : "Not synced"}</b></div><div class="side-row"><label>Status</label><b>${synced ? "Not checked" : "Not synced"}</b></div><button class="btn primary disabled-action" disabled title="Ledger data required">Reconcile Now</button></div></section><section class="ws-card"><div class="ws-card-h"><span>Charges Breakdown</span><span class="muted">Today</span></div><div class="ws-card-b side-list"><div class="side-row"><label>Brokerage</label><b>Pending</b></div><div class="side-row"><label>Exchange Fees</label><b>Pending</b></div><div class="side-row"><label>GST</label><b>Pending</b></div><div class="side-row"><label>STT</label><b>Pending</b></div><div class="side-row"><label>Total Charges</label><b class="bad">${pnl.charges == null ? "Pending" : h(rs(pnl.charges))}</b></div></div></section><section class="ws-card"><div class="ws-card-h"><span>Quick Actions</span></div><div class="ws-card-b quick-actions"><button id="syncAccountBtn2" class="btn">Sync Account</button><a class="btn" href="/tradeops/trade-history">View Trade History</a><button class="btn disabled-action" disabled title="Ledger data required">Download CSV</button><button class="btn disabled-action" disabled title="Ledger data required">Download PDF</button></div></section></aside></div></section>`;
   }
   if (page === "orders" || page === "trade-history") return `${top}${kpis}${simpleRows(trades,["Date","Time","Symbol","Side","Qty","Entry","Exit","P&L","Status"],(t)=>`<tr><td>${h(t.date)}</td><td>${h(t.time)}</td><td>${h(t.symbol)}</td><td>${h(t.side)}</td><td>${h(t.qty)}</td><td>${h(t.entry)}</td><td>${h(t.exit)}</td><td>${h(rs(t.pnl || 0))}</td><td>${h(t.status)}</td></tr>`)}</section>`;
   if (page === "positions") return `${top}${kpis}${simpleRows(positions,["Symbol","Qty","Avg","LTP","P&L","Status"],(p)=>`<tr><td>${h(p.symbol)}</td><td>${h(p.qty)}</td><td>${h(p.avg)}</td><td>${h(p.ltp)}</td><td>${h(rs(p.pnl || 0))}</td><td>${h(p.status)}</td></tr>`)}</section>`;
@@ -7353,6 +7675,9 @@ body.tradeops-collapsed .help,body.tradeops-collapsed .collapse-btn{justify-cont
 .status-chip .dot{width:8px!important;height:8px!important}
 .mode-chip{background:#f8fbff!important;color:#385173!important}
 .mode-dot{width:8px;height:8px;border-radius:50%;background:#2563eb;box-shadow:0 0 0 4px rgba(37,99,235,.10)}
+.strategy-select{height:36px!important;max-width:220px!important;min-width:164px!important;border:1px solid #d9e5f2!important;border-radius:12px!important;background:#fff!important;color:#0b1738!important;padding:0 34px 0 12px!important;font-size:13px!important;font-weight:780!important;box-shadow:0 8px 18px rgba(15,23,42,.035)!important;outline:none!important}
+.strategy-select:focus{border-color:#93c5fd!important;box-shadow:0 0 0 3px rgba(37,99,235,.12)!important}
+.strategy-mini{font-size:11px!important;color:#64748b!important;font-weight:700!important;margin-left:-4px!important;white-space:nowrap!important}
 .updated-chip{padding-right:7px!important}
 .refresh-mini{width:28px!important;height:28px!important;border:0!important;border-left:1px solid #e5edf7!important;background:transparent!important;color:#2563eb!important;display:grid!important;place-items:center!important;border-radius:9px!important;cursor:pointer!important;margin-left:2px!important}
 .refresh-mini svg{width:15px!important;height:15px!important;stroke-width:2.2!important;color:currentColor!important}
@@ -7379,6 +7704,163 @@ body.tradeops-collapsed .help,body.tradeops-collapsed .collapse-btn{justify-cont
 .workflow .flow-step .flow-text{flex:0 1 auto!important}
 .workflow .flow-step .flow-ok{position:static!important;left:auto!important;right:auto!important;top:auto!important;bottom:auto!important;margin-left:4px!important;flex:0 0 19px!important;width:19px!important;height:19px!important;font-size:12px!important}
 .workflow .flow-step .flow-ok:before{content:""!important}
+
+/* TradeOps dashboard fit pass: desktop density + real mobile layout */
+.content{padding:12px 16px 18px!important}
+.dashboard{grid-template-columns:minmax(300px,32fr) minmax(340px,34fr) minmax(300px,34fr)!important;grid-template-areas:"workflow workflow workflow" "pnl chart account" "ready orders quick" "positions recent quick" "logs logs logs"!important;gap:12px!important;align-items:stretch!important}
+.workflow.card{min-height:76px!important;padding:9px 12px!important;gap:10px!important;overflow:hidden!important}
+.workflow .flow-step{height:54px!important;min-width:0!important;flex:1 1 0!important;border-radius:12px!important;padding:0 10px!important;gap:9px!important}
+.workflow .flow-step:not(:last-of-type):after{right:-11px!important;width:10px!important;top:26px!important}
+.workflow .flow-icon{width:32px!important;height:32px!important;flex:0 0 32px!important}
+.workflow .flow-text{min-width:0!important}
+.workflow .flow-text b{font-size:12px!important;white-space:nowrap!important;overflow:hidden!important;text-overflow:ellipsis!important}
+.workflow .flow-text span{display:block!important;font-size:10px!important;white-space:nowrap!important;overflow:hidden!important;text-overflow:ellipsis!important;max-width:105px!important}
+.flow-actions{gap:8px!important;margin-left:2px!important;flex:0 0 auto!important;display:grid!important;grid-template-columns:1fr!important}
+.flow-actions .btn{height:32px!important;min-width:122px!important;border-radius:9px!important}
+.card-h{min-height:36px!important;padding:10px 14px 0!important;font-size:14px!important}
+.card-b{padding:10px 14px 12px!important}
+.pnl,.chart,.account{min-height:332px!important;height:332px!important}
+.pnl .card-b,.chart .card-b,.account .card-b{height:calc(100% - 36px)!important}
+.pnl-label{font-size:12px!important;margin-top:3px!important}
+.pnl-main{margin:0!important}
+.pnl-value{font-size:34px!important;margin:6px 0 10px!important;letter-spacing:-1px!important}
+.profit-pill{height:24px!important;font-size:11px!important;padding:0 12px!important}
+.metric-grid{gap:7px!important}
+.metric{min-height:54px!important;padding:8px!important;border-radius:8px!important}
+.metric label{font-size:10px!important;margin-bottom:5px!important;line-height:1.1!important}
+.metric b{font-size:12px!important;line-height:1.15!important;word-break:break-word!important}
+.pnl-foot{height:auto!important;margin-top:8px!important;padding-top:8px!important;font-size:11px!important;gap:8px!important;flex-wrap:wrap!important}
+.ohlc{margin-bottom:6px!important;font-size:11px!important}
+.ltp{font-size:22px!important}
+.chart-box{height:176px!important;max-height:176px!important;margin-top:8px!important}
+.tabs{margin-top:8px!important}
+.chart-footer{font-size:10.5px!important}
+.balance-big{font-size:24px!important;margin:5px 0 8px!important}
+.account-hint{font-size:11px!important;margin-bottom:8px!important}
+.account-ident{gap:8px!important;margin-bottom:8px!important}
+.account-ident>div{padding:8px!important}
+.acct-lines{padding:7px 0!important;margin-bottom:7px!important}
+.kv{padding:5px 0!important}
+.kv label{font-size:11px!important}
+.kv b,.kv strong{font-size:12px!important}
+.account-warn{padding:8px 10px!important;margin:7px 0!important;font-size:11px!important}
+.account-primary{height:32px!important}
+.ready.mini-card,.orders.mini-card{min-height:150px!important;height:150px!important}
+.quick.mini-card{min-height:312px!important;height:312px!important}
+.positions,.recent{min-height:154px!important;height:154px!important}
+.mini-card .card-b{padding-top:8px!important}
+.execution-gate .gate-head{gap:8px!important}
+.ready-strip{height:28px!important;margin:0!important;font-size:11px!important;width:auto!important;padding:0 12px!important}
+.execution-gate .mini-grid{grid-template-columns:repeat(4,minmax(0,1fr))!important;gap:7px!important}
+.execution-gate .mini-stat{min-height:54px!important;padding:8px!important}
+.order-idle b{font-size:22px!important}
+.order-bubbles{gap:6px!important}
+.order-bubble{min-height:48px!important;padding:7px 3px!important}
+.order-bubble b{font-size:16px!important}
+.quick-row{padding:6px 0!important}
+.table-wrap{height:92px!important;overflow:hidden!important;padding-bottom:8px!important}
+.logs-card{min-height:178px!important;height:178px!important}
+.logs{height:100px!important}
+@media(max-width:1366px){
+  .content{padding:10px 12px 16px!important}
+  .dashboard{gap:10px!important}
+  .workflow.card{min-height:66px!important;padding:7px 10px!important}
+  .workflow .flow-step{height:46px!important}
+  .workflow .flow-icon{width:28px!important;height:28px!important;flex-basis:28px!important}
+  .workflow .flow-text span{display:none!important}
+  .pnl,.chart,.account{height:292px!important;min-height:292px!important}
+  .pnl-value{font-size:30px!important}
+  .chart-box{height:146px!important;max-height:146px!important}
+  .metric{min-height:46px!important;padding:6px!important}
+  .metric label{font-size:9.5px!important}
+  .metric b{font-size:11px!important}
+  .balance-big{font-size:21px!important}
+  .ready.mini-card,.orders.mini-card{height:132px!important;min-height:132px!important}
+  .quick.mini-card{height:274px!important;min-height:274px!important}
+  .positions,.recent{height:142px!important;min-height:142px!important}
+  .logs-card{height:166px!important;min-height:166px!important}
+}
+@media(max-width:760px){
+  html,body{width:100%!important;overflow-x:hidden!important}
+  .app{display:block!important;grid-template-columns:1fr!important;width:100%!important;min-height:100vh!important}
+  .side{display:none!important}
+  body.tradeops-collapsed .main,.main{margin-left:0!important;width:100%!important;min-width:0!important}
+  body.tradeops-collapsed .top,.top{left:0!important;width:100%!important;height:auto!important;min-height:112px!important;align-items:stretch!important;flex-direction:column!important;gap:7px!important;padding:8px 10px!important;overflow:visible!important}
+  .top-spacer{display:none!important}
+  .command-group{width:100%!important;min-width:0!important}
+  .status-group{order:2!important;display:flex!important;overflow-x:auto!important;overflow-y:hidden!important;padding-bottom:2px!important;gap:8px!important;scrollbar-width:none!important}
+  .status-group::-webkit-scrollbar{display:none!important}
+  .action-group{order:1!important;display:grid!important;grid-template-columns:minmax(0,1fr) auto auto!important;gap:8px!important;align-items:center!important}
+  .status-chip{height:34px!important;flex:0 0 auto!important;padding:0 10px!important;font-size:12px!important}
+  .strategy-select{height:34px!important;flex:0 0 176px!important;max-width:176px!important;font-size:12px!important}
+  .strategy-mini{display:none!important}
+  .status-chip span{display:inline!important}
+  .mode-chip span{display:inline!important}
+  .mode-chip{display:inline-flex!important}
+  .account-switcher{min-width:0!important;width:100%!important;justify-content:flex-start!important}
+  .account-switcher b{overflow:hidden!important;text-overflow:ellipsis!important;white-space:nowrap!important}
+  .btn.danger{height:38px!important;padding:0 12px!important;font-size:12px!important}
+  .profile-block{width:38px!important;overflow:hidden!important}
+  .profile-block .user{display:none!important}
+  .content{padding:10px!important;width:100%!important}
+  .dashboard{grid-template-columns:minmax(0,1fr)!important;grid-template-areas:"workflow" "pnl" "chart" "account" "ready" "orders" "quick" "positions" "recent" "logs"!important;gap:10px!important;width:100%!important}
+  .dashboard>.card{width:100%!important;height:auto!important;min-width:0!important}
+  .workflow.card{display:flex!important;flex-wrap:nowrap!important;overflow-x:auto!important;overflow-y:hidden!important;min-height:70px!important;padding:9px!important;gap:8px!important;background:transparent!important;scrollbar-width:none!important}
+  .workflow.card::-webkit-scrollbar{display:none!important}
+  .workflow .flow-step{flex:0 0 196px!important;height:50px!important;border-radius:12px!important}
+  .workflow .flow-step:not(:last-of-type):after{display:none!important}
+  .workflow .flow-text span{display:block!important;max-width:108px!important}
+  .flow-actions{display:flex!important;flex:0 0 auto!important}
+  .flow-actions .btn{min-width:106px!important;height:34px!important}
+  .pnl,.chart,.account,.ready.mini-card,.orders.mini-card,.quick.mini-card,.positions,.recent,.logs-card{height:auto!important;min-height:0!important}
+  .pnl .card-b,.chart .card-b,.account .card-b{height:auto!important}
+  .pnl-value{font-size:42px!important}
+  .metric-grid{grid-template-columns:repeat(2,minmax(0,1fr))!important}
+  .metric{min-height:64px!important}
+  .pnl-foot{display:grid!important;grid-template-columns:1fr!important}
+  .chart-box{height:320px!important;max-height:320px!important}
+  .account-ident{grid-template-columns:1fr!important}
+  .execution-gate .mini-grid{grid-template-columns:repeat(2,minmax(0,1fr))!important}
+  .order-bubbles{grid-template-columns:repeat(3,minmax(0,1fr))!important}
+  .quick-grid{grid-template-columns:1fr!important}
+  .table-wrap{height:auto!important;overflow-x:auto!important;overflow-y:hidden!important}
+  .table{min-width:560px!important}
+  .logs{height:150px!important}
+}
+/* Dashboard QA pass 2: remove visible wasted height and tablet overflow */
+.dashboard .account-ident{display:none!important}
+.dashboard .account-hint{display:none!important}
+.dashboard .account-warn{padding:7px 9px!important;margin:5px 0!important}
+.dashboard .metric b{font-size:11px!important;white-space:nowrap!important;word-break:normal!important}
+.dashboard .metric label{white-space:normal!important}
+.dashboard .pnl,.dashboard .chart,.dashboard .account{height:390px!important;min-height:390px!important}
+.dashboard .chart-box{height:218px!important;max-height:218px!important}
+.dashboard .logs-card{height:166px!important;min-height:166px!important}
+.dashboard .logs{height:90px!important}
+@media(max-width:1366px){
+  .dashboard .pnl,.dashboard .chart,.dashboard .account{height:286px!important;min-height:286px!important}
+  .dashboard .chart-box{height:140px!important;max-height:140px!important}
+  .dashboard .logs-card{height:154px!important;min-height:154px!important}
+  .dashboard .logs{height:82px!important}
+}
+@media(min-width:761px) and (max-width:900px){
+  .top{left:74px!important;width:calc(100% - 74px)!important;overflow-x:auto!important}
+  .content{padding:10px!important;overflow:hidden!important}
+  .dashboard{grid-template-columns:minmax(0,1fr) minmax(0,1fr)!important;grid-template-areas:"workflow workflow" "pnl chart" "account quick" "ready orders" "positions recent" "logs logs"!important;width:100%!important}
+  .workflow.card{overflow-x:auto!important;flex-wrap:nowrap!important}
+  .workflow .flow-step{flex:0 0 178px!important}
+  .workflow .flow-step:not(:last-of-type):after{display:none!important}
+  .flow-actions{display:flex!important}
+  .dashboard .pnl,.dashboard .chart,.dashboard .account,.dashboard .quick{height:auto!important;min-height:310px!important}
+  .dashboard .chart-box{height:190px!important;max-height:190px!important}
+  .dashboard .ready,.dashboard .orders,.dashboard .positions,.dashboard .recent{height:auto!important;min-height:150px!important}
+  .dashboard .logs-card{height:180px!important;min-height:180px!important}
+}
+@media(max-width:760px){
+  .dashboard .account-ident{display:grid!important}
+  .dashboard .pnl,.dashboard .chart,.dashboard .account,.dashboard .quick,.dashboard .logs-card{height:auto!important;min-height:0!important}
+  .dashboard .metric b{font-size:12px!important;white-space:normal!important}
+}
 
 </style>
 </head>
@@ -7413,6 +7895,8 @@ body.tradeops-collapsed .help,body.tradeops-collapsed .collapse-btn{justify-cont
   <main class="main">
     <header class="top">
       <div class="command-group status-group">
+        <select id="strategySelect" class="strategy-select" title="Select TradeOps strategy"><option value="tt1030-futures">10:30 Futures</option></select>
+        <span id="strategyInstrumentMini" class="strategy-mini">BANKNIFTY</span>
         <div class="status-chip"><span id="marketDot" class="dot"></span><span id="marketLabel">Checking</span></div>
         <div class="status-chip"><span id="brokerDot" class="dot"></span><span id="brokerLabel">Broker</span></div>
         <div class="status-chip"><span id="botDot" class="dot"></span><span id="botLabel">Bot</span></div>
@@ -7434,9 +7918,9 @@ body.tradeops-collapsed .help,body.tradeops-collapsed .collapse-btn{justify-cont
           <div class="flow-step"><div class="flow-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><rect x="6" y="7" width="12" height="10" rx="2"/><path d="M12 3v4M8 21h8M9 11h.01M15 11h.01"/></svg></div><div class="flow-text"><b id="flowBotTitle">Bot</b><span id="flowBotSub">Checking</span></div><span class="flow-ok" id="flowBotBadge">?</span></div>
           <div class="flow-step"><div class="flow-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M4 12h3l2-5 4 10 2-5h5"/></svg></div><div class="flow-text"><b id="flowFeedTitle">Feed</b><span id="flowFeedSub">Checking</span></div><span class="flow-ok" id="flowFeedBadge">?</span></div>
           <div class="flow-step"><div class="flow-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M5 19 19 5"/><path d="m14 5 5 5"/><path d="M5 19l5-1 8-8"/></svg></div><div class="flow-text"><b id="flowExecTitle">Execution</b><span id="flowExecSub">Checking</span></div><span class="flow-ok" id="flowExecBadge">?</span></div>
-          <div class="flow-actions"><button class="btn" id="refreshTokenBtn">Refresh Token</button><button class="btn" id="syncAccountBtn">Sync Account</button></div>
+          <div class="flow-actions"><button class="btn" id="refreshTokenBtn" title="Open token fix page">Fix Token</button><button class="btn" id="syncAccountBtn">Sync Account</button></div>
         </section>
-        <section class="card pnl"><div class="card-h"><span class="pnl-head">10:30 Futures P&amp;L <span class="dot ok"></span><span class="ok" id="pnlLiveLabel">Live data</span></span><a class="pnl-link" href="/tradeops/trade-history">View details &rsaquo;</a></div><div class="card-b"><div id="pnlMetricLabel" class="pnl-label">10:30 Futures Net P&amp;L</div><div class="pnl-main"><div><div id="netPnl" class="pnl-value">Not synced</div><div id="pnlSupport" class="pnl-support">10:30 futures P&amp;L</div></div><span id="profitChip" class="profit-pill">--</span></div><div class="metric-grid"><div class="metric"><label>Realized P&amp;L</label><b id="realized">--</b></div><div class="metric emphasis"><label>Unrealized P&amp;L</label><b id="unrealized">--</b></div><div class="metric"><label>Charges</label><b id="charges">Unavailable</b></div><div class="metric emphasis"><label>Net After Charges</label><b id="netAfterCharges">Unavailable</b></div><div class="metric"><label>Day High</label><b id="dayHigh">Not available</b></div><div class="metric"><label>Day Low</label><b id="dayLow">Not available</b></div><div class="metric emphasis"><label>Open P&amp;L</label><b id="openPnl">--</b></div><div class="metric"><label>Closed P&amp;L</label><b id="closedPnl">--</b></div></div><div class="pnl-foot"><span>Last updated: <b id="pnlUpdated">--</b></span><span>Source: <b id="pnlSource">Broker</b></span><span>Mode: <b id="pnlMode">Live</b></span></div></div></section>
+        <section class="card pnl"><div class="card-h"><span class="pnl-head"><span id="pnlCardTitle">10:30 Futures P&amp;L</span> <span class="dot ok"></span><span class="ok" id="pnlLiveLabel">Live data</span></span><a class="pnl-link" href="/tradeops/trade-history">View details &rsaquo;</a></div><div class="card-b"><div id="pnlMetricLabel" class="pnl-label">10:30 Futures Net P&amp;L</div><div class="pnl-main"><div><div id="netPnl" class="pnl-value">Not synced</div><div id="pnlSupport" class="pnl-support">10:30 futures P&amp;L</div></div><span id="profitChip" class="profit-pill">--</span></div><div class="metric-grid"><div class="metric"><label>Realized P&amp;L</label><b id="realized">--</b></div><div class="metric emphasis"><label>Unrealized P&amp;L</label><b id="unrealized">--</b></div><div class="metric"><label>Charges</label><b id="charges">Unavailable</b></div><div class="metric emphasis"><label>Net After Charges</label><b id="netAfterCharges">Unavailable</b></div><div class="metric"><label>Day High</label><b id="dayHigh">Not available</b></div><div class="metric"><label>Day Low</label><b id="dayLow">Not available</b></div><div class="metric emphasis"><label>Open P&amp;L</label><b id="openPnl">--</b></div><div class="metric"><label>Closed P&amp;L</label><b id="closedPnl">--</b></div></div><div class="pnl-foot"><span>Last updated: <b id="pnlUpdated">--</b></span><span>Source: <b id="pnlSource">Broker</b></span><span>Mode: <b id="pnlMode">Live</b></span></div></div></section>
         <section class="card chart"><div class="card-h"><span>BANKNIFTY &middot; <span id="chartTfLabel">15m</span> <span id="chartMode" class="chart-mode">Checking</span></span><a class="chart-link" href="/tradeops/candle-logs">View chart &rsaquo;</a></div><div class="card-b"><div class="chart-top"><div><div id="ohlc" class="ohlc">OHLC unavailable</div><div><span id="ltp" class="ltp">LTP unavailable</span> <span id="change" class="ok"></span></div></div><button class="btn" id="chartTfTop">15m</button></div><div class="chart-box" id="chartBox"></div><div class="tabs" id="chartTabs"><button type="button" data-tf="15m" class="active">15m</button><span style="margin-left:auto" class="muted chart-footer"><span id="feedStateDot" class="dot"></span> <span id="feedState">Checking</span> | Last candle: <b id="lastCandle">--</b> | <b id="candleCount">0 candles</b></span></div></div></section>
         <section class="card account"><div class="card-h"><span>Account Balance</span><span id="accountSyncChip" class="account-chip">Checking</span></div><div class="card-b"><div class="muted">Total Account Balance</div><div class="balance-big" id="balance">Not synced</div><div id="accountHint" class="account-hint">Sync account to view balance</div><div class="account-ident"><div><label>Account ID</label><b id="accountId">Not synced</b></div><div><label>Broker</label><b id="brokerName">Not synced</b></div><div><label>Holder</label><b id="accountName">Not synced</b></div></div><div class="acct-lines"><div class="kv"><label>Available Margin</label><strong id="available">Not synced</strong></div><div class="kv"><label>Used Margin</label><b id="usedMargin">Not synced</b></div><div class="kv"><label>Buying Power</label><strong id="buyingPower">Not synced</strong></div></div><div id="accountWarn" class="account-warn">Account not synced. Balance and margin unavailable.</div><div class="kv"><label>Broker Sync</label><b id="brokerSyncAccount">Not synced</b></div><div class="kv"><label>Reconciliation</label><b id="recon" class="ok">Not synced</b></div><div class="kv"><label>Last Sync</label><b id="lastSync">Not synced</b></div><a class="btn account-primary" href="/tradeops/account">View Statement &rsaquo;</a></div></section>
         <section class="card ready mini-card execution-gate"><div class="card-h"><span>Execution Gate</span><a href="/tradeops/executions">View details &rsaquo;</a></div><div class="card-b"><div class="gate-head"><span id="readyStrip" class="ready-strip">Checking</span><span id="gateReason" class="muted">Checking execution state</span></div><div id="gateIdle" class="compact-empty gate-idle"><div class="empty-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="12" r="9"/><path d="M8 12h8"/></svg></div><div><b>No pending execution</b><span>Waiting for next order request.</span><small>Last check: <strong id="gateLastCheck">--</strong></small></div></div><div id="gateMetrics" class="mini-grid"><div class="mini-stat"><label>Next Order Value</label><b id="nextOrderValue">Idle</b></div><div class="mini-stat"><label>Required Margin</label><b id="requiredMargin">Idle</b></div><div class="mini-stat"><label>Available Margin</label><b id="available2">Not synced</b></div><div class="mini-stat"><label>Shortfall</label><b id="shortfall">--</b></div></div><div class="checks-row" id="checksRow"></div></div></section>
@@ -7452,8 +7936,11 @@ body.tradeops-collapsed .help,body.tradeops-collapsed .collapse-btn{justify-cont
 <div class="tradeops-loader" id="tradeopsLoader"><div class="loader-logo"><svg viewBox="0 0 24 24"><path d="M4 16.5 9 11l3.5 3.5L20 6"/><path d="M5 20h14"/><path d="M6 4h12"/></svg></div></div>
 <script>setTimeout(function(){var e=document.getElementById('tradeopsLoader');if(e)e.classList.add('hide')},7000);</script>
 <div class="modal" id="modal"><div class="dialog"><h2>Emergency Stop</h2><p class="muted">This will close all open positions immediately. This action cannot be undone.</p><input id="pin" placeholder="Optional PIN / password"><label><input type="checkbox" id="confirmBox"> I understand this is a live close-all action.</label><input id="confirmPhrase" placeholder="Type CLOSE ALL"><div id="emergencyResult" class="muted" style="margin:12px 0"></div><div class="actions"><button class="btn" id="cancelStop">Cancel</button><button class="btn danger" id="sendStop">Close All Trades Now</button></div></div></div><script async src="https://cdn.jsdelivr.net/npm/lightweight-charts@4.2.3/dist/lightweight-charts.standalone.production.js"></script><script>
-  const PAGE=${JSON.stringify(safePage)};const INITIAL_STATUS=${JSON.stringify(initialStatus || null).replace(/<\\/g,"<\\\\/")};const INR=new Intl.NumberFormat('en-IN',{style:'currency',currency:'INR',maximumFractionDigits:0});let paused=false;let chartTf='15m';let lastStatus=null;let tradeOpsSessionDate='';
+  const PAGE=${JSON.stringify(safePage)};const INITIAL_STATUS=${JSON.stringify(initialStatus || null).replace(/<\\/g,"<\\\\/")};const INR=new Intl.NumberFormat('en-IN',{style:'currency',currency:'INR',maximumFractionDigits:0});const DEFAULT_STRATEGY='tt1030-futures';let selectedTradeOpsStrategy=(function(){try{return localStorage.getItem('tradeopsSelectedStrategy')||DEFAULT_STRATEGY}catch(e){return DEFAULT_STRATEGY}})();let paused=false;let chartTf='15m';let lastStatus=null;let tradeOpsSessionDate='';
 function rs(n){n=Number(n||0);return (n<0?'-':'')+INR.format(Math.abs(n));}function pc(n){return Number(n||0).toFixed(2)+'%'}function cls(n){return Number(n||0)>=0?'ok':'bad'}function txt(v){v=String(v||'').trim();return !v||v==='Unavailable'?'Not synced':v}function money(ok,n){return ok?rs(n):'Not synced'}function num(v){const n=Number(v);return Number.isFinite(n)?n:null}function fixed(v,d){const n=num(v);return n==null?'--':n.toFixed(d||2)}function ago(sec){if(sec==null)return 'No heartbeat';return sec<60?sec+'s ago':Math.round(sec/60)+'m ago'}function set(id,v){const e=document.getElementById(id);if(e)e.textContent=v}function markFlow(id,ok){const e=document.getElementById(id);if(!e)return;e.className='flow-ok '+(ok?'pass':'fail');e.textContent=ok?'✓':'!';const step=e.closest('.flow-step');if(step)step.classList.toggle('blocked',!ok)}function rows(cols,msg){return '<tr><td colspan="'+cols+'" class="muted" style="text-align:center;padding:18px">'+msg+'</td></tr>'}
+function strategyUrl(path){const sep=path.indexOf('?')>=0?'&':'?';return path+sep+'strategy='+encodeURIComponent(selectedTradeOpsStrategy||DEFAULT_STRATEGY)}
+function renderStrategySelect(d){const sel=document.getElementById('strategySelect');const list=Array.isArray(d.strategies)?d.strategies:[];if(sel){const current=String(d.selectedStrategyId||selectedTradeOpsStrategy||DEFAULT_STRATEGY);if(list.length){sel.innerHTML=list.map(function(s){return '<option value="'+txt(s.id)+'">'+txt(s.name)+' | '+txt(s.mode||'SHADOW')+'</option>'}).join('')}sel.value=current;selectedTradeOpsStrategy=current;try{localStorage.setItem('tradeopsSelectedStrategy',current)}catch(e){}}const st=d.strategy||{};set('strategyInstrumentMini',txt(st.instrument||'BANKNIFTY')+' | '+txt(st.product||''))}
+function selectTradeOpsStrategy(id){selectedTradeOpsStrategy=id||DEFAULT_STRATEGY;try{localStorage.setItem('tradeopsSelectedStrategy',selectedTradeOpsStrategy)}catch(e){}const sel=document.getElementById('strategySelect');if(sel)sel.value=selectedTradeOpsStrategy;load();loadLogs()}
 function nav(){document.querySelectorAll('.nav a').forEach(a=>a.classList.toggle('active',a.dataset.page===PAGE))}
 function hideLoader(){const e=document.getElementById('tradeopsLoader');if(e)e.classList.add('hide')}
 function setFlowBadge(id,ok){const e=document.getElementById(id);if(!e)return;e.className='flow-ok '+(ok?'pass':'fail');e.innerHTML=ok?'&#10003;':'!';const step=e.closest('.flow-step');if(step)step.classList.toggle('blocked',!ok)}
@@ -7464,7 +7951,7 @@ function chart(candles){const wrap=document.getElementById('chartBox');const cs=
 function logGroups(logs){const meaningful=[];(logs||[]).forEach(l=>{let msg=String(l.message||'');let level=String(l.level||'INFO').toUpperCase();if(/requireStack|at Module|node:internal|^\\s*at\\s/i.test(msg))return;if(/MODULE_NOT_FOUND/i.test(msg)){level='ERROR';msg='Server module missing. Stack trace available in full logs.'}if(/ETIMEDOUT|failed|rejected|Error:/i.test(msg))level='ERROR';meaningful.push({time:l.time,level,message:msg})});const grouped=[];meaningful.forEach(l=>{const prev=grouped[grouped.length-1];const key=l.level+'|'+String(l.message||'').replace(/attempt \\d+/i,'attempt #');if(prev&&prev.key===key){prev.count++}else grouped.push({key,count:1,row:l})});return grouped}
 function logHtml(groups,limit){return groups.length?groups.slice(0,limit).map(g=>{const l=g.row;const msg=g.count>1?l.message+' repeated '+g.count+' times':l.message;return '<div><span class="muted">'+txt(l.time)+'</span> <span class="'+(l.level==='ERROR'?'error':l.level==='WARN'?'warn':'info')+'">['+txt(l.level)+']</span> '+txt(msg)+'</div>'}).join(''):'<div class="muted">No meaningful logs recorded yet</div>'}
 function renderLogs(logs){if(paused)return;const grouped=logGroups(logs);const logsEl=document.getElementById('logs');if(logsEl)logsEl.innerHTML=logHtml(grouped,6);const workspaceLogs=document.getElementById('workspaceLogs');if(workspaceLogs)workspaceLogs.innerHTML=logHtml(grouped,120)}
-async function loadLogs(){if(paused)return;try{const r=await fetch('/api/tradeops/logs',{cache:'no-store',credentials:'same-origin',headers:{'Accept':'application/json'}});if(!r.ok)return;const j=await r.json();if(j&&Array.isArray(j.logs))renderLogs(j.logs)}catch(e){}}
+async function loadLogs(){if(paused)return;try{const r=await fetch(strategyUrl('/api/tradeops/logs'),{cache:'no-store',credentials:'same-origin',headers:{'Accept':'application/json'}});if(!r.ok)return;const j=await r.json();if(j&&Array.isArray(j.logs))renderLogs(j.logs)}catch(e){}}
 function setupSidebar(){const btn=document.querySelector('.collapse-btn');if(!btn||btn._wired)return;btn._wired=true;const label=btn.querySelector('span');function sync(){const collapsed=document.body.classList.contains('tradeops-collapsed');if(label)label.textContent=collapsed?'Expand':'Collapse';btn.title=collapsed?'Expand sidebar':'Collapse sidebar'}try{if(localStorage.getItem('tradeopsSidebarCollapsed')==='1')document.body.classList.add('tradeops-collapsed')}catch(e){}sync();btn.onclick=function(){document.body.classList.toggle('tradeops-collapsed');try{localStorage.setItem('tradeopsSidebarCollapsed',document.body.classList.contains('tradeops-collapsed')?'1':'0')}catch(e){}sync()}}
 function render(d){
   d=d||{};
@@ -7482,6 +7969,7 @@ function render(d){
   d.logs=Array.isArray(d.logs)?d.logs:[];
   d.updatedAt=d.updatedAt||new Date().toISOString();
   lastStatus=d;
+  renderStrategySelect(d);
   tradeOpsSessionDate=(d&&d.market&&d.market.latestSession)||String((d&&d.updatedAt)||'').slice(0,10)||'';
   nav();
   document.getElementById('dashboard').classList.toggle('hidden',PAGE!=='dashboard');
@@ -7539,9 +8027,11 @@ function render(d){
   const profitChip=document.getElementById('profitChip');
   profitChip.textContent=net>=0?'Profit':'Loss';
   profitChip.className='profit-pill '+(net>=0?'':'loss');
+  const strategyLabel=txt(d.strategy&&d.strategy.label||'TradeOps Strategy');
+  set('pnlCardTitle',strategyLabel+' P&L');
   set('pnlLiveLabel',liveMode?'Live':'Last Session');
   set('pnlMetricLabel',liveMode?'Net Live P&L':'Net Session P&L');
-  set('pnlSupport',openActive?'10:30 futures position active':((d.pnl&&d.pnl.source)?'Source: '+d.pnl.source:'10:30 futures P&L'));
+  set('pnlSupport',openActive?strategyLabel+' position active':((d.pnl&&d.pnl.source)?'Source: '+d.pnl.source:strategyLabel+' P&L'));
   set('pnlSource',(d.pnl&&d.pnl.source?d.pnl.source:(d.broker.connected?'Broker':'Bot'))+' / '+Math.round(((d.pnl&&d.pnl.refreshMs)||5000)/1000)+'s');
   set('pnlMode',(d.strategy&&d.strategy.mode)||'UNKNOWN');
   set('realized',rs(d.pnl.realized));
@@ -7696,7 +8186,7 @@ function render(d){
     const buying=synced?rs((d.pnl.buyingPower!=null?d.pnl.buyingPower:d.pnl.availableMargin)||0):'Not synced';
     const syncChip=synced?pill('Synced','ok'):pill('Not synced','warn');
     const statementRows='';
-    root.innerHTML='<section class="workspace-page account-workspace"><div class="workspace-head"><div><h1>Account</h1><p>Auto-refreshes live Zerodha margins every 5 seconds while this page is open.</p></div><div class="workspace-actions"><button id="syncAccountBtnPage" class="btn" onclick="load()">Sync Now</button><a class="btn" href="/admin/signals">Refresh Token</a><button class="btn disabled-action" disabled title="Zerodha ledger sync is not connected">Export Statement</button><a class="btn" href="/tradeops">Back to Dashboard</a></div></div>'+summary([kpi('Account Balance',balance,syncChip,'&#8377;'),kpi('Available Margin',available,synced?pill('Broker value','ok'):pill('Not synced','warn'),'&#8599;'),kpi('Used Margin',used,pill('Live risk','warn'),'&#9684;'),kpi('Buying Power',buying,syncChip,'&#9889;'),kpi('Ledger Sync',synced?'Margins live':'Not synced',pill(synced?'Broker margins':'Not synced',synced?'ok':'warn'),'&#10003;')])+'<div class="ws-grid account-layout"><div class="ws-main"><section class="ws-card"><div class="ws-card-h"><span>Account Identity</span></div><div class="ws-card-b"><div class="identity-grid"><div class="identity-cell"><label>Account ID</label><b>'+txt(d.broker&&d.broker.accountId)+'</b></div><div class="identity-cell"><label>Account Holder</label><b>'+txt(d.broker&&d.broker.accountName)+'</b></div><div class="identity-cell"><label>Broker</label><b>'+(brokerOk?'Zerodha':'Not synced')+'</b></div><div class="identity-cell"><label>Account Type</label><b>Live</b></div><div class="identity-cell"><label>Token Status</label><b>'+(tokenOk?'Valid':'Required')+'</b></div><div class="identity-cell"><label>Last Broker Sync</label><b>'+txt(d.updatedAt||'Not synced')+'</b></div></div></div></section>'+filterBar('<select><option>All Types</option><option>Money In</option><option>Money Out</option><option>Charges</option><option>P&L</option></select>')+tableCard('Account Statement',[{t:'Date / Time'},{t:'Type'},{t:'Money In',right:1},{t:'Money Out',right:1},{t:'Charges',right:1},{t:'Realized P&L',right:1},{t:'Running Balance',right:1},{t:'Broker Ref ID'},{t:'Status'},{t:'Notes'}],statementRows,empty('','Ledger sync not connected','Live balance and available margin are pulled from Zerodha margins. Full account statement and charge ledger need a separate broker ledger integration.',{href:'/tradeops/trade-history',label:'View Trade History'}),' 0 ledger records')+'</div><aside class="ws-side">'+sidePanel('Live Margin Source', [['Broker Reported Balance',balance],['Available Margin',available],['Used Margin',used],['Last Sync',txt(d.updatedAt||'Not synced')]]) + sidePanel('Charges Breakdown', [['Brokerage','Unavailable'],['Exchange Fees','Unavailable'],['GST','Unavailable'],['STT','Unavailable'],['Total Charges',d.pnl&&d.pnl.charges!=null?rs(d.pnl.charges):'Unavailable','bad']])+'<section class="ws-card"><div class="ws-card-h"><span>Quick Actions</span></div><div class="ws-card-b quick-actions"><button class="btn" onclick="load()">Sync Now</button><a class="btn" href="/tradeops/trade-history">View Trade History</a><button class="btn disabled-action" disabled title="Ledger data required">Download CSV</button><button class="btn disabled-action" disabled title="Ledger data required">Download PDF</button></div></section></aside></div></section>';return;
+    root.innerHTML='<section class="workspace-page account-workspace"><div class="workspace-head"><div><h1>Account</h1><p>Auto-refreshes live Zerodha margins every 5 seconds while this page is open.</p></div><div class="workspace-actions"><button id="syncAccountBtnPage" class="btn" onclick="load()">Sync Now</button><button class="btn tokenRefreshAction" type="button">Fix Token</button><button class="btn disabled-action" disabled title="Zerodha ledger sync is not connected">Export Statement</button><a class="btn" href="/tradeops">Back to Dashboard</a></div></div>'+summary([kpi('Account Balance',balance,syncChip,'&#8377;'),kpi('Available Margin',available,synced?pill('Broker value','ok'):pill('Not synced','warn'),'&#8599;'),kpi('Used Margin',used,pill('Live risk','warn'),'&#9684;'),kpi('Buying Power',buying,syncChip,'&#9889;'),kpi('Ledger Sync',synced?'Margins live':'Not synced',pill(synced?'Broker margins':'Not synced',synced?'ok':'warn'),'&#10003;')])+'<div class="ws-grid account-layout"><div class="ws-main"><section class="ws-card"><div class="ws-card-h"><span>Account Identity</span></div><div class="ws-card-b"><div class="identity-grid"><div class="identity-cell"><label>Account ID</label><b>'+txt(d.broker&&d.broker.accountId)+'</b></div><div class="identity-cell"><label>Account Holder</label><b>'+txt(d.broker&&d.broker.accountName)+'</b></div><div class="identity-cell"><label>Broker</label><b>'+(brokerOk?'Zerodha':'Not synced')+'</b></div><div class="identity-cell"><label>Account Type</label><b>Live</b></div><div class="identity-cell"><label>Token Status</label><b>'+(tokenOk?'Valid':'Required')+'</b></div><div class="identity-cell"><label>Last Broker Sync</label><b>'+txt(d.updatedAt||'Not synced')+'</b></div></div></div></section>'+filterBar('<select><option>All Types</option><option>Money In</option><option>Money Out</option><option>Charges</option><option>P&L</option></select>')+tableCard('Account Statement',[{t:'Date / Time'},{t:'Type'},{t:'Money In',right:1},{t:'Money Out',right:1},{t:'Charges',right:1},{t:'Realized P&L',right:1},{t:'Running Balance',right:1},{t:'Broker Ref ID'},{t:'Status'},{t:'Notes'}],statementRows,empty('','Ledger sync not connected','Live balance and available margin are pulled from Zerodha margins. Full account statement and charge ledger need a separate broker ledger integration.',{href:'/tradeops/trade-history',label:'View Trade History'}),' 0 ledger records')+'</div><aside class="ws-side">'+sidePanel('Live Margin Source', [['Broker Reported Balance',balance],['Available Margin',available],['Used Margin',used],['Last Sync',txt(d.updatedAt||'Not synced')]]) + sidePanel('Charges Breakdown', [['Brokerage','Unavailable'],['Exchange Fees','Unavailable'],['GST','Unavailable'],['STT','Unavailable'],['Total Charges',d.pnl&&d.pnl.charges!=null?rs(d.pnl.charges):'Unavailable','bad']])+'<section class="ws-card"><div class="ws-card-h"><span>Quick Actions</span></div><div class="ws-card-b quick-actions"><button class="btn" onclick="load()">Sync Now</button><a class="btn" href="/tradeops/trade-history">View Trade History</a><button class="btn disabled-action" disabled title="Ledger data required">Download CSV</button><button class="btn disabled-action" disabled title="Ledger data required">Download PDF</button></div></section></aside></div></section>';return;
   }
   if(PAGE==='orders'){
     const todayTrades=tradeRowsFor('today');
@@ -7753,11 +8243,11 @@ function render(d){
     document.getElementById('thApply').onclick=applyTradeHistory;document.getElementById('thReset').onclick=resetTradeHistory;document.getElementById('thDayApply').onclick=function(){state.day=document.getElementById('thDay').value||baseDate;state.range='day';state.page=1;drawTradeHistory()};document.getElementById('thMonth').onchange=function(){state.month=this.value||defaultMonth;state.range='monthly';state.page=1;drawTradeHistory()};document.getElementById('thSearch').onkeydown=function(e){if(e.key==='Enter')applyTradeHistory()};document.getElementById('thPrev').onclick=function(){state.page--;drawTradeHistory()};document.getElementById('thNext').onclick=function(){state.page++;drawTradeHistory()};drawTradeHistory();return;
   }
   if(PAGE==='candle-logs'){
-    const rows=candles.map(c=>{const blocked=/blocked|rejected|failed|insufficient|no live order/i.test(String(c.status||'')+' '+String(c.note||''));const closePnl=blocked?null:(c.closePnlRs!=null?c.closePnlRs:c.pnlRs);const statusCls=blocked?'bad':String(c.status||'').includes('entry')||String(c.status||'').includes('Entry')?'ok':String(c.status||'').includes('hit')?'bad':String(c.status||'').includes('trail')?'warn':'';return '<tr><td class="right">'+txt(c.idx||'')+'</td><td>'+txt(c.time)+'</td><td class="right">'+txt(c.open)+'</td><td class="right">'+txt(c.high)+'</td><td class="right">'+txt(c.low)+'</td><td class="right">'+txt(c.close)+'</td><td>'+pill(blocked?'Entry blocked':(c.status||'Recorded'),statusCls)+'</td><td class="right">'+(blocked||c.entry==null?'--':txt(c.entry))+'</td><td>'+txt(c.dir||'--')+'</td><td class="right">'+(blocked||c.sl==null?'--':txt(c.sl))+'</td><td class="right '+(closePnl==null?'muted':Number(closePnl)>=0?'ok':'bad')+'">'+(closePnl==null?'--':rs(closePnl))+'</td><td style="white-space:normal;overflow:visible;text-overflow:clip;min-width:320px;line-height:1.45">'+txt(c.note||'')+'</td></tr>'}).join('');
+    const rows=candles.map(c=>{const blocked=/^(entry_blocked|entry blocked)$/i.test(String(c.status||''));const context=/blocked context/i.test(String(c.status||''));const closePnl=blocked||context?null:(c.closePnlRs!=null?c.closePnlRs:c.pnlRs);const statusCls=blocked?'bad':context?'warn':String(c.status||'').includes('entry')||String(c.status||'').includes('Entry')?'ok':String(c.status||'').includes('hit')?'bad':String(c.status||'').includes('trail')?'warn':'';return '<tr><td class="right">'+txt(c.idx||'')+'</td><td>'+txt(c.time)+'</td><td class="right">'+txt(c.open)+'</td><td class="right">'+txt(c.high)+'</td><td class="right">'+txt(c.low)+'</td><td class="right">'+txt(c.close)+'</td><td>'+pill(blocked?'Entry blocked':context?'Blocked context':(c.status||'Recorded'),statusCls)+'</td><td class="right">'+(blocked||context||c.entry==null?'--':txt(c.entry))+'</td><td>'+txt(c.dir||'--')+'</td><td class="right">'+(blocked||context||c.sl==null?'--':txt(c.sl))+'</td><td class="right '+(closePnl==null?'muted':Number(closePnl)>=0?'ok':'bad')+'">'+(closePnl==null?'--':rs(closePnl))+'</td><td style="white-space:normal;overflow:visible;text-overflow:clip;min-width:320px;line-height:1.45">'+txt(c.note||'')+'</td></tr>'}).join('');
     standardPage('Candle Logs','Inspect BANKNIFTY 10:30 futures 15m candles with entry state and P&L at every candle close.',[kpi('Candles',String(candles.length),pill(candles.length?'Recorded':'No data',candles.length?'ok':'warn'),'&#9636;'),kpi('Timeframe','15m',pill('BANKNIFTY','ok'),'&#9719;'),kpi('Trade Entry',candles.find(c=>c.entry!=null)?txt(candles.find(c=>c.entry!=null).entry):'No entry',pill('10:30 futures','ok'),'&#8594;'),kpi('Latest Candle P&L',candles[0]&&candles[0].pnlRs!=null?rs(candles[0].pnlRs):'--',pill('At close','warn'),'&#8377;'),kpi('Last Candle',candles[0]?txt(candles[0].time):'No candle',pill('Latest','warn'),'&#9719;')],filterBar('<select><option>15m</option><option>All Candles</option><option>Entry Candles</option><option>In Trade</option></select>'),tableCard('15m Candle Records',[{t:'#',right:1},{t:'Time'},{t:'Open',right:1},{t:'High',right:1},{t:'Low',right:1},{t:'Close',right:1},{t:'State'},{t:'Entry',right:1},{t:'Dir'},{t:'SL',right:1},{t:'P&L @ Close',right:1},{t:'Note'}],rows,empty('&#9636;','No 15m candles recorded','Today 10:30 futures candle log is not available from the bot heartbeat yet.',{href:'/tradeops/health',label:'Check Feed'}),' '+candles.length+' candles'),'');return;
   }
   if(PAGE==='server-logs'){
-    const grouped=[];logs.forEach(l=>{const prev=grouped[grouped.length-1];const key=String(l.level||'')+'|'+String(l.message||'').replace(/attempt \d+/i,'attempt #');if(prev&&prev.key===key){prev.count++}else grouped.push({key,count:1,row:l})});
+    const grouped=[];logs.forEach(l=>{const prev=grouped[grouped.length-1];const key=String(l.level||'')+'|'+String(l.message||'').replace(/attempt \\d+/i,'attempt #');if(prev&&prev.key===key){prev.count++}else grouped.push({key,count:1,row:l})});
     const logControls='<section class="ws-card log-filter-card"><div class="ws-card-b"><div class="filter-bar"><select><option>All Levels</option><option>INFO</option><option>WARN</option><option>ERROR</option></select><input placeholder="Search server logs..."><button class="btn primary" type="button">Apply Filter</button><button class="btn" type="button">Reset</button><button class="btn" type="button" onclick="load()">Refresh Logs</button></div></div></section>';
     const consoleHtml='<section class="ws-card server-log-full"><div class="ws-card-h"><span>Server Log Console <span class="dot ok"></span> <span class="ok">Live</span></span><div class="log-actions"><button class="btn" id="pauseLogsPage" type="button">Pause</button><button class="btn" id="clearLogsPage" type="button">Clear Preview</button><button class="btn" type="button" onclick="load()">Refresh</button></div></div><div class="ws-card-b"><div class="console full"><div id="workspaceLogs" class="logs">'+(grouped.length?grouped.slice(0,120).map(g=>{const l=g.row;const msg=g.count>1?l.message+' repeated '+g.count+' times':l.message;return '<div><span class="muted">'+txt(l.time)+'</span> <span class="'+(l.level==='ERROR'?'error':l.level==='WARN'?'warn':'info')+'">['+txt(l.level)+']</span> '+txt(msg)+'</div>'}).join(''):'<div class="muted">No server logs recorded yet</div>')+'</div></div></div></section>';
     standardPage('Server Logs','Review bot, broker, feed, alert, and execution service logs in a full console view.',[kpi('Log Lines',String(logs.length),pill('Preview','ok'),'&#9636;'),kpi('Errors',String(logs.filter(l=>l.level==='ERROR').length),pill('Watch','bad'),'&#10005;'),kpi('Warnings',String(logs.filter(l=>l.level==='WARN').length),pill('Review','warn'),'&#9888;'),kpi('Info',String(logs.filter(l=>l.level==='INFO').length),pill('Normal','ok'),'&#10003;'),kpi('Source','Server',pill('Live','ok'),'&#9719;')],logControls,consoleHtml,sidePanel('Console Controls',[['Filters','Level + search'],['Date Range','Not required'],['Service','TradeOps / bot logs'],['Grouping','Repeated errors grouped']]));setTimeout(()=>{const p=document.getElementById('pauseLogsPage');if(p&&!p._wired){p._wired=true;p.onclick=function(){paused=!paused;p.textContent=paused?'Resume':'Pause'}}const c=document.getElementById('clearLogsPage');if(c&&!c._wired){c._wired=true;c.onclick=function(){const x=document.getElementById('workspaceLogs');if(x)x.innerHTML='<div class="muted">Preview cleared. Refresh to reload server logs.</div>'}}},0);return;
@@ -7774,9 +8264,12 @@ function render(d){
     const tgChecked=nc.telegramEnabled?'checked':'';
     const modeNow=String(mc.runningMode||mc.envMode||'SHADOW').toUpperCase();
     const modeSwitch='<label class="tradeops-switch" style="position:relative;display:inline-flex;align-items:center;gap:10px;margin-top:16px;padding:10px 14px;border:1px solid #d7e4f4;border-radius:999px;background:#fff;font-weight:800;cursor:pointer"><span>SHADOW</span><input id="tt1030ModeToggle" type="checkbox" '+checked+' onchange="setTradeOpsMode(this.checked?&quot;LIVE&quot;:&quot;SHADOW&quot;)" style="position:absolute;opacity:0;pointer-events:none"><span style="width:54px;height:30px;border-radius:999px;background:'+(checked?'#16a34a':'#cbd5e1')+';display:inline-flex;align-items:center;padding:3px;transition:.2s"><i style="width:24px;height:24px;border-radius:50%;background:#fff;display:block;transform:translateX('+(checked?'24px':'0')+');transition:.2s;box-shadow:0 2px 8px rgba(15,23,42,.2)"></i></span><span>LIVE</span></label>';
-    const panel='<section class="ws-card"><div class="ws-card-h"><span>10:30 Futures Mode</span>'+pill(modeNow,modeNow==='LIVE'?'bad':'ok')+'</div><div class="ws-card-b"><div class="identity-grid"><div class="identity-cell"><label>Switch Scope</label><b>10:30 Futures only</b></div><div class="identity-cell"><label>Configured Mode</label><b>'+txt(mc.envMode||'SHADOW')+'</b></div><div class="identity-cell"><label>Order Effect</label><b>'+((modeNow==='LIVE')?'Real broker futures orders':'Shadow futures tracking')+'</b></div><div class="identity-cell"><label>Quantity</label><b>30</b></div></div>'+modeSwitch+'<div id="modeResult" class="account-warn" style="display:none"></div></div></section>'
+    const strategyList=Array.isArray(d.strategies)?d.strategies:[];
+    const strategyRows=strategyList.map(function(s){const live=String(s.mode||'SHADOW').toUpperCase()==='LIVE';const disabled=!s.enabled;return '<div class="identity-cell" style="min-height:118px"><label>'+txt(s.name)+'</label><b>'+txt(s.instrument)+' '+txt(s.product)+'</b><div class="muted" style="margin-top:6px">Entry '+txt(s.entryTime)+' | Qty '+txt(s.quantity)+' | SL '+txt(s.sl)+'</div><div style="margin-top:10px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">'+pill(disabled?'Disabled':txt(s.status||'Waiting'),disabled?'warn':live?'bad':'ok')+pill(live?'LIVE':'SHADOW',live?'bad':'ok')+(s.liveCapable?'':'<span class="muted">LIVE locked</span>')+'<button class="btn" type="button" onclick="selectTradeOpsStrategy(&quot;'+txt(s.id)+'&quot;)">View</button></div></div>'}).join('');
+    const strategyPanel='<section class="ws-card"><div class="ws-card-h"><span>Strategy Control Center</span>'+pill('One LIVE max','warn')+'</div><div class="ws-card-b"><div class="identity-grid">'+strategyRows+'</div><div class="muted" style="margin-top:12px">Top strategy dropdown controls all TradeOps pages. Account balance remains broker-level. New shadow strategies will show scoped empty data until the trading-bot writes their own strategy files.</div></div></section>';
+    const panel=strategyPanel+'<section class="ws-card"><div class="ws-card-h"><span>10:30 Futures Mode</span>'+pill(modeNow,modeNow==='LIVE'?'bad':'ok')+'</div><div class="ws-card-b"><div class="identity-grid"><div class="identity-cell"><label>Switch Scope</label><b>10:30 Futures only</b></div><div class="identity-cell"><label>Configured Mode</label><b>'+txt(mc.envMode||'SHADOW')+'</b></div><div class="identity-cell"><label>Order Effect</label><b>'+((modeNow==='LIVE')?'Real broker futures orders':'Shadow futures tracking')+'</b></div><div class="identity-cell"><label>Quantity</label><b>30</b></div></div>'+modeSwitch+'<div id="modeResult" class="account-warn" style="display:none"></div></div></section>'
       +'<section class="ws-card"><div class="ws-card-h"><span>Telegram Alerts</span>'+pill(nc.telegramEnabled?'ON':'OFF',nc.telegramEnabled?'ok':'warn')+'</div><div class="ws-card-b"><div class="identity-grid"><div class="identity-cell"><label>Alert Scope</label><b>10:30 Futures only</b></div><div class="identity-cell"><label>Telegram Token</label><b>'+(nc.tokenConfigured?'Configured':'Missing')+'</b></div><div class="identity-cell"><label>Chat ID</label><b>'+(nc.chatConfigured?'Configured':'Missing')+'</b></div><div class="identity-cell"><label>Drishti Alerts</label><b>Off in TradeOps</b></div></div><label style="display:inline-flex;align-items:center;gap:10px;margin-top:16px;padding:10px 14px;border:1px solid #d7e4f4;border-radius:999px;background:#fff;font-weight:800;cursor:pointer"><span>OFF</span><input id="tt1030TelegramToggle" type="checkbox" '+tgChecked+' onchange="setTradeOpsTelegram(this.checked)" style="width:42px;height:22px;accent-color:#16a34a"><span>ON</span></label><div class="muted" style="margin-top:10px">Sends entry, exit, stop-loss/reversal, and EOD close alerts for 10:30 futures using the existing bot Telegram token.</div><div id="telegramResult" class="account-warn" style="display:none"></div></div></section>';
-    standardPage('Bot Config','TradeOps controls only the 10:30 futures strategy. Other ZeroScreen shadow strategies are not part of TradeOps.',[kpi('10:30 Futures',txt(modeNow),pill(mc.restartRequired?'Reload needed':'Configured',mc.restartRequired?'warn':'ok'),'&#9889;'),kpi('Switch Scope','10:30 Futures only',pill('Isolated','ok'),'&#9636;'),kpi('Configured Mode',txt(mc.envMode||'SHADOW'),pill('TT1030_FUTURES_MODE','ok'),'&#10003;'),kpi('Telegram',nc.telegramEnabled?'On':'Off',pill(nc.tokenConfigured&&nc.chatConfigured?'Ready':'Check token',nc.tokenConfigured&&nc.chatConfigured?'ok':'warn'),'&#9993;'),kpi('LIVE Gate',mc.liveAllowed?'Clear':'Blocked',pill(mc.liveAllowed?'Eligible':'Blocked',mc.liveAllowed?'ok':'bad'),'&#8377;')],'',panel,sidePanel('10:30 Futures Safety',[['10:30 heartbeat',hasHeartbeat?'Issue':'Confirmed',hasHeartbeat?'bad':'ok'],['10:30 audit',hasAudit?'Blocked':'OK',hasAudit?'bad':'ok'],['Open Trade',hasOpen?'Blocked':'Flat',hasOpen?'bad':'ok'],['Telegram scope','10:30 futures only','ok']])+issueHtml);return;
+    standardPage('Strategy Control Center','Enable strategies, review LIVE/SHADOW mode, and keep strategy data scoped from the top selector.',[kpi('Strategies',String(strategyList.length),pill('Configured','ok'),'&#9636;'),kpi('Selected',txt(d.strategy&&d.strategy.label),pill(txt(d.strategy&&d.strategy.mode||'SHADOW'),String(d.strategy&&d.strategy.mode).toUpperCase()==='LIVE'?'bad':'ok'),'&#9889;'),kpi('Configured Mode',txt(mc.envMode||'SHADOW'),pill('TT1030_FUTURES_MODE','ok'),'&#10003;'),kpi('Telegram',nc.telegramEnabled?'On':'Off',pill(nc.tokenConfigured&&nc.chatConfigured?'Ready':'Check token',nc.tokenConfigured&&nc.chatConfigured?'ok':'warn'),'&#9993;'),kpi('LIVE Gate',mc.liveAllowed?'Clear':'Blocked',pill(mc.liveAllowed?'Eligible':'Blocked',mc.liveAllowed?'ok':'bad'),'&#8377;')],'',panel,sidePanel('10:30 Futures Safety',[['10:30 heartbeat',hasHeartbeat?'Issue':'Confirmed',hasHeartbeat?'bad':'ok'],['10:30 audit',hasAudit?'Blocked':'OK',hasAudit?'bad':'ok'],['Open Trade',hasOpen?'Blocked':'Flat',hasOpen?'bad':'ok'],['Telegram scope','10:30 futures only','ok']])+issueHtml);return;
   }
   const genericTitle=titleCase(PAGE);
   const subtitles={health:'Monitor service health, broker connectivity, feed freshness, and execution safety.',alerts:'Review alert delivery, failed notifications, and channel status.',audit:'Review user actions, emergency-stop checks, config changes, and account events.','admin-config':'Manage users, roles, access, token/account status, and admin controls.','bot-config':'Control bot state, safety checklist, token/feed/sync controls, and control history.',settings:'Configure TradeOps preferences, display options, alerts, and audit notes.'};
@@ -7806,7 +8299,7 @@ function wireWorkspaceControls(){
     const totalEl=card.querySelector('.ws-page-total');
     const prev=card.querySelector('.ws-prev');
     const next=card.querySelector('.ws-next');
-    function rowDateKey(html){html=String(html||'');const dm=html.match(/data-date=["']([^"']+)["']/i);if(dm&&dm[1])return String(dm[1]).slice(0,10);const cells=html.match(/<td[^>]*>\s*(20\d{2}-\d{2}-\d{2})\s*<\/td>/i);if(cells&&cells[1])return cells[1].slice(0,10);const m=html.match(/(20\d{2}-\d{2}-\d{2})|(\d{1,2}\s+[A-Za-z]{3,9}\s+20\d{2})/);if(!m)return '';const raw=m[0];if(/^\d{4}-/.test(raw))return raw.slice(0,10);const d=new Date(raw);return isNaN(d.getTime())?'':d.toISOString().slice(0,10)}
+    function rowDateKey(html){html=String(html||'');const dm=html.match(/data-date=["']([^"']+)["']/i);if(dm&&dm[1])return String(dm[1]).slice(0,10);const cells=html.match(/<td[^>]*>\\s*(20\\d{2}-\\d{2}-\\d{2})\\s*<\\/td>/i);if(cells&&cells[1])return cells[1].slice(0,10);const m=html.match(/(20\\d{2}-\\d{2}-\\d{2})|(\\d{1,2}\\s+[A-Za-z]{3,9}\\s+20\\d{2})/);if(!m)return '';const raw=m[0];if(/^\\d{4}-/.test(raw))return raw.slice(0,10);const d=new Date(raw);return isNaN(d.getTime())?'':d.toISOString().slice(0,10)}
     function addDaysKey(key,days){const d=new Date(key+'T00:00:00Z');if(isNaN(d.getTime()))return '';d.setUTCDate(d.getUTCDate()+days);return d.toISOString().slice(0,10)}
     function filtered(){const q=String(card._query||'').toLowerCase().trim();const terms=Array.isArray(card._terms)?card._terms.map(function(x){return String(x||'').toLowerCase().trim()}).filter(Boolean):[];const all=card._allRows.slice();let latest='';all.forEach(function(html){const k=rowDateKey(html);if(k&&(!latest||k>latest))latest=k});const today=String(tradeOpsSessionDate||latest||new Date().toISOString().slice(0,10)).slice(0,10);const weekStart=addDaysKey(today,-7);return all.filter(function(html){const low=html.toLowerCase();if(q&&!low.includes(q))return false;if(terms.some(function(t){return !low.includes(t)}))return false;const range=String(card._range||'today').toLowerCase();const k=rowDateKey(html);if(!k)return range!=='weekly'&&range!=='monthly';if(range==='latest-session')return latest?k===latest:k===today;if(range==='today')return k===today;if(range==='weekly')return k>=weekStart&&k<=today;if(range==='monthly')return k.slice(0,7)===today.slice(0,7);return false})}
     function draw(){const rows=filtered();const total=rows.length;const pages=Math.max(1,Math.ceil(total/pageSize));card._page=Math.min(Math.max(1,card._page||1),pages);const start=(card._page-1)*pageSize;tbody.innerHTML=rows.slice(start,start+pageSize).join('');if(pageInfo)pageInfo.textContent='Page '+card._page+' of '+pages;if(totalEl)totalEl.textContent='Showing '+(total?start+1:0)+'-'+Math.min(start+pageSize,total)+' of '+total;if(prev)prev.disabled=card._page<=1;if(next)next.disabled=card._page>=pages;wireOrderRows()}
@@ -7823,8 +8316,8 @@ function wireWorkspaceControls(){
     const apply=bar.querySelector('.btn.primary');
     const reset=Array.from(bar.querySelectorAll('.btn')).find(function(b){return !b.classList.contains('primary') && /reset/i.test(b.textContent||'')});
     const cards=Array.from(document.querySelectorAll('.workspace-table-card'));
-    function activeRange(){const seg=bar.querySelector('.seg.active');const t=String(seg&&seg.textContent||'today').toLowerCase().trim().replace(/\s+/g,'-');return t||'today'}
-    function selectedTerms(){return selects.map(function(s){return String(s.value||s.options[s.selectedIndex]?.text||'').trim()}).filter(function(v){return v&&!/^all\b/i.test(v)&&!/^(today|latest session|weekly|monthly|yearly|custom|5m|15m)$/i.test(v)})}
+    function activeRange(){const seg=bar.querySelector('.seg.active');const t=String(seg&&seg.textContent||'today').toLowerCase().trim().replace(/\\s+/g,'-');return t||'today'}
+    function selectedTerms(){return selects.map(function(s){return String(s.value||s.options[s.selectedIndex]?.text||'').trim()}).filter(function(v){return v&&!/^all\\b/i.test(v)&&!/^(today|latest session|weekly|monthly|yearly|custom|5m|15m)$/i.test(v)})}
     function run(){const opts={query:input?input.value:'',range:activeRange(),terms:selectedTerms()};cards.forEach(function(card){if(card._applyFilters)card._applyFilters(opts);else if(card._applySearch)card._applySearch(opts.query)})}
     if(apply)apply.onclick=run;
     if(input)input.onkeydown=function(e){if(e.key==='Enter')run()};
@@ -7834,6 +8327,7 @@ function wireWorkspaceControls(){
   });
   const syncPage=document.getElementById('syncAccountBtnPage'); if(syncPage&&!syncPage._wired){syncPage._wired=true;syncPage.onclick=async function(){const old=syncPage.textContent;syncPage.textContent='Syncing...';syncPage.disabled=true;await load();syncPage.textContent='Synced';setTimeout(function(){syncPage.textContent=old;syncPage.disabled=false},1200)}}
   const syncPage2=document.getElementById('syncAccountBtn2'); if(syncPage2&&!syncPage2._wired){syncPage2._wired=true;syncPage2.onclick=function(){const b=document.getElementById('syncAccountBtnPage'); if(b)b.click(); else load();}}
+  document.querySelectorAll('.tokenRefreshAction').forEach(function(btn){if(btn._wired)return;btn._wired=true;btn.onclick=function(){const b=document.getElementById('refreshTokenBtn');if(b)b.click();}});
 }
 async function setTradeOpsMode(mode){
   const out=document.getElementById('modeResult');
@@ -7869,21 +8363,21 @@ async function setTradeOpsTelegram(enabled){
     if(toggle)toggle.checked=!enabled;
   }
 }
-function showLoadError(message){hideLoader();const root=document.getElementById(PAGE==='dashboard'?'dashboard':'detailGrid');const title=PAGE.replace(/-/g,' ').replace(/\b\w/g,function(m){return m.toUpperCase()});if(root){const html='<section class="ws-card" style="grid-column:1/-1"><div class="ws-card-h"><span>'+title+'</span><button class="btn" onclick="load()">Retry</button></div><div class="ws-card-b"><b class="bad">Could not load workspace data</b><p class="muted">'+txt(message||'Status API request failed')+'</p></div></section>';if(PAGE==='dashboard')root.innerHTML=html;else root.innerHTML=html;}}
-async function load(){const ctrl=new AbortController();const timer=setTimeout(()=>ctrl.abort(),8000);try{const r=await fetch('/api/tradeops/status',{cache:'no-store',credentials:'same-origin',signal:ctrl.signal,headers:{'Accept':'application/json'}});const ct=r.headers.get('content-type')||'';if(!r.ok)throw new Error('Status API HTTP '+r.status);if(!ct.includes('application/json'))throw new Error('Status API returned non-JSON');const j=await r.json();if(!j||j.ok===false)throw new Error(j&&j.error?j.error:'Status API failed');render(j)}catch(e){console.error(e);if(!lastStatus)showLoadError(e&&e.name==='AbortError'?'Status API timeout':e&&e.message?e.message:'Request failed')}finally{clearTimeout(timer)}}setupSidebar();const emergencyBtn=document.getElementById('emergencyBtn');if(emergencyBtn)emergencyBtn.onclick=()=>document.getElementById('modal')?.classList.add('open');const cancelStop=document.getElementById('cancelStop');if(cancelStop)cancelStop.onclick=()=>document.getElementById('modal')?.classList.remove('open');const sendStop=document.getElementById('sendStop');if(sendStop)sendStop.onclick=async()=>{const out=document.getElementById('emergencyResult');if(out)out.innerHTML='Fetching open positions...<br>Sending exit orders...';try{const r=await fetch('/api/tradeops/emergency-stop',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({confirm:document.getElementById('confirmBox')?.checked,phrase:document.getElementById('confirmPhrase')?.value,pin:document.getElementById('pin')?.value})});const j=await r.json();if(out)out.innerHTML=(j.ok?'Closed positions count: '+(j.closed?j.closed.length:0)+'<br>Failed exits count: 0<br>':'Failed exits count: 1<br>')+(j.message||j.error||'Done');await load()}catch(e){if(out)out.textContent=e.message||'Request failed'}};const pauseLogs=document.getElementById('pauseLogs');if(pauseLogs)pauseLogs.onclick=()=>{paused=!paused;pauseLogs.textContent=paused?'Resume':'Pause'};const clearLogs=document.getElementById('clearLogs');if(clearLogs)clearLogs.onclick=()=>{const logsEl=document.getElementById('logs');if(logsEl)logsEl.innerHTML='<div class="muted">Preview cleared. New logs will appear on next tick.</div>'};const refreshTokenBtn=document.getElementById('refreshTokenBtn');if(refreshTokenBtn)refreshTokenBtn.onclick=()=>{refreshTokenBtn.textContent='Opening Token Page...';refreshTokenBtn.disabled=true;location.href='/admin/signals'};const syncAccountBtn=document.getElementById('syncAccountBtn');if(syncAccountBtn)syncAccountBtn.onclick=async()=>{const old=syncAccountBtn.textContent;syncAccountBtn.textContent='Syncing...';syncAccountBtn.disabled=true;await load();syncAccountBtn.textContent='Synced';setTimeout(()=>{syncAccountBtn.textContent=old;syncAccountBtn.disabled=false},1200)};document.querySelectorAll('#chartTabs button[data-tf]').forEach(btn=>{btn.onclick=()=>{chartTf=btn.dataset.tf||'15m';document.querySelectorAll('#chartTabs button[data-tf]').forEach(b=>b.classList.toggle('active',b===btn));if(lastStatus)render(lastStatus);}});if(INITIAL_STATUS&&INITIAL_STATUS.ok){try{render(INITIAL_STATUS)}catch(e){console.error(e);showLoadError(e&&e.message?e.message:"Initial render failed")}}load();loadLogs();if(PAGE==='dashboard'||PAGE==='account')setInterval(load,5000);setInterval(loadLogs,1000);
+function showLoadError(message){hideLoader();const root=document.getElementById(PAGE==='dashboard'?'dashboard':'detailGrid');const title=PAGE.replace(/-/g,' ').replace(/\\b\\w/g,function(m){return m.toUpperCase()});if(root){const html='<section class="ws-card" style="grid-column:1/-1"><div class="ws-card-h"><span>'+title+'</span><button class="btn" onclick="load()">Retry</button></div><div class="ws-card-b"><b class="bad">Could not load workspace data</b><p class="muted">'+txt(message||'Status API request failed')+'</p></div></section>';if(PAGE==='dashboard')root.innerHTML=html;else root.innerHTML=html;}}
+async function load(){const ctrl=new AbortController();const timer=setTimeout(()=>ctrl.abort(),8000);try{const r=await fetch(strategyUrl('/api/tradeops/status'),{cache:'no-store',credentials:'same-origin',signal:ctrl.signal,headers:{'Accept':'application/json'}});const ct=r.headers.get('content-type')||'';if(!r.ok)throw new Error('Status API HTTP '+r.status);if(!ct.includes('application/json'))throw new Error('Status API returned non-JSON');const j=await r.json();if(!j||j.ok===false)throw new Error(j&&j.error?j.error:'Status API failed');render(j)}catch(e){console.error(e);if(!lastStatus)showLoadError(e&&e.name==='AbortError'?'Status API timeout':e&&e.message?e.message:'Request failed')}finally{clearTimeout(timer)}}setupSidebar();const strategySelect=document.getElementById('strategySelect');if(strategySelect)strategySelect.onchange=()=>{selectedTradeOpsStrategy=strategySelect.value||DEFAULT_STRATEGY;try{localStorage.setItem('tradeopsSelectedStrategy',selectedTradeOpsStrategy)}catch(e){}load();loadLogs()};const emergencyBtn=document.getElementById('emergencyBtn');if(emergencyBtn)emergencyBtn.onclick=()=>document.getElementById('modal')?.classList.add('open');const cancelStop=document.getElementById('cancelStop');if(cancelStop)cancelStop.onclick=()=>document.getElementById('modal')?.classList.remove('open');const sendStop=document.getElementById('sendStop');if(sendStop)sendStop.onclick=async()=>{const out=document.getElementById('emergencyResult');if(out)out.innerHTML='Fetching open positions...<br>Sending exit orders...';try{const r=await fetch('/api/tradeops/emergency-stop',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({confirm:document.getElementById('confirmBox')?.checked,phrase:document.getElementById('confirmPhrase')?.value,pin:document.getElementById('pin')?.value})});const j=await r.json();if(out)out.innerHTML=(j.ok?'Closed positions count: '+(j.closed?j.closed.length:0)+'<br>Failed exits count: 0<br>':'Failed exits count: 1<br>')+(j.message||j.error||'Done');await load()}catch(e){if(out)out.textContent=e.message||'Request failed'}};const pauseLogs=document.getElementById('pauseLogs');if(pauseLogs)pauseLogs.onclick=()=>{paused=!paused;pauseLogs.textContent=paused?'Resume':'Pause'};const clearLogs=document.getElementById('clearLogs');if(clearLogs)clearLogs.onclick=()=>{const logsEl=document.getElementById('logs');if(logsEl)logsEl.innerHTML='<div class="muted">Preview cleared. New logs will appear on next tick.</div>'};const refreshTokenBtn=document.getElementById('refreshTokenBtn');if(refreshTokenBtn)refreshTokenBtn.onclick=async()=>{const old=refreshTokenBtn.textContent;refreshTokenBtn.textContent='Refreshing...';refreshTokenBtn.disabled=true;try{const r=await fetch('/api/tradeops/token-refresh',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({source:'dashboard'})});const j=await r.json();if(!r.ok||!j.ok)throw new Error(j.error||'Token refresh failed to start');refreshTokenBtn.textContent='Refresh Started';const logsEl=document.getElementById('logs');if(logsEl)logsEl.innerHTML='<div><span class="info">[INFO]</span> '+txt(j.message||'Auto token refresh started')+'</div>'+logsEl.innerHTML;setTimeout(load,8000);setTimeout(load,25000);setTimeout(load,60000)}catch(e){refreshTokenBtn.textContent='Refresh Failed';alert((e&&e.message)||'Token refresh failed')}finally{setTimeout(()=>{refreshTokenBtn.textContent=old;refreshTokenBtn.disabled=false},5000)}};const syncAccountBtn=document.getElementById('syncAccountBtn');if(syncAccountBtn)syncAccountBtn.onclick=async()=>{const old=syncAccountBtn.textContent;syncAccountBtn.textContent='Syncing...';syncAccountBtn.disabled=true;await load();syncAccountBtn.textContent=(lastStatus&&lastStatus.broker&&lastStatus.broker.tokenOK)?'Synced':'Token Required';setTimeout(()=>{syncAccountBtn.textContent=old;syncAccountBtn.disabled=false},1600)};document.querySelectorAll('#chartTabs button[data-tf]').forEach(btn=>{btn.onclick=()=>{chartTf=btn.dataset.tf||'15m';document.querySelectorAll('#chartTabs button[data-tf]').forEach(b=>b.classList.toggle('active',b===btn));if(lastStatus)render(lastStatus);}});if(INITIAL_STATUS&&INITIAL_STATUS.ok){try{render(INITIAL_STATUS)}catch(e){console.error(e);showLoadError(e&&e.message?e.message:"Initial render failed")}}load();loadLogs();if(PAGE==='dashboard'||PAGE==='account')setInterval(load,5000);setInterval(loadLogs,1000);
 </script>
 </body></html>`;
 }
 
-app.get("/tradeops", requireAdmin, async (_req: Request, res: Response) => {
+app.get("/tradeops", requireAdmin, async (req: Request, res: Response) => {
   res.setHeader("Cache-Control", "no-store");
-  const initialStatus = await buildTradeOpsStatus().catch((e: any) => ({ ok: false, error: e?.message || "Status unavailable" }));
+  const initialStatus = await buildTradeOpsStatus(String(req.query.strategy || "")).catch((e: any) => ({ ok: false, error: e?.message || "Status unavailable" }));
   res.send(renderTradeOpsApp("dashboard", initialStatus));
 });
 
 app.get("/tradeops/:section", requireAdmin, async (req: Request, res: Response) => {
   res.setHeader("Cache-Control", "no-store");
-  const initialStatus = await buildTradeOpsStatus().catch((e: any) => ({ ok: false, error: e?.message || "Status unavailable" }));
+  const initialStatus = await buildTradeOpsStatus(String(req.query.strategy || "")).catch((e: any) => ({ ok: false, error: e?.message || "Status unavailable" }));
   res.send(renderTradeOpsApp(req.params.section || "dashboard", initialStatus));
 });
 
