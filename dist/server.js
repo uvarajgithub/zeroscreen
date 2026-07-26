@@ -7406,7 +7406,7 @@ app.post("/api/tradeops/token-refresh", requireAdmin, async (_req, res) => {
             res.status(500).json({ ok: false, error: "Auto token script not found on VPS" });
             return;
         }
-        const running = (0, child_process_1.execSync)("pgrep -af 'node .*auto_token.js' || true", { encoding: "utf8", timeout: 3000 }).trim();
+        const running = (0, child_process_1.execSync)("pgrep -af '[n]ode .*auto_token.js' || true", { encoding: "utf8", timeout: 3000 }).trim();
         if (running) {
             res.json({ ok: true, running: true, message: "Token refresh is already running. Dashboard will resync when it completes." });
             return;
@@ -8380,7 +8380,28 @@ function wireWorkspaceControls(){
   });
   const syncPage=document.getElementById('syncAccountBtnPage'); if(syncPage&&!syncPage._wired){syncPage._wired=true;syncPage.onclick=async function(){const old=syncPage.textContent;syncPage.textContent='Syncing...';syncPage.disabled=true;await load();syncPage.textContent='Synced';setTimeout(function(){syncPage.textContent=old;syncPage.disabled=false},1200)}}
   const syncPage2=document.getElementById('syncAccountBtn2'); if(syncPage2&&!syncPage2._wired){syncPage2._wired=true;syncPage2.onclick=function(){const b=document.getElementById('syncAccountBtnPage'); if(b)b.click(); else load();}}
-  document.querySelectorAll('.tokenRefreshAction').forEach(function(btn){if(btn._wired)return;btn._wired=true;btn.onclick=function(){const b=document.getElementById('refreshTokenBtn');if(b)b.click();}});
+  document.querySelectorAll('.tokenRefreshAction').forEach(function(btn){if(btn._wired)return;btn._wired=true;btn.onclick=async function(){await startTradeOpsTokenRefresh(btn)}});
+}
+async function startTradeOpsTokenRefresh(button){
+  const btn=button||document.getElementById('refreshTokenBtn');
+  const old=btn?btn.textContent:'Refresh Token';
+  if(btn){btn.textContent='Refreshing...';btn.disabled=true;}
+  try{
+    const r=await fetch('/api/tradeops/token-refresh',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({source:'tradeops'})});
+    const j=await r.json();
+    if(!r.ok||!j.ok)throw new Error(j.error||'Token refresh failed to start');
+    if(btn)btn.textContent='Refresh Started';
+    const logsEl=document.getElementById('logs');
+    if(logsEl)logsEl.innerHTML='<div><span class="info">[INFO]</span> '+txt(j.message||'Auto token refresh started')+'</div>'+logsEl.innerHTML;
+    setTimeout(load,8000);setTimeout(load,25000);setTimeout(load,60000);
+    return j;
+  }catch(e){
+    if(btn)btn.textContent='Refresh Failed';
+    alert((e&&e.message)||'Token refresh failed');
+    throw e;
+  }finally{
+    if(btn)setTimeout(function(){btn.textContent=old;btn.disabled=false},5000);
+  }
 }
 async function setTradeOpsMode(mode){
   const out=document.getElementById('modeResult');
