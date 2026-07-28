@@ -6530,7 +6530,9 @@ function tradeOpsLiveSafety(hb) {
     const issues = [];
     const env = tradeOpsReadBotEnv().map;
     const mode = String(hb?.tt1030FuturesMode || env.TT1030_FUTURES_MODE || "SHADOW").toUpperCase();
-    if (String(hb?.tt1030Strategy || "").toUpperCase() !== "TEN_THIRTY_INDEX_SHADOW") {
+    const strategyMarker = String(hb?.tt1030Strategy || "").toUpperCase();
+    const confirmedStrategy = /^(TEN_THIRTY_INDEX_SHADOW|TEN_THIRTY_FUTURES_(LIVE|SHADOW))$/.test(strategyMarker);
+    if (!confirmedStrategy) {
         issues.push("10:30 futures heartbeat is not confirmed.");
     }
     if (hb?.tt1030AuditStatus === "BLOCKED") {
