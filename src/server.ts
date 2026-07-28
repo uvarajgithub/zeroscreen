@@ -183,6 +183,71 @@ app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use("/public", express.static(path.join(__dirname, "..", "public")));
 
+/**
+ * Repair user-facing text damaged by an earlier non-UTF-8 conversion.
+ * Scripts, styles, URLs, API payloads, and application data are not modified.
+ */
+function repairVisibleHtmlText(html: string): string {
+  const decoded = html
+    .replace(/â€”/g, "\u2014")
+    .replace(/â€“/g, "\u2013")
+    .replace(/â€¦/g, "\u2026")
+    .replace(/â‚¹/g, "\u20b9")
+    .replace(/Â©/g, "\u00a9")
+    .replace(/Â·/g, "\u00b7")
+    .replace(/â€¢/g, "\u2022")
+    .replace(/â†’/g, "\u2192")
+    .replace(/â†/g, "\u2190")
+    .replace(/â‰¥/g, "\u2265")
+    .replace(/â‰¤/g, "\u2264")
+    .replace(/âœ“/g, "\u2713")
+    .replace(/âœ”/g, "\u2714")
+    .replace(/âœ•/g, "\u2715")
+    .replace(/âœ–/g, "\u2716")
+    .replace(/Â/g, "");
+
+  const blocks = decoded.split(/(<(?:script|style)\b[\s\S]*?<\/(?:script|style)>)/gi);
+  const repaired = blocks.map((block) => {
+    if (/^<(?:script|style)\b/i.test(block)) return block;
+    const cleanText = (rawText: string) => {
+      let text = rawText;
+      if (!text.includes("?")) return text;
+      text = text
+        .replace(/\?{2,}\s*/g, "")
+        .replace(/\?(\d[\d,.]*)/g, "\u20b9$1")
+        .replace(/^\s*\?\s+(?=Prev\b)/i, " \u2190 ")
+        .replace(/\s+\?(?=\s*$)/g, " \u2192")
+        .replace(/(^|\s)\?(?=\s|$)/g, "$1\u00b7")
+        .replace(/\s{2,}/g, " ");
+      return text;
+    };
+    return block
+      .replace(/>([^<]*)</g, (_match, rawText: string) => `>${cleanText(rawText)}<`)
+      .replace(
+        /\b(title|placeholder|aria-label)="([^"]*)"/gi,
+        (_match, name: string, value: string) => `${name}="${cleanText(value)}"`
+      );
+  }).join("");
+  if (!/<\/body>/i.test(repaired) || repaired.includes("/public/js/ui-text-repair.js")) {
+    return repaired;
+  }
+  return repaired.replace(
+    /<\/body>/i,
+    '<script src="/public/js/ui-text-repair.js?v=1"></script></body>'
+  );
+}
+
+app.use((_req: Request, res: Response, next: NextFunction) => {
+  const send = res.send.bind(res);
+  res.send = ((body?: any) => {
+    if (typeof body === "string" && /<!doctype html|<html[\s>]/i.test(body)) {
+      return send(repairVisibleHtmlText(body));
+    }
+    return send(body);
+  }) as Response["send"];
+  next();
+});
+
 // Bypass ngrok browser warning for all responses
 app.use((_req: Request, res: Response, next: NextFunction) => {
   res.setHeader("ngrok-skip-browser-warning", "true");
@@ -1719,7 +1784,10 @@ app.get("/", async (req: Request, res: Response) => {
   const hasNextPage = rawStocks.length > PAGE_SIZE;
   const stocks = hasNextPage ? rawStocks.slice(0, PAGE_SIZE) : rawStocks;
   const sectors = await getSectors();
-  const todayPicks = await getActivePicks();
+  const rawTodayPicks = await getActivePicks();
+  const todayPicks = Array.from(
+    new Map(rawTodayPicks.map((pick: any) => [String(pick.stock_symbol).toUpperCase(), pick])).values()
+  ) as typeof rawTodayPicks;
   const activeStrategy = req.query.strategy as string | undefined;
   const dbStats = await getDbStats();
   const priceAsOf = dbStats.lastPriceUpdate
@@ -1755,7 +1823,7 @@ app.get("/", async (req: Request, res: Response) => {
       <td>${deStr}</td>
       <td>${fmt(s.promoter_pct)}%</td>
       <td>${fmt(s.pe_ratio, 1)}</td>
-      <td>${s.all_profitable ? "?" : "?"} ${s.profit_uptrend ? "?" : "?"}</td>
+      <td>${s.all_profitable ? "Profitable" : "Mixed"}${s.profit_uptrend ? " / Uptrend" : ""}</td>
     </tr>`;
   }).join("");
 
@@ -1774,7 +1842,7 @@ app.get("/", async (req: Request, res: Response) => {
 
   const strategyCards = STRATEGIES.map(s => `
     <a href="/?strategy=${s.id}&${strategyParams(s)}" class="strategy-card s-${s.id} ${activeStrategy === s.id ? "active" : ""}" title="${s.desc}">
-      <span class="s-flag">????</span>
+      <span class="s-flag" aria-hidden="true"></span>
       <span class="s-emoji">${s.icon}</span>
       <span class="strategy-label">${s.label}</span>
     </a>`).join("");
@@ -1785,7 +1853,7 @@ app.get("/", async (req: Request, res: Response) => {
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>ZeroScreen — NSE Stock Screener</title>
-  <link rel="stylesheet" href="/public/css/style.css?v=6">
+  <link rel="stylesheet" href="/public/css/style.css?v=7">
 </head>
 <body>
   ${nav("home", req)}
@@ -1851,7 +1919,7 @@ app.get("/", async (req: Request, res: Response) => {
         <div class="screener-hero-text">
           <h1>NSE Stock Screener</h1>
           <p class="screener-hero-sub">Filter 1,700+ stocks by ROCE, D/E, P/E, promoter % and more — free forever</p>
-          ${priceAsOf ? `<span class="data-freshness-badge">?? Prices as of ${priceAsOf} · NSE EOD · Fundamentals updated weekly</span>` : ""}
+          ${priceAsOf ? `<span class="data-freshness-badge">Prices as of ${priceAsOf} &middot; NSE EOD &middot; Fundamentals updated weekly</span>` : ""}
         </div>
         <div class="screener-hero-stats">
           <div class="sh-stat"><strong>1,700+</strong><span>NSE Stocks</span></div>
@@ -1869,24 +1937,24 @@ app.get("/", async (req: Request, res: Response) => {
             <span class="today-live-pulse"></span>
             <span class="today-section-title">Today's Picks</span>
             <span class="today-section-badge">${todayPicks.length} stocks</span>
-            <span class="tier-pill tier-mid">?? Traders</span>
+            <span class="tier-pill tier-mid">For traders</span>
           </div>
-          <a href="/today" class="today-view-all">View all ${todayPicks.length} ?</a>
+          <a href="/today" class="today-view-all">View all ${todayPicks.length} &rarr;</a>
         </div>
-        <div class="picks-data-note">?? Based on last market close · Fundamentals, signals &amp; price action analysed · Not SEBI registered · Educational only</div>
+        <div class="picks-data-note">Based on last market close &middot; Fundamentals, signals and price action analysed &middot; Educational only</div>
         <div class="today-picks-grid">
           ${todayPicks.slice(0, 6).map(p => `
           <a href="/today" class="today-pick-card today-pick-card-${p.direction.toLowerCase()}">
             <div class="today-pick-header">
-              <span class="today-pick-dir today-dir-${p.direction.toLowerCase()}">${p.direction === "LONG" ? "? LONG" : "? SHORT"}</span>
+              <span class="today-pick-dir today-dir-${p.direction.toLowerCase()}">${p.direction}</span>
               ${p.pick_type ? `<span class="today-pick-type">${p.pick_type}</span>` : ""}
             </div>
             <div class="today-pick-sym">${esc(p.stock_symbol)}</div>
             ${p.company_name ? `<div class="today-pick-co">${esc(p.company_name.length > 20 ? p.company_name.slice(0,19)+'…' : p.company_name)}</div>` : ""}
-            <div class="today-pick-range">?${p.entry_low} – ?${p.entry_high}</div>
+            <div class="today-pick-range">&#8377;${p.entry_low} &ndash; &#8377;${p.entry_high}</div>
             <div class="today-pick-meta">
-              ${p.target ? `<span class="today-tgt">?? ?${p.target}</span>` : ""}
-              ${p.stop_loss ? `<span class="today-sl">SL ?${p.stop_loss}</span>` : ""}
+              ${p.target ? `<span class="today-tgt">Target &#8377;${p.target}</span>` : ""}
+              ${p.stop_loss ? `<span class="today-sl">SL &#8377;${p.stop_loss}</span>` : ""}
             </div>
           </a>`).join("")}
           ${todayPicks.length > 6 ? `<a href="/today" class="today-pick-more-card">+${todayPicks.length - 6} more picks</a>` : ""}
@@ -1896,9 +1964,9 @@ app.get("/", async (req: Request, res: Response) => {
       <!-- Strategy Presets -->
       <section class="strategies-section">
         <div class="strategies-header">
-          <span class="strategies-title">? Quick Strategies</span>
+          <span class="strategies-title">Quick Strategies</span>
           <span class="strategies-sub">One click to load expert filters — no technical knowledge needed</span>
-          <span class="tier-pill tier-mid" style="margin-left:auto">?? Traders</span>
+          <span class="tier-pill tier-mid" style="margin-left:auto">For traders</span>
         </div>
         <div class="strategies-grid">${strategyCards}</div>
       </section>
@@ -1912,7 +1980,7 @@ app.get("/", async (req: Request, res: Response) => {
           <div class="filter-grid">
 
             <div class="filter-group">
-              <label>ROCE % =</label>
+              <label>ROCE % &ge;</label>
               <select name="minRoce">
                 <option value="">Any</option>
                 <option value="5"  ${q.minRoce==="5"  ?"selected":""}>= 5%</option>
@@ -1926,7 +1994,7 @@ app.get("/", async (req: Request, res: Response) => {
             </div>
 
             <div class="filter-group">
-              <label>D/E Ratio =</label>
+              <label>D/E Ratio &le;</label>
               <select name="maxDe">
                 <option value="">Any</option>
                 <option value="0"   ${q.maxDe==="0"   ?"selected":""}>0 — Debt-free ??</option>
@@ -1939,7 +2007,7 @@ app.get("/", async (req: Request, res: Response) => {
             </div>
 
             <div class="filter-group">
-              <label>Promoter % =</label>
+              <label>Promoter % &ge;</label>
               <select name="minPromoter">
                 <option value="">Any</option>
                 <option value="30" ${q.minPromoter==="30" ?"selected":""}>= 30%</option>
@@ -1953,7 +2021,7 @@ app.get("/", async (req: Request, res: Response) => {
             </div>
 
             <div class="filter-group">
-              <label>P/E Ratio =</label>
+              <label>P/E Ratio &le;</label>
               <select name="maxPe">
                 <option value="">Any</option>
                 <option value="8"  ${q.maxPe==="8"  ?"selected":""}>= 8 (Deep Value)</option>
@@ -1968,7 +2036,7 @@ app.get("/", async (req: Request, res: Response) => {
             </div>
 
             <div class="filter-group">
-              <label>P/E Ratio =</label>
+              <label>P/E Ratio &ge;</label>
               <select name="minPe">
                 <option value="">Any</option>
                 <option value="5"  ${q.minPe==="5"  ?"selected":""}>= 5</option>
@@ -1980,7 +2048,7 @@ app.get("/", async (req: Request, res: Response) => {
             </div>
 
             <div class="filter-group">
-              <label>Dividend Yield =</label>
+              <label>Dividend Yield &ge;</label>
               <select name="minDivYield">
                 <option value="">Any</option>
                 <option value="0.5" ${q.minDivYield==="0.5" ?"selected":""}>= 0.5%</option>
@@ -2019,7 +2087,7 @@ app.get("/", async (req: Request, res: Response) => {
             </div>
 
             <div class="filter-group">
-              <label>Volume =</label>
+              <label>Volume &ge;</label>
               <select name="minVolume">
                 <option value="">Any</option>
                 <option value="10000"   ${q.minVolume==="10000"   ?"selected":""}>= 10,000</option>
@@ -2081,7 +2149,7 @@ app.get("/", async (req: Request, res: Response) => {
           <div class="filter-grid">
 
             <div class="filter-group">
-              <label>ROE % =</label>
+              <label>ROE % &ge;</label>
               <select name="minRoe">
                 <option value="">Any</option>
                 <option value="5"  ${q.minRoe==="5"  ?"selected":""}>= 5%</option>
@@ -2107,7 +2175,7 @@ app.get("/", async (req: Request, res: Response) => {
             </div>
 
             <div class="filter-group">
-              <label>Current Ratio =</label>
+              <label>Current Ratio &ge;</label>
               <select name="minCr">
                 <option value="">Any</option>
                 <option value="1"   ${q.minCr==="1"   ?"selected":""}>= 1.0 (Liquid)</option>
@@ -2118,7 +2186,7 @@ app.get("/", async (req: Request, res: Response) => {
             </div>
 
             <div class="filter-group">
-              <label>Price/Book (P/B) =</label>
+              <label>Price/Book (P/B) &le;</label>
               <select name="maxPb">
                 <option value="">Any</option>
                 <option value="1"   ${q.maxPb==="1"   ?"selected":""}>= 1.0 (Below Book)</option>
@@ -6226,12 +6294,62 @@ app.get("/api/bot/status", async (_req: Request, res: Response) => {
 });
 
 // Shadow-only ZeroScreen monitor. This endpoint never places broker orders.
-app.get("/api/shadow-monitor", featureGate("feature_signals", "Signals"), (_req: Request, res: Response) => {
+let shadowExternalHealthCache: { checkedAt: number; value: any } = { checkedAt: 0, value: null };
+async function shadowExternalHealth(): Promise<any> {
+  if (shadowExternalHealthCache.value && Date.now() - shadowExternalHealthCache.checkedAt < 45000) {
+    return shadowExternalHealthCache.value;
+  }
+  const checkedAt = new Date().toISOString();
+  const startedAt = Date.now();
+  const [databaseResult, tokenResult] = await Promise.allSettled([
+    dbAll<{ ok: number }>("SELECT 1 AS ok"),
+    tradeOpsKiteJSON("/user/profile"),
+  ]);
+  const tokenProfile = tokenResult.status === "fulfilled" ? tokenResult.value?.data : null;
+  const tokenError = tokenResult.status === "rejected"
+    ? String((tokenResult.reason as any)?.message || tokenResult.reason || "Token validation failed")
+    : "";
+  const autoTokenScript = "/home/ubuntu/trading-bot/auto_token.js";
+  const autoTokenLog = "/home/ubuntu/trading-bot/logs/auto_token.log";
+  const autoTokenLogText = fs.existsSync(autoTokenLog)
+    ? fs.readFileSync(autoTokenLog, "utf8").slice(-12000)
+    : "";
+  const autoRefreshVerified = /Token refreshed\s*&\s*bot ready/i.test(autoTokenLogText);
+  const autoRefreshFailed = /\b(failed|fatal|invalid|error)\b/i.test(
+    autoTokenLogText.split(/\r?\n/).slice(-20).join("\n"),
+  );
+  const value = {
+    checkedAt,
+    apiLatencyMs: Date.now() - startedAt,
+    database: {
+      ok: databaseResult.status === "fulfilled" && databaseResult.value?.[0]?.ok === 1,
+      error: databaseResult.status === "rejected"
+        ? String((databaseResult.reason as any)?.message || databaseResult.reason || "Database check failed")
+        : "",
+    },
+    token: {
+      valid: !!tokenProfile,
+      userId: tokenProfile?.user_id || null,
+      error: tokenError,
+      source: "Kite /user/profile",
+      autoRefreshImplemented: fs.existsSync(autoTokenScript),
+      autoRefreshVerified,
+      autoRefreshFailed,
+      lastAutoRefreshLogAt: fs.existsSync(autoTokenLog) ? fs.statSync(autoTokenLog).mtime.toISOString() : null,
+    },
+  };
+  shadowExternalHealthCache = { checkedAt: Date.now(), value };
+  return value;
+}
+
+app.get("/api/shadow-monitor", featureGate("feature_signals", "Signals"), async (_req: Request, res: Response) => {
   res.setHeader("Cache-Control", "no-store");
   try {
+    const externalHealth = await shadowExternalHealth();
     res.json(buildShadowMonitorPayload(
       String(_req.query.strategy || ""),
-      String(_req.query.instrument || "")
+      String(_req.query.instrument || ""),
+      externalHealth,
     ));
   } catch (error: any) {
     res.status(500).json({ ok: false, error: error?.message || "Shadow monitor unavailable" });
