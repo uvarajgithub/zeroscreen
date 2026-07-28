@@ -34,6 +34,7 @@ import crypto from "crypto";
 import https from "https";
 import fs from "fs";
 import { execSync } from "child_process";
+import { buildShadowMonitorPayload, renderShadowStrategyMonitorPage } from "./shadowMonitor";
 
 // -- Telegram notify helper -----------------------------------------------------
 const TG_BOT   = process.env.TELEGRAM_BOT_TOKEN || "";
@@ -6224,6 +6225,19 @@ app.get("/api/bot/status", async (_req: Request, res: Response) => {
   });
 });
 
+// Shadow-only ZeroScreen monitor. This endpoint never places broker orders.
+app.get("/api/shadow-monitor", featureGate("feature_signals", "Signals"), (_req: Request, res: Response) => {
+  res.setHeader("Cache-Control", "no-store");
+  try {
+    res.json(buildShadowMonitorPayload(
+      String(_req.query.strategy || ""),
+      String(_req.query.instrument || "")
+    ));
+  } catch (error: any) {
+    res.status(500).json({ ok: false, error: error?.message || "Shadow monitor unavailable" });
+  }
+});
+
 // -- POST /api/bot/action — admin restart / stop the trading bot -----------------
 app.post("/api/bot/action", requireAdmin, (req: Request, res: Response) => {
   const { action } = req.body as { action?: string };
@@ -12056,6 +12070,8 @@ app.get("/dashboard", featureGate("feature_dashboard", "Dashboard"), async (req:
 // -- GET /signals ----------------------------------------------------------------
 app.get("/signals", featureGate("feature_signals", "Signals"), async (req, res) => {
     res.setHeader("Cache-Control", "no-store");
+    res.send(renderShadowStrategyMonitorPage(nav("signals", req)));
+    return;
     const state = readBotJSON("trade-state.json", {});
     const _rawTrades: any[] = readBotJSON("trades.json", []);
     const _premMap: Record<string, number> = {};
