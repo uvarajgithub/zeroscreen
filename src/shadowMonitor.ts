@@ -114,6 +114,12 @@ function recentServerLogs(): any[] {
 function strategyFields(strategy: StrategyDefinition, hb: any, state: any, instrument: InstrumentType) {
   const isOptions = instrument === "OPTIONS";
   if (strategy.prefix === "drishti") {
+    const candleFile = readJson("candle-log.json", []);
+    const candleRows = Array.isArray(candleFile)
+      ? candleFile
+      : Array.isArray(candleFile?.log)
+        ? candleFile.log
+        : Array.isArray(candleFile?.candles) ? candleFile.candles : [];
     const inTrade = isOptions ? !!(hb.optInTrade || state.optInTrade) : !!(hb.inTrade || state.activeTrade);
     const realized = isOptions ? num(hb.optDailyRs) : num(hb.dailyRealRs);
     const unrealized = isOptions ? num(hb.unrealisedPnL) : num(hb.unrealisedPnL);
@@ -135,7 +141,7 @@ function strategyFields(strategy: StrategyDefinition, hb: any, state: any, instr
       entryTime: timeValue(isOptions ? state.optEntryTime : state.entryTime),
       phase: text(hb.status),
       rawTrades: isOptions && Array.isArray(hb.optRecentTrades) ? hb.optRecentTrades : readJson("trades.json", []),
-      candleLog: readJson("candle-log.json", []),
+      candleLog: candleRows,
     };
   }
 
@@ -217,7 +223,8 @@ function normalizedTrades(rawTrades: any[], strategy: StrategyDefinition, instru
 }
 
 function normalizedCandles(raw: any[], hb: any): any[] {
-  return raw.slice(-5).reverse().map((row: any) => ({
+  const rows = Array.isArray(raw) ? raw : [];
+  return rows.slice(-5).reverse().map((row: any) => ({
     time: text(row.time) || timeValue(row.at || row.date),
     timeframe: text(row.timeframe || row.tf) || "15m",
     open: num(row.open ?? row.o),
@@ -284,11 +291,34 @@ export function buildShadowMonitorPayload(strategyId = "", instrumentValue = "")
   const losses = fields.losses || closedTrades.filter((row: any) => (row.pnl ?? 0) < 0).length;
   const tradeCount = Math.max(fields.trades, trades.length);
   const winRate = wins + losses > 0 ? wins / (wins + losses) * 100 : 0;
-  const logs = recentServerLogs();
   const nowIso = new Date().toISOString();
   const runtimeStatus = connected
     ? fields.inTrade ? "RUNNING" : (fields.phase || "WAITING")
     : marketStatus() === "CLOSED" ? "SLEEPING" : "OFFLINE";
+  const observationTime = timeValue(nowIso) || "";
+  const logs = [
+    ...recentServerLogs(),
+    {
+      time: observationTime,
+      level: connected ? "INFO" : "WARN",
+      message: `[SYSTEM] Bot heartbeat ${connected ? "connected" : "stale"} (${heartbeatAgeSec ?? "unknown"}s)`,
+    },
+    {
+      time: observationTime,
+      level: "INFO",
+      message: `[STRATEGY] ${strategy.name} ${runtimeStatus}; ${instrument} shadow view selected`,
+    },
+    {
+      time: observationTime,
+      level: candles.length ? "INFO" : "WARN",
+      message: `[CANDLE] ${candles.length ? `Latest ${candles[0]?.time || ""} candle available` : "No strategy candle recorded yet"}`,
+    },
+    {
+      time: observationTime,
+      level: "INFO",
+      message: `[P&L] Shadow total ${fields.total.toFixed(2)}; realized ${fields.realized === null ? "unavailable" : fields.realized.toFixed(2)}; unrealized ${fields.unrealized === null ? "unavailable" : fields.unrealized.toFixed(2)}`,
+    },
+  ].slice(-120);
 
   return {
     ok: true,
