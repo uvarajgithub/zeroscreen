@@ -1,5 +1,7 @@
 import fs from "fs";
+import os from "os";
 import path from "path";
+import { execFileSync } from "child_process";
 
 type InstrumentType = "FUTURES" | "OPTIONS";
 
@@ -7,24 +9,51 @@ type StrategyDefinition = {
   id: string;
   name: string;
   version: string;
-  prefix: "drishti" | "tt1030" | "normalBreakoutShadow" | "hybridShadow";
+  prefix: "drishti" | "tt1030" | "tt1000" | "normalBreakoutShadow" | "hybridShadow";
   backtestFile?: string;
 };
 
 const BOT_DIR = process.env.TRADING_BOT_DIR || "/home/ubuntu/trading-bot";
+const FUTURES_MARGIN_RATE = 0.12;
+const FUTURES_CAPITAL_FALLBACK = 200000;
+const OPTIONS_CAPITAL_FALLBACK = 15000;
+const HEARTBEAT_HEALTHY_SEC = 60;
+const HEARTBEAT_CRITICAL_SEC = 120;
+
+type HealthLevel = "PASS" | "WARN" | "FAIL" | "INFO";
+type HealthCheck = {
+  id: string;
+  label: string;
+  level: HealthLevel;
+  value: string;
+  detail: string;
+  source: string;
+  critical: boolean;
+};
+
+let runtimeHealthCache: { checkedAt: number; value: any } = { checkedAt: 0, value: null };
 
 const STRATEGIES: StrategyDefinition[] = [
-  { id: "drishti", name: "DRISHTI (BANKNIFTY)", version: "Current", prefix: "drishti", backtestFile: "5year-backtest-result.json" },
-  { id: "tt1030", name: "10:30 Breakout (BANKNIFTY)", version: "Current", prefix: "tt1030", backtestFile: "fixed-futures-signal-backtest-compare.json" },
-  { id: "normal-breakout", name: "Normal Breakout (BANKNIFTY)", version: "V1", prefix: "normalBreakoutShadow", backtestFile: "normal-breakout-june-july-sweep.json" },
-  { id: "hybrid-body", name: "Hybrid Body Breakout (BANKNIFTY)", version: "Current", prefix: "hybridShadow" },
+  { id: "drishti", name: "DRISHTI (BANKNIFTY)", version: "Current", prefix: "drishti", backtestFile: "shadow-strategy-5yr-results.json" },
+  { id: "tt1030", name: "10:30 Breakout (BANKNIFTY)", version: "Current", prefix: "tt1030", backtestFile: "shadow-strategy-5yr-results.json" },
+  { id: "tt1000", name: "10:00 Breakout (BANKNIFTY)", version: "V1", prefix: "tt1000", backtestFile: "shadow-strategy-5yr-results.json" },
+  { id: "normal-breakout", name: "Normal Breakout (BANKNIFTY)", version: "V1", prefix: "normalBreakoutShadow", backtestFile: "shadow-strategy-5yr-results.json" },
+  { id: "hybrid-body", name: "Hybrid Body Breakout (BANKNIFTY)", version: "Current", prefix: "hybridShadow", backtestFile: "shadow-strategy-5yr-results.json" },
 ];
 
 function readJson(file: string, fallback: any): any {
   try {
     const filePath = path.join(BOT_DIR, file);
     if (!fs.existsSync(filePath)) return fallback;
-    return JSON.parse(fs.readFileSync(filePath, "utf8"));
+    const raw = fs.readFileSync(filePath, "utf8").replace(/^\uFEFF/, "");
+    try {
+      return JSON.parse(raw);
+    } catch {
+      const objectAt = raw.indexOf("{");
+      const arrayAt = raw.indexOf("[");
+      const start = objectAt < 0 ? arrayAt : arrayAt < 0 ? objectAt : Math.min(objectAt, arrayAt);
+      return start >= 0 ? JSON.parse(raw.slice(start)) : fallback;
+    }
   } catch {
     return fallback;
   }
@@ -79,25 +108,41 @@ function sanitizeLog(value: any): string {
     .slice(0, 360);
 }
 
-function recentServerLogs(): any[] {
+function recentServerLogs(strategy: StrategyDefinition): any[] {
   const candidates = [
     "/root/.pm2/logs/trading-bot-out.log",
-    "/root/.pm2/logs/trading-bot-error.log",
     "/home/ubuntu/.pm2/logs/trading-bot-out.log",
-    "/home/ubuntu/.pm2/logs/trading-bot-error.log",
     path.join(BOT_DIR, "logs/server.log"),
     path.join(BOT_DIR, "logs/bot-out.log"),
-    path.join(BOT_DIR, "logs/bot-err.log"),
   ];
   const rows: any[] = [];
+  const seen = new Set<string>();
+  const strategyPattern = strategy.id === "drishti"
+    ? /drishti/i
+    : strategy.id === "tt1030"
+      ? /\b10[:.]?30\b|\btt1030\b/i
+      : strategy.id === "tt1000"
+        ? /\b10[:.]?00\b|\btt1000\b/i
+        : strategy.id === "normal-breakout"
+          ? /\bnormal\b|\bbreakout\b/i
+          : /\bhybrid\b|\bbody\b/i;
+  const operationalPattern =
+    /\bheartbeat\b|\btoken\b|\bfeed\b|\bcandle\b|\bmarket\b|\bserver\b|\bconnected\b|\bsleep(?:ing)?\b|\bwake\b|\bstarted\b|\bstopped\b/i;
   for (const file of candidates) {
     try {
       if (!fs.existsSync(file)) continue;
-      const lines = fs.readFileSync(file, "utf8").split(/\r?\n/).filter(Boolean).slice(-45);
+      const lines = fs.readFileSync(file, "utf8").split(/\r?\n/).filter(Boolean).slice(-120);
       for (const line of lines) {
         if (/access[_ -]?token|authorization:|api[_ -]?key/i.test(line)) continue;
         const message = sanitizeLog(line);
         if (!message || /^\s*at\s|node:internal|requireStack/i.test(message)) continue;
+        if (!strategyPattern.test(message) && !operationalPattern.test(message)) continue;
+        const dedupeKey = message
+          .replace(/\b\d{2}:\d{2}:\d{2}\b/g, "")
+          .replace(/\b\d+(?:\.\d+)?(?:ms|s)\b/gi, "")
+          .trim();
+        if (seen.has(dedupeKey)) continue;
+        seen.add(dedupeKey);
         const timeMatch = message.match(/\b(\d{2}:\d{2}:\d{2})\b/);
         const level = /error|failed|rejected|exception/i.test(message)
           ? "ERROR"
@@ -108,46 +153,53 @@ function recentServerLogs(): any[] {
       }
     } catch {}
   }
-  return rows.slice(-120);
+  return rows.slice(-40);
 }
 
 function strategyFields(strategy: StrategyDefinition, hb: any, state: any, instrument: InstrumentType) {
   const isOptions = instrument === "OPTIONS";
   if (strategy.prefix === "drishti") {
     const candleFile = readJson("candle-log.json", []);
-    const candleRows = Array.isArray(candleFile)
+    const fileCandleRows = Array.isArray(candleFile)
       ? candleFile
       : Array.isArray(candleFile?.log)
         ? candleFile.log
         : Array.isArray(candleFile?.candles) ? candleFile.candles : [];
-    const inTrade = isOptions ? !!(hb.optInTrade || state.optInTrade) : !!(hb.inTrade || state.activeTrade);
-    const rawSymbol = text(isOptions ? (hb.optSymbol || state.optSymbol) : (hb.symbol || state.tradeSymbol));
+    const heartbeatCandleRows = Array.isArray(hb.DrishtiCandleLog) ? hb.DrishtiCandleLog : [];
+    const candleRows = heartbeatCandleRows.length
+      ? heartbeatCandleRows
+      : candleFile?.date && dateKey(candleFile.date) !== todayIST() ? [] : fileCandleRows;
+    const inTrade = isOptions ? !!hb.optInTrade : !!hb.inTrade;
+    const rawSymbol = text(isOptions ? hb.optSymbol : hb.symbol);
     const scopedSymbol = !isOptions && rawSymbol && /\d+(CE|PE)$/i.test(rawSymbol) ? null : rawSymbol;
     const realized = isOptions ? num(hb.optDailyRs) : num(hb.dailyRealRs);
     const unrealized = isOptions ? num(hb.unrealisedPnL) : num(hb.unrealisedPnL);
+    const tradeCount = num(isOptions ? hb.optRecentTrades?.length : hb.tradeCount) ?? 0;
     return {
       inTrade,
       realized,
       unrealized: inTrade ? unrealized : 0,
       total: (realized ?? 0) + (inTrade ? (unrealized ?? 0) : 0),
-      trades: num(isOptions ? hb.optRecentTrades?.length : hb.tradeCount) ?? 0,
+      trades: tradeCount,
       wins: num(isOptions ? hb.optWins : state.drishtiWins) ?? 0,
       losses: num(isOptions ? hb.optLosses : state.drishtiLosses) ?? 0,
-      direction: text(isOptions ? (hb.optDir || state.optDir) : (hb.direction || state.tradeDirection)),
+      direction: text(isOptions ? hb.optDir : hb.direction),
       symbol: scopedSymbol,
-      entry: num(isOptions ? (hb.optEntryPrem || state.optEntryPrem) : (hb.entryPrice || state.drishtiFuturesEntry || state.entryPrice)),
-      live: num(isOptions ? (hb.livePremium || state.livePremium) : hb.livePrice),
-      sl: num(isOptions ? state.candleSL : (hb.sl || state.candleSL)),
+      entry: num(isOptions ? hb.optEntryPrem : (hb.drishtiFuturesEntry || hb.entryPrice)),
+      live: num(isOptions ? hb.livePremium : hb.livePrice),
+      sl: num(hb.sl),
       target: null,
-      quantity: num(isOptions ? (state.mainQty || hb.qty) : (state.mainQty || hb.qty)),
-      entryTime: timeValue(isOptions ? state.optEntryTime : state.entryTime),
-      entryAt: isOptions ? state.optEntryTime : state.entryTime,
+      quantity: num(hb.qty),
+      entryTime: timeValue(isOptions ? hb.optEntryTime : hb.entryTime),
+      entryAt: isOptions ? hb.optEntryTime : hb.entryTime,
       phase: text(hb.status),
       dayHigh: null,
       dayLow: null,
       volume: null,
       openInterest: null,
-      rawTrades: isOptions && Array.isArray(hb.optRecentTrades) ? hb.optRecentTrades : readJson("trades.json", []),
+      rawTrades: isOptions && Array.isArray(hb.optRecentTrades)
+        ? hb.optRecentTrades
+        : tradeCount > 0 ? readJson("trades.json", []) : [],
       candleLog: candleRows,
     };
   }
@@ -155,12 +207,15 @@ function strategyFields(strategy: StrategyDefinition, hb: any, state: any, instr
   const prefix = strategy.prefix;
   const inTrade = !!hb[`${prefix}InTrade`];
   const total = num(hb[isOptions ? `${prefix}OptPnL` : `${prefix}PnL`]) ?? 0;
-  const closed = num(hb[`${prefix}ClosedPnL`]);
+  const closed = num(hb[isOptions ? `${prefix}OptClosedPnL` : `${prefix}ClosedPnL`]);
   const realized = closed ?? (inTrade ? null : total);
   const unrealized = inTrade && realized !== null ? total - realized : (inTrade ? total : 0);
   const optionSymbol = text(hb[`${prefix}OptionSymbol`]);
   const futuresSymbol = text(hb[`${prefix}FuturesSymbol`]);
   const direction = text(hb[`${prefix}Dir`]);
+  const persisted = prefix === "normalBreakoutShadow"
+    ? readJson("normal-breakout-v1-state.json", {})
+    : prefix === "hybridShadow" ? readJson("hybrid-state.json", {}) : {};
   return {
     inTrade,
     realized,
@@ -180,8 +235,8 @@ function strategyFields(strategy: StrategyDefinition, hb: any, state: any, instr
     sl: num(hb[`${prefix}SL`]),
     target: null,
     quantity: num(hb[`${prefix}LiveQty`] ?? hb.qty),
-    entryTime: null,
-    entryAt: null,
+    entryTime: timeValue(hb[`${prefix}EntryTime`] ?? persisted.entryTime),
+    entryAt: hb[`${prefix}EntryAt`] ?? (persisted.date && persisted.entryTime ? `${persisted.date}T${persisted.entryTime}:00+05:30` : null),
     phase: text(hb[`${prefix}Phase`] || hb.status),
     dayHigh: num(hb[isOptions ? `${prefix}OptionHigh` : `${prefix}High`]),
     dayLow: num(hb[isOptions ? `${prefix}OptionLow` : `${prefix}Low`]),
@@ -192,55 +247,100 @@ function strategyFields(strategy: StrategyDefinition, hb: any, state: any, instr
   };
 }
 
-function normalizedTrades(rawTrades: any[], strategy: StrategyDefinition, instrument: InstrumentType, tradeDate: string) {
-  const seen = new Set<string>();
-  return rawTrades
+function normalizedTrades(rawTrades: any[], strategy: StrategyDefinition, instrument: InstrumentType, tradeDate: string, defaultQuantity = 30) {
+  const normalized = rawTrades
     .filter((row: any) => {
       const rowDate = dateKey(row.date || row.at || row.entryTime || row.exitTime);
       return !rowDate || rowDate === tradeDate;
     })
     .filter((row: any) => {
       const symbol = String(row.symbol || row.tradeSymbol || row.contract || "").toUpperCase();
-      const looksOption = /\d+(CE|PE)$/.test(symbol) || !!row.premiumEntry || !!row.entryPremium;
-      return instrument === "OPTIONS" ? looksOption || strategy.prefix !== "drishti" : !looksOption || strategy.prefix !== "drishti";
+      const hasPremium = num(row.premiumEntry ?? row.entryPremium ?? row.premIn) !== null;
+      const hasIndexTrade = num(row.entry ?? row.entryPrice) !== null;
+      const looksOption = /\d+(CE|PE)$/.test(symbol) || hasPremium;
+      return instrument === "OPTIONS" ? looksOption : hasIndexTrade || !looksOption;
     })
     .map((row: any, index: number) => {
-      const direction = text(row.direction || row.dir || row.side);
-      const symbol = text(row.symbol || row.tradeSymbol || row.contract);
-      const pnl = num(row.pnlRs ?? row.pnl ?? row.points ?? row.pts);
-      const entry = num(row.premiumEntry ?? row.entryPremium ?? row.premIn ?? row.entryPrice ?? row.entry);
-      const exit = num(row.premiumExit ?? row.exitPremium ?? row.premOut ?? row.exitPrice ?? row.exit);
+      const direction = text(row.direction || row.dir || row.side).toUpperCase();
+      const rawSymbol = text(row.symbol || row.tradeSymbol || row.contract);
+      const quantity = num(row.qty ?? row.quantity ?? row.lots) ?? defaultQuantity;
+      const isOptions = instrument === "OPTIONS";
+      const entry = isOptions
+        ? num(row.premiumEntry ?? row.entryPremium ?? row.premIn)
+        : num(row.entryPrice ?? row.entry);
+      const exit = isOptions
+        ? num(row.premiumExit ?? row.exitPremium ?? row.premOut)
+        : num(row.exitPrice ?? row.exit);
+      const premiumPnl = isOptions && entry !== null && exit !== null
+        ? (exit - entry) * quantity
+        : null;
+      const pnl = isOptions
+        ? premiumPnl ?? num(row.optionPnlRs ?? row.optPnlRs ?? row.optionPnl)
+        : num(row.pnlRs ?? row.pnl ?? row.points ?? row.pts);
+      const contract = /\b(CE|PE)\b/i.test(direction)
+        ? direction.match(/\b(CE|PE)\b/i)?.[1]?.toUpperCase()
+        : rawSymbol.match(/(CE|PE)$/i)?.[1]?.toUpperCase() || null;
+      const action = isOptions
+        ? "BUY"
+        : contract === "PE" || /\bSELL|SHORT\b/i.test(direction) ? "SELL" : "BUY";
+      const exitAction = action === "BUY" ? "SELL" : "BUY";
+      const symbol = isOptions
+        ? rawSymbol || `BANKNIFTY ${contract || "OPTION"}`
+        : text(row.futuresSymbol) || "BANKNIFTY FUTURES";
       const stableId = text(row.tradeId || row.signalId) || [
         strategy.id, instrument, tradeDate, symbol, direction, entry, row.entryTime || row.date || index,
       ].join("|");
+      const capitalDeployed = entry !== null && quantity > 0
+        ? (isOptions ? entry * quantity : entry * quantity * FUTURES_MARGIN_RATE)
+        : null;
       return {
         id: stableId,
+        tradeId: stableId,
+        strategyId: strategy.id,
+        strategyVersion: strategy.version,
+        instrumentType: instrument,
+        executionMode: "SHADOW",
+        tradeDate,
         time: timeValue(row.entryTime || row.date || row.at || row.time),
         instrument: symbol,
         side: direction,
-        quantity: num(row.qty ?? row.quantity ?? row.lots),
+        contract,
+        action,
+        exitAction,
+        quantity,
         entry,
         exit,
         stopLoss: num(row.sl ?? row.stopLoss),
         target: num(row.target),
         pnl,
+        capitalDeployed,
+        returnPct: pnl !== null && capitalDeployed ? pnl / capitalDeployed * 100 : null,
         result: pnl === null ? null : pnl > 0 ? "WIN" : pnl < 0 ? "LOSS" : "FLAT",
         status: text(row.status) || (exit !== null && exit > 0 ? "CLOSED" : "OPEN"),
         reason: text(row.reasonExit || row.reason || row.note),
       };
-    })
-    .filter((row: any) => {
-      if (seen.has(row.id)) return false;
-      seen.add(row.id);
-      return true;
-    })
+    });
+
+  const consolidated = new Map<string, any>();
+  for (const row of normalized) {
+    const tradeKey = text(row.id) && !String(row.id).includes("|")
+      ? `id:${row.id}`
+      : [row.instrument, row.contract, row.side, row.entry].join("|");
+    const existing = consolidated.get(tradeKey);
+    if (!existing || (existing.exit == null && row.exit != null)) {
+      consolidated.set(tradeKey, row);
+    }
+  }
+
+  return [...consolidated.values()]
     .slice(-25)
     .reverse();
 }
 
 function normalizedCandles(raw: any[], hb: any): any[] {
   const rows = Array.isArray(raw) ? raw : [];
-  return rows.slice(-5).reverse().map((row: any) => ({
+  return rows.slice().reverse().map((row: any) => ({
+    number: num(row.idx ?? row.num),
     time: text(row.time) || timeValue(row.at || row.date),
     timeframe: text(row.timeframe || row.tf) || "15m",
     open: num(row.open ?? row.o),
@@ -249,33 +349,95 @@ function normalizedCandles(raw: any[], hb: any): any[] {
     close: num(row.close ?? row.c),
     volume: num(row.volume ?? row.v),
     status: text(row.status || row.state),
+    side: text(row.dir || row.direction || row.side),
+    entry: num(row.entry ?? row.entryPrice),
+    stopLoss: num(row.sl ?? row.stopLoss),
+    exit: num(row.exit ?? row.exitPrice),
+    pnl: num(row.pnlRs ?? row.pnl ?? row.pnlPts),
     note: text(row.note || row.reason) || "No evaluation note recorded",
   })).map((row: any) => ({ ...row, receivedAt: hb?.at || null }));
 }
 
-function backtestSummary(strategy: StrategyDefinition): any {
+function backtestSummary(strategy: StrategyDefinition, instrument: InstrumentType): any {
   if (!strategy.backtestFile) return null;
   const data = readJson(strategy.backtestFile, null);
   if (!data) return null;
+  const normalized = data?.strategies?.[strategy.id]?.[instrument];
+  if (normalized?.summary) {
+    const summary = normalized.summary;
+    return {
+      source: strategy.backtestFile,
+      coverage: data.coverage?.from && data.coverage?.to
+        ? `${String(data.coverage.from).slice(0, 4)}-${String(data.coverage.to).slice(0, 4)}`
+        : "5Y",
+      coverageFrom: data.coverage?.from || null,
+      coverageTo: data.coverage?.to || null,
+      pnl: num(summary.total),
+      pnlUnit: "rupees",
+      winRate: num(summary.winRate),
+      maxDrawdown: num(summary.maxDrawdown),
+      avgMonthlyPnl: num(summary.avgMonthlyPnl),
+      capitalUsed: num(summary.capitalUsed),
+      returnPct: num(summary.returnPct),
+      avgMonthlyReturnPct: num(summary.avgMonthlyReturnPct),
+      totalTrades: num(summary.totalTrades),
+      dailyRecords: Array.isArray(normalized.days) ? normalized.days.length : 0,
+      monthlyRecords: Array.isArray(normalized.months) ? normalized.months.length : 0,
+      modelled: !!normalized.modelled,
+      methodology: text(normalized.methodology),
+      days: Array.isArray(normalized.days) ? normalized.days : [],
+      months: Array.isArray(normalized.months) ? normalized.months : [],
+      generatedAt: data.generatedAt || null,
+    };
+  }
+  if (strategy.prefix === "tt1030" && data.summary) {
+    const stats = instrument === "OPTIONS" ? data.summary.optStats : data.summary.futStats;
+    const months = data.months && typeof data.months === "object" ? Object.keys(data.months).length : 0;
+    if (!stats) return null;
+    return {
+      source: strategy.backtestFile,
+      coverage: "2021-2026",
+      pnl: num(stats.total),
+      pnlUnit: "rupees",
+      winRate: num(stats.winRate),
+      maxDrawdown: num(stats.maxDD),
+      avgMonthlyPnl: months ? (num(stats.total) ?? 0) / months : null,
+      totalTrades: num(data.summary.trades),
+      dailyRecords: num(data.summary.days) ?? 0,
+      monthlyRecords: months,
+    };
+  }
   const totals = data.totals || data.summary || data.total || {};
   const daily = Array.isArray(data.daily) ? data.daily : [];
   const monthly = data.monthly && typeof data.monthly === "object" ? Object.values(data.monthly) : [];
   const totalTrades = num(totals.trades ?? totals.totalTrades ?? data.tradedDays);
   const wins = num(totals.wins ?? totals.totalWins);
-  const winRate = num(data.winRate ?? totals.winRate) ?? (
+  const winRate = num(data.winRate ?? totals.winRate ?? totals.tradeWinRate) ?? (
     totalTrades && wins !== null ? (wins / totalTrades) * 100 : null
   );
-  const returnPct = num(totals.returnPct ?? totals.totalReturnPct ?? data.returnPct);
-  const maxDrawdown = num(totals.maxDrawdownPct ?? totals.maxDrawdown ?? data.maxDrawdown);
-  const avgMonthlyReturn = num(totals.avgMonthlyReturnPct ?? totals.avgMonthlyReturn ?? data.avgMonthlyReturn);
-  const pnl = num(totals.pnl ?? totals.totalPnl ?? totals.bodyBreakout);
-  if ([totalTrades, winRate, returnPct, maxDrawdown, avgMonthlyReturn, pnl].every(v => v === null)) return null;
+  const maxDrawdown = num(totals.maxDDRs ?? totals.maxDrawdown ?? data.maxDrawdown);
+  const cashPnl = num(totals.totalPnlRs ?? totals.pnl ?? totals.totalPnl);
+  const pnl = cashPnl ?? num(totals.bodyBreakout);
+  const pnlUnit = cashPnl !== null ? "rupees" : "points";
+  const dailyValues = daily.map((row: any) => num(row.pnl ?? row.bbPnL)).filter((value: number | null): value is number => value !== null);
+  let derivedDrawdown = 0;
+  let equity = 0;
+  let peak = 0;
+  for (const value of dailyValues) {
+    equity += value;
+    peak = Math.max(peak, equity);
+    derivedDrawdown = Math.max(derivedDrawdown, peak - equity);
+  }
+  const resolvedDrawdown = maxDrawdown ?? (dailyValues.length ? derivedDrawdown : null);
+  const avgMonthlyPnl = monthly.length && pnl !== null ? pnl / monthly.length : null;
+  if ([totalTrades, winRate, resolvedDrawdown, avgMonthlyPnl, pnl].every(v => v === null)) return null;
   return {
     source: strategy.backtestFile,
-    returnPct,
+    coverage: data.period?.from && data.period?.to ? `${String(data.period.from).slice(0, 4)}-${String(data.period.to).slice(0, 4)}` : null,
+    pnlUnit,
     winRate,
-    maxDrawdown,
-    avgMonthlyReturn,
+    maxDrawdown: resolvedDrawdown,
+    avgMonthlyPnl,
     totalTrades,
     pnl,
     dailyRecords: daily.length,
@@ -284,19 +446,40 @@ function backtestSummary(strategy: StrategyDefinition): any {
 }
 
 function shadowHistory(strategy: StrategyDefinition, instrument: InstrumentType): any {
-  const byDate = new Map<string, { date: string; pnl: number; trades: number; wins: number; losses: number }>();
-  if (strategy.prefix === "tt1030") {
+  const byDate = new Map<string, { date: string; pnl: number; capitalDeployed: number; trades: number; wins: number; losses: number }>();
+  const monthlyHistoryKey: Partial<Record<StrategyDefinition["prefix"], string>> = {
+    tt1030: "TEN_THIRTY",
+    tt1000: "TEN_O_CLOCK",
+    normalBreakoutShadow: "NORMAL_BREAKOUT_V1",
+    hybridShadow: "HYBRID_BODY",
+  };
+  const historyKey = monthlyHistoryKey[strategy.prefix];
+  if (historyKey) {
     const source = readJson("strategy-monthly-history.json", {});
     const months = source?.months && typeof source.months === "object" ? source.months : {};
     for (const month of Object.values(months) as any[]) {
-      const days = month?.TEN_THIRTY?.days || month?.days || {};
+      const days = month?.[historyKey]?.days || {};
       for (const [date, record] of Object.entries(days) as [string, any][]) {
         const summary = record?.summary || {};
         const pnl = num(instrument === "OPTIONS" ? summary.optionsRs : summary.futuresRs);
         if (pnl === null) continue;
+        const tradeRows = Array.isArray(record?.trades) ? record.trades : [];
+        const completedRows = tradeRows.filter((row: any) =>
+          num(instrument === "OPTIONS" ? row.premOut ?? row.premiumExit : row.exit ?? row.exitPrice) !== null
+          || num(row.pnlRs ?? row.pnl ?? row.pts) !== null
+        );
+        const capitalRows = completedRows.length ? completedRows : tradeRows.filter((row: any) =>
+          num(instrument === "OPTIONS" ? row.premIn ?? row.premiumEntry : row.entry ?? row.entryPrice) !== null
+        );
+        const capitalDeployed = capitalRows.reduce((sum: number, row: any) => {
+          const entry = num(instrument === "OPTIONS" ? row.premIn ?? row.premiumEntry : row.entry ?? row.entryPrice);
+          const quantity = num(row.qty ?? row.quantity) ?? 30;
+          return sum + (entry && quantity ? (instrument === "OPTIONS" ? entry * quantity : entry * quantity * FUTURES_MARGIN_RATE) : 0);
+        }, 0);
         byDate.set(date, {
           date,
           pnl,
+          capitalDeployed: Math.round(capitalDeployed),
           trades: num(summary.trades) ?? 0,
           wins: num(summary.wins) ?? (pnl > 0 ? 1 : 0),
           losses: num(summary.losses) ?? (pnl < 0 ? 1 : 0),
@@ -313,8 +496,13 @@ function shadowHistory(strategy: StrategyDefinition, instrument: InstrumentType)
       if (instrument === "OPTIONS" ? !looksOption : looksOption) continue;
       const pnl = num(row.pnlRs ?? row.pnl);
       if (pnl === null) continue;
-      const current = byDate.get(date) || { date, pnl: 0, trades: 0, wins: 0, losses: 0 };
+      const current = byDate.get(date) || { date, pnl: 0, capitalDeployed: 0, trades: 0, wins: 0, losses: 0 };
       current.pnl += pnl;
+      const entry = num(instrument === "OPTIONS" ? row.premiumEntry ?? row.entryPremium : row.entryPrice ?? row.entry);
+      const quantity = num(row.qty ?? row.quantity) ?? 30;
+      current.capitalDeployed += entry && quantity
+        ? (instrument === "OPTIONS" ? entry * quantity : entry * quantity * FUTURES_MARGIN_RATE)
+        : 0;
       current.trades += 1;
       if (pnl > 0) current.wins += 1;
       if (pnl < 0) current.losses += 1;
@@ -322,13 +510,18 @@ function shadowHistory(strategy: StrategyDefinition, instrument: InstrumentType)
     }
   }
 
-  const days = Array.from(byDate.values()).sort((a, b) => a.date.localeCompare(b.date));
+  const days = Array.from(byDate.values()).map(day => ({
+    ...day,
+    capitalDeployed: Math.round(day.capitalDeployed),
+    returnPct: day.capitalDeployed > 0 ? day.pnl / day.capitalDeployed * 100 : null,
+  })).sort((a, b) => a.date.localeCompare(b.date));
   const aggregate = (keyFor: (date: string) => string) => {
     const groups = new Map<string, any>();
     for (const day of days) {
       const key = keyFor(day.date);
-      const row = groups.get(key) || { period: key, pnl: 0, tradingDays: 0, trades: 0, wins: 0, losses: 0 };
+      const row = groups.get(key) || { period: key, pnl: 0, capitalDeployed: 0, tradingDays: 0, trades: 0, wins: 0, losses: 0 };
       row.pnl += day.pnl;
+      row.capitalDeployed += day.capitalDeployed;
       row.tradingDays += 1;
       row.trades += day.trades;
       row.wins += day.wins;
@@ -338,6 +531,7 @@ function shadowHistory(strategy: StrategyDefinition, instrument: InstrumentType)
     return Array.from(groups.values()).map((row: any) => ({
       ...row,
       winRate: row.wins + row.losses > 0 ? row.wins / (row.wins + row.losses) * 100 : 0,
+      returnPct: row.capitalDeployed > 0 ? row.pnl / row.capitalDeployed * 100 : null,
     })).sort((a: any, b: any) => a.period.localeCompare(b.period)).reverse();
   };
   const weekKey = (date: string) => {
@@ -349,11 +543,320 @@ function shadowHistory(strategy: StrategyDefinition, instrument: InstrumentType)
     return `${parsed.getUTCFullYear()}-W${String(week).padStart(2, "0")}`;
   };
   return {
-    source: strategy.prefix === "tt1030" ? "strategy-monthly-history.json" : strategy.prefix === "drishti" ? "trades.json" : null,
+    source: historyKey ? "strategy-monthly-history.json" : strategy.prefix === "drishti" ? "trades.json" : null,
     days: [...days].reverse(),
     weekly: aggregate(weekKey),
     monthly: aggregate(date => date.slice(0, 7)),
     yearly: aggregate(date => date.slice(0, 4)),
+  };
+}
+
+function runtimeEvidence(): any {
+  if (runtimeHealthCache.value && Date.now() - runtimeHealthCache.checkedAt < 15000) {
+    return runtimeHealthCache.value;
+  }
+  let processInfo: any = null;
+  try {
+    const raw = execFileSync("pm2", ["jlist"], {
+      encoding: "utf8",
+      timeout: 2500,
+      windowsHide: true,
+      stdio: ["ignore", "pipe", "ignore"],
+    });
+    const rows = JSON.parse(raw);
+    const tradingBot = Array.isArray(rows) ? rows.find((row: any) => row?.name === "trading-bot") : null;
+    if (tradingBot) {
+      processInfo = {
+        status: text(tradingBot?.pm2_env?.status)?.toUpperCase() || "UNKNOWN",
+        pid: num(tradingBot?.pid),
+        uptimeStartedAt: num(tradingBot?.pm2_env?.pm_uptime),
+        restarts: num(tradingBot?.pm2_env?.restart_time) ?? 0,
+        unstableRestarts: num(tradingBot?.pm2_env?.unstable_restarts) ?? 0,
+      };
+    }
+  } catch {
+    processInfo = null;
+  }
+
+  const cpuCount = Math.max(1, os.cpus()?.length || 1);
+  const cpuLoadPct = Math.max(0, os.loadavg()[0] / cpuCount * 100);
+  const memoryUsedPct = os.totalmem() > 0 ? (1 - os.freemem() / os.totalmem()) * 100 : 0;
+  let diskUsedPct: number | null = null;
+  try {
+    const stats = fs.statfsSync(BOT_DIR);
+    const total = Number(stats.blocks) * Number(stats.bsize);
+    const free = Number(stats.bavail) * Number(stats.bsize);
+    diskUsedPct = total > 0 ? (1 - free / total) * 100 : null;
+  } catch {
+    diskUsedPct = null;
+  }
+  const value = { process: processInfo, resources: { cpuLoadPct, memoryUsedPct, diskUsedPct } };
+  runtimeHealthCache = { checkedAt: Date.now(), value };
+  return value;
+}
+
+function minuteOfDay(value: any): number | null {
+  const match = String(value || "").match(/(\d{1,2}):(\d{2})/);
+  if (!match) return null;
+  return Number(match[1]) * 60 + Number(match[2]);
+}
+
+function istClock(): { weekday: number; minutes: number; time: string } {
+  const now = new Date();
+  const parts = new Intl.DateTimeFormat("en-GB", {
+    timeZone: "Asia/Kolkata",
+    weekday: "short",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }).formatToParts(now);
+  const part = (type: string) => parts.find(row => row.type === type)?.value || "";
+  const weekdays: Record<string, number> = { Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6, Sun: 0 };
+  const hour = Number(part("hour") || 0);
+  const minute = Number(part("minute") || 0);
+  return { weekday: weekdays[part("weekday")] ?? now.getDay(), minutes: hour * 60 + minute, time: `${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}` };
+}
+
+function systemHealth(
+  strategy: StrategyDefinition,
+  hb: any,
+  fields: ReturnType<typeof strategyFields>,
+  candles: any[],
+  heartbeatAgeSec: number | null,
+  externalHealth: any,
+): any {
+  const evidence = runtimeEvidence();
+  const processState = String(evidence.process?.status || "UNKNOWN");
+  const processOnline = processState === "ONLINE";
+  const clock = istClock();
+  const tradingDay = clock.weekday >= 1 && clock.weekday <= 5;
+  const marketOpen = tradingDay && clock.minutes >= 555 && clock.minutes <= 930;
+  const triggerByStrategy: Record<string, { time: string; minutes: number }> = {
+    drishti: { time: "09:25", minutes: 565 },
+    tt1000: { time: "10:00", minutes: 600 },
+    tt1030: { time: "10:30", minutes: 630 },
+    "normal-breakout": { time: "09:45", minutes: 585 },
+    "hybrid-body": { time: "09:30", minutes: 570 },
+  };
+  const trigger = triggerByStrategy[strategy.id] || { time: "--", minutes: 555 };
+  const candleTimes = candles.map(row => minuteOfDay(row.time)).filter((value): value is number => value !== null);
+  const uniqueTimes = new Set(candleTimes);
+  const duplicateCandles = candleTimes.length - uniqueTimes.size;
+  const sortedTimes = [...uniqueTimes].sort((a, b) => a - b);
+  const gapCount = sortedTimes.slice(1).filter((value, index) => value - sortedTimes[index] > 20).length;
+  const latestCandleMinute = sortedTimes.length ? sortedTimes[sortedTimes.length - 1] : null;
+  const triggerDue = tradingDay && clock.minutes >= trigger.minutes + 20;
+  const triggerCompleted = candleTimes.some(value => value >= trigger.minutes);
+  const missedTriggers = triggerDue && !triggerCompleted ? 1 : 0;
+  const freshHeartbeat = heartbeatAgeSec !== null && heartbeatAgeSec <= HEARTBEAT_HEALTHY_SEC;
+  const delayedHeartbeat = heartbeatAgeSec !== null && heartbeatAgeSec <= HEARTBEAT_CRITICAL_SEC;
+  const livePrice = num(fields.live ?? hb?.price);
+  const strategyMarker = text(
+    hb?.[`${strategy.prefix}Strategy`]
+      ?? (strategy.id === "drishti" ? hb?.strategy : null)
+      ?? fields.phase,
+  );
+  const recentLogs = recentServerLogs(strategy);
+  const recentRuntimeErrors = recentLogs.filter(row => /UNCAUGHT|CRASH|FATAL|SAVE_FAIL|WRITE_FAIL/i.test(String(row.message || "")));
+  let storageWritable = false;
+  try {
+    fs.accessSync(BOT_DIR, fs.constants.R_OK | fs.constants.W_OK);
+    storageWritable = true;
+  } catch {
+    storageWritable = false;
+  }
+  const heartbeatFile = path.join(BOT_DIR, "bot-heartbeat.json");
+  const snapshotReadable = fs.existsSync(heartbeatFile);
+  const tokenValid = externalHealth?.token?.valid === true;
+  const tokenChecked = !!externalHealth?.token?.source;
+  const databaseOK = externalHealth?.database?.ok === true;
+  const autoRefreshImplemented = externalHealth?.token?.autoRefreshImplemented === true;
+  const autoRefreshVerified = externalHealth?.token?.autoRefreshVerified === true;
+  const autoRefreshFailed = externalHealth?.token?.autoRefreshFailed === true;
+  const autoRefreshDetail = autoRefreshVerified
+    ? `last successful run ${externalHealth?.token?.lastAutoRefreshLogAt || "recorded"}`
+    : autoRefreshFailed
+      ? "latest attempt reports a failure"
+      : autoRefreshImplemented
+        ? "helper present but no verified success evidence"
+        : "not implemented";
+  const futuresFields = strategyFields(strategy, hb, readJson("trade-state.json", {}), "FUTURES");
+  const optionsFields = strategyFields(strategy, hb, readJson("trade-state.json", {}), "OPTIONS");
+  const resourceValues = [
+    Number(evidence.resources?.cpuLoadPct || 0),
+    Number(evidence.resources?.memoryUsedPct || 0),
+    Number(evidence.resources?.diskUsedPct || 0),
+  ];
+  const resourceCritical = resourceValues.some(value => value >= 95);
+  const resourceWarning = resourceValues.some(value => value >= 85) || Number(evidence.process?.unstableRestarts || 0) > 0;
+  const processUptimeMs = evidence.process?.uptimeStartedAt
+    ? Math.max(0, Date.now() - Number(evidence.process.uptimeStartedAt))
+    : null;
+  const processUptime = processUptimeMs === null
+    ? "--"
+    : `${Math.floor(processUptimeMs / 86400000)}d ${Math.floor(processUptimeMs % 86400000 / 3600000)}h`;
+  const latestFeedLog = recentLogs.find(row => /\b(FEED|TICK|MARKET DATA|HEARTBEAT)\b/i.test(String(row.message || "")));
+  const futuresReady = processOnline && !!(futuresFields.phase || futuresFields.rawTrades?.length || strategyMarker);
+  const optionsReady = processOnline && !!(optionsFields.phase || optionsFields.rawTrades?.length || strategyMarker);
+
+  const checks: HealthCheck[] = [
+    {
+      id: "process",
+      label: "Bot Process",
+      level: processOnline ? "PASS" : "FAIL",
+      value: processOnline ? "Online" : processState === "UNKNOWN" ? "Unknown" : processState,
+      detail: processOnline
+        ? `PID ${evidence.process?.pid || "--"}; uptime ${processUptime}; ${evidence.process?.restarts || 0} lifetime restarts`
+        : "PM2 trading-bot process is not online.",
+      source: "PM2 jlist",
+      critical: true,
+    },
+    {
+      id: "scheduler",
+      label: "Scheduler",
+      level: !processOnline ? "FAIL" : missedTriggers ? "FAIL" : triggerCompleted ? "PASS" : "INFO",
+      value: !processOnline ? "Stopped" : missedTriggers ? "Missed trigger" : triggerCompleted ? "Active" : "Waiting",
+      detail: `Expected ${trigger.time}; last evaluation ${latestCandleMinute === null ? "--" : `${String(Math.floor(latestCandleMinute / 60)).padStart(2, "0")}:${String(latestCandleMinute % 60).padStart(2, "0")}`}; missed ${missedTriggers}`,
+      source: "PM2 + strategy candle evaluation log",
+      critical: true,
+    },
+    {
+      id: "trigger",
+      label: "Latest Automatic Trigger",
+      level: missedTriggers ? "FAIL" : triggerCompleted ? "PASS" : triggerDue ? "WARN" : "INFO",
+      value: missedTriggers ? "Missed" : triggerCompleted ? "Completed" : "Pending",
+      detail: `Scheduled ${trigger.time}; latest strategy evaluation ${latestCandleMinute === null ? "--" : `${String(Math.floor(latestCandleMinute / 60)).padStart(2, "0")}:${String(latestCandleMinute % 60).padStart(2, "0")}`}`,
+      source: "Scheduled trigger + selected strategy candle log",
+      critical: true,
+    },
+    {
+      id: "heartbeat",
+      label: "Strategy Heartbeat",
+      level: freshHeartbeat ? "PASS" : delayedHeartbeat ? "WARN" : "FAIL",
+      value: heartbeatAgeSec === null ? "Missing" : `${heartbeatAgeSec}s ago`,
+      detail: `Expected within ${HEARTBEAT_HEALTHY_SEC}s; critical after ${HEARTBEAT_CRITICAL_SEC}s`,
+      source: "bot-heartbeat.json",
+      critical: true,
+    },
+    {
+      id: "marketHeartbeat",
+      label: "Market Data Heartbeat",
+      level: !marketOpen ? "INFO" : freshHeartbeat && livePrice !== null && livePrice > 0 ? "PASS" : delayedHeartbeat ? "WARN" : "FAIL",
+      value: !marketOpen ? "Market closed" : freshHeartbeat ? "Receiving" : "Stale",
+      detail: `Latest price ${livePrice ?? "--"}; heartbeat ${heartbeatAgeSec === null ? "missing" : `${heartbeatAgeSec}s ago`}`,
+      source: "Bot heartbeat market fields",
+      critical: true,
+    },
+    {
+      id: "feed",
+      label: "Feed Freshness",
+      level: !marketOpen ? "INFO" : freshHeartbeat && livePrice !== null && livePrice > 0 ? "PASS" : delayedHeartbeat ? "WARN" : "FAIL",
+      value: !marketOpen ? "Market closed" : livePrice ? "Fresh" : "No price",
+      detail: !marketOpen
+        ? `Fresh ticks are not required outside market hours. Last event: ${latestFeedLog?.message || "not published"}`
+        : `Latest price evidence ${livePrice ?? "--"}; last feed event ${latestFeedLog?.message || "not published"}.`,
+      source: "Heartbeat price evidence",
+      critical: true,
+    },
+    {
+      id: "candles",
+      label: "Candle Generation",
+      level: duplicateCandles > 0 ? "FAIL" : missedTriggers ? "FAIL" : gapCount > 0 ? "WARN" : triggerCompleted ? "PASS" : "INFO",
+      value: duplicateCandles ? `${duplicateCandles} duplicate` : gapCount ? `${gapCount} gap` : triggerCompleted ? "Updating" : "Waiting",
+      detail: `${candles.length} candles; latest ${candles[0]?.time || "--"}; duplicate ${duplicateCandles}; gaps ${gapCount}`,
+      source: "Selected strategy candle log",
+      critical: true,
+    },
+    {
+      id: "strategy",
+      label: "Strategy Engine",
+      level: !processOnline || recentRuntimeErrors.length ? "FAIL" : strategyMarker || candles.length ? "PASS" : "WARN",
+      value: !processOnline ? "Offline" : recentRuntimeErrors.length ? "Runtime error" : strategyMarker || candles.length ? "Loaded" : "Unverified",
+      detail: `${strategy.name}; version ${strategy.version}; phase ${fields.phase || "--"}; recent fatal errors ${recentRuntimeErrors.length}`,
+      source: "Heartbeat strategy fields + PM2 logs",
+      critical: true,
+    },
+    {
+      id: "futuresExecutor",
+      label: "Futures Shadow Executor",
+      level: futuresReady ? "PASS" : processOnline ? "WARN" : "FAIL",
+      value: futuresReady ? "Ready" : "Unverified",
+      detail: `Futures execution adapter; selected strategy ${strategy.name}; mode SHADOW`,
+      source: "Futures strategy runtime fields",
+      critical: true,
+    },
+    {
+      id: "optionsExecutor",
+      label: "Options Shadow Executor",
+      level: optionsReady ? "PASS" : processOnline ? "WARN" : "FAIL",
+      value: optionsReady ? "Ready" : "Unverified",
+      detail: `Options execution adapter; selected strategy ${strategy.name}; mode SHADOW`,
+      source: "Options strategy runtime fields",
+      critical: true,
+    },
+    {
+      id: "storage",
+      label: "Database & Storage",
+      level: databaseOK && storageWritable && snapshotReadable && !recentRuntimeErrors.some(row => /SAVE_FAIL|WRITE_FAIL/i.test(String(row.message || ""))) ? "PASS" : "FAIL",
+      value: databaseOK && storageWritable ? "Connected" : "Unavailable",
+      detail: `SQLite ${databaseOK ? "readable" : "failed"}; bot storage ${storageWritable ? "writable" : "not writable"}; heartbeat snapshot ${snapshotReadable ? "readable" : "missing"}`,
+      source: "SQLite SELECT 1 + filesystem access",
+      critical: true,
+    },
+    {
+      id: "token",
+      label: "Broker Token",
+      level: tokenValid ? "PASS" : marketOpen ? "FAIL" : tokenChecked ? "WARN" : "INFO",
+      value: tokenValid ? "Valid" : tokenChecked ? "Invalid" : "Not verified",
+      detail: tokenValid
+        ? `Kite profile verified; auto refresh ${autoRefreshDetail}`
+        : `${externalHealth?.token?.error || "Profile validation unavailable"}; auto refresh ${autoRefreshDetail}`,
+      source: externalHealth?.token?.source || "Kite profile validation",
+      critical: true,
+    },
+    ...(autoRefreshImplemented ? [{
+      id: "autoTokenRefresh",
+      label: "Auto Token Refresh",
+      level: (autoRefreshVerified ? "PASS" : autoRefreshFailed ? "FAIL" : "WARN") as HealthLevel,
+      value: autoRefreshVerified ? "Verified" : autoRefreshFailed ? "Failed" : "Unverified",
+      detail: autoRefreshDetail,
+      source: "auto_token.js + refresh log",
+      critical: false,
+    }] : []),
+    {
+      id: "tokenValidation",
+      label: "Last Token Validation",
+      level: tokenValid ? "PASS" : tokenChecked ? "WARN" : "INFO",
+      value: externalHealth?.checkedAt || "Not verified",
+      detail: tokenValid ? "Latest Kite profile validation succeeded." : "No successful token validation is currently available.",
+      source: externalHealth?.token?.source || "Kite profile validation",
+      critical: false,
+    },
+    {
+      id: "resources",
+      label: "Server Resources",
+      level: resourceCritical ? "FAIL" : resourceWarning ? "WARN" : "PASS",
+      value: resourceCritical ? "Critical" : resourceWarning ? "Elevated" : "Normal",
+      detail: `CPU ${evidence.resources?.cpuLoadPct?.toFixed(1) ?? "--"}%; memory ${evidence.resources?.memoryUsedPct?.toFixed(1) ?? "--"}%; disk ${evidence.resources?.diskUsedPct?.toFixed(1) ?? "--"}%; API ${externalHealth?.apiLatencyMs ?? "--"}ms`,
+      source: "VPS operating system + API probe",
+      critical: false,
+    },
+  ];
+  const criticalChecks = checks.filter(check => check.critical);
+  const passedCritical = criticalChecks.filter(check => check.level === "PASS" || check.level === "INFO").length;
+  const failedCritical = criticalChecks.filter(check => check.level === "FAIL").length;
+  const warningCount = checks.filter(check => check.level === "WARN").length;
+  const state = failedCritical > 0 ? "CRITICAL" : warningCount > 0 ? "WARNING" : "HEALTHY";
+  return {
+    state,
+    label: state === "HEALTHY" ? "Healthy" : state === "WARNING" ? "Warning" : "Critical",
+    summary: `${passedCritical} of ${criticalChecks.length} critical checks passed`,
+    passedCritical,
+    criticalTotal: criticalChecks.length,
+    warningCount,
+    failedCritical,
+    checks,
+    checkedAt: externalHealth?.checkedAt || new Date().toISOString(),
   };
 }
 
@@ -364,7 +867,118 @@ function marketStatus(now = new Date()): "OPEN" | "CLOSED" {
   return day >= 1 && day <= 5 && minutes >= 555 && minutes <= 930 ? "OPEN" : "CLOSED";
 }
 
-export function buildShadowMonitorPayload(strategyId = "", instrumentValue = ""): any {
+function capitalForTrade(row: any, instrument: InstrumentType): number {
+  const entry = Math.abs(num(row?.entry) ?? 0);
+  const quantity = Math.abs(num(row?.quantity) ?? 0);
+  if (!entry || !quantity) return 0;
+  return instrument === "OPTIONS"
+    ? entry * quantity
+    : entry * quantity * FUTURES_MARGIN_RATE;
+}
+
+function performanceOverview(hb: any, state: any, tradeDate: string): any {
+  const coverageMonth = tradeDate.slice(0, 7);
+  const coverageYear = tradeDate.slice(0, 4);
+  const rows: Record<"TODAY" | "MONTH" | "YEAR", any[]> = { TODAY: [], MONTH: [], YEAR: [] };
+
+  for (const strategy of STRATEGIES) {
+    for (const instrument of ["FUTURES", "OPTIONS"] as InstrumentType[]) {
+      const fields = strategyFields(strategy, hb, state, instrument);
+      const trades = normalizedTrades(
+        fields.rawTrades,
+        strategy,
+        instrument,
+        tradeDate,
+        fields.quantity ?? num(hb.qty) ?? 30,
+      );
+      const capitalFromTrades = trades.reduce((sum: number, row: any) => sum + capitalForTrade(row, instrument), 0);
+      const fallbackPerTrade = instrument === "OPTIONS" ? OPTIONS_CAPITAL_FALLBACK : FUTURES_CAPITAL_FALLBACK;
+      const liveTradeCount = Math.max(trades.length, fields.trades, fields.inTrade ? 1 : 0);
+      const liveCapital = capitalFromTrades || (liveTradeCount > 0 ? liveTradeCount * fallbackPerTrade : 0);
+      if (liveCapital > 0) {
+        rows.TODAY.push({
+          strategyId: strategy.id,
+          strategyName: strategy.name.replace(" (BANKNIFTY)", ""),
+          instrument,
+          pnl: fields.total,
+          capitalUsed: Math.round(liveCapital),
+          returnPct: fields.total / liveCapital * 100,
+          trades: liveTradeCount,
+        });
+      }
+
+      const liveHistory = shadowHistory(strategy, instrument);
+      const month = Array.isArray(liveHistory.monthly)
+        ? liveHistory.monthly.find((row: any) => row.period === coverageMonth)
+        : null;
+      if (month && num(month.capitalDeployed)) {
+        rows.MONTH.push({
+          strategyId: strategy.id,
+          strategyName: strategy.name.replace(" (BANKNIFTY)", ""),
+          instrument,
+          pnl: num(month.pnl) ?? 0,
+          capitalUsed: num(month.capitalDeployed),
+          returnPct: num(month.returnPct) ?? ((num(month.pnl) ?? 0) / Number(month.capitalDeployed) * 100),
+          trades: num(month.trades) ?? 0,
+        });
+      }
+      const year = Array.isArray(liveHistory.yearly)
+        ? liveHistory.yearly.find((row: any) => row.period === coverageYear)
+        : null;
+      if (year && num(year.capitalDeployed)) {
+        rows.YEAR.push({
+          strategyId: strategy.id,
+          strategyName: strategy.name.replace(" (BANKNIFTY)", ""),
+          instrument,
+          pnl: num(year.pnl) ?? 0,
+          capitalUsed: num(year.capitalDeployed),
+          returnPct: num(year.returnPct) ?? ((num(year.pnl) ?? 0) / Number(year.capitalDeployed) * 100),
+          trades: num(year.trades) ?? 0,
+        });
+      }
+    }
+  }
+
+  const summarize = (periodRows: any[], label: string, source: "LIVE" | "BACKTEST") => {
+    const capitalUsed = periodRows.reduce((sum, row) => sum + Number(row.capitalUsed || 0), 0);
+    const pnl = periodRows.reduce((sum, row) => sum + Number(row.pnl || 0), 0);
+    const best = (instrument: InstrumentType) => periodRows
+      .filter(row => row.instrument === instrument)
+      .sort((a, b) => Number(b.returnPct) - Number(a.returnPct))[0] || null;
+    const bestOverall = [...periodRows]
+      .sort((a, b) => Number(b.returnPct) - Number(a.returnPct))[0] || null;
+    return {
+      label,
+      source,
+      averageReturnPct: capitalUsed > 0 ? pnl / capitalUsed * 100 : null,
+      capitalUsed: Math.round(capitalUsed),
+      pnl: Math.round(pnl),
+      strategiesCompared: periodRows.length,
+      bestOverall,
+      bestFutures: best("FUTURES"),
+      bestOptions: best("OPTIONS"),
+    };
+  };
+
+  return {
+    definition: "Return on deployed capital = net P&L divided by capital committed to recorded trades.",
+    capitalBasis: {
+      futures: "Entry value x quantity x 12% estimated margin",
+      options: "Entry premium x quantity",
+    },
+    periods: {
+      TODAY: summarize(rows.TODAY, tradeDate, "LIVE"),
+      MONTH: summarize(rows.MONTH, coverageMonth || "Latest month", "LIVE"),
+      YEAR: summarize(
+        rows.YEAR,
+        coverageYear || "Latest year",
+        "LIVE",
+      ),
+    },
+  };
+}
+
+export function buildShadowMonitorPayload(strategyId = "", instrumentValue = "", externalHealth: any = {}): any {
   const tradeDate = todayIST();
   const strategy = STRATEGIES.find(item => item.id === strategyId) || STRATEGIES[0];
   const instrument: InstrumentType = instrumentValue === "OPTIONS" ? "OPTIONS" : "FUTURES";
@@ -374,12 +988,54 @@ export function buildShadowMonitorPayload(strategyId = "", instrumentValue = "")
   const heartbeatAgeSec = heartbeatAt ? Math.max(0, Math.round((Date.now() - heartbeatAt) / 1000)) : null;
   const connected = heartbeatAgeSec !== null && heartbeatAgeSec < 180;
   const fields = strategyFields(strategy, hb, state, instrument);
-  const trades = normalizedTrades(fields.rawTrades, strategy, instrument, tradeDate);
+  const trades = normalizedTrades(fields.rawTrades, strategy, instrument, tradeDate, fields.quantity ?? num(hb.qty) ?? 30);
+  if (fields.inTrade && !trades.some((row: any) => row.status === "OPEN")) {
+    const openContract = /\b(CE|PE)\b/i.test(String(fields.direction || ""))
+      ? String(fields.direction).match(/\b(CE|PE)\b/i)?.[1]?.toUpperCase()
+      : String(fields.symbol || "").match(/(CE|PE)$/i)?.[1]?.toUpperCase() || null;
+    const openAction = instrument === "OPTIONS"
+      ? "BUY"
+      : openContract === "PE" ? "SELL" : "BUY";
+    const openCapital = fields.entry && fields.quantity
+      ? (instrument === "OPTIONS"
+        ? fields.entry * fields.quantity
+        : fields.entry * fields.quantity * FUTURES_MARGIN_RATE)
+      : null;
+    const openTradeId = `${strategy.id}|${instrument}|${tradeDate}|open`;
+    trades.unshift({
+      id: openTradeId,
+      tradeId: openTradeId,
+      strategyId: strategy.id,
+      strategyVersion: strategy.version,
+      instrumentType: instrument,
+      executionMode: "SHADOW",
+      tradeDate,
+      time: fields.entryTime,
+      instrument: fields.symbol || (instrument === "OPTIONS" ? "BANKNIFTY option" : "BANKNIFTY"),
+      side: fields.direction,
+      contract: openContract,
+      action: openAction,
+      exitAction: openAction === "BUY" ? "SELL" : "BUY",
+      quantity: fields.quantity,
+      entry: fields.entry,
+      exit: null,
+      stopLoss: fields.sl,
+      target: fields.target,
+      pnl: fields.unrealized,
+      capitalDeployed: openCapital,
+      returnPct: fields.unrealized !== null && openCapital ? fields.unrealized / openCapital * 100 : null,
+      result: null,
+      status: "OPEN",
+      reason: "Live shadow position",
+    });
+  }
   const candles = normalizedCandles(fields.candleLog, hb);
+  const aggregateHealth = systemHealth(strategy, hb, fields, candles, heartbeatAgeSec, externalHealth);
   const closedTrades = trades.filter((row: any) => String(row.status).toUpperCase() === "CLOSED");
   const wins = fields.wins || closedTrades.filter((row: any) => (row.pnl ?? 0) > 0).length;
   const losses = fields.losses || closedTrades.filter((row: any) => (row.pnl ?? 0) < 0).length;
-  const tradeCount = Math.max(fields.trades, trades.length);
+  const recordedTrades = strategy.prefix === "drishti" ? fields.trades : closedTrades.length;
+  const tradeCount = Math.max(fields.trades, recordedTrades, fields.inTrade ? 1 : 0);
   const winRate = wins + losses > 0 ? wins / (wins + losses) * 100 : 0;
   const nowIso = new Date().toISOString();
   const runtimeStatus = connected
@@ -387,7 +1043,7 @@ export function buildShadowMonitorPayload(strategyId = "", instrumentValue = "")
     : marketStatus() === "CLOSED" ? "SLEEPING" : "OFFLINE";
   const observationTime = timeValue(nowIso) || "";
   const logs = [
-    ...recentServerLogs(),
+    ...recentServerLogs(strategy),
     {
       time: observationTime,
       level: connected ? "INFO" : "WARN",
@@ -423,13 +1079,22 @@ export function buildShadowMonitorPayload(strategyId = "", instrumentValue = "")
     strategies: STRATEGIES.map(item => ({ id: item.id, name: item.name, version: item.version })),
     market: { status: marketStatus(), checkedAt: nowIso },
     health: {
-      overall: connected ? "HEALTHY" : marketStatus() === "CLOSED" ? "SLEEPING" : "WARNING",
+      overall: aggregateHealth.state,
+      label: aggregateHealth.label,
+      summary: aggregateHealth.summary,
+      passedCritical: aggregateHealth.passedCritical,
+      criticalTotal: aggregateHealth.criticalTotal,
+      warningCount: aggregateHealth.warningCount,
+      failedCritical: aggregateHealth.failedCritical,
+      checks: aggregateHealth.checks,
       connected,
       heartbeatAgeSec,
       lastCheckedAt: nowIso,
       feed: connected ? "CONNECTED" : "DISCONNECTED",
       feedLatencyMs: num(hb.feedLatencyMs ?? hb.latencyMs),
       lastTickAt: hb.at || null,
+      heartbeatState: heartbeatAgeSec === null ? "MISSING" : heartbeatAgeSec <= HEARTBEAT_HEALTHY_SEC ? "FRESH" : heartbeatAgeSec <= HEARTBEAT_CRITICAL_SEC ? "DELAYED" : "STALE",
+      lastFeedEvent: logs.find(row => /\b(FEED|TICK|MARKET DATA|HEARTBEAT)\b/i.test(String(row.message || ""))) || null,
     },
     runtime: {
       status: runtimeStatus,
@@ -439,7 +1104,8 @@ export function buildShadowMonitorPayload(strategyId = "", instrumentValue = "")
       version: strategy.version,
       phase: fields.phase,
     },
-    backtest: backtestSummary(strategy),
+    performance: performanceOverview(hb, state, tradeDate),
+    backtest: backtestSummary(strategy, instrument),
     history: shadowHistory(strategy, instrument),
     summary: {
       realizedPnl: fields.realized,
@@ -499,14 +1165,431 @@ export function renderShadowStrategyMonitorPage(navHtml: string): string {
   <link rel="stylesheet" href="/public/css/style.css">
   <style>
     :root{--sm-bg:#f7f9fc;--sm-card:#fff;--sm-ink:#0f172a;--sm-muted:#64748b;--sm-line:#e5eaf2;--sm-blue:#315efb;--sm-green:#16a34a;--sm-red:#dc2626;--sm-amber:#b45309;--sm-console:#111c2d}
-    *{box-sizing:border-box}.sm-page{background:var(--sm-bg);color:var(--sm-ink);min-height:calc(100vh - 104px);padding:14px 18px 24px;overflow-x:hidden}.sm-shell{max-width:1600px;margin:0 auto}.sm-head{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;margin-bottom:10px}.sm-title-row{display:flex;align-items:center;gap:10px;flex-wrap:wrap}.sm-title{font-size:26px;line-height:1.2;margin:0;font-weight:780}.sm-shadow-badge{border:1px solid #c4b5fd;background:#f5f3ff;color:#6d28d9;border-radius:6px;padding:5px 9px;font-size:11px;font-weight:800}.sm-sub{font-size:12px;color:var(--sm-muted);margin:4px 0 0}.sm-head-actions{display:flex;align-items:center;gap:10px}.sm-market,.sm-refresh,.sm-history-btn,.sm-link-btn,.sm-resume{height:36px;border-radius:7px;border:1px solid var(--sm-line);background:#fff;padding:0 13px;font-size:12px;font-weight:750;color:var(--sm-ink);display:inline-flex;align-items:center;gap:7px;cursor:pointer;white-space:nowrap}.sm-market.open{color:var(--sm-green);border-color:#9fdfa9;background:#f0fdf4}.sm-market.closed{color:var(--sm-muted)}.sm-dot{width:8px;height:8px;border-radius:50%;background:currentColor;display:inline-block}.sm-icon{width:17px;height:17px;fill:none;stroke:currentColor;stroke-width:1.9;stroke-linecap:round;stroke-linejoin:round}.sm-control{display:grid;grid-template-columns:minmax(270px,1.5fr) 252px 210px 200px;gap:12px;align-items:end}.sm-control-card{padding:12px 14px;margin-bottom:12px}.sm-field label{display:block;font-size:11px;color:var(--sm-muted);font-weight:700;margin:0 0 5px}.sm-select,.sm-today{width:100%;height:38px;border:1px solid var(--sm-line);border-radius:7px;background:#fff;color:var(--sm-ink);padding:0 12px;font-size:13px;outline:none;display:flex;align-items:center}.sm-segment{display:grid;grid-template-columns:1fr 1fr;height:38px;border:1px solid var(--sm-line);border-radius:7px;overflow:hidden;background:#fff}.sm-segment button{border:0;background:#fff;color:#334155;font-size:12px;font-weight:750;cursor:pointer}.sm-segment button.active{background:var(--sm-blue);color:#fff;box-shadow:none}.sm-mode-box{height:38px;border:1px solid #a7e0b2;border-radius:7px;background:#effdf3;color:var(--sm-green);padding:5px 10px;display:flex;flex-direction:column;justify-content:center}.sm-mode-box b{font-size:11px}.sm-mode-box span{font-size:9px;color:#4b7d5b}.sm-refresh-meta{text-align:right;font-size:11px;color:var(--sm-muted);padding:0}.sm-health{display:grid;grid-template-columns:1fr 1fr 1.18fr 1.65fr;gap:12px;margin-bottom:12px}.sm-card{background:var(--sm-card);border:1px solid var(--sm-line);border-radius:8px;box-shadow:0 1px 2px rgba(15,23,42,.04);min-width:0}.sm-health-card{min-height:102px;padding:13px 14px;display:flex;align-items:center;gap:12px}.sm-health-icon{width:44px;height:44px;border-radius:50%;display:grid;place-items:center;background:#eef5ff;color:var(--sm-blue);flex:0 0 auto}.sm-health-icon.good{background:#ecfdf3;color:var(--sm-green)}.sm-health-icon.warn{background:#fff7ed;color:var(--sm-amber)}.sm-health-copy{min-width:0;flex:1}.sm-card-label{font-size:11px;color:#334155;margin-bottom:5px}.sm-health-value{font-size:17px;font-weight:780;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.sm-health-note{font-size:10px;color:var(--sm-muted);margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.sm-backtest{display:grid;grid-template-columns:auto repeat(6,minmax(0,1fr));gap:0;align-items:center;width:100%}.sm-bt-cell{padding:0 9px;border-left:1px solid var(--sm-line);min-width:0}.sm-bt-cell:first-of-type{border-left:0}.sm-bt-cell span{display:block;font-size:10px;color:var(--sm-muted);white-space:nowrap}.sm-bt-cell b{display:block;font-size:13px;margin-top:5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.sm-source{font-size:9px;text-transform:uppercase;color:var(--sm-muted);font-weight:800;letter-spacing:.04em}.sm-main-grid{display:grid;grid-template-columns:1.45fr .95fr;gap:12px;margin-bottom:12px}.sm-pnl{padding:15px 18px;min-height:244px;border-color:#cbd5e1}.sm-pnl.profit{background:#eefbf4;border-color:#8dd9aa}.sm-pnl.loss{background:#fff1f1;border-color:#f3a4a4}.sm-card-head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:10px}.sm-card-head h2{font-size:13px;margin:0;font-weight:800;text-transform:uppercase}.sm-live-chip,.sm-type-chip,.sm-status{height:23px;border-radius:4px;border:1px solid #a7e0b2;background:#effdf3;color:var(--sm-green);padding:0 8px;display:inline-flex;align-items:center;gap:6px;font-size:9px;font-weight:800}.sm-type-chip{border-color:#b8d2ff;background:#eff5ff;color:var(--sm-blue)}.sm-pnl-value{text-align:center;font-size:40px;font-weight:800;line-height:1.05;color:#334155;margin:11px 0 3px}.sm-pnl-sub{text-align:center;font-size:10px;color:var(--sm-muted);margin-bottom:11px}.sm-pnl-state{display:inline-flex;margin-left:6px;padding:3px 7px;border-radius:4px;background:#dcfce7;color:var(--sm-green);font-size:9px;font-weight:800}.sm-pnl.loss .sm-pnl-state{background:#fee2e2;color:var(--sm-red)}.sm-pnl.profit .sm-pnl-value{color:var(--sm-green)}.sm-pnl.loss .sm-pnl-value{color:var(--sm-red)}.sm-metrics{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:7px}.sm-metric{padding:8px 10px;border:1px solid rgba(100,116,139,.16);background:rgba(255,255,255,.78);border-radius:5px;min-width:0}.sm-metric span{display:block;font-size:9px;color:var(--sm-muted);line-height:1.25}.sm-metric b{display:block;font-size:12px;margin-top:4px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.sm-card-foot{font-size:10px;color:var(--sm-muted);border-top:1px solid rgba(100,116,139,.18);margin-top:10px;padding-top:8px}.sm-snapshot{padding:14px 16px;min-height:244px}.sm-snapshot-grid{display:grid;grid-template-columns:1fr 1fr}.sm-kv{min-height:27px;border-top:1px dashed var(--sm-line);padding:6px 0;display:grid;grid-template-columns:1fr auto;gap:10px;font-size:10px}.sm-kv:nth-child(odd){padding-right:16px}.sm-kv:nth-child(even){padding-left:16px;border-left:1px solid var(--sm-line)}.sm-kv span{color:var(--sm-muted)}.sm-kv b{text-align:right;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.sm-empty{height:182px;display:grid;place-items:center;text-align:center;color:var(--sm-muted);padding:20px}.sm-empty b{display:block;color:var(--sm-ink);font-size:14px;margin-bottom:5px}.sm-table-card,.sm-log-card{display:flex;flex-direction:column}.sm-trade-card{height:330px;margin-bottom:12px}.sm-detail-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px}.sm-detail-card{height:310px}.sm-console-card{height:260px}.sm-card-pad{padding:12px 12px 10px}.sm-table-wrap{overflow:auto;min-height:0;flex:1;border-top:1px solid var(--sm-line)}.sm-table{width:100%;border-collapse:collapse;min-width:820px}.sm-table.candles{min-width:650px}.sm-table th{height:31px;text-align:left;padding:0 8px;color:var(--sm-muted);font-size:9px;font-weight:760;background:#f8fafc;position:sticky;top:0;z-index:1}.sm-table td{height:34px;border-top:1px solid #edf1f6;padding:0 8px;font-size:10px;white-space:nowrap}.sm-table td.note{max-width:190px;overflow:hidden;text-overflow:ellipsis}.sm-table-footer{height:38px;border-top:1px solid var(--sm-line);display:flex;align-items:center;justify-content:space-between;padding:0 12px;color:var(--sm-muted);font-size:10px}.sm-table-total{font-size:11px;font-weight:800}.sm-positive{color:var(--sm-green)!important}.sm-negative{color:var(--sm-red)!important}.sm-muted{color:var(--sm-muted)!important}.sm-tag{border-radius:4px;padding:3px 6px;font-size:9px;font-weight:800;background:#f1f5f9;color:#475569}.sm-tag.win,.sm-tag.buy,.sm-tag.ce,.sm-tag.closed{background:#ecfdf3;color:var(--sm-green)}.sm-tag.loss,.sm-tag.sell,.sm-tag.pe{background:#fef2f2;color:var(--sm-red)}.sm-tag.open{background:#eff6ff;color:var(--sm-blue)}.sm-cepe{color:#fff!important}.sm-cepe.ce{background:#0f3d91}.sm-cepe.pe{background:#b91c1c}.sm-table-empty{height:220px;text-align:center!important;color:var(--sm-muted)}.sm-instrument-body{display:grid;grid-template-columns:1fr 1fr;gap:0;padding:0 14px}.sm-instrument-note{margin:8px 14px 12px;padding-top:8px;border-top:1px solid var(--sm-line);font-size:9px;color:var(--sm-muted)}.sm-log-card{background:#fff}.sm-log-console{margin:0 8px 8px;background:var(--sm-console);border-radius:6px;color:#e5e7eb;min-height:0;flex:1;overflow:auto;padding:10px 12px;font:10px/1.55 ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace}.sm-log-line{display:grid;grid-template-columns:70px 45px minmax(0,1fr);gap:7px;white-space:pre-wrap}.sm-log-line .INFO{color:#4ade80}.sm-log-line .WARN{color:#fbbf24}.sm-log-line .ERROR{color:#fb7185}.sm-log-line .DEBUG{color:#94a3b8}.sm-log-actions{display:flex;align-items:center;gap:7px}.sm-resume{height:26px;font-size:10px;padding:0 8px}.sm-history-btn,.sm-link-btn{height:28px;color:var(--sm-blue);border-color:#b8d2ff}.sm-footer-note{text-align:center;font-size:11px;color:var(--sm-muted);margin:14px 0 0}.sm-modal{position:fixed;inset:0;background:rgba(15,23,42,.5);z-index:1200;display:none;padding:24px}.sm-modal.open{display:grid;place-items:center}.sm-modal-panel{width:min(1040px,100%);max-height:88vh;background:#fff;border-radius:8px;box-shadow:0 24px 60px rgba(15,23,42,.24);display:flex;flex-direction:column;overflow:hidden}.sm-modal-head{display:flex;align-items:center;justify-content:space-between;padding:14px 16px;border-bottom:1px solid var(--sm-line)}.sm-modal-head h2{margin:0;font-size:16px}.sm-close{border:0;background:#f1f5f9;width:32px;height:32px;border-radius:50%;cursor:pointer;font-size:18px}.sm-history-tabs{display:flex;gap:6px;padding:12px 16px;border-bottom:1px solid var(--sm-line);overflow-x:auto}.sm-history-tabs button{height:32px;border:1px solid var(--sm-line);border-radius:6px;background:#fff;padding:0 13px;font-size:11px;font-weight:750;cursor:pointer}.sm-history-tabs button.active{background:#edf4ff;color:var(--sm-blue);border-color:#9fc0ff}.sm-history-body{padding:16px;overflow:auto}.sm-history-state{border:1px dashed var(--sm-line);border-radius:7px;padding:30px;text-align:center;color:var(--sm-muted)}.sm-loading{opacity:.72}
+    *{box-sizing:border-box}.sm-page{background:var(--sm-bg);color:var(--sm-ink);min-height:calc(100vh - 104px);padding:16px 18px 26px;overflow-x:hidden}.sm-shell{max-width:1600px;margin:0 auto}.sm-head{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;margin-bottom:12px}.sm-title-row{display:flex;align-items:center;gap:10px;flex-wrap:wrap}.sm-title{font-size:28px;line-height:1.2;margin:0;font-weight:780}.sm-shadow-badge{border:1px solid #c4b5fd;background:#f5f3ff;color:#6d28d9;border-radius:6px;padding:5px 9px;font-size:12px;font-weight:800}.sm-sub{font-size:13px;color:var(--sm-muted);margin:5px 0 0}.sm-head-actions{display:flex;align-items:center;gap:10px}.sm-market,.sm-refresh,.sm-history-btn,.sm-link-btn,.sm-resume{height:38px;border-radius:7px;border:1px solid var(--sm-line);background:#fff;padding:0 14px;font-size:13px;font-weight:750;color:var(--sm-ink);display:inline-flex;align-items:center;gap:7px;cursor:pointer;white-space:nowrap}.sm-market.open{color:var(--sm-green);border-color:#9fdfa9;background:#f0fdf4}.sm-market.closed{color:var(--sm-muted)}.sm-dot{width:8px;height:8px;border-radius:50%;background:currentColor;display:inline-block}.sm-icon{width:18px;height:18px;fill:none;stroke:currentColor;stroke-width:2.2;stroke-linecap:round;stroke-linejoin:round}.sm-control{display:grid;grid-template-columns:minmax(270px,1.5fr) 252px 210px 200px;gap:12px;align-items:end}.sm-control-card{padding:13px 14px;margin-bottom:10px}.sm-field label{display:block;font-size:12px;color:var(--sm-muted);font-weight:700;margin:0 0 6px}.sm-select,.sm-today{width:100%;height:40px;border:1px solid var(--sm-line);border-radius:7px;background:#fff;color:var(--sm-ink);padding:0 12px;font-size:14px;outline:none;display:flex;align-items:center}.sm-segment{display:grid;grid-template-columns:1fr 1fr;height:40px;border:1px solid var(--sm-line);border-radius:7px;overflow:hidden;background:#fff}.sm-segment button{border:0;background:#fff;color:#334155;font-size:13px;font-weight:750;cursor:pointer}.sm-segment button.active{background:var(--sm-blue);color:#fff;box-shadow:none}.sm-mode-box{height:40px;border:1px solid #a7e0b2;border-radius:7px;background:#effdf3;color:var(--sm-green);padding:5px 10px;display:flex;flex-direction:column;justify-content:center}.sm-mode-box b{font-size:12px}.sm-mode-box span{font-size:10px;color:#4b7d5b}.sm-refresh-meta{text-align:right;font-size:12px;color:var(--sm-muted);padding:0}.sm-health{display:grid;grid-template-columns:.9fr .9fr 1fr 1.8fr;gap:10px;margin-bottom:10px}.sm-card{background:var(--sm-card);border:1px solid var(--sm-line);border-radius:8px;box-shadow:0 1px 2px rgba(15,23,42,.04);min-width:0}.sm-health-card{position:relative;min-height:76px;padding:10px 12px;display:flex;align-items:center;gap:10px}.sm-health-card:not(:last-child)::after{content:"";position:absolute;width:10px;height:2px;right:-11px;top:50%;background:#b7e4c5;z-index:2}.sm-health-card.good-step{border-color:#a7e0b2;background:#f6fff8}.sm-health-icon{width:36px;height:36px;border-radius:50%;display:grid;place-items:center;background:#eef5ff;color:var(--sm-blue);flex:0 0 auto}.sm-health-icon.good{background:#dcfce7;color:var(--sm-green)}.sm-health-icon.warn{background:#fff7ed;color:var(--sm-amber)}.sm-health-copy{min-width:0;flex:1}.sm-card-label{font-size:11px;color:#475569;margin-bottom:3px}.sm-health-value{font-size:15px;font-weight:800;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.sm-health-note{font-size:10px;color:var(--sm-muted);margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.sm-backtest{display:grid;grid-template-columns:auto repeat(6,minmax(0,1fr));gap:0;align-items:center;width:100%}.sm-bt-cell{padding:0 8px;border-left:1px solid var(--sm-line);min-width:0}.sm-bt-cell:first-of-type{border-left:0}.sm-bt-cell span{display:block;font-size:10px;color:var(--sm-muted);white-space:nowrap}.sm-bt-cell b{display:block;font-size:12px;margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.sm-source{font-size:10px;text-transform:uppercase;color:var(--sm-muted);font-weight:800;letter-spacing:.04em}.sm-main-grid{display:grid;grid-template-columns:1.45fr .95fr;gap:12px;margin-bottom:12px}.sm-pnl{padding:16px 18px;min-height:262px;border-color:#cbd5e1}.sm-pnl.profit{background:#eefbf4;border-color:#8dd9aa}.sm-pnl.loss{background:#fff1f1;border-color:#f3a4a4}.sm-card-head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:11px}.sm-card-head h2{font-size:14px;margin:0;font-weight:800;text-transform:uppercase}.sm-live-chip,.sm-type-chip,.sm-status{height:25px;border-radius:4px;border:1px solid #a7e0b2;background:#effdf3;color:var(--sm-green);padding:0 8px;display:inline-flex;align-items:center;gap:6px;font-size:10px;font-weight:800}.sm-type-chip{border-color:#b8d2ff;background:#eff5ff;color:var(--sm-blue)}.sm-pnl-value{text-align:center;font-size:44px;font-weight:800;line-height:1.05;color:#334155;margin:12px 0 4px}.sm-pnl-sub{text-align:center;font-size:12px;color:var(--sm-muted);margin-bottom:12px}.sm-pnl-state{display:inline-flex;margin-left:6px;padding:3px 7px;border-radius:4px;background:#dcfce7;color:var(--sm-green);font-size:10px;font-weight:800}.sm-pnl.loss .sm-pnl-state{background:#fee2e2;color:var(--sm-red)}.sm-pnl.profit .sm-pnl-value{color:var(--sm-green)}.sm-pnl.loss .sm-pnl-value{color:var(--sm-red)}.sm-metrics{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px}.sm-metric{padding:9px 10px;border:1px solid rgba(100,116,139,.16);background:rgba(255,255,255,.78);border-radius:5px;min-width:0}.sm-metric span{display:block;font-size:11px;color:var(--sm-muted);line-height:1.25}.sm-metric b{display:block;font-size:14px;margin-top:4px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.sm-card-foot{font-size:12px;color:var(--sm-muted);border-top:1px solid rgba(100,116,139,.18);margin-top:11px;padding-top:9px}.sm-snapshot{padding:15px 16px;min-height:262px}.sm-snapshot-grid{display:grid;grid-template-columns:1fr 1fr}.sm-kv{min-height:31px;border-top:1px dashed var(--sm-line);padding:7px 0;display:grid;grid-template-columns:1fr auto;gap:10px;font-size:12px}.sm-kv:nth-child(odd){padding-right:16px}.sm-kv:nth-child(even){padding-left:16px;border-left:1px solid var(--sm-line)}.sm-kv span{color:var(--sm-muted)}.sm-kv b{text-align:right;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.sm-empty{height:194px;display:grid;place-items:center;text-align:center;color:var(--sm-muted);padding:20px;font-size:12px}.sm-empty b{display:block;color:var(--sm-ink);font-size:15px;margin-bottom:6px}.sm-table-card,.sm-log-card{display:flex;flex-direction:column}.sm-trade-card{height:360px;margin-bottom:12px}.sm-detail-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px}.sm-detail-card{height:330px}.sm-console-card{height:280px}.sm-card-pad{padding:13px 14px 11px}.sm-table-wrap{overflow:auto;min-height:0;flex:1;border-top:1px solid var(--sm-line)}.sm-table{width:100%;border-collapse:collapse;min-width:900px}.sm-table.candles{min-width:900px}.sm-table th{height:34px;text-align:left;padding:0 9px;color:var(--sm-muted);font-size:11px;font-weight:760;background:#f8fafc;position:sticky;top:0;z-index:1}.sm-table td{height:38px;border-top:1px solid #edf1f6;padding:0 9px;font-size:12px;white-space:nowrap}.sm-table td.note{max-width:260px;overflow:hidden;text-overflow:ellipsis}.sm-table tr.candle-entry td{background:#f0fdf4}.sm-table tr.candle-exit td,.sm-table tr.candle-sl td{background:#fff1f2}.sm-table tr.candle-trail td{background:#fffbeb}.sm-table tr.candle-watch td{background:#f8fafc}.sm-state{display:inline-flex;border-radius:5px;padding:4px 7px;font-size:10px;font-weight:800;background:#e2e8f0;color:#475569}.sm-state.entry,.sm-state.re-entry{background:#dcfce7;color:#15803d}.sm-state.exit,.sm-state.eod-exit,.sm-state.sl-hit,.sm-state.re-exit{background:#fee2e2;color:#dc2626}.sm-state.trail{background:#fef3c7;color:#b45309}.sm-state.watching,.sm-state.hold{background:#dbeafe;color:#1d4ed8}.sm-side{display:inline-flex;min-width:34px;justify-content:center;border-radius:999px;padding:4px 8px;font-size:10px;font-weight:900}.sm-side.ce{background:#dcfce7;color:#15803d;border:1px solid #86efac}.sm-side.pe{background:#fee2e2;color:#dc2626;border:1px solid #fca5a5}.sm-table-footer{height:42px;border-top:1px solid var(--sm-line);display:flex;align-items:center;justify-content:space-between;padding:0 14px;color:var(--sm-muted);font-size:12px}.sm-table-total{font-size:13px;font-weight:800}.sm-positive{color:var(--sm-green)!important}.sm-negative{color:var(--sm-red)!important}.sm-muted{color:var(--sm-muted)!important}.sm-tag{border-radius:4px;padding:4px 7px;font-size:10px;font-weight:800;background:#f1f5f9;color:#475569}.sm-tag.win,.sm-tag.buy,.sm-tag.ce,.sm-tag.closed{background:#ecfdf3;color:var(--sm-green)}.sm-tag.loss,.sm-tag.sell,.sm-tag.pe{background:#fef2f2;color:var(--sm-red)}.sm-tag.open{background:#eff6ff;color:var(--sm-blue)}.sm-cepe{color:#fff!important}.sm-cepe.ce{background:#0f3d91}.sm-cepe.pe{background:#b91c1c}.sm-table-empty{height:230px;text-align:center!important;color:var(--sm-muted)}.sm-instrument-body{display:grid;grid-template-columns:1fr 1fr;gap:0;padding:0 14px}.sm-instrument-note{margin:9px 14px 12px;padding-top:9px;border-top:1px solid var(--sm-line);font-size:11px;color:var(--sm-muted)}.sm-log-card{background:#fff}.sm-log-console{margin:0 8px 8px;background:var(--sm-console);border-radius:6px;color:#e5e7eb;min-height:0;flex:1;overflow:auto;padding:11px 12px;font:11px/1.6 ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace}.sm-log-line{display:grid;grid-template-columns:76px 50px minmax(0,1fr);gap:8px;white-space:pre-wrap}.sm-log-line .INFO{color:#4ade80}.sm-log-line .WARN{color:#fbbf24}.sm-log-line .ERROR{color:#fb7185}.sm-log-line .DEBUG{color:#94a3b8}.sm-log-actions{display:flex;align-items:center;gap:7px}.sm-resume{height:29px;font-size:11px;padding:0 9px}.sm-history-btn,.sm-link-btn{height:31px;color:var(--sm-blue);border-color:#b8d2ff}.sm-footer-note{text-align:center;font-size:12px;color:var(--sm-muted);margin:14px 0 0}.sm-modal{position:fixed;inset:0;background:rgba(15,23,42,.5);z-index:1200;display:none;padding:24px}.sm-modal.open{display:grid;place-items:center}.sm-modal-panel{width:min(1180px,100%);max-height:88vh;background:#fff;border-radius:8px;box-shadow:0 24px 60px rgba(15,23,42,.24);display:flex;flex-direction:column;overflow:hidden}.sm-modal-head{display:flex;align-items:center;justify-content:space-between;padding:14px 16px;border-bottom:1px solid var(--sm-line)}.sm-modal-head h2{margin:0;font-size:17px}.sm-close{border:0;background:#f1f5f9;width:34px;height:34px;border-radius:50%;cursor:pointer;font-size:19px}.sm-history-tabs{display:flex;gap:6px;padding:12px 16px;border-bottom:1px solid var(--sm-line);overflow-x:auto}.sm-history-tabs button{height:34px;border:1px solid var(--sm-line);border-radius:6px;background:#fff;padding:0 13px;font-size:12px;font-weight:750;cursor:pointer}.sm-history-tabs button.active{background:#edf4ff;color:var(--sm-blue);border-color:#9fc0ff}.sm-history-body{padding:16px;overflow:auto;font-size:13px}.sm-history-state{border:1px dashed var(--sm-line);border-radius:7px;padding:30px;text-align:center;color:var(--sm-muted)}.sm-loading{opacity:.72}
+    .sm-health-trigger{cursor:pointer;transition:border-color .16s ease,box-shadow .16s ease,transform .16s ease}.sm-health-trigger:hover{border-color:#8eb4ff;box-shadow:0 8px 24px rgba(37,99,235,.11);transform:translateY(-1px)}.sm-health-trigger:focus-visible{outline:3px solid rgba(37,99,235,.24);outline-offset:2px}.sm-health-action{flex:0 0 auto;color:var(--sm-blue);font-size:10px;font-weight:850;white-space:nowrap;padding:5px 7px;border:1px solid #bfd3ff;border-radius:5px;background:#f7faff}
+    .sm-health-card.warning-step{border-color:#f3cd80;background:#fffdf7}.sm-health-card.critical-step{border-color:#f3a6ae;background:#fff9fa}.sm-health-card.warning-step::before,.sm-health-card.critical-step::before{content:"";position:absolute;right:14px;top:14px;width:8px;height:8px;border-radius:50%}.sm-health-card.warning-step::before{background:#e89a0c;box-shadow:0 0 0 3px rgba(232,154,12,.12)}.sm-health-card.critical-step::before{background:#e63c4d;box-shadow:0 0 0 3px rgba(230,60,77,.12)}
+    .sm-health-icon.warn{background:#fff4dc;color:#c97900}.sm-health-icon.fail{background:#ffe8eb;color:#d92d42}.sm-health-value.warn{color:#b76800}.sm-health-value.fail{color:#cf2439}
+    .sm-health-panel{width:min(920px,100%)}.sm-health-summary{display:grid;grid-template-columns:auto minmax(0,1fr) auto;align-items:center;gap:14px;padding:16px;border-bottom:1px solid var(--sm-line);background:#f8fbff}.sm-health-state{font-size:14px;font-weight:850;padding:7px 10px;border-radius:6px;background:#edf7f0;color:#11863b}.sm-health-state.warning{background:#fff3d8;color:#a96100}.sm-health-state.critical{background:#ffe8eb;color:#c9283d}.sm-health-summary b{display:block;font-size:14px;margin-bottom:3px}.sm-health-summary span,.sm-health-checked{font-size:12px;color:var(--sm-muted)}.sm-health-list{display:grid;gap:8px;padding:14px;overflow:auto}.sm-health-row{display:grid;grid-template-columns:minmax(180px,1fr) auto minmax(240px,1.4fr);align-items:center;gap:12px;border:1px solid var(--sm-line);border-radius:7px;padding:10px 12px;background:#fff}.sm-health-row-title b{display:block;font-size:13px}.sm-health-row-title small,.sm-health-row-detail small{display:block;color:var(--sm-muted);font-size:10px;margin-top:2px}.sm-health-row-value{text-align:right;font-weight:800;font-size:12px}.sm-check-badge{display:inline-flex;align-items:center;justify-content:center;min-width:54px;height:24px;border-radius:5px;font-size:10px;font-weight:850;margin-bottom:3px}.sm-check-badge.pass{background:#e7f8ed;color:#11863b}.sm-check-badge.warn{background:#fff2d6;color:#a96100}.sm-check-badge.fail{background:#ffe6e9;color:#cb263b}.sm-check-badge.info{background:#eaf1fb;color:#526783}.sm-health-row-detail{font-size:12px;line-height:1.35}
     @media(max-width:1200px){.sm-health{grid-template-columns:1fr 1fr}.sm-main-grid{grid-template-columns:1fr}.sm-control{grid-template-columns:1.4fr 240px 180px 180px}.sm-main-grid .sm-pnl,.sm-main-grid .sm-snapshot{min-height:0}}
-    @media(max-width:760px){.sm-page{padding:12px}.sm-head{align-items:flex-start}.sm-title{font-size:21px}.sm-sub{max-width:260px}.sm-head-actions{display:grid;grid-template-columns:1fr auto}.sm-head-actions .sm-refresh-meta{grid-column:1/-1;grid-row:2;text-align:left}.sm-market,.sm-refresh{height:32px}.sm-control{grid-template-columns:1fr 1fr}.sm-field.strategy,.sm-field.mode{grid-column:1/-1}.sm-health{grid-template-columns:1fr}.sm-health-card{min-height:84px}.sm-backtest{grid-template-columns:1fr 1fr 1fr;row-gap:12px}.sm-backtest .sm-health-icon{display:none}.sm-bt-cell{border-left:0;padding:0 8px}.sm-main-grid,.sm-detail-grid{grid-template-columns:1fr}.sm-pnl,.sm-snapshot{min-height:0}.sm-pnl-value{font-size:36px}.sm-metrics{grid-template-columns:repeat(2,1fr)}.sm-metric{padding:7px 9px}.sm-snapshot-grid,.sm-instrument-body{grid-template-columns:1fr}.sm-kv:nth-child(odd),.sm-kv:nth-child(even){padding-left:0;padding-right:0;border-left:0}.sm-trade-card,.sm-detail-card,.sm-console-card{height:326px}.sm-modal{padding:10px}}
+    @media(max-width:760px){.sm-page{padding:12px}.sm-head{align-items:flex-start}.sm-title{font-size:24px}.sm-sub{max-width:280px;font-size:13px}.sm-head-actions{display:grid;grid-template-columns:1fr auto}.sm-head-actions .sm-refresh-meta{grid-column:1/-1;grid-row:2;text-align:left}.sm-market,.sm-refresh{height:36px}.sm-control{grid-template-columns:1fr 1fr}.sm-field.strategy,.sm-field.mode{grid-column:1/-1}.sm-health{grid-template-columns:1fr}.sm-health-card{min-height:76px}.sm-health-card:not(:last-child)::after{display:none}.sm-backtest{grid-template-columns:1fr 1fr 1fr;row-gap:12px}.sm-backtest .sm-health-icon{display:none}.sm-bt-cell{border-left:0;padding:0 8px}.sm-main-grid,.sm-detail-grid{grid-template-columns:1fr}.sm-pnl,.sm-snapshot{min-height:0}.sm-pnl-value{font-size:40px}.sm-metrics{grid-template-columns:repeat(2,1fr)}.sm-metric{padding:9px}.sm-snapshot-grid,.sm-instrument-body{grid-template-columns:1fr}.sm-kv:nth-child(odd),.sm-kv:nth-child(even){padding-left:0;padding-right:0;border-left:0}.sm-trade-card,.sm-detail-card,.sm-console-card{height:350px}.sm-modal{padding:10px}}
+
+    /* Premium Shadow Monitor skin. Scoped to this page only. */
+    .sm-page{font-family:Inter,Manrope,"Segoe UI",sans-serif;background:linear-gradient(145deg,#f8faff 0%,#f5f8fc 52%,#fbfcff 100%);padding:22px 24px 28px}
+    .sm-shell{max-width:1640px}
+    .sm-head{align-items:center;margin-bottom:16px}
+    .sm-title{font-size:32px;letter-spacing:0;font-weight:800;color:#101a3a}
+    .sm-shadow-badge{border:0;border-radius:10px;background:#f0edff;color:#5b35e8;padding:7px 11px;box-shadow:0 5px 16px rgba(91,53,232,.09)}
+    .sm-sub{color:#68738f}
+    .sm-head-actions{align-items:center}
+    .sm-market,.sm-refresh{height:38px;border-color:#e1e7f0;border-radius:10px;box-shadow:0 4px 14px rgba(30,55,90,.05)}
+    .sm-market.open{background:#effaf3;border-color:#d5efdd;color:#138a39}
+    .sm-refresh-meta{font-size:11px;color:#68738f}
+    .sm-card{border-color:#e7ebf3;border-radius:16px;box-shadow:0 8px 26px rgba(30,55,90,.065)}
+    .sm-control{grid-template-columns:minmax(290px,1.15fr) minmax(220px,.72fr) minmax(190px,.68fr) minmax(340px,1.65fr);gap:14px;margin-bottom:16px;align-items:stretch}
+    .sm-control-box{height:66px;padding:10px 14px;display:flex;flex-direction:column;justify-content:center}
+    .sm-control-box label{font-size:9px;text-transform:uppercase;color:#8a94aa;margin:0 0 2px 42px}
+    .sm-control-inner{display:flex;align-items:center;min-width:0}
+    .sm-control-icon{width:34px;height:34px;border-radius:10px;display:grid;place-items:center;color:#24345f;flex:0 0 auto}
+    .sm-select,.sm-today{height:34px;border:0;background:transparent;font-size:14px;font-weight:750;padding:0 8px;color:#14203e}
+    .sm-segment{height:46px;margin:auto 0;border:0;border-radius:12px;padding:4px;background:#f7f8fc;gap:4px}
+    .sm-segment button{border-radius:9px;color:#65708b}
+    .sm-segment button.active{background:linear-gradient(135deg,#426cff,#7256ef);box-shadow:0 7px 16px rgba(77,89,231,.22)}
+    .sm-shadow-status{height:66px;padding:10px 16px;display:flex;align-items:center;gap:12px;border-color:#e2dbff;background:linear-gradient(120deg,#faf8ff,#f5f2ff)}
+    .sm-shadow-status-icon{width:40px;height:40px;border-radius:12px;background:linear-gradient(145deg,#7c5cff,#5136d8);color:#fff;display:grid;place-items:center;box-shadow:0 8px 18px rgba(91,53,232,.2);flex:0 0 auto}
+    .sm-shadow-status b{display:block;font-size:13px;color:#202453}
+    .sm-shadow-status span{display:block;font-size:11px;color:#626d89;margin-top:3px}
+    .sm-health{grid-template-columns:.9fr .9fr 1.05fr 1.65fr;gap:14px;margin-bottom:16px}
+    .sm-health-card{min-height:98px;padding:14px 16px;border-radius:16px;background:rgba(255,255,255,.92)}
+    .sm-health-card:not(:last-child)::after{display:none}
+    .sm-health-card.good-step{background:#fff;border-color:#e4eaf2}
+    .sm-health-icon{width:54px;height:54px;border-radius:50%;background:#eef3ff;color:#3867e8;box-shadow:inset 0 0 0 1px rgba(61,103,232,.08)}
+    .sm-health-icon.good{background:#e8f9ee;color:#12a04a}
+    .sm-health-icon.candle{background:#f2efff;color:#6849e9}
+    .sm-card-label{font-size:12px;color:#33415f}
+    .sm-health-value{font-size:18px;color:#14203e}
+    .sm-health-card.good-step .sm-health-value{color:#128438}
+    .sm-health-note{font-size:11px;color:#758099}
+    .sm-summary-head{display:flex;align-items:center;justify-content:space-between;gap:12px}
+    .sm-summary-head>span{font-size:9px;color:#7c879d}
+    .sm-candle-counts{display:grid;grid-template-columns:repeat(3,1fr);margin-top:8px}
+    .sm-candle-counts>span{text-align:center;border-left:1px solid #e8ecf3}
+    .sm-candle-counts>span:first-child{border-left:0}
+    .sm-candle-counts small{display:block;font-size:10px;color:#65708b}
+    .sm-candle-counts b{display:block;font-size:16px;margin-top:2px;color:#18254b}
+    #backtestStep{background:linear-gradient(135deg,#fff,#fbfbff)}
+    .sm-backtest{grid-template-columns:54px repeat(5,minmax(0,1fr))}
+    .sm-bt-cell{padding:0 10px}
+    .sm-bt-cell span{font-size:9px}
+    .sm-bt-cell b{font-size:12px}
+    .sm-main-grid{grid-template-columns:minmax(0,1.5fr) minmax(390px,1fr);gap:14px;margin-bottom:16px}
+    .sm-pnl,.sm-snapshot{height:270px;min-height:270px;border-radius:18px}
+    .sm-pnl{position:relative;overflow:hidden;padding:18px 22px;background:linear-gradient(135deg,#f1fff7 0%,#effbf7 58%,#f8fffb 100%);border-color:#caead8}
+    .sm-pnl::after{content:"";position:absolute;inset:auto -8% -50% 35%;height:220px;border-top:1px solid rgba(31,174,96,.12);transform:rotate(-8deg);pointer-events:none}
+    .sm-pnl.loss{background:linear-gradient(135deg,#fff5f5,#fffafa);border-color:#f1d1d1}
+    .sm-card-head h2{font-size:14px;text-transform:none;letter-spacing:0;color:#17213d}
+    .sm-card-head h2 small{font-size:10px;font-weight:600;color:#778199}
+    .sm-heading-with-icon{display:flex;align-items:center;gap:9px;min-width:0}
+    .sm-heading-with-icon h2{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+    .sm-section-icon{width:32px;height:32px;border-radius:10px;display:grid;place-items:center;flex:0 0 auto}
+    .sm-section-icon .sm-icon{width:17px;height:17px}
+    .sm-section-icon.pnl{width:48px;height:48px;border-radius:50%;background:#e4f8eb;color:#149447}
+    .sm-section-icon.snapshot{background:#edf3ff;color:#3567e9}
+    .sm-section-icon.trade{background:#eef4ff;color:#3168ea}
+    .sm-section-icon.candle{background:#f1edff;color:#6849e9}
+    .sm-section-icon.console{background:rgba(255,255,255,.08);color:#b8cae0}
+    .sm-health-card.good-step::before{content:"";position:absolute;right:14px;top:14px;width:8px;height:8px;border-radius:50%;background:#16b653;box-shadow:0 0 0 3px rgba(22,182,83,.1)}
+    .sm-health-icon.health.good{background:linear-gradient(145deg,#e9fbef,#dff7e7);color:#16a34a}
+    .sm-health-icon.feed.good{background:linear-gradient(145deg,#edf4ff,#dfeaff);color:#3567e9}
+    .sm-health-icon.candle{background:linear-gradient(145deg,#f4f1ff,#eae4ff);color:#704fe8}
+    .sm-health-icon.backtest.good{background:linear-gradient(145deg,#eef4ff,#e0e9ff);color:#315fe4}
+    .sm-live-chip{height:30px;border-radius:10px;padding:0 12px;background:#ecf9f0;border-color:#cbead5;font-size:10px}
+    .sm-pnl-value{position:relative;z-index:1;font-size:52px;margin:14px 0 12px;color:#0a8a36}
+    .sm-pnl-sub{display:none}
+    .sm-metrics{position:relative;z-index:1;grid-template-columns:repeat(6,minmax(0,1fr));gap:0;margin-top:14px}
+    .sm-metric{border:0;border-left:1px solid rgba(86,125,106,.18);border-radius:0;background:transparent;text-align:center;padding:7px 9px}
+    .sm-metric:first-child{border-left:0}
+    .sm-metric span{font-size:10px}
+    .sm-metric b{font-size:14px}
+    .sm-card-foot{position:relative;z-index:1;font-size:11px;border-color:rgba(86,125,106,.16);margin-top:14px}
+    .sm-snapshot{padding:16px 18px;background:#fff}
+    .sm-snapshot-grid{grid-template-columns:1fr}
+    .sm-kv{min-height:27px;padding:5px 2px;border-top:1px solid #eef1f6;font-size:11px}
+    .sm-kv:nth-child(odd),.sm-kv:nth-child(even){padding-left:2px;padding-right:2px;border-left:0}
+    .sm-type-chip{border-radius:8px;background:#eef4ff}
+    .sm-bottom-grid{display:grid;grid-template-columns:minmax(0,1.25fr) minmax(0,.9fr);gap:14px}
+    .sm-bottom-grid>article{height:380px;margin:0;border-radius:16px;min-width:0;max-width:100%;overflow:hidden}
+    .sm-bottom-grid .sm-card-head{min-height:47px;margin:0}
+    .sm-bottom-grid .sm-table-wrap{border-color:#eef1f6}
+    .sm-bottom-grid .sm-table{min-width:0;table-layout:fixed}
+    .sm-bottom-grid .sm-table.candles{min-width:0}
+    .sm-table th{height:34px;background:#fafbfe;font-size:9px;color:#68738f}
+    .sm-table td{height:34px;font-size:10px;overflow:hidden;text-overflow:ellipsis}
+    .sm-trade-card th:nth-child(2),.sm-trade-card td:nth-child(2){width:23%}
+    #candleLogs th:nth-child(2),#candleLogs td:nth-child(2){width:27%}
+    #candleLogs th:last-child,#candleLogs td:last-child{width:25%}
+    .sm-history-btn,.sm-link-btn{height:30px;border-radius:9px;background:#fff;color:#315efb}
+    .sm-section-helper{min-height:42px;padding:11px 14px;border-top:1px solid #eef1f6;color:#778199;font-size:10px}
+    .sm-console-card{background:linear-gradient(145deg,#10223a,#08182d);border-color:#17385c;color:#e8f0fa;box-shadow:0 12px 30px rgba(7,30,56,.18)}
+    .sm-console-full{height:260px;margin-top:14px;overflow:hidden}
+    .sm-console-card .sm-card-head h2,.sm-console-card .sm-card-head h2 small{color:#eef5ff}
+    .sm-log-console{margin:0 10px 10px;padding:10px 12px;background:transparent;border-top:1px solid rgba(124,158,196,.18);border-radius:0;font-size:10px}
+    .sm-log-live{font-size:9px;color:#a9b9ca;display:inline-flex;align-items:center;gap:5px}
+    .sm-log-live .sm-dot{color:#2bd46f;box-shadow:0 0 8px #2bd46f}
+    .sm-console-card .sm-resume{color:#c8d6e7;background:rgba(255,255,255,.06);border-color:rgba(255,255,255,.12)}
+    .sm-footer-note{margin-top:18px}
+    .sm-control-box,.sm-shadow-status,.sm-health-card,.sm-pnl,.sm-snapshot{min-width:0;max-width:100%;overflow:hidden}
+    .sm-health-copy,.sm-backtest,.sm-bt-cell,.sm-metric,.sm-card-head,.sm-log-actions{min-width:0}
+    .sm-shadow-status span,.sm-health-note,.sm-bt-cell b,.sm-section-helper{overflow:hidden;text-overflow:ellipsis}
+    .sm-card-pad{padding-left:16px;padding-right:16px}
+    @media(max-width:1280px){.sm-control{grid-template-columns:1.2fr .72fr .68fr 1.35fr}.sm-main-grid{grid-template-columns:1.35fr 1fr}}
+    @media(max-width:900px){.sm-page{padding:16px}.sm-head{align-items:flex-start}.sm-control{grid-template-columns:1fr 1fr}.sm-shadow-status{grid-column:1/-1}.sm-health{grid-template-columns:1fr 1fr}.sm-main-grid,.sm-bottom-grid{grid-template-columns:1fr}.sm-pnl,.sm-snapshot{height:auto;min-height:270px}.sm-bottom-grid>article{height:380px}.sm-console-full{height:280px}}
+    @media(max-width:600px){.sm-page{padding:12px}.sm-title{font-size:26px}.sm-head{display:block}.sm-head-actions{margin-top:12px;grid-template-columns:auto 1fr auto}.sm-control{grid-template-columns:1fr}.sm-shadow-status{grid-column:auto}.sm-health{grid-template-columns:1fr}.sm-backtest{grid-template-columns:44px 1fr 1fr}.sm-bt-cell{border-left:0;padding:5px}.sm-metrics{grid-template-columns:repeat(2,1fr)}.sm-metric:nth-child(odd){border-left:0}.sm-pnl-value{font-size:40px}.sm-bottom-grid>article{height:380px}.sm-console-full{height:300px}.sm-section-helper{white-space:normal}}
+
+    /* Final responsive density pass. */
+    .sm-page{padding:clamp(14px,1.4vw,24px);font-size:14px}
+    .sm-shell{width:100%;max-width:1680px}
+    .sm-head{margin-bottom:14px}
+    .sm-title{font-size:clamp(28px,2vw,34px)}
+    .sm-sub,.sm-market,.sm-refresh,.sm-select,.sm-segment button,.sm-today{font-size:14px}
+    .sm-control{grid-template-columns:minmax(260px,1.15fr) minmax(190px,.72fr) minmax(170px,.62fr) minmax(300px,1.45fr);gap:12px;margin-bottom:12px}
+    .sm-control-box,.sm-shadow-status{height:62px}
+    .sm-control-box label{font-size:11px;margin-left:40px}
+    .sm-shadow-status b{font-size:14px}
+    .sm-shadow-status span{font-size:12px}
+    .sm-health{grid-template-columns:minmax(210px,.85fr) minmax(230px,.9fr) minmax(280px,1.05fr) minmax(430px,1.55fr);gap:12px;margin-bottom:12px}
+    .sm-health-card{min-height:88px;padding:12px 14px}
+    .sm-health-icon{width:48px;height:48px}
+    .sm-card-label{font-size:13px}
+    .sm-health-value{font-size:18px}
+    .sm-health-note,.sm-summary-head>span{font-size:12px}
+    .sm-candle-counts{margin-top:6px}
+    .sm-candle-counts small{font-size:11px}
+    .sm-candle-counts b{font-size:17px}
+    .sm-bt-cell span{font-size:11px}
+    .sm-bt-cell b{font-size:13px}
+    .sm-main-grid{grid-template-columns:minmax(0,1.45fr) minmax(360px,1fr);gap:12px;margin-bottom:12px;align-items:stretch}
+    .sm-pnl,.sm-snapshot{height:auto;min-height:258px}
+    .sm-pnl{padding:16px 20px}
+    .sm-card-head{margin-bottom:8px}
+    .sm-card-head h2{font-size:16px}
+    .sm-card-head h2 small{font-size:12px}
+    .sm-pnl-value{font-size:clamp(42px,3.2vw,54px);margin:8px 0 10px}
+    .sm-metrics{margin-top:8px}
+    .sm-metric{padding:8px 10px}
+    .sm-metric span{font-size:12px}
+    .sm-metric b{font-size:15px}
+    .sm-card-foot{font-size:12px;margin-top:10px}
+    .sm-snapshot{padding:15px 18px}
+    .sm-kv{min-height:28px;padding:5px 2px;font-size:13px}
+    .sm-bottom-grid{grid-template-columns:minmax(0,1.3fr) minmax(0,1fr);gap:12px}
+    .sm-bottom-grid>article{height:clamp(350px,37vh,430px)}
+    .sm-bottom-grid .sm-card-head{min-height:54px}
+    .sm-card-pad{padding:12px 16px}
+    .sm-table th{height:38px;padding:0 10px;font-size:11px}
+    .sm-table td{height:40px;padding:0 10px;font-size:12px}
+    .sm-state,.sm-side,.sm-tag{font-size:11px}
+    .sm-section-helper{min-height:44px;padding:12px 16px;font-size:12px}
+    .sm-history-btn,.sm-link-btn{height:34px;font-size:12px}
+    .sm-console-full{height:clamp(250px,29vh,330px);margin-top:12px}
+    .sm-log-console{font-size:12px;line-height:1.55;padding:12px 14px}
+    .sm-log-line{grid-template-columns:82px 54px minmax(0,1fr);gap:10px}
+    .sm-log-live{font-size:11px}
+    .sm-resume{font-size:12px}
+    .sm-footer-note{font-size:13px}
+    .sm-control{grid-template-columns:minmax(300px,1.2fr) minmax(250px,.78fr) minmax(210px,.64fr) minmax(360px,1.45fr)}
+    .sm-control-box,.sm-shadow-status{height:76px;padding:12px 16px;border-radius:14px}
+    .sm-control-box label{margin:0 0 3px 42px;font-size:11px;line-height:1}
+    .sm-instrument-control label{margin-left:0;text-align:center}
+    .sm-control-icon{width:36px;height:36px}
+    .sm-select,.sm-today{font-size:15px}
+    .sm-segment{height:46px;margin:3px 0 0}
+    .sm-shadow-status{position:relative;display:flex;flex-direction:row;align-items:center;justify-content:flex-start;text-align:left;overflow:hidden}
+    .sm-shadow-status-icon{position:static;inset:auto;transform:none;margin:0;flex:0 0 42px}
+    .sm-shadow-status>div:last-child{min-width:0}
+    .sm-health{align-items:stretch}
+    .sm-health-card{height:112px;min-height:112px;align-items:center;overflow:hidden}
+    .sm-backtest{height:100%;grid-template-columns:58px repeat(5,minmax(92px,1fr))}
+    .sm-bt-cell{display:flex;min-height:54px;flex-direction:column;justify-content:center;padding:0 12px}
+    .sm-bt-cell span{font-size:11px}
+    .sm-bt-cell b{display:block;max-width:100%;font-size:14px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+    .sm-order-flow{display:inline-flex;align-items:center;gap:5px;white-space:nowrap}
+    .sm-action{display:inline-flex;align-items:center;justify-content:center;min-width:42px;border-radius:6px;padding:4px 7px;font-size:11px;font-weight:850}
+    .sm-action.buy{background:#dcfce7;color:#15803d}
+    .sm-action.sell{background:#fee2e2;color:#dc2626}
+    .sm-flow-arrow{color:#94a3b8;font-weight:800}
+    .sm-performance-card{margin-bottom:12px;padding:13px 16px;border-radius:14px;overflow:hidden}
+    .sm-performance-head{display:flex;align-items:center;justify-content:space-between;gap:14px;margin-bottom:11px}
+    .sm-performance-title{display:flex;align-items:center;gap:10px;min-width:0}
+    .sm-performance-title .sm-section-icon{background:#eef4ff;color:#315efb}
+    .sm-performance-title h2{margin:0;font-size:16px}
+    .sm-performance-title p{margin:2px 0 0;color:var(--sm-muted);font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+    .sm-performance-tabs{display:flex;align-items:center;gap:4px;padding:3px;background:#f1f5f9;border-radius:9px;flex:0 0 auto}
+    .sm-performance-tabs button{height:30px;padding:0 12px;border:0;border-radius:7px;background:transparent;color:#64748b;font-size:12px;font-weight:750;cursor:pointer}
+    .sm-performance-tabs button.active{background:#fff;color:#315efb;box-shadow:0 2px 8px rgba(15,23,42,.08)}
+    .sm-performance-grid{display:grid;grid-template-columns:.8fr 1.2fr 1.2fr .9fr;gap:0;border-top:1px solid #edf1f6}
+    .sm-performance-metric{min-width:0;padding:11px 16px 3px;border-left:1px solid #edf1f6}
+    .sm-performance-metric:first-child{border-left:0}
+    .sm-performance-metric span{display:block;color:var(--sm-muted);font-size:11px}
+    .sm-performance-metric b{display:block;margin-top:3px;font-size:18px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+    .sm-performance-metric small{display:block;margin-top:3px;color:#64748b;font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+    .sm-performance-foot{display:flex;justify-content:space-between;gap:12px;margin-top:10px;padding-top:9px;border-top:1px solid #edf1f6;color:#64748b;font-size:11px}
+    .sm-trade-card .sm-table{min-width:860px;table-layout:auto}
+    .sm-trade-card th:nth-child(2),.sm-trade-card td:nth-child(2){width:24%}
+    .sm-trade-card th:nth-child(4),.sm-trade-card td:nth-child(4){width:17%}
+    .sm-main-grid{display:block}
+    .sm-pnl{width:100%;min-height:245px}
+    .sm-pnl .sm-card-head,.sm-pnl .sm-card-foot{max-width:1380px;margin-left:auto;margin-right:auto}
+    .sm-pnl .sm-metrics{max-width:1180px;margin-left:auto;margin-right:auto}
+    .sm-history-toolbar{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:12px}
+    .sm-history-toolbar h3{margin:0;font-size:16px}
+    .sm-history-method{border:1px solid var(--sm-line);background:#f8fafc;border-radius:8px;padding:14px 16px;line-height:1.6}
+    .sm-history-method b{display:block;font-size:15px;margin-bottom:5px}
+    .sm-month-open{height:30px;border:1px solid #b8d2ff;border-radius:7px;background:#fff;color:var(--sm-blue);font-size:12px;font-weight:750;padding:0 10px;cursor:pointer}
+    @media(max-width:1360px){
+      .sm-control{grid-template-columns:1.15fr .78fr .64fr 1.25fr}
+      .sm-health{grid-template-columns:1fr 1fr}
+      .sm-health-card{min-height:82px}
+      .sm-metrics{grid-template-columns:repeat(3,minmax(0,1fr));row-gap:8px}
+      .sm-metric:nth-child(4){border-left:0}
+      .sm-pnl,.sm-snapshot{min-height:300px}
+    }
+    @media(max-width:1050px){
+      .sm-control{grid-template-columns:1fr 1fr}
+      .sm-shadow-status{grid-column:1/-1}
+      .sm-main-grid,.sm-bottom-grid{grid-template-columns:1fr}
+      .sm-pnl,.sm-snapshot{min-height:0}
+      .sm-bottom-grid>article{height:390px}
+    }
+    @media(max-width:700px){
+      .sm-page{padding:12px}
+      .sm-head{display:block}
+      .sm-head-actions{display:grid;grid-template-columns:auto 1fr auto;margin-top:12px}
+      .sm-refresh-meta{grid-column:1/-1;text-align:left}
+      .sm-control,.sm-health{grid-template-columns:1fr}
+      .sm-shadow-status{grid-column:auto}
+      .sm-control-box,.sm-shadow-status{height:auto;min-height:60px}
+      .sm-health-card{min-height:82px}
+      .sm-backtest{grid-template-columns:48px repeat(2,minmax(0,1fr));row-gap:10px}
+      .sm-bt-cell{border-left:0;padding:3px 7px}
+      .sm-metrics{grid-template-columns:repeat(2,minmax(0,1fr))}
+      .sm-metric,.sm-metric:nth-child(4){border-left:0;border-top:1px solid rgba(86,125,106,.18)}
+      .sm-pnl-value{font-size:40px}
+      .sm-snapshot-grid{grid-template-columns:1fr}
+      .sm-bottom-grid>article{height:390px}
+      .sm-table-wrap{overflow-x:auto}
+      .sm-bottom-grid .sm-table{min-width:680px}
+      .sm-bottom-grid .sm-table.candles{min-width:580px}
+      .sm-console-full{height:320px}
+      .sm-log-line{grid-template-columns:66px 48px minmax(0,1fr);font-size:11px}
+      .sm-log-actions{flex-wrap:wrap;justify-content:flex-end}
+      .sm-performance-head{align-items:flex-start;flex-direction:column}
+      .sm-performance-tabs{width:100%}
+      .sm-performance-tabs button{flex:1}
+      .sm-performance-grid{grid-template-columns:1fr 1fr}
+      .sm-performance-metric:nth-child(3){border-left:0;border-top:1px solid #edf1f6}
+      .sm-performance-metric:nth-child(4){border-top:1px solid #edf1f6}
+      .sm-performance-foot{display:block;line-height:1.5}
+    }
+    /* Surgical top layout: two controls followed by exactly four common cards. */
+    .sm-control{grid-template-columns:minmax(310px,.8fr) minmax(0,2.2fr);align-items:stretch}
+    .sm-control .sm-control-box{height:72px}
+    .sm-control .sm-instrument-control .sm-segment{height:42px}
+    .sm-control .sm-instrument-control .sm-segment button{font-size:14px}
+    .sm-health{grid-template-columns:minmax(190px,.9fr) minmax(260px,1.25fr) minmax(460px,2.15fr) minmax(390px,1.8fr);gap:12px}
+    .sm-health-card{min-height:126px;height:auto;padding:14px}
+    .sm-health-card .sm-health-value{white-space:normal;overflow:visible;text-overflow:clip}
+    .sm-feed-card .sm-health-copy{align-self:stretch;display:flex;flex-direction:column;justify-content:center}
+    .sm-feed-metrics{display:grid;grid-template-columns:1fr 1fr;gap:6px 12px;margin-top:8px}
+    .sm-feed-metrics span{min-width:0;color:var(--sm-muted);font-size:10px}
+    .sm-feed-metrics b{display:block;color:var(--sm-ink);font-size:11px;white-space:normal;overflow-wrap:anywhere}
+    .sm-backtest-card{align-items:stretch}
+    .sm-backtest{grid-template-columns:48px repeat(3,minmax(90px,1fr));grid-template-rows:auto auto;row-gap:10px}
+    .sm-backtest .sm-health-icon{grid-row:1/3}
+    .sm-bt-cell{padding:0 9px}
+    .sm-bt-cell span,.sm-bt-cell b{white-space:normal;overflow:visible;text-overflow:clip}
+    .sm-bt-cell b{font-size:13px}
+    .sm-best-card{align-items:stretch}
+    .sm-best-wrap{width:100%;min-width:0}
+    .sm-best-title{font-size:13px;font-weight:850;margin-bottom:9px}
+    .sm-best-groups{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));height:calc(100% - 24px)}
+    .sm-best-group{min-width:0;padding:0 10px;border-left:1px solid var(--sm-line);display:flex;flex-direction:column;justify-content:center}
+    .sm-best-group:first-child{border-left:0;padding-left:0}
+    .sm-best-group>span{font-size:9px;color:var(--sm-muted);font-weight:750}
+    .sm-best-group>b{font-size:11px;margin:3px 0;white-space:normal;overflow-wrap:anywhere}
+    .sm-best-group small{display:block;font-size:9px;color:var(--sm-muted)}
+    .sm-best-group strong{display:block;font-size:12px;margin-top:3px}
+    @media(max-width:1250px){.sm-health{grid-template-columns:1fr 1fr}.sm-backtest-card,.sm-best-card{min-height:140px}}
+    @media(max-width:760px){.sm-control{grid-template-columns:1fr}.sm-control .sm-control-box{height:auto;min-height:72px}.sm-health{grid-template-columns:1fr}.sm-health-summary{grid-template-columns:1fr}.sm-health-checked{text-align:left}.sm-health-row{grid-template-columns:1fr auto}.sm-health-row-detail{grid-column:1/-1}.sm-backtest{grid-template-columns:repeat(2,minmax(0,1fr))}.sm-backtest .sm-health-icon{display:none}.sm-best-groups{grid-template-columns:1fr}.sm-best-group{border-left:0;border-top:1px solid var(--sm-line);padding:8px 0}.sm-best-group:first-child{border-top:0}}
+    /* Reference-matched top section. No styles below the common-card row are changed here. */
+    .sm-control{grid-template-columns:minmax(280px,28fr) minmax(0,72fr);gap:14px;padding:12px 14px;margin-bottom:14px;background:#fff;border:1px solid #dce5f1;border-radius:15px;box-shadow:0 5px 18px rgba(31,55,91,.06)}
+    .sm-control .sm-control-box{height:64px;padding:0 12px;border:0;border-radius:10px;box-shadow:none;background:transparent}
+    .sm-control .sm-control-box:first-child{border-right:1px solid #e7edf5;border-radius:0;padding-right:20px}
+    .sm-control .sm-control-box label{margin:0 0 5px;font-size:11px;line-height:1;color:#7b879d;font-weight:700;letter-spacing:0;text-transform:uppercase}
+    .sm-control .sm-control-inner{height:44px}
+    .sm-control .sm-control-icon{width:32px;height:32px;margin-right:8px;background:transparent;color:#243b6b}
+    .sm-control .sm-select{height:44px;border-color:#d9e2ef;border-radius:8px;font-size:14px;font-weight:700;background:#fff}
+    .sm-control .sm-instrument-control .sm-segment{height:50px;padding:4px;border-radius:10px;background:#f4f6fa;box-shadow:inset 0 0 0 1px #e9edf4}
+    .sm-control .sm-instrument-control .sm-segment button{height:42px;border-radius:8px;font-size:14px;font-weight:750;color:#57647c}
+    .sm-control .sm-instrument-control .sm-segment button.active{background:linear-gradient(135deg,#6849f5,#4b48eb);color:#fff;box-shadow:0 5px 14px rgba(80,70,235,.25)}
+    .sm-health{grid-template-columns:minmax(0,20fr) minmax(0,22fr) minmax(0,30fr) minmax(0,28fr);gap:12px;margin-bottom:14px}
+    .sm-health-card{height:156px;min-height:156px;padding:14px 16px;border:1px solid #dfe6f0;border-radius:15px;background:#fff;box-shadow:0 5px 18px rgba(31,55,91,.06);display:block}
+    .sm-health-card.good-step{background:#fff;border-color:#dfe6f0}
+    .sm-health-card::before{display:none!important}
+    .sm-common-head{display:flex;align-items:center;justify-content:space-between;gap:10px;min-width:0;height:30px}
+    .sm-common-title{display:flex;align-items:center;gap:8px;min-width:0;color:#17233f;font-size:14px;font-weight:700;line-height:1;white-space:nowrap}
+    .sm-title-icon,#healthIcon,#feedIcon{width:30px!important;height:30px!important;min-width:30px;border-radius:50%;display:grid!important;place-items:center;background:#e9f9ef!important;color:#16a34a!important;box-shadow:inset 0 0 0 1px rgba(22,163,74,.08)!important}
+    .sm-title-icon.feed,#feedIcon{background:#edf4ff!important;color:#3567e9!important}
+    .sm-title-icon.backtest{background:#edf4ff!important;color:#315fe4!important}
+    .sm-title-icon.best{background:#f2efff!important;color:#704fe8!important}
+    .sm-title-icon .sm-icon,#healthIcon .sm-icon,#feedIcon .sm-icon{width:17px;height:17px}
+    .sm-status-dot{width:8px;height:8px;flex:0 0 auto;border-radius:50%;background:#18b653;box-shadow:0 0 0 3px rgba(24,182,83,.1)}
+    .warning-step .sm-status-dot{background:#e89a0c;box-shadow:0 0 0 3px rgba(232,154,12,.11)}
+    .critical-step .sm-status-dot{background:#e63c4d;box-shadow:0 0 0 3px rgba(230,60,77,.11)}
+    .sm-system-card .sm-health-value,.sm-feed-card .sm-health-value{margin:11px 0 10px;font-size:22px;line-height:1.05;font-weight:800;color:#11863b;white-space:nowrap;overflow:visible}
+    .sm-system-card.warning-step .sm-health-value,.sm-feed-card.warning-step .sm-health-value{color:#b76800}
+    .sm-system-card.critical-step .sm-health-value,.sm-feed-card.critical-step .sm-health-value{color:#cf2439}
+    .sm-system-bottom{display:flex;align-items:center;justify-content:space-between;gap:8px;min-width:0}
+    .sm-system-bottom .sm-health-note{margin:0;min-width:0;font-size:11px;line-height:1.2;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+    .sm-health-action{height:28px;padding:0 9px;display:inline-flex;align-items:center;justify-content:center;border-radius:6px;font-size:10px;line-height:1;font-weight:800;white-space:nowrap;background:#f7faff;border:1px solid #bed1f8;color:#315efb}
+    .sm-feed-card .sm-health-value{margin:8px 0 7px}
+    .sm-feed-metrics{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:0;margin:0}
+    .sm-feed-metrics span{padding:0 7px;border-left:1px solid #e5ebf3;color:#7a879d;font-size:10px;line-height:1.15;white-space:nowrap}
+    .sm-feed-metrics span:first-child{padding-left:0;border-left:0}
+    .sm-feed-metrics b{display:block;margin-top:3px;color:#17233f;font-size:11px;font-weight:750;white-space:nowrap;overflow:visible}
+    .sm-feed-event{margin-top:7px;color:#7a879d;font-size:10px;line-height:1.2;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+    .sm-feed-event b{font-weight:600}
+    .sm-backtest-card .sm-common-head,.sm-best-card .sm-common-head{margin-bottom:11px}
+    .sm-backtest{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));grid-template-rows:repeat(2,1fr);gap:9px 0;width:100%}
+    .sm-backtest>.sm-health-icon{display:none!important}
+    .sm-bt-cell{min-width:0;padding:0 10px;border-left:1px solid #e5ebf3}
+    .sm-bt-cell:nth-of-type(2),.sm-bt-cell:nth-of-type(5){border-left:0;padding-left:0}
+    .sm-bt-cell span{display:block;color:#7a879d;font-size:10px;line-height:1.15;font-weight:600;white-space:nowrap;overflow:visible}
+    .sm-bt-cell b{display:block;margin-top:4px;color:#17233f;font-size:15px;line-height:1.1;font-weight:750;white-space:nowrap;overflow:visible;text-overflow:clip}
+    .sm-best-groups{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));height:85px}
+    .sm-best-group{min-width:0;padding:1px 11px;border-left:1px solid #e5ebf3;display:flex;flex-direction:column;align-items:center;justify-content:flex-start;text-align:center}
+    .sm-best-group:first-child{border-left:0;padding-left:0}
+    .sm-best-group>span{font-size:10px;line-height:1.15;color:#7a879d;font-weight:650;white-space:nowrap}
+    .sm-best-group>b{width:100%;margin:5px 0 3px;color:#17233f;font-size:12px;line-height:1.15;font-weight:750;white-space:normal;overflow-wrap:break-word}
+    .sm-best-group small:first-of-type{display:inline-flex;align-items:center;justify-content:center;min-height:18px;padding:2px 6px;border-radius:5px;background:#eef3ff;color:#315efb;font-size:9px;font-weight:800;text-transform:uppercase}
+    .sm-best-group strong{display:block;margin-top:4px;font-size:16px;line-height:1;font-weight:800}
+    .sm-best-group small:last-of-type{display:block;margin-top:3px;font-size:10px;line-height:1;font-weight:700}
+    @media(max-width:1250px){.sm-health{grid-template-columns:1fr 1fr}.sm-health-card{height:156px;min-height:156px}}
+    @media(max-width:760px){.sm-control{grid-template-columns:1fr;padding:10px}.sm-control .sm-control-box:first-child{border-right:0;border-bottom:1px solid #e7edf5;padding:0 0 12px}.sm-health{grid-template-columns:1fr}.sm-health-card{height:auto;min-height:156px}.sm-backtest{grid-template-columns:repeat(2,minmax(0,1fr))}.sm-bt-cell:nth-of-type(n){padding:0 8px;border-left:1px solid #e5ebf3}.sm-bt-cell:nth-of-type(2n){border-left:0;padding-left:0}.sm-best-groups{height:auto}.sm-best-group{padding-bottom:4px}}
+    .sm-page{position:relative}
+    .sm-data-loader{position:fixed;inset:0;z-index:1600;display:none;align-items:center;justify-content:center;flex-direction:column;gap:8px;background:rgba(247,249,252,.88);backdrop-filter:blur(4px);color:#17233f}
+    .sm-data-loader.active{display:flex}
+    .sm-loader-mark{position:relative;width:74px;height:74px;display:grid;place-items:center;margin-bottom:6px}
+    .sm-loader-mark img{width:48px;height:48px;border-radius:11px;filter:drop-shadow(0 8px 14px rgba(66,74,220,.2));animation:smLoaderPulse 1.35s ease-in-out infinite}
+    .sm-loader-ring{position:absolute;inset:2px;border:3px solid rgba(82,76,231,.14);border-top-color:#584ce8;border-right-color:#315efb;border-radius:50%;animation:smLoaderSpin .85s linear infinite}
+    .sm-data-loader b{font-size:14px;font-weight:800}
+    .sm-data-loader>span:last-child{font-size:11px;color:#718096}
+    @keyframes smLoaderSpin{to{transform:rotate(360deg)}}
+    @keyframes smLoaderPulse{0%,100%{transform:scale(.94);opacity:.82}50%{transform:scale(1);opacity:1}}
+    .sm-control .strategy .sm-control-inner{position:relative;padding:4px;border:1px solid #d6e0ee;border-radius:10px;background:#f7f9fd;transition:border-color .16s ease,box-shadow .16s ease,background .16s ease}
+    .sm-control .strategy .sm-control-inner:focus-within{border-color:#7c8df6;background:#fff;box-shadow:0 0 0 3px rgba(79,70,229,.12)}
+    .sm-control .strategy .sm-control-icon{width:36px;height:36px;flex:0 0 36px;margin-right:2px;border-radius:8px;background:#eef2ff;color:#4f46e5}
+    .sm-control .strategy .sm-select{height:36px;padding:0 34px 0 9px;border:0;background:transparent;box-shadow:none;appearance:none;cursor:pointer;color:#18233d;font-size:14px;font-weight:750}
+    .sm-control .strategy .sm-control-inner::after{content:"";position:absolute;right:15px;top:50%;width:8px;height:8px;border-right:2px solid #516078;border-bottom:2px solid #516078;transform:translateY(-68%) rotate(45deg);pointer-events:none}
+    .sm-control .strategy .sm-select:hover{color:#315efb}
+    .sm-control .sm-instrument-control .sm-segment{gap:5px;background:#eef1f7}
+    .sm-control .sm-instrument-control .sm-segment button{display:flex;align-items:center;justify-content:center;gap:8px;border:1px solid transparent;transition:background .16s ease,color .16s ease,border-color .16s ease,box-shadow .16s ease,transform .16s ease}
+    .sm-control .sm-instrument-control .sm-segment button .sm-icon{width:18px;height:18px}
+    .sm-control .sm-instrument-control .sm-segment button:not(.active){background:#fff;border-color:#e1e6ef;color:#56627a;box-shadow:0 1px 2px rgba(15,23,42,.04)}
+    .sm-control .sm-instrument-control .sm-segment button:not(.active):hover{border-color:#aebcf4;color:#4338ca;background:#f8f9ff}
+    .sm-control .sm-instrument-control .sm-segment button.active{transform:translateY(-1px);background:#5148e8;color:#fff;border-color:#5148e8;box-shadow:0 6px 16px rgba(81,72,232,.26)}
+    .sm-control .sm-instrument-control .sm-segment button:focus-visible{outline:3px solid rgba(79,70,229,.2);outline-offset:1px}
+    /* Shadow Live P&L presentation only. Data bindings remain in renderSummary. */
+    .sm-pnl{isolation:isolate;position:relative;width:100%;min-height:340px;padding:26px 32px 22px;overflow:hidden;border:1px solid rgba(81,129,255,.3);border-radius:26px;background:linear-gradient(118deg,#071a4d 0%,#0c1947 38%,#241052 69%,#073e4d 100%);box-shadow:0 20px 42px rgba(13,25,64,.24),inset 0 1px 0 rgba(255,255,255,.1);color:#f8fbff}
+    .sm-pnl.profit,.sm-pnl.loss{background:linear-gradient(118deg,#071a4d 0%,#0c1947 38%,#241052 69%,#073e4d 100%);border-color:rgba(81,129,255,.3)}
+    .sm-pnl::before{content:"";position:absolute;inset:0;z-index:-3;background-image:radial-gradient(circle,rgba(70,145,255,.45) 1px,transparent 1.4px),radial-gradient(circle,rgba(25,230,202,.28) 1px,transparent 1.4px);background-position:18px 18px,calc(100% - 18px) calc(100% - 18px);background-size:15px 15px,17px 17px;mask-image:linear-gradient(115deg,#000 0%,transparent 24%,transparent 76%,#000 100%);opacity:.4;pointer-events:none}
+    .sm-pnl::after{content:"";position:absolute;inset:-35% -12%;z-index:-4;height:auto;border:0;transform:none;background:radial-gradient(circle at 8% 48%,rgba(26,103,255,.28),transparent 30%),radial-gradient(circle at 70% 18%,rgba(112,43,222,.28),transparent 32%),radial-gradient(circle at 96% 70%,rgba(0,205,190,.22),transparent 27%);pointer-events:none}
+    .sm-pnl-curve{position:absolute;inset:auto 0 38px 0;z-index:-1;width:100%;height:58%;opacity:.72;pointer-events:none}
+    .sm-pnl-orbit{position:absolute;right:5%;top:-90px;z-index:-2;width:270px;height:220px;border:1px solid rgba(75,212,255,.13);border-radius:50%;box-shadow:0 0 0 16px rgba(75,212,255,.045),0 0 0 34px rgba(126,75,255,.035);transform:rotate(18deg);pointer-events:none}
+    .sm-pnl .sm-card-head{position:relative;z-index:2;align-items:flex-start;margin:0}
+    .sm-pnl-heading{display:flex;align-items:center;gap:15px;min-width:0}
+    .sm-pnl-heading-icon{width:54px;height:54px;display:grid;place-items:center;flex:0 0 54px;border:1px solid rgba(43,239,171,.45);border-radius:50%;background:rgba(17,190,168,.13);color:#2ce4a2;box-shadow:inset 0 0 0 7px rgba(19,202,177,.06),0 0 24px rgba(30,211,174,.08)}
+    .sm-pnl-heading-icon .sm-icon{width:27px;height:27px;stroke-width:2.5}
+    .sm-pnl-heading-copy h2,.sm-pnl .sm-card-head h2{margin:2px 0 0;color:#f8fbff;font-size:21px;font-weight:800;text-transform:none}
+    .sm-pnl-heading-copy p{margin:5px 0 0;color:#9fb6da;font-size:13px}
+    .sm-pnl .sm-live-chip{height:38px;min-width:104px;justify-content:center;border:1px solid rgba(32,229,170,.66);border-radius:999px;background:rgba(4,105,99,.22);color:#2ce4a2;font-size:13px;letter-spacing:.04em;box-shadow:inset 0 0 18px rgba(31,224,181,.06)}
+    .sm-pnl .sm-live-chip .sm-dot{width:10px;height:10px;box-shadow:0 0 13px currentColor}
+    .sm-pnl-value{position:relative;z-index:2;margin:12px 0 4px;text-align:center;font-size:clamp(64px,5.3vw,82px);font-weight:850;line-height:1.04;letter-spacing:0;background:linear-gradient(180deg,#42eca8 0%,#16cd82 100%);-webkit-background-clip:text;background-clip:text;color:transparent;filter:drop-shadow(0 8px 18px rgba(24,210,137,.15))}
+    .sm-pnl.loss .sm-pnl-value{background:linear-gradient(180deg,#ff858e 0%,#ff5264 100%);-webkit-background-clip:text;background-clip:text;color:transparent}
+    .sm-pnl:not(.profit):not(.loss) .sm-pnl-value{background:linear-gradient(180deg,#f4f8ff 0%,#b9c9e4 100%);-webkit-background-clip:text;background-clip:text;color:transparent}
+    .sm-pnl-sub{position:relative;z-index:2;display:block;min-height:22px;margin:0 0 10px;text-align:center;color:#91a8cc;font-size:11px}
+    .sm-pnl-state{margin-left:0;border:1px solid rgba(44,228,162,.3);border-radius:999px;background:rgba(44,228,162,.1);color:#57efb4;padding:3px 8px}
+    .sm-pnl.loss .sm-pnl-state{border-color:rgba(255,102,116,.35);background:rgba(255,82,100,.12);color:#ff8994}
+    .sm-pnl .sm-metrics{position:relative;z-index:2;display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:0;max-width:none;margin:4px auto 0}
+    .sm-pnl .sm-metric{display:flex;align-items:center;justify-content:center;gap:11px;min-width:0;min-height:72px;padding:8px 15px;border:0;border-left:1px solid rgba(151,178,220,.22);border-radius:0;background:transparent;text-align:left}
+    .sm-pnl .sm-metric:first-child{border-left:0}
+    .sm-pnl-metric-icon{width:42px;height:42px;display:grid;place-items:center;flex:0 0 42px;border:1px solid currentColor;border-radius:50%;background:rgba(255,255,255,.055)}
+    .sm-pnl-metric-icon .sm-icon{width:21px;height:21px}
+    .sm-pnl .sm-metric:nth-child(1) .sm-pnl-metric-icon{color:#2ce4a2;background:rgba(24,210,137,.13)}
+    .sm-pnl .sm-metric:nth-child(2) .sm-pnl-metric-icon{color:#28c8ff;background:rgba(19,148,238,.13)}
+    .sm-pnl .sm-metric:nth-child(3) .sm-pnl-metric-icon{color:#9d70ff;background:rgba(119,65,225,.15)}
+    .sm-pnl .sm-metric:nth-child(4) .sm-pnl-metric-icon{color:#ffd24e;background:rgba(229,167,14,.15)}
+    .sm-pnl .sm-metric:nth-child(5) .sm-pnl-metric-icon{color:#ff6997;background:rgba(226,46,112,.15)}
+    .sm-pnl .sm-metric:nth-child(6) .sm-pnl-metric-icon{color:#42dbff;background:rgba(14,170,213,.15)}
+    .sm-pnl-metric-copy{min-width:0}
+    .sm-pnl .sm-metric span:not(.sm-pnl-metric-icon){display:block;color:#91a8cc;font-size:12px;line-height:1.2;white-space:nowrap}
+    .sm-pnl .sm-metric b{display:block;margin-top:6px;color:#eef5ff;font-size:17px;font-weight:800;line-height:1.15;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+    .sm-pnl .sm-metric:nth-child(3) b{color:#d391ff}
+    .sm-pnl .sm-metric:nth-child(4) b{color:#ffd84f}
+    .sm-pnl .sm-metric:nth-child(5) b{color:#ff76a0}
+    .sm-pnl .sm-metric:nth-child(6) b{color:#b9ebff}
+    .sm-pnl .sm-positive{color:#39e9a4!important}.sm-pnl .sm-negative{color:#ff7180!important}.sm-pnl .sm-muted{color:#9fb2cf!important}
+    .sm-pnl .sm-card-foot{position:relative;z-index:2;display:flex;align-items:center;gap:10px;max-width:none;margin:12px 0 0;padding:13px 0 0;border-top:1px solid rgba(145,173,216,.2);color:#a9bddc;font-size:12px}
+    .sm-pnl-foot-icon{width:24px;height:24px;display:grid;place-items:center;flex:0 0 24px;color:#2ce4a2}
+    .sm-pnl-foot-icon .sm-icon{width:20px;height:20px}
+    @media(max-width:1100px){.sm-pnl{min-height:390px}.sm-pnl .sm-metrics{grid-template-columns:repeat(3,minmax(0,1fr));row-gap:4px}.sm-pnl .sm-metric:nth-child(4){border-left:0}.sm-pnl-value{font-size:clamp(58px,8vw,72px)}}
+    @media(max-width:700px){.sm-pnl{min-height:0;padding:20px 16px;border-radius:20px}.sm-pnl-heading{gap:10px}.sm-pnl-heading-icon{width:44px;height:44px;flex-basis:44px}.sm-pnl-heading-copy h2,.sm-pnl .sm-card-head h2{font-size:17px}.sm-pnl-heading-copy p{font-size:11px}.sm-pnl .sm-live-chip{height:34px;min-width:82px;font-size:11px}.sm-pnl-value{margin-top:20px;font-size:clamp(42px,12vw,54px)}.sm-pnl .sm-metrics{grid-template-columns:repeat(2,minmax(0,1fr));row-gap:4px}.sm-pnl .sm-metric,.sm-pnl .sm-metric:nth-child(4){justify-content:flex-start;min-height:68px;padding:9px 8px;border-left:0;border-top:1px solid rgba(151,178,220,.18)}.sm-pnl .sm-metric:nth-child(1),.sm-pnl .sm-metric:nth-child(2){border-top:0}.sm-pnl .sm-metric:nth-child(even){border-left:1px solid rgba(151,178,220,.18)}.sm-pnl-metric-icon{width:36px;height:36px;flex-basis:36px}.sm-pnl .sm-metric b{font-size:15px}.sm-pnl .sm-metric span:not(.sm-pnl-metric-icon){font-size:10px}.sm-pnl .sm-card-foot{align-items:flex-start;line-height:1.45}}
+    @media(prefers-reduced-motion:reduce){.sm-loader-mark img,.sm-loader-ring{animation:none}}
   </style>
 </head>
 <body>
   ${navHtml}
   <main class="sm-page">
+    <div class="sm-data-loader" id="monitorLoader" role="status" aria-live="polite"><div class="sm-loader-mark"><span class="sm-loader-ring"></span><img src="/public/images/logo.svg" alt=""></div><b>Loading strategy data</b><span>Checking live shadow runtime...</span></div>
     <div class="sm-shell" id="shadowMonitor">
       <header class="sm-head">
         <div>
@@ -519,56 +1602,84 @@ export function renderShadowStrategyMonitorPage(navHtml: string): string {
           <button class="sm-refresh" id="refreshAll" type="button"><svg class="sm-icon" viewBox="0 0 24 24"><path d="M20 12a8 8 0 1 1-2.3-5.7"/><path d="M20 4v6h-6"/></svg>Refresh</button>
         </div>
       </header>
-      <section class="sm-card sm-control-card sm-control" aria-label="Monitor controls">
-        <div class="sm-field strategy"><label for="strategySelect">Strategy</label><select class="sm-select" id="strategySelect"><option>Loading strategies...</option></select></div>
-        <div class="sm-field"><label>Instrument</label><div class="sm-segment"><button type="button" class="active" data-instrument="FUTURES">FUTURES</button><button type="button" data-instrument="OPTIONS">OPTIONS</button></div></div>
-        <div class="sm-field"><label>Date</label><div class="sm-today" id="todayLabel">Today</div></div>
-        <div class="sm-field mode"><label>Execution</label><div class="sm-mode-box"><b>SHADOW MODE</b><span>Simulated Execution Only</span></div></div>
+      <section class="sm-control" aria-label="Monitor controls">
+        <div class="sm-card sm-control-box sm-field strategy"><label for="strategySelect">Strategy</label><div class="sm-control-inner"><span class="sm-control-icon"><svg class="sm-icon" viewBox="0 0 24 24"><path d="M4 20V10m5 10V4m5 16v-7m5 7V7M2 20h20"/></svg></span><select class="sm-select" id="strategySelect"><option>Loading strategies...</option></select></div></div>
+        <div class="sm-card sm-control-box sm-field sm-instrument-control"><label>Instrument</label><div class="sm-segment"><button type="button" class="active" data-instrument="FUTURES"><svg class="sm-icon" viewBox="0 0 24 24"><path d="M7 3v18m10-18v18M4 8h6v8H4m10-6h6v7h-6"/></svg><span>Futures</span></button><button type="button" data-instrument="OPTIONS"><svg class="sm-icon" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="3"/></svg><span>Options</span></button></div></div>
       </section>
       <section class="sm-health">
-        <article class="sm-card sm-health-card"><div class="sm-health-icon" id="healthIcon"><svg class="sm-icon" viewBox="0 0 24 24"><path d="M20.8 4.6a5.5 5.5 0 0 0-7.8 0L12 5.7l-1.1-1.1a5.5 5.5 0 0 0-7.8 7.8l1.1 1.1L12 21l7.8-7.5 1.1-1.1a5.5 5.5 0 0 0-.1-7.8Z"/></svg></div><div class="sm-health-copy"><div class="sm-card-label">System Health</div><div class="sm-health-value" id="healthValue">Checking</div><div class="sm-health-note" id="healthNote">Waiting for heartbeat</div></div></article>
-        <article class="sm-card sm-health-card"><div class="sm-health-icon" id="feedIcon"><svg class="sm-icon" viewBox="0 0 24 24"><rect x="4" y="3" width="16" height="7" rx="2"/><rect x="4" y="14" width="16" height="7" rx="2"/><path d="M8 6.5h.01M8 17.5h.01"/></svg></div><div class="sm-health-copy"><div class="sm-card-label">Server / Feed Status</div><div class="sm-health-value" id="feedValue">Checking</div><div class="sm-health-note" id="feedNote">Market data status</div></div></article>
-        <article class="sm-card sm-health-card"><div class="sm-health-icon"><svg class="sm-icon" viewBox="0 0 24 24"><path d="M6 3v18M18 3v18M4 8h4v8H4M16 6h4v10h-4M10 11h4v7h-4"/></svg></div><div class="sm-health-copy"><div class="sm-card-label">Strategy Runtime</div><div class="sm-health-value" id="runtimeValue">Checking</div><div class="sm-health-note" id="runtimeNote">Waiting for strategy state</div></div></article>
-        <article class="sm-card sm-health-card"><div class="sm-backtest" id="backtestSummary"><div class="sm-health-icon"><svg class="sm-icon" viewBox="0 0 24 24"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg></div><div class="sm-bt-cell"><span>Backtest Data</span><b>Checking</b></div><div class="sm-bt-cell"><span>Return</span><b>--</b></div><div class="sm-bt-cell"><span>Win Rate</span><b>--</b></div><div class="sm-bt-cell"><span>Max Drawdown</span><b>--</b></div><div class="sm-bt-cell"><span>Total Trades</span><b>--</b></div></div></article>
+        <article class="sm-card sm-health-card sm-health-trigger sm-system-card" id="healthStep" role="button" tabindex="0" aria-label="View detailed system health"><div class="sm-common-head"><div class="sm-common-title"><span class="sm-title-icon health" id="healthIcon"><svg class="sm-icon" viewBox="0 0 24 24"><path d="M20.8 4.7a5.5 5.5 0 0 0-7.8 0L12 5.8l-1.1-1.1a5.5 5.5 0 0 0-7.8 7.8L12 21l8.8-8.5a5.5 5.5 0 0 0 0-7.8Z"/><path d="M4.5 12h3l1.5-3.2 2.4 7 2-4h3.7"/></svg></span><span>System Health</span></div><span class="sm-status-dot" aria-hidden="true"></span></div><div class="sm-health-value" id="healthValue">Checking</div><div class="sm-system-bottom"><span class="sm-health-note" id="healthNote">Waiting for real checks</span><span class="sm-health-action" id="healthAction">View Checks</span></div></article>
+        <article class="sm-card sm-health-card sm-feed-card" id="feedStep"><div class="sm-common-head"><div class="sm-common-title"><span class="sm-title-icon feed" id="feedIcon"><svg class="sm-icon" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="7" rx="2"/><rect x="3" y="14" width="18" height="7" rx="2"/><path d="M7 6.5h.01M7 17.5h.01M11 6.5h7M11 17.5h7"/></svg></span><span>Server / Feed Status</span></div><span class="sm-status-dot" aria-hidden="true"></span></div><div class="sm-health-value" id="feedValue">Checking</div><div class="sm-feed-metrics"><span>Latest Tick<b id="feedLatestTick">--</b></span><span>Heartbeat<b id="feedHeartbeat">--</b></span><span>Latency<b id="feedLatency">--</b></span></div><div class="sm-feed-event">Last event: <b id="feedEvent">--</b></div></article>
+        <article class="sm-card sm-health-card sm-backtest-card" id="backtestStep"><div class="sm-common-head"><div class="sm-common-title"><span class="sm-title-icon backtest"><svg class="sm-icon" viewBox="0 0 24 24"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10Z"/><path d="m8.5 12 2.2 2.2 4.8-5"/></svg></span><span>5Y Backtest Summary</span></div><span class="sm-status-dot" aria-hidden="true"></span></div><div class="sm-backtest" id="backtestSummary"><div class="sm-bt-cell"><span>5Y Return</span><b>--</b></div><div class="sm-bt-cell"><span>Net Backtest P&amp;L</span><b>--</b></div><div class="sm-bt-cell"><span>Win Rate</span><b>--</b></div><div class="sm-bt-cell"><span>Max Drawdown</span><b>--</b></div><div class="sm-bt-cell"><span>Avg Monthly Return</span><b>--</b></div><div class="sm-bt-cell"><span>Total Trades</span><b>--</b></div></div></article>
+        <article class="sm-card sm-health-card sm-best-card" id="bestStep"><div class="sm-common-head"><div class="sm-common-title"><span class="sm-title-icon best"><svg class="sm-icon" viewBox="0 0 24 24"><path d="m12 3 2.7 5.5 6.1.9-4.4 4.3 1 6.1-5.4-2.9-5.4 2.9 1-6.1-4.4-4.3 6.1-.9Z"/></svg></span><span>Best Performers</span></div></div><div class="sm-best-groups" id="bestPerformers"><div class="sm-best-group"><span>Best Today</span><b>--</b></div><div class="sm-best-group"><span>Best This Month</span><b>--</b></div><div class="sm-best-group"><span>Best This Year</span><b>--</b></div></div></article>
       </section>
       <section class="sm-main-grid">
-        <article class="sm-card sm-pnl" id="pnlCard"><div class="sm-card-head"><h2><span class="sm-dot sm-positive"></span> Shadow Live P&amp;L (Today)</h2><span class="sm-live-chip"><span class="sm-dot"></span>LIVE SHADOW</span></div><div class="sm-pnl-value" id="totalPnl">&#8377;0.00</div><div class="sm-pnl-sub">Total Shadow P&amp;L <span class="sm-pnl-state" id="pnlState">NO TRADE</span></div><div class="sm-metrics" id="pnlMetrics"></div><div class="sm-card-foot" id="pnlFoot">Current day only. Waiting for live shadow data.</div></article>
-        <article class="sm-card sm-snapshot"><div class="sm-card-head"><h2 id="positionTitle">Current Position (Futures)</h2><span class="sm-type-chip" id="instrumentChip">WAITING</span></div><div id="positionBody" class="sm-empty"><div><b>Loading position</b><span>Checking the selected shadow instrument.</span></div></div></article>
+        <article class="sm-card sm-pnl" id="pnlCard">
+          <span class="sm-pnl-orbit" aria-hidden="true"></span>
+          <svg class="sm-pnl-curve" viewBox="0 0 1200 260" preserveAspectRatio="none" aria-hidden="true"><defs><linearGradient id="smPnlCurve" x1="0" y1="1" x2="1" y2="0"><stop offset="0" stop-color="#2448d8" stop-opacity=".08"/><stop offset=".55" stop-color="#18bb91" stop-opacity=".42"/><stop offset="1" stop-color="#24d68f" stop-opacity=".9"/></linearGradient></defs><path d="M0 235 C120 218 178 238 285 202 S455 208 555 164 S720 185 805 126 S1015 112 1200 34" fill="none" stroke="url(#smPnlCurve)" stroke-width="3"/><path d="M0 235 C120 218 178 238 285 202 S455 208 555 164 S720 185 805 126 S1015 112 1200 34 L1200 260 L0 260 Z" fill="url(#smPnlCurve)" opacity=".08"/></svg>
+          <div class="sm-card-head">
+            <div class="sm-pnl-heading"><span class="sm-pnl-heading-icon"><svg class="sm-icon" viewBox="0 0 24 24"><path d="m4 17 6-6 4 4 6-8"/><path d="M15 7h5v5"/></svg></span><div class="sm-pnl-heading-copy"><h2>Shadow Live P&amp;L</h2><p>Simulated trades only. No real broker orders are placed.</p></div></div>
+            <span class="sm-live-chip"><span class="sm-dot"></span>LIVE</span>
+          </div>
+          <div class="sm-pnl-value" id="totalPnl">&#8377;0.00</div>
+          <div class="sm-pnl-sub"><span class="sm-pnl-state" id="pnlState">NO TRADE</span></div>
+          <div class="sm-metrics" id="pnlMetrics"></div>
+          <div class="sm-card-foot"><span class="sm-pnl-foot-icon"><svg class="sm-icon" viewBox="0 0 24 24"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10Z"/><path d="m8.5 12 2.2 2.2 4.8-5"/></svg></span><span id="pnlFoot">Current day only. Waiting for live shadow data.</span></div>
+        </article>
       </section>
-      <article class="sm-card sm-table-card sm-trade-card"><div class="sm-card-head sm-card-pad"><h2 id="tradeTitle">Today's Trade History (Futures)</h2><button class="sm-history-btn" id="openHistory" type="button">View Full History</button></div><div class="sm-table-wrap"><table class="sm-table" id="tradeTable"></table></div><div class="sm-table-footer"><span id="tradeShowing">Showing 0 trades</span><span class="sm-table-total" id="tradeTotal">Total P&amp;L: &#8377;0.00</span></div></article>
-      <section class="sm-detail-grid">
-        <article class="sm-card sm-table-card sm-detail-card"><div class="sm-card-head sm-card-pad"><h2>Candle Logs - Latest 5</h2><a class="sm-link-btn" href="/dashboard">View All</a></div><div class="sm-table-wrap"><table class="sm-table candles" id="candleTable"></table></div></article>
-        <article class="sm-card sm-detail-card"><div class="sm-card-head sm-card-pad"><h2 id="instrumentSummaryTitle">Instrument Summary (Futures)</h2><span class="sm-type-chip" id="summaryTypeChip">FUTURES</span></div><div class="sm-instrument-body" id="instrumentSummaryBody"></div><div class="sm-instrument-note">All prices are indicative. Shadow execution uses simulated fills.</div></article>
+      <section class="sm-bottom-grid">
+        <article class="sm-card sm-table-card sm-trade-card"><div class="sm-card-head sm-card-pad"><div class="sm-heading-with-icon"><span class="sm-section-icon trade"><svg class="sm-icon" viewBox="0 0 24 24"><path d="M7 3v3m10-3v3M4 9h16M5 5h14a1 1 0 0 1 1 1v14H4V6a1 1 0 0 1 1-1Z"/><path d="M8 13h3m2 0h3m-8 3h3"/></svg></span><h2 id="tradeTitle">Today's Trade History <small>(Today Only)</small></h2></div><button class="sm-history-btn" id="openHistory" type="button">View Full History</button></div><div class="sm-table-wrap"><table class="sm-table" id="tradeTable"></table></div><div class="sm-section-helper">This table shows today's trades only. Full history is available in View Full History.</div></article>
+        <article class="sm-card sm-table-card sm-detail-card" id="candleLogs"><div class="sm-card-head sm-card-pad"><div class="sm-heading-with-icon"><span class="sm-section-icon candle"><svg class="sm-icon" viewBox="0 0 24 24"><path d="M7 3v18M17 3v18M4 8h6v8H4m10-6h6v7h-6"/></svg></span><h2>Candle Logs <small>(Latest 5)</small></h2></div><button class="sm-link-btn" id="openCandles" type="button">View All</button></div><div class="sm-table-wrap"><table class="sm-table candles" id="candleTable"></table></div><div class="sm-section-helper">Candle logs are recorded for active timeframes. Latest 5 entries shown.</div></article>
       </section>
-      <article class="sm-card sm-log-card sm-console-card"><div class="sm-card-head sm-card-pad"><h2><span class="sm-dot sm-positive"></span> Server Logs - Live <span class="sm-source">(Updates every minute)</span></h2><div class="sm-log-actions"><button class="sm-resume" id="pauseLogs" type="button">Pause Auto-scroll</button><button class="sm-resume" id="resumeLogs" type="button" hidden>Resume Auto-scroll</button></div></div><div class="sm-log-console" id="logConsole"><div class="sm-muted">Loading server logs...</div></div></article>
+      <article class="sm-card sm-log-card sm-console-card sm-console-full"><div class="sm-card-head sm-card-pad"><div class="sm-heading-with-icon"><span class="sm-section-icon console"><svg class="sm-icon" viewBox="0 0 24 24"><path d="m7 8 4 4-4 4m6 0h4"/></svg></span><h2>Server Logs <small>(Live)</small></h2></div><div class="sm-log-actions"><span class="sm-log-live"><span class="sm-dot"></span>Updates every minute</span><button class="sm-resume" id="pauseLogs" type="button">Pause</button><button class="sm-resume" id="resumeLogs" type="button" hidden>Resume</button></div></div><div class="sm-log-console" id="logConsole"><div class="sm-muted">Loading server logs...</div></div></article>
       <p class="sm-footer-note">Shadow mode trades are not executed in the market. All P&amp;L values are hypothetical.</p>
     </div>
   </main>
-  <div class="sm-modal" id="historyModal" role="dialog" aria-modal="true" aria-labelledby="historyTitle"><div class="sm-modal-panel"><div class="sm-modal-head"><h2 id="historyTitle">Shadow Performance History</h2><button class="sm-close" id="closeHistory" type="button" aria-label="Close">&times;</button></div><div class="sm-history-tabs"><button class="active" data-period="WEEKLY">Weekly</button><button data-period="MONTHLY">Monthly</button><button data-period="YEARLY">Yearly</button><button data-period="BACKTEST">Backtest</button></div><div class="sm-history-body" id="historyBody"></div></div></div>
+  <div class="sm-modal" id="historyModal" role="dialog" aria-modal="true" aria-labelledby="historyTitle"><div class="sm-modal-panel"><div class="sm-modal-head"><h2 id="historyTitle">Shadow Performance History</h2><button class="sm-close" id="closeHistory" type="button" aria-label="Close">&times;</button></div><div class="sm-history-tabs"><button data-period="DAILY">Daily</button><button class="active" data-period="MONTHLY">Monthly</button><button data-period="YEARLY">Yearly</button></div><div class="sm-history-body" id="historyBody"></div></div></div>
+  <div class="sm-modal" id="candleModal" role="dialog" aria-modal="true" aria-labelledby="candleModalTitle"><div class="sm-modal-panel"><div class="sm-modal-head"><div><h2 id="candleModalTitle">Today's Candle Log</h2><div class="sm-health-note" id="candleModalSub">Selected shadow strategy</div></div><button class="sm-close" id="closeCandles" type="button" aria-label="Close">&times;</button></div><div class="sm-history-body"><div class="sm-table-wrap" style="max-height:70vh"><table class="sm-table candles sm-candle-full" id="candleFullTable"></table></div></div></div></div>
+  <div class="sm-modal" id="healthModal" role="dialog" aria-modal="true" aria-labelledby="healthModalTitle"><div class="sm-modal-panel sm-health-panel"><div class="sm-modal-head"><div><h2 id="healthModalTitle">System Health Evidence</h2><div class="sm-health-note">Live process, scheduler, feed, execution, storage and token checks</div></div><button class="sm-close" id="closeHealth" type="button" aria-label="Close">&times;</button></div><div class="sm-health-summary"><strong class="sm-health-state" id="healthModalState">CHECKING</strong><div><b id="healthModalSummary">Running checks</b><span>Critical services must pass before the monitor reports healthy.</span></div><div class="sm-health-checked" id="healthModalChecked">Checked: --</div></div><div class="sm-health-list" id="healthDetails"></div></div></div>
   <script>
     (function(){
-      var state={strategy:localStorage.getItem("zsShadowStrategy")||"drishti",instrument:localStorage.getItem("zsShadowInstrument")||"FUTURES",request:0,data:null,logStick:true};
+      var state={strategy:localStorage.getItem("zsShadowStrategy")||"drishti",instrument:localStorage.getItem("zsShadowInstrument")||"FUTURES",performancePeriod:localStorage.getItem("zsShadowPerformancePeriod")||"TODAY",request:0,data:null,logStick:true};
       var activeController=null;
       function el(id){return document.getElementById(id)}
       function esc(v){return String(v==null?"":v).replace(/[&<>"']/g,function(c){return({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"})[c]})}
       function value(v,digits){return v==null||!isFinite(Number(v))?"--":Number(v).toLocaleString("en-IN",{minimumFractionDigits:digits||0,maximumFractionDigits:digits==null?2:digits})}
       function money(v){if(v==null||!isFinite(Number(v)))return"Not available";var n=Number(v);return(n>0?"+":n<0?"-":"")+"&#8377;"+Math.abs(n).toLocaleString("en-IN",{minimumFractionDigits:2,maximumFractionDigits:2})}
+      function compactMoney(v,negative){if(v==null||!isFinite(Number(v)))return"--";var n=Math.abs(Number(v));var unit=n>=10000000?(n/10000000).toFixed(2)+" Cr":n>=100000?(n/100000).toFixed(2)+" L":n>=1000?(n/1000).toFixed(1)+" K":n.toFixed(0);return(negative?"-":Number(v)<0?"-":Number(v)>0?"+":"")+"&#8377;"+unit}
+      function btValue(v,unit){return unit==="points"?(v==null?"--":value(v)+" pts"):money(v)}
       function pct(v){return v==null||!isFinite(Number(v))?"--":Number(v).toFixed(2)+"%"}
       function dt(v){if(!v)return"--";var d=new Date(v);return isNaN(d.getTime())?esc(v):d.toLocaleTimeString("en-IN",{timeZone:"Asia/Kolkata",hour:"2-digit",minute:"2-digit",second:"2-digit"})}
       function clsPnl(v){return Number(v)>0?"sm-positive":Number(v)<0?"sm-negative":"sm-muted"}
-      function metric(label,val,cls){return'<div class="sm-metric"><span>'+esc(label)+'</span><b class="'+(cls||"")+'">'+val+'</b></div>'}
+      function metricIcon(label){var icons={"Realized P&L":'<svg class="sm-icon" viewBox="0 0 24 24"><ellipse cx="9" cy="6" rx="5" ry="3"/><path d="M4 6v5c0 1.7 2.2 3 5 3s5-1.3 5-3V6M4 11v5c0 1.7 2.2 3 5 3 1 0 1.9-.2 2.7-.5"/><ellipse cx="17" cy="16" rx="4" ry="2.5"/><path d="M13 16v3c0 1.4 1.8 2.5 4 2.5s4-1.1 4-2.5v-3"/></svg>',"Unrealized P&L":'<svg class="sm-icon" viewBox="0 0 24 24"><path d="M4 7h14a2 2 0 0 1 2 2v10H4a2 2 0 0 1-2-2V6a3 3 0 0 1 3-3h12"/><path d="M16 12h5v4h-5a2 2 0 0 1 0-4Z"/></svg>',"Today Trades":'<svg class="sm-icon" viewBox="0 0 24 24"><path d="M4 20V13h4v7H4Zm6 0V8h4v12h-4Zm6 0V4h4v16h-4Z"/><path d="M2 20h20"/></svg>',"Win Rate":'<svg class="sm-icon" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="4"/><path d="m12 12 7-7M16 5h3v3"/></svg>',"Open Position":'<svg class="sm-icon" viewBox="0 0 24 24"><path d="M4 8h16v12H4zM9 8V5h6v3M4 12h16"/><path d="M10 12v2h4v-2"/></svg>',"Last Update":'<svg class="sm-icon" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>'};return icons[label]||icons["Today Trades"]}
+      function metric(label,val,cls){return'<div class="sm-metric"><span class="sm-pnl-metric-icon" aria-hidden="true">'+metricIcon(label)+'</span><div class="sm-pnl-metric-copy"><span>'+esc(label)+'</span><b class="'+(cls||"")+'">'+val+'</b></div></div>'}
       function renderStrategies(list){var select=el("strategySelect");var html=(list||[]).map(function(s){return'<option value="'+esc(s.id)+'" '+(s.id===state.strategy?"selected":"")+'>'+esc(s.name)+'</option>'}).join("");select.innerHTML=html;if(!list.some(function(s){return s.id===state.strategy})){state.strategy=list[0]?list[0].id:"";select.value=state.strategy}}
-      function renderHealth(d){var good=d.health.connected;el("healthIcon").className="sm-health-icon "+(good?"good":"warn");el("healthValue").textContent=d.health.overall;el("healthNote").textContent=(good?"All systems operational. ":"Heartbeat requires attention. ")+"Checked: "+dt(d.health.lastCheckedAt);el("feedIcon").className="sm-health-icon "+(good?"good":"warn");el("feedValue").textContent=d.health.feed;el("feedNote").textContent=(d.health.feedLatencyMs==null?"Latency unavailable":"Latency: "+d.health.feedLatencyMs+" ms")+" | Last Tick: "+dt(d.health.lastTickAt);el("runtimeValue").textContent=d.runtime.status;el("runtimeNote").textContent="Last Eval: "+dt(d.runtime.lastEvaluatedAt)+" | Next: "+dt(d.runtime.nextEvaluationAt)+" | "+d.runtime.version;var b=d.backtest;el("backtestSummary").innerHTML='<div class="sm-health-icon"><svg class="sm-icon" viewBox="0 0 24 24"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg></div>'+(b?'<div class="sm-bt-cell"><span>Backtest Data</span><b title="'+esc(b.source)+'">BACKTEST DATA</b></div><div class="sm-bt-cell"><span>5Y Return</span><b class="'+clsPnl(b.returnPct)+'">'+pct(b.returnPct)+'</b></div><div class="sm-bt-cell"><span>Win Rate</span><b>'+pct(b.winRate)+'</b></div><div class="sm-bt-cell"><span>Max Drawdown</span><b class="sm-negative">'+pct(b.maxDrawdown)+'</b></div><div class="sm-bt-cell"><span>Avg Monthly</span><b>'+pct(b.avgMonthlyReturn)+'</b></div><div class="sm-bt-cell"><span>Total Trades</span><b>'+value(b.totalTrades,0)+'</b></div>':'<div class="sm-bt-cell" style="grid-column:2/-1"><span>Backtest Data</span><b>Not connected for this strategy</b></div>')}
-      function renderSummary(d){var s=d.summary;var card=el("pnlCard");card.classList.toggle("profit",Number(s.totalPnl)>0);card.classList.toggle("loss",Number(s.totalPnl)<0);el("totalPnl").innerHTML=money(s.totalPnl);var stateText=Number(s.totalPnl)>0?"PROFIT":Number(s.totalPnl)<0?"LOSS":"NO TRADE";el("pnlState").textContent=stateText;el("pnlMetrics").innerHTML=metric("Realized P&L",money(s.realizedPnl),clsPnl(s.realizedPnl))+metric("Unrealized P&L",money(s.unrealizedPnl),clsPnl(s.unrealizedPnl))+metric("Today's Trades",value(s.trades,0))+metric("Open Positions",value(s.openPositions,0))+metric("Wins",value(s.wins,0),"sm-positive")+metric("Losses",value(s.losses,0),"sm-negative")+metric("Win Rate",pct(s.winRate))+metric("Last Updated",dt(s.lastUpdatedAt));el("pnlFoot").textContent=s.trades===0&&s.openPositions===0?"No shadow trade executed today.":"Total Shadow P&L = Realized Shadow P&L + Unrealized Shadow P&L."}
-      function renderPosition(d){var option=d.identity.instrumentType==="OPTIONS";el("positionTitle").textContent="Current Position ("+(option?"Options":"Futures")+")";var p=d.position;if(!p){el("instrumentChip").textContent="WAITING";el("positionBody").className="sm-empty";el("positionBody").innerHTML='<div><b>No open shadow position</b><span>The selected strategy is waiting for the next valid signal.</span><div class="sm-health-note" style="margin-top:10px">Last evaluated: '+dt(d.runtime.lastEvaluatedAt)+' | Next: '+dt(d.runtime.nextEvaluationAt)+' | Result: '+esc(d.lastSignal||"No Signal")+'</div></div>';return}el("instrumentChip").textContent="OPEN";el("positionBody").className="sm-snapshot-grid";var age=p.entryAt?(Math.max(0,Math.floor((Date.now()-new Date(p.entryAt).getTime())/60000))+" min"):"--";var risk=p.entryPrice!=null&&p.stopLoss!=null&&p.target!=null&&Math.abs(p.entryPrice-p.stopLoss)>0?"1 : "+(Math.abs(p.target-p.entryPrice)/Math.abs(p.entryPrice-p.stopLoss)).toFixed(2):"--";var rows=option?[["Contract",p.instrument],["Type",/CE$/i.test(p.instrument||"")?"CE":/PE$/i.test(p.instrument||"")?"PE":"--"],["Buy / Sell",p.side],["Lots",value(p.quantity,0)],["Entry Premium",value(p.entryPrice)],["Current Premium",value(p.ltp)],["Stop Loss",value(p.stopLoss)],["Target",value(p.target)],["Current P&L",money(p.currentPnl)],["Status",p.status],["Entry Time",p.entryTime||"--"],["Position Age",age],["Last Evaluated",dt(d.runtime.lastEvaluatedAt)],["Next Evaluation",dt(d.runtime.nextEvaluationAt)]]:[["Instrument",p.instrument],["Direction",p.side],["Quantity / Lots",value(p.quantity,0)],["Entry Price",value(p.entryPrice)],["LTP",value(p.ltp)],["Current P&L",money(p.currentPnl)],["Stop Loss",value(p.stopLoss)],["Target",value(p.target)],["Risk / Reward",risk],["Entry Time",p.entryTime||"--"],["Position Age",age],["Status",p.status],["Last Evaluated",dt(d.runtime.lastEvaluatedAt)],["Next Evaluation",dt(d.runtime.nextEvaluationAt)]];el("positionBody").innerHTML=rows.map(function(r){var special=r[0]==="Current P&L";var type=r[0]==="Type"&&/^(CE|PE)$/.test(r[1]);return'<div class="sm-kv"><span>'+esc(r[0])+'</span><b class="'+(special?clsPnl(p.currentPnl):type?"sm-tag sm-cepe "+r[1].toLowerCase():"")+'">'+(String(r[1]).indexOf("&#8377;")>=0?r[1]:esc(r[1]))+'</b></div>'}).join("")}
-      function renderTrades(d){var option=d.identity.instrumentType==="OPTIONS";el("tradeTitle").textContent="Today's Trade History ("+(option?"Options":"Futures")+")";var headers=option?["#","Time","Contract","Type","Strike","Side","Qty","Entry Premium","Exit Premium","SL","Target","P&L","Result","Status"]:["#","Time","Instrument","Side","Qty (Lots)","Entry Price","Exit Price","SL","Target","P&L","Result","Status"];var trades=d.trades||[];var rows=trades.map(function(t,index){var side=esc(t.side||"--");var result=esc(t.result||"--");var status=esc(t.status||"--");var type=/CE$/i.test(t.instrument||"")?"CE":/PE$/i.test(t.instrument||"")?"PE":"--";var strike=(t.instrument||"").match(/(\\d+)(?:CE|PE)$/i);var common=option?[index+1,esc(t.time||"--"),esc(t.instrument||"--"),'<span class="sm-tag sm-cepe '+type.toLowerCase()+'">'+type+"</span>",strike?strike[1]:"--",'<span class="sm-tag '+(/buy|ce/i.test(side)?"buy":"sell")+'">'+side+"</span>",value(t.quantity,0),value(t.entry),value(t.exit),value(t.stopLoss),value(t.target),'<span class="'+clsPnl(t.pnl)+'">'+money(t.pnl)+"</span>",'<span class="sm-tag '+result.toLowerCase()+'">'+result+"</span>",'<span class="sm-tag '+status.toLowerCase()+'">'+status+"</span>"]:[index+1,esc(t.time||"--"),esc(t.instrument||"--"),'<span class="sm-tag '+(/buy|long|ce/i.test(side)?"buy":"sell")+'">'+side+"</span>",value(t.quantity,0),value(t.entry),value(t.exit),value(t.stopLoss),value(t.target),'<span class="'+clsPnl(t.pnl)+'">'+money(t.pnl)+"</span>",'<span class="sm-tag '+result.toLowerCase()+'">'+result+"</span>",'<span class="sm-tag '+status.toLowerCase()+'">'+status+"</span>"];return"<tr>"+common.map(function(c){return"<td>"+c+"</td>"}).join("")+"</tr>"}).join("");el("tradeTable").innerHTML="<thead><tr>"+headers.map(function(h){return"<th>"+esc(h)+"</th>"}).join("")+"</tr></thead><tbody>"+(rows||'<tr><td class="sm-table-empty" colspan="'+headers.length+'">No shadow trades recorded today for this strategy and instrument.</td></tr>')+"</tbody>";el("tradeShowing").textContent=trades.length?"Showing 1 to "+trades.length+" of "+trades.length+" trades":"Showing 0 trades";var total=trades.reduce(function(sum,t){return sum+(isFinite(Number(t.pnl))?Number(t.pnl):0)},0);el("tradeTotal").className="sm-table-total "+clsPnl(total);el("tradeTotal").innerHTML="Total P&L: "+money(total)}
-      function renderCandles(d){var rows=(d.candles||[]).map(function(c){return"<tr><td>"+esc(c.time||"--")+"</td><td>"+esc(c.timeframe||"--")+"</td><td>"+value(c.open)+"</td><td>"+value(c.high)+"</td><td>"+value(c.low)+"</td><td>"+value(c.close)+"</td><td>"+value(c.volume,0)+"</td><td><span class='sm-tag'>"+esc(c.status||"--")+"</span></td><td class='note' title='"+esc(c.note)+"'>"+esc(c.note)+"</td></tr>"}).join("");el("candleTable").innerHTML="<thead><tr><th>Time</th><th>Timeframe</th><th>Open</th><th>High</th><th>Low</th><th>Close</th><th>Volume</th><th>Status</th><th>Evaluation Note</th></tr></thead><tbody>"+(rows||'<tr><td class="sm-table-empty" colspan="9">No relevant candle logs recorded for the selected strategy.</td></tr>')+"</tbody>"}
-      function renderInstrumentSummary(d){var option=d.identity.instrumentType==="OPTIONS";var s=d.instrumentSummary||{};el("instrumentSummaryTitle").textContent="Instrument Summary ("+(option?"Options":"Futures")+")";el("summaryTypeChip").textContent=option?(s.type||"OPTIONS"):"FUTURES";el("summaryTypeChip").className="sm-type-chip "+(option&&s.type?"sm-cepe "+String(s.type).toLowerCase():"");var rows=option?[["Contract",s.contract],["Type",s.type],["Strike",value(s.strike,0)],["Expiry",s.expiry],["Lot Size",value(s.lotSize,0)],["LTP",value(s.ltp)],["Change",value(s.change)],["Day High",value(s.dayHigh)],["Day Low",value(s.dayLow)],["Open Interest",value(s.openInterest,0)],["Volume",value(s.volume,0)],["Implied Volatility",pct(s.impliedVolatility)]]:[["Contract",s.contract],["Lot Size",value(s.lotSize,0)],["Tick Size",value(s.tickSize)],["LTP",value(s.ltp)],["Change",value(s.change)],["Day High",value(s.dayHigh)],["Day Low",value(s.dayLow)],["Open Interest",value(s.openInterest,0)],["Volume",value(s.volume,0)],["Expiry",s.expiry]];el("instrumentSummaryBody").innerHTML=rows.map(function(r){return'<div class="sm-kv"><span>'+esc(r[0])+'</span><b>'+esc(r[1]==null?"--":r[1])+'</b></div>'}).join("")}
+      function renderHealth(d){var good=d.health.connected;var runtimeGood=good&&!/OFFLINE|ERROR|BLOCKED/i.test(d.runtime.status||"");var candles=d.candles||[];var count=function(tf){return candles.filter(function(c){return String(c.timeframe).toLowerCase()===tf}).length};el("healthStep").classList.toggle("good-step",good);el("feedStep").classList.toggle("good-step",good);el("runtimeStep").classList.toggle("good-step",runtimeGood);el("healthIcon").className="sm-health-icon health "+(good?"good":"warn");el("healthValue").textContent=d.health.overall;el("healthNote").textContent=good?"All systems operational":"Heartbeat needs attention";el("feedIcon").className="sm-health-icon feed "+(good?"good":"warn");el("feedValue").textContent=d.health.feed;el("feedNote").textContent=good?"Market data active":"Market data unavailable";el("runtimeValue").textContent=d.runtime.status;el("runtimeNote").textContent=d.runtime.status+" | "+d.runtime.version;el("candleLatest").textContent="Latest: "+(candles[0]?.time||"--");el("count1m").textContent=count("1m");el("count5m").textContent=count("5m");el("count15m").textContent=count("15m");var b=d.backtest;el("backtestStep").classList.toggle("good-step",!!b);el("backtestSummary").innerHTML='<div class="sm-health-icon backtest '+(b?"good":"warn")+'"><svg class="sm-icon" viewBox="0 0 24 24"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10Z"/><path d="'+(b?"m8.5 12 2.2 2.2 4.8-5":"M12 8v5m0 3h.01")+'"/></svg></div>'+(b?'<div class="sm-bt-cell"><span>5Y Backtest</span><b title="'+esc((b.coverage||"5Y")+(b.modelled?" · Modelled":" · Historical")+" · "+(b.methodology||b.source))+'">'+esc(b.coverage||"5Y")+'</b></div><div class="sm-bt-cell"><span>5Y P&amp;L</span><b class="'+clsPnl(b.pnl)+'">'+compactMoney(b.pnl,false)+'</b></div><div class="sm-bt-cell"><span>Win Rate</span><b>'+pct(b.winRate)+'</b></div><div class="sm-bt-cell"><span>Max Drawdown</span><b class="sm-negative">'+compactMoney(b.maxDrawdown,true)+'</b></div><div class="sm-bt-cell"><span>Avg Monthly</span><b>'+compactMoney(b.avgMonthlyPnl,false)+'</b></div>':'<div class="sm-bt-cell" style="grid-column:2/-1"><span>5Y Backtest Summary</span><b>No strategy-specific result available</b></div>')}
+      function renderPerformance(d){var p=d.performance&&d.performance.periods&&d.performance.periods[state.performancePeriod];if(!p)return;var leader=function(row,label){if(!row)return'<div class="sm-performance-metric"><span>'+label+'</span><b>--</b><small>No qualifying trades</small></div>';return'<div class="sm-performance-metric"><span>'+label+'</span><b class="'+clsPnl(row.returnPct)+'">'+pct(row.returnPct)+'</b><small>'+esc(row.strategyName)+' · '+compactMoney(row.pnl,false)+'</small></div>'};el("performanceGrid").innerHTML='<div class="sm-performance-metric"><span>Average Return</span><b class="'+clsPnl(p.averageReturnPct)+'">'+pct(p.averageReturnPct)+'</b><small>'+value(p.strategiesCompared,0)+' strategy/instrument results</small></div>'+leader(p.bestFutures,"Best Futures")+leader(p.bestOptions,"Best Options")+'<div class="sm-performance-metric"><span>Capital Deployed</span><b>'+compactMoney(p.capitalUsed,false).replace(/^\\+/,"")+'</b><small>Combined net P&amp;L '+compactMoney(p.pnl,false)+'</small></div>';el("performanceScope").textContent=(p.source==="LIVE"?"Live":"Backtest")+" · "+p.label;el("performanceFormula").textContent=d.performance.definition;document.querySelectorAll("[data-performance-period]").forEach(function(b){b.classList.toggle("active",b.dataset.performancePeriod===state.performancePeriod)})}
+      function renderSummary(d){var s=d.summary;var total=Number(s.totalPnl);var hasOpen=Number(s.openPositions)>0;var card=el("pnlCard");card.classList.toggle("profit",total>0);card.classList.toggle("loss",total<0);el("totalPnl").innerHTML=money(s.totalPnl);var stateText=total>0?"PROFIT":total<0?"LOSS":hasOpen?"LIVE POSITION":"NO TRADE";el("pnlState").textContent=stateText;el("pnlMetrics").innerHTML=metric("Realized P&L",money(s.realizedPnl),clsPnl(s.realizedPnl))+metric("Unrealized P&L",money(s.unrealizedPnl),clsPnl(s.unrealizedPnl))+metric("Today Trades",value(s.trades,0))+metric("Win Rate",pct(s.winRate))+metric("Open Position",value(s.openPositions,0))+metric("Last Update",dt(s.lastUpdatedAt));var strategy=d.identity.strategyName;var instrument=d.identity.instrumentType==="OPTIONS"?"options":"futures";el("pnlFoot").textContent=hasOpen?"Live shadow P&L is updated continuously. Trades are appended to today's history in real time.":Number(s.trades)>0?"Today's completed shadow P&L. No live broker orders were placed.":strategy+" has no "+instrument+" shadow entry today. Current P&L is \u20b90.00."}
+      function renderTrades(d){var option=d.identity.instrumentType==="OPTIONS";el("tradeTitle").innerHTML="Today's Trade History <small>(Today Only &middot; "+(option?"Options":"Futures")+")</small>";var headers=["Time","Instrument","Contract","Order Flow","Entry","Exit","Qty","Net P&L","Status"];var trades=d.trades||[];var rows=trades.slice(0,7).map(function(t){var contract=esc(t.contract||"--");var action=String(t.action||"--").toUpperCase();var exitAction=String(t.exitAction||"--").toUpperCase();var status=esc(t.status||"--");var flow='<span class="sm-order-flow"><span class="sm-action '+action.toLowerCase()+'">'+esc(action)+'</span><span class="sm-flow-arrow">&rarr;</span><span class="sm-action '+exitAction.toLowerCase()+'">'+esc(exitAction)+'</span></span>';var cells=[esc(t.time||"--"),esc(t.instrument||"--"),'<span class="sm-side '+contract.toLowerCase()+'">'+contract+"</span>",flow,value(t.entry),value(t.exit),value(t.quantity,0),'<span class="'+clsPnl(t.pnl)+'">'+money(t.pnl)+"</span>",'<span class="sm-tag '+status.toLowerCase()+'">'+status+"</span>"];return"<tr>"+cells.map(function(c){return"<td>"+c+"</td>"}).join("")+"</tr>"}).join("");el("tradeTable").innerHTML="<thead><tr>"+headers.map(function(h){return"<th>"+esc(h)+"</th>"}).join("")+"</tr></thead><tbody>"+(rows||'<tr><td class="sm-table-empty" colspan="9">No shadow trades recorded today for this strategy and instrument.</td></tr>')+"</tbody>"}
+      function candleState(raw){var key=String(raw||"watching").toLowerCase().replace(/_/g,"-");var labels={"pre-ref":"Pre-market setup","marked-ref":"Range marked","stale-signal-skip":"Signal skipped","no-trade":"No trade","wait-c2":"Watching","exit-eod":"EOD Exit","eod-exit":"EOD Exit","sl-hit":"SL Hit","reentry":"Re-entry","re-entry":"Re-entry","re-exit":"Re-exit"};return{key:key,label:labels[key]||key.split("-").map(function(x){return x?x[0].toUpperCase()+x.slice(1):x}).join(" ")}}
+      function candleCells(c){var st=candleState(c.status);var side=String(c.side||"").toUpperCase();var sideHtml=/^(CE|PE)$/.test(side)?'<span class="sm-side '+side.toLowerCase()+'">'+side+"</span>":"--";var rowClass=/entry/.test(st.key)&&!/exit/.test(st.key)?"candle-entry":/sl/.test(st.key)?"candle-sl":/exit/.test(st.key)?"candle-exit":/trail/.test(st.key)?"candle-trail":"candle-watch";return{st:st,side:sideHtml,rowClass:rowClass}}
+      function candleTable(rows,compact){var body=(rows||[]).map(function(c){var x=candleCells(c);var cells=compact?[esc(c.time||"--"),'<span class="sm-state '+x.st.key+'">'+esc(x.st.label)+"</span>",x.side,value(c.close),'<span class="'+clsPnl(c.pnl)+'">'+(c.pnl==null?"--":money(c.pnl))+"</span>",'<span title="'+esc(c.note)+'">'+esc(c.note)+"</span>"]:[value(c.number,0),esc(c.time||"--"),'<span class="sm-state '+x.st.key+'">'+esc(x.st.label)+"</span>",x.side,value(c.open),value(c.high),value(c.low),value(c.close),value(c.entry),value(c.stopLoss),'<span class="'+clsPnl(c.pnl)+'">'+(c.pnl==null?"--":money(c.pnl))+"</span>",'<span title="'+esc(c.note)+'">'+esc(c.note)+"</span>"];return'<tr class="'+x.rowClass+'">'+cells.map(function(v,i){return'<td class="'+(i===cells.length-1?"note":"")+'">'+v+"</td>"}).join("")+"</tr>"}).join("");var headers=compact?["Time","State","Side","Close","P&L","Note"]:["#","Time","State","Side","Open","High","Low","Close","Entry","SL","P&L","Note"];return"<thead><tr>"+headers.map(function(h){return"<th>"+h+"</th>"}).join("")+"</tr></thead><tbody>"+(body||'<tr><td class="sm-table-empty" colspan="'+headers.length+'">No relevant candle logs recorded for the selected strategy.</td></tr>')+"</tbody>"}
+      function renderCandles(d){var rows=d.candles||[];el("candleTable").innerHTML=candleTable(rows.slice(0,5),true);el("candleFullTable").innerHTML=candleTable(rows,false);el("candleModalTitle").textContent="Today's Candle Log - "+d.identity.strategyName;el("candleModalSub").textContent=d.identity.instrumentType+" | "+d.identity.tradeDate+" | "+rows.length+" candles"}
       function renderLogs(d){var box=el("logConsole");var nearBottom=box.scrollHeight-box.scrollTop-box.clientHeight<28;var rows=(d.logs||[]).map(function(l){return'<div class="sm-log-line"><span>'+esc(l.time||"--:--:--")+'</span><b class="'+esc(l.level)+'">'+esc(l.level)+'</b><span>'+esc(l.message)+'</span></div>'}).join("");box.innerHTML=rows||'<div class="sm-muted">No server log entries available.</div>';if(state.logStick&&nearBottom)box.scrollTop=box.scrollHeight;el("resumeLogs").hidden=state.logStick}
-      function render(d){state.data=d;renderStrategies(d.strategies);renderHealth(d);renderSummary(d);renderPosition(d);renderTrades(d);renderCandles(d);renderInstrumentSummary(d);renderLogs(d);var tradeDay=new Date(d.identity.tradeDate+"T00:00:00");el("todayLabel").textContent="Today ("+tradeDay.toLocaleDateString("en-IN",{day:"2-digit",month:"short",year:"numeric"})+")";var m=el("marketStatus");m.className="sm-market "+(d.market.status==="OPEN"?"open":"closed");m.querySelector("span:last-child").textContent="Market "+(d.market.status==="OPEN"?"Open":"Closed");el("refreshMeta").textContent="Last refreshed: "+dt(d.refreshedAt);document.querySelectorAll("[data-instrument]").forEach(function(b){b.classList.toggle("active",b.dataset.instrument===state.instrument)});el("shadowMonitor").classList.remove("sm-loading")}
-      async function load(){var seq=++state.request;if(activeController)activeController.abort();activeController=new AbortController();el("shadowMonitor").classList.add("sm-loading");try{var url="/api/shadow-monitor?strategy="+encodeURIComponent(state.strategy)+"&instrument="+encodeURIComponent(state.instrument);var r=await fetch(url,{cache:"no-store",credentials:"same-origin",signal:activeController.signal});if(!r.ok)throw new Error("HTTP "+r.status);var d=await r.json();if(seq!==state.request)return;if(!d.ok)throw new Error(d.error||"Monitor unavailable");render(d)}catch(e){if(e.name==="AbortError")return;el("refreshMeta").textContent="Refresh failed: "+e.message;el("shadowMonitor").classList.remove("sm-loading")}}
-      el("strategySelect").addEventListener("change",function(){state.strategy=this.value;localStorage.setItem("zsShadowStrategy",state.strategy);load()});document.querySelectorAll("[data-instrument]").forEach(function(b){b.addEventListener("click",function(){state.instrument=this.dataset.instrument;localStorage.setItem("zsShadowInstrument",state.instrument);load()})});el("refreshAll").addEventListener("click",load);el("logConsole").addEventListener("scroll",function(){if(this.scrollHeight-this.scrollTop-this.clientHeight>=28){state.logStick=false;el("resumeLogs").hidden=false;el("pauseLogs").hidden=true}});el("pauseLogs").addEventListener("click",function(){state.logStick=false;this.hidden=true;el("resumeLogs").hidden=false});el("resumeLogs").addEventListener("click",function(){state.logStick=true;el("logConsole").scrollTop=el("logConsole").scrollHeight;this.hidden=true;el("pauseLogs").hidden=false});el("openHistory").addEventListener("click",function(){el("historyModal").classList.add("open");renderHistory("WEEKLY")});el("closeHistory").addEventListener("click",function(){el("historyModal").classList.remove("open")});el("historyModal").addEventListener("click",function(e){if(e.target===this)this.classList.remove("open")});document.querySelectorAll("[data-period]").forEach(function(b){b.addEventListener("click",function(){document.querySelectorAll("[data-period]").forEach(function(x){x.classList.toggle("active",x===b)});renderHistory(b.dataset.period)})});
-      function renderHistory(period){var d=state.data;if(!d)return;var body=el("historyBody");if(period==="BACKTEST"){var b=d.backtest;body.innerHTML=b?'<div class="sm-history-state"><b>Backtest Data</b><p>Source: '+esc(b.source)+'</p><p>Return: '+pct(b.returnPct)+' | Win rate: '+pct(b.winRate)+' | Max drawdown: '+pct(b.maxDrawdown)+' | Trades: '+value(b.totalTrades,0)+'</p></div>':'<div class="sm-history-state">Backtest data is not connected for this strategy.</div>';return}var h=d.history||{};var rows=period==="WEEKLY"?h.weekly:period==="MONTHLY"?h.monthly:h.yearly;if(!rows||!rows.length){body.innerHTML='<div class="sm-history-state"><b>Historical Shadow Data - '+esc(period)+'</b><p>No persisted '+esc(period.toLowerCase())+' shadow records are available for this strategy and instrument.</p></div>';return}body.innerHTML='<div class="sm-source" style="margin-bottom:10px">Historical Shadow Data | Source: '+esc(h.source||"Not available")+'</div><div class="sm-table-wrap" style="max-height:54vh"><table class="sm-table"><thead><tr><th>Period</th><th>Net P&L</th><th>Trading Days</th><th>Trades</th><th>Wins</th><th>Losses</th><th>Win Rate</th></tr></thead><tbody>'+rows.map(function(r){return"<tr><td>"+esc(r.period)+"</td><td class='"+clsPnl(r.pnl)+"'>"+money(r.pnl)+"</td><td>"+value(r.tradingDays,0)+"</td><td>"+value(r.trades,0)+"</td><td class='sm-positive'>"+value(r.wins,0)+"</td><td class='sm-negative'>"+value(r.losses,0)+"</td><td>"+pct(r.winRate)+"</td></tr>"}).join("")+"</tbody></table></div>"}
+      function render(d){state.data=d;renderStrategies(d.strategies);renderHealth(d);el("healthAction").textContent="View Checks";renderSummary(d);renderTrades(d);renderCandles(d);renderLogs(d);var m=el("marketStatus");m.className="sm-market "+(d.market.status==="OPEN"?"open":"closed");m.querySelector("span:last-child").textContent="Market "+(d.market.status==="OPEN"?"Open":"Closed");el("refreshMeta").textContent="Last refreshed: "+dt(d.refreshedAt);document.querySelectorAll("[data-instrument]").forEach(function(b){b.classList.toggle("active",b.dataset.instrument===state.instrument)});el("shadowMonitor").classList.remove("sm-loading");el("monitorLoader").classList.remove("active")}
+      async function load(trigger){var interactive=trigger===true||!!(trigger&&trigger.type)||state.userRequestedLoad===true;state.userRequestedLoad=false;var seq=++state.request;if(activeController)activeController.abort();activeController=new AbortController();if(interactive){el("monitorLoader").classList.add("active");el("shadowMonitor").classList.add("sm-loading")}try{var url="/api/shadow-monitor?strategy="+encodeURIComponent(state.strategy)+"&instrument="+encodeURIComponent(state.instrument);var r=await fetch(url,{cache:"no-store",credentials:"same-origin",signal:activeController.signal});if(!r.ok)throw new Error("HTTP "+r.status);var d=await r.json();if(seq!==state.request)return;if(!d.ok)throw new Error(d.error||"Monitor unavailable");render(d)}catch(e){if(e.name==="AbortError")return;el("refreshMeta").textContent="Refresh failed: "+e.message;el("shadowMonitor").classList.remove("sm-loading");el("monitorLoader").classList.remove("active")}}
+      el("strategySelect").addEventListener("change",function(){state.userRequestedLoad=true},{capture:true});document.querySelectorAll("[data-instrument]").forEach(function(button){button.addEventListener("click",function(){state.userRequestedLoad=true},{capture:true})});
+      el("strategySelect").addEventListener("change",function(){state.strategy=this.value;localStorage.setItem("zsShadowStrategy",state.strategy);load()});document.querySelectorAll("[data-instrument]").forEach(function(b){b.addEventListener("click",function(){state.instrument=this.dataset.instrument;localStorage.setItem("zsShadowInstrument",state.instrument);load()})});document.querySelectorAll("[data-performance-period]").forEach(function(b){b.addEventListener("click",function(){state.performancePeriod=this.dataset.performancePeriod;localStorage.setItem("zsShadowPerformancePeriod",state.performancePeriod);if(state.data)renderPerformance(state.data)})});el("refreshAll").addEventListener("click",load);el("logConsole").addEventListener("scroll",function(){if(this.scrollHeight-this.scrollTop-this.clientHeight>=28){state.logStick=false;el("resumeLogs").hidden=false;el("pauseLogs").hidden=true}});el("pauseLogs").addEventListener("click",function(){state.logStick=false;this.hidden=true;el("resumeLogs").hidden=false});el("resumeLogs").addEventListener("click",function(){state.logStick=true;el("logConsole").scrollTop=el("logConsole").scrollHeight;this.hidden=true;el("pauseLogs").hidden=false});el("openHistory").addEventListener("click",function(){el("historyModal").classList.add("open");renderHistory("MONTHLY")});el("closeHistory").addEventListener("click",function(){el("historyModal").classList.remove("open")});el("historyModal").addEventListener("click",function(e){if(e.target===this)this.classList.remove("open")});el("openCandles").addEventListener("click",function(){el("candleModal").classList.add("open")});el("closeCandles").addEventListener("click",function(){el("candleModal").classList.remove("open")});el("candleModal").addEventListener("click",function(e){if(e.target===this)this.classList.remove("open")});document.querySelectorAll("[data-period]").forEach(function(b){b.addEventListener("click",function(){document.querySelectorAll("[data-period]").forEach(function(x){x.classList.toggle("active",x===b)});renderHistory(b.dataset.period)})});
+      function historyRows(rows,withAction){return'<div class="sm-table-wrap" style="max-height:58vh"><table class="sm-table"><thead><tr><th>Period</th><th>Net P&amp;L</th><th>Capital Used</th><th>Return</th><th>Points</th><th>Trading Days</th><th>Trades</th><th>Wins</th><th>Losses</th><th>Win Rate</th>'+(withAction?'<th>Details</th>':'')+'</tr></thead><tbody>'+rows.map(function(r){return"<tr><td>"+esc(r.period)+"</td><td class='"+clsPnl(r.pnl)+"'>"+money(r.pnl)+"</td><td>"+money(r.capitalUsed).replace(/^\\+/,"")+"</td><td class='"+clsPnl(r.returnPct)+"'>"+pct(r.returnPct)+"</td><td>"+value(r.points)+"</td><td>"+value(r.tradingDays,0)+"</td><td>"+value(r.trades,0)+"</td><td class='sm-positive'>"+value(r.wins,0)+"</td><td class='sm-negative'>"+value(r.losses,0)+"</td><td>"+pct(r.winRate)+"</td>"+(withAction?'<td><button class="sm-month-open" data-month-open="'+esc(r.period)+'">View days</button></td>':'')+"</tr>"}).join("")+"</tbody></table></div>"}
+      function renderMonthDays(month){var d=state.data;var b=d&&d.backtest;var rows=(b&&b.days||[]).filter(function(r){return String(r.date||"").slice(0,7)===month}).sort(function(a,z){return String(a.date).localeCompare(String(z.date))});var body=el("historyBody");body.innerHTML='<div class="sm-history-toolbar"><div><h3>'+esc(month)+' daily results</h3><div class="sm-health-note">'+esc(d.identity.strategyName)+' · '+esc(d.identity.instrumentType)+(b.modelled?' · Modelled options':' · Historical candles')+'</div></div><button class="sm-history-btn" id="backToMonths" type="button">Back to months</button></div><div class="sm-table-wrap" style="max-height:58vh"><table class="sm-table"><thead><tr><th>Date</th><th>Net P&amp;L</th><th>Capital Used</th><th>Return</th><th>Gross P&amp;L</th><th>Points</th><th>Trades</th><th>Wins</th><th>Losses</th><th>Exit reasons</th></tr></thead><tbody>'+rows.map(function(r){return"<tr><td>"+esc(r.date)+"</td><td class='"+clsPnl(r.pnl)+"'>"+money(r.pnl)+"</td><td>"+money(r.capitalUsed).replace(/^\\+/,"")+"</td><td class='"+clsPnl(r.returnPct)+"'>"+pct(r.returnPct)+"</td><td class='"+clsPnl(r.grossPnl)+"'>"+money(r.grossPnl)+"</td><td>"+value(r.points)+"</td><td>"+value(r.trades,0)+"</td><td class='sm-positive'>"+value(r.wins,0)+"</td><td class='sm-negative'>"+value(r.losses,0)+"</td><td title='"+esc((r.reasons||[]).join(", "))+"'>"+esc((r.reasons||[]).join(", ")||"--")+"</td></tr>"}).join("")+"</tbody></table></div>";el("backToMonths").addEventListener("click",function(){renderHistory("MONTHLY")})}
+      function renderHistory(period){var d=state.data;if(!d)return;var body=el("historyBody");var b=d.backtest;if(!b){body.innerHTML='<div class="sm-history-state"><b>No strategy-specific five-year result</b><p>This view will not substitute another strategy&apos;s data.</p></div>';return}if(period==="BACKTEST"){body.innerHTML='<div class="sm-history-method"><b>'+(b.modelled?'Modelled options backtest':'Historical-candle backtest')+' · '+esc(b.coverage||"5Y")+'</b><div>'+esc(b.methodology||"Methodology not recorded")+'</div><div style="margin-top:8px">Source: '+esc(b.source)+' · Generated: '+esc(b.generatedAt||"--")+'</div><div style="margin-top:8px">Net P&amp;L: '+btValue(b.pnl,b.pnlUnit)+' · Return on deployed capital: '+pct(b.returnPct)+' · Win rate: '+pct(b.winRate)+' · Max drawdown: '+btValue(b.maxDrawdown,b.pnlUnit)+' · Trades: '+value(b.totalTrades,0)+'</div></div>';return}var rows=(b.months||[]).slice().sort(function(a,z){return String(z.period).localeCompare(String(a.period))});if(period==="YEARLY"){var years={};rows.forEach(function(r){var y=String(r.period).slice(0,4);var x=years[y]||(years[y]={period:y,pnl:0,capitalUsed:0,points:0,tradingDays:0,trades:0,wins:0,losses:0});x.pnl+=Number(r.pnl||0);x.capitalUsed+=Number(r.capitalUsed||0);x.points+=Number(r.points||0);x.tradingDays+=Number(r.tradingDays||0);x.trades+=Number(r.trades||0);x.wins+=Number(r.wins||0);x.losses+=Number(r.losses||0)});rows=Object.values(years).map(function(r){r.winRate=r.wins+r.losses?r.wins/(r.wins+r.losses)*100:0;r.returnPct=r.capitalUsed?r.pnl/r.capitalUsed*100:null;return r}).sort(function(a,z){return z.period.localeCompare(a.period)});body.innerHTML=historyRows(rows,false);return}body.innerHTML='<div class="sm-history-toolbar"><div><h3>Monthly backtest history</h3><div class="sm-health-note">Open any month to see every traded day.</div></div><div class="sm-source">'+esc(b.coverage||"5Y")+' · '+(b.modelled?"MODELLED OPTIONS":"HISTORICAL CANDLES")+'</div></div>'+historyRows(rows,true);body.querySelectorAll("[data-month-open]").forEach(function(button){button.addEventListener("click",function(){renderMonthDays(button.dataset.monthOpen)})})}
+      function renderHealthDetails(health){var h=health||{};var status=String(h.overall||"CRITICAL").toUpperCase();var stateClass=status==="HEALTHY"?"":status.toLowerCase();el("healthModalState").className="sm-health-state "+stateClass;el("healthModalState").textContent=status;el("healthModalSummary").textContent=h.summary||"Health evidence unavailable";el("healthModalChecked").textContent="Checked: "+dt(h.checkedAt||new Date().toISOString());var checks=Array.isArray(h.checks)?h.checks:[];el("healthDetails").innerHTML=checks.length?checks.map(function(c){var level=String(c.level||"INFO").toLowerCase();return'<div class="sm-health-row"><div class="sm-health-row-title"><b>'+esc(c.label)+'</b><small>'+esc(c.source||"Runtime evidence")+'</small></div><div class="sm-health-row-value"><span class="sm-check-badge '+level+'">'+esc(c.level||"INFO")+'</span><div>'+esc(c.value||"--")+'</div></div><div class="sm-health-row-detail">'+esc(c.detail||"No additional detail")+'<small>'+(c.critical?"Critical check":"Supporting check")+'</small></div></div>'}).join(""):'<div class="sm-history-state">No health evidence was returned by the server.</div>'}
+      renderHealth=function(d){var h=d.health||{};var status=String(h.overall||"CRITICAL").toUpperCase();var healthy=status==="HEALTHY";var warning=status==="WARNING";var checks=Array.isArray(h.checks)?h.checks:[];var check=function(id){return checks.find(function(c){return c.id===id})||{level:"INFO",value:"--",detail:"Evidence unavailable"}};var feed=check("feed");var strategy=check("strategy");var candles=d.candles||[];var count=function(tf){return candles.filter(function(c){return String(c.timeframe).toLowerCase()===tf}).length};var healthCard=el("healthStep");healthCard.classList.toggle("good-step",healthy);healthCard.classList.toggle("warning-step",warning);healthCard.classList.toggle("critical-step",!healthy&&!warning);el("healthIcon").className="sm-health-icon health "+(healthy?"good":warning?"warn":"fail");el("healthValue").className="sm-health-value "+(healthy?"":warning?"warn":"fail");el("healthValue").textContent=h.label||status;el("healthNote").textContent=h.summary||"Health evidence unavailable";var feedGood=feed.level==="PASS";var feedWarn=feed.level==="WARN"||feed.level==="INFO";el("feedStep").classList.toggle("good-step",feedGood);el("feedStep").classList.toggle("warning-step",feedWarn&&!feedGood);el("feedStep").classList.toggle("critical-step",!feedGood&&!feedWarn);el("feedIcon").className="sm-health-icon feed "+(feedGood?"good":feedWarn?"warn":"fail");el("feedValue").textContent=feed.value||h.feed||"--";el("feedNote").textContent=feed.detail||"Market data evidence unavailable";var runtimeGood=strategy.level==="PASS";el("runtimeStep").classList.toggle("good-step",runtimeGood);el("runtimeStep").classList.toggle("warning-step",strategy.level==="WARN"||strategy.level==="INFO");el("runtimeStep").classList.toggle("critical-step",strategy.level==="FAIL");el("runtimeValue").textContent=strategy.value||d.runtime.status;el("runtimeNote").textContent=strategy.detail||((d.runtime.status||"--")+" | "+(d.runtime.version||"--"));el("candleLatest").textContent="Latest: "+(candles[0]&&candles[0].time||"--");el("count1m").textContent=count("1m");el("count5m").textContent=count("5m");el("count15m").textContent=count("15m");var b=d.backtest;el("backtestStep").classList.toggle("good-step",!!b);el("backtestSummary").innerHTML='<div class="sm-health-icon backtest '+(b?"good":"warn")+'"><svg class="sm-icon" viewBox="0 0 24 24"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10Z"/><path d="'+(b?"m8.5 12 2.2 2.2 4.8-5":"M12 8v5m0 3h.01")+'"/></svg></div>'+(b?'<div class="sm-bt-cell"><span>5Y Backtest</span><b title="'+esc((b.coverage||"5Y")+(b.modelled?" · Modelled":" · Historical")+" · "+(b.methodology||b.source))+'">'+esc(b.coverage||"5Y")+'</b></div><div class="sm-bt-cell"><span>5Y P&amp;L</span><b class="'+clsPnl(b.pnl)+'">'+compactMoney(b.pnl,false)+'</b></div><div class="sm-bt-cell"><span>Win Rate</span><b>'+pct(b.winRate)+'</b></div><div class="sm-bt-cell"><span>Max Drawdown</span><b class="sm-negative">'+compactMoney(b.maxDrawdown,true)+'</b></div><div class="sm-bt-cell"><span>Avg Monthly</span><b>'+compactMoney(b.avgMonthlyPnl,false)+'</b></div>':'<div class="sm-bt-cell" style="grid-column:2/-1"><span>5Y Backtest Summary</span><b>No strategy-specific result available</b></div>');renderHealthDetails(h)};
+      function bestPerformer(row,label){if(!row)return'<div class="sm-best-group"><span>'+label+'</span><b>No qualifying trades</b><small>--</small><strong>--</strong></div>';return'<div class="sm-best-group"><span>'+label+'</span><b>'+esc(row.strategyName||"--")+'</b><small>'+esc(row.instrument==="OPTIONS"?"Options":"Futures")+'</small><strong class="'+clsPnl(row.returnPct)+'">'+pct(row.returnPct)+'</strong><small class="'+clsPnl(row.pnl)+'">'+money(row.pnl)+'</small></div>'}
+      function renderBestPerformers(d){var periods=d.performance&&d.performance.periods||{};el("bestPerformers").innerHTML=bestPerformer(periods.TODAY&&periods.TODAY.bestOverall,"Best Today")+bestPerformer(periods.MONTH&&periods.MONTH.bestOverall,"Best This Month")+bestPerformer(periods.YEAR&&periods.YEAR.bestOverall,"Best This Year")}
+      renderHealth=function(d){var h=d.health||{};var status=String(h.overall||"CRITICAL").toUpperCase();var healthy=status==="HEALTHY";var warning=status==="WARNING";var checks=Array.isArray(h.checks)?h.checks:[];var check=function(id){return checks.find(function(c){return c.id===id})||{level:"INFO",value:"--",detail:"Evidence unavailable"}};var feed=check("feed");var healthCard=el("healthStep");healthCard.classList.toggle("good-step",healthy);healthCard.classList.toggle("warning-step",warning);healthCard.classList.toggle("critical-step",!healthy&&!warning);el("healthIcon").className="sm-health-icon health "+(healthy?"good":warning?"warn":"fail");el("healthValue").className="sm-health-value "+(healthy?"":warning?"warn":"fail");el("healthValue").textContent=h.label||status;el("healthNote").textContent=h.summary||"Health evidence unavailable";el("healthAction").textContent=(h.passedCritical==null?"--":h.passedCritical)+"/"+(h.criticalTotal==null?"--":h.criticalTotal)+" · View checks";var marketClosed=d.market&&d.market.status==="CLOSED";var feedGood=feed.level==="PASS";var feedWarn=marketClosed||feed.level==="WARN"||feed.level==="INFO";el("feedStep").classList.toggle("good-step",feedGood||marketClosed);el("feedStep").classList.toggle("warning-step",feedWarn&&!feedGood&&!marketClosed);el("feedStep").classList.toggle("critical-step",!feedGood&&!feedWarn);el("feedIcon").className="sm-health-icon feed "+(feedGood||marketClosed?"good":feedWarn?"warn":"fail");el("feedValue").textContent=marketClosed?"Market Closed":feedGood?"Connected":feed.level==="WARN"?"Delayed":"Disconnected";el("feedLatestTick").textContent=dt(h.lastTickAt);el("feedLatency").textContent=h.feedLatencyMs==null?"Unavailable":value(h.feedLatencyMs,0)+" ms";el("feedHeartbeat").textContent=esc(h.heartbeatState||"--");var event=h.lastFeedEvent&&h.lastFeedEvent.message||"No feed event published";el("feedEvent").textContent=event.length>64?event.slice(0,61)+"...":event;el("feedEvent").title=event;var b=d.backtest;el("backtestStep").classList.toggle("good-step",!!b);el("backtestSummary").innerHTML='<div class="sm-health-icon backtest '+(b?"good":"warn")+'"><svg class="sm-icon" viewBox="0 0 24 24"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10Z"/><path d="'+(b?"m8.5 12 2.2 2.2 4.8-5":"M12 8v5m0 3h.01")+'"/></svg></div>'+(b?'<div class="sm-bt-cell"><span>5Y Return</span><b class="'+clsPnl(b.returnPct)+'">'+pct(b.returnPct)+'</b></div><div class="sm-bt-cell"><span>Net Backtest P&amp;L</span><b class="'+clsPnl(b.pnl)+'">'+money(b.pnl)+'</b></div><div class="sm-bt-cell"><span>Win Rate</span><b>'+pct(b.winRate)+'</b></div><div class="sm-bt-cell"><span>Max Drawdown</span><b class="sm-negative">'+money(-Math.abs(Number(b.maxDrawdown||0)))+'</b></div><div class="sm-bt-cell"><span>Avg Monthly Return</span><b>'+pct(b.avgMonthlyReturnPct)+'</b></div><div class="sm-bt-cell"><span>Total Trades</span><b>'+value(b.totalTrades,0)+'</b></div>':'<div class="sm-bt-cell"><span>5Y Backtest Summary</span><b>No selected strategy result</b></div>');renderBestPerformers(d);renderHealthDetails(h)};
+      renderTrades=function(d){var option=d.identity.instrumentType==="OPTIONS";el("tradeTitle").innerHTML="Today's Trade History <small>(Today Only &middot; "+(option?"Options":"Futures")+")</small>";var headers=["Time","Instrument","Contract","Order Flow","Entry","Exit","Qty","Net P&L","Return %","Status"];var trades=d.trades||[];var rows=trades.slice(0,7).map(function(t){var contract=esc(t.contract||"--");var action=String(t.action||"--").toUpperCase();var exitAction=String(t.exitAction||"--").toUpperCase();var status=esc(t.status||"--");var flow='<span class="sm-order-flow"><span class="sm-action '+action.toLowerCase()+'">'+esc(action)+'</span><span class="sm-flow-arrow">&rarr;</span><span class="sm-action '+exitAction.toLowerCase()+'">'+esc(exitAction)+'</span></span>';var cells=[esc(t.time||"--"),esc(t.instrument||"--"),'<span class="sm-side '+contract.toLowerCase()+'">'+contract+"</span>",flow,value(t.entry),value(t.exit),value(t.quantity,0),'<span class="'+clsPnl(t.pnl)+'">'+money(t.pnl)+"</span>",'<span class="'+clsPnl(t.returnPct)+'">'+pct(t.returnPct)+"</span>",'<span class="sm-tag '+status.toLowerCase()+'">'+status+"</span>"];return"<tr data-trade-id='"+esc(t.tradeId||t.id||"")+"'>"+cells.map(function(c){return"<td>"+c+"</td>"}).join("")+"</tr>"}).join("");el("tradeTable").innerHTML="<thead><tr>"+headers.map(function(h){return"<th>"+esc(h)+"</th>"}).join("")+"</tr></thead><tbody>"+(rows||'<tr><td class="sm-table-empty" colspan="10">No shadow trades recorded today for this strategy and instrument.</td></tr>')+"</tbody>"};
+      function liveHistoryTable(rows,withAction){return'<div class="sm-table-wrap" style="max-height:58vh"><table class="sm-table"><thead><tr><th>Period</th><th>Net P&amp;L</th><th>Capital Deployed</th><th>Return %</th><th>Trading Days</th><th>Trades</th><th>Wins</th><th>Losses</th><th>Win Rate</th>'+(withAction?'<th>Details</th>':'')+'</tr></thead><tbody>'+rows.map(function(r){return"<tr><td>"+esc(r.period||r.date)+"</td><td class='"+clsPnl(r.pnl)+"'>"+money(r.pnl)+"</td><td>"+(r.capitalDeployed?money(r.capitalDeployed).replace(/^\\+/,""):"--")+"</td><td class='"+clsPnl(r.returnPct)+"'>"+pct(r.returnPct)+"</td><td>"+value(r.tradingDays==null?1:r.tradingDays,0)+"</td><td>"+value(r.trades,0)+"</td><td class='sm-positive'>"+value(r.wins,0)+"</td><td class='sm-negative'>"+value(r.losses,0)+"</td><td>"+pct(r.winRate==null?(r.wins+r.losses?r.wins/(r.wins+r.losses)*100:0):r.winRate)+"</td>"+(withAction?'<td><button class="sm-month-open" data-month-open="'+esc(r.period)+'">View days</button></td>':'')+"</tr>"}).join("")+"</tbody></table></div>"}
+      renderMonthDays=function(month){var d=state.data;var rows=((d&&d.history&&d.history.days)||[]).filter(function(r){return String(r.date||"").slice(0,7)===month});el("historyBody").innerHTML='<div class="sm-history-toolbar"><div><h3>'+esc(month)+' daily shadow results</h3><div class="sm-health-note">'+esc(d.identity.strategyName)+' · '+esc(d.identity.instrumentType)+' · SHADOW</div></div><button class="sm-history-btn" id="backToMonths" type="button">Back to months</button></div>'+liveHistoryTable(rows,false);el("backToMonths").addEventListener("click",function(){renderHistory("MONTHLY")})};
+      renderHistory=function(period){var d=state.data;if(!d)return;var h=d.history||{};var body=el("historyBody");var rows=period==="DAILY"?(h.days||[]):period==="YEARLY"?(h.yearly||[]):(h.monthly||[]);if(!rows.length){body.innerHTML='<div class="sm-history-state"><b>No shadow history for this selection</b><p>'+esc(d.identity.strategyName)+' · '+esc(d.identity.instrumentType)+' · SHADOW</p></div>';return}body.innerHTML='<div class="sm-history-toolbar"><div><h3>'+esc(period.charAt(0)+period.slice(1).toLowerCase())+' shadow history</h3><div class="sm-health-note">Selected strategy and instrument only. Return = aggregate net P&amp;L / aggregate deployed capital.</div></div><div class="sm-source">LIVE SHADOW</div></div>'+liveHistoryTable(rows,period==="MONTHLY");if(period==="MONTHLY")body.querySelectorAll("[data-month-open]").forEach(function(button){button.addEventListener("click",function(){renderMonthDays(button.dataset.monthOpen)})})};
+      function openHealth(){if(state.data)renderHealthDetails(state.data.health);el("healthModal").classList.add("open")}
+      el("healthStep").addEventListener("click",openHealth);el("healthStep").addEventListener("keydown",function(e){if(e.key==="Enter"||e.key===" "){e.preventDefault();openHealth()}});el("closeHealth").addEventListener("click",function(){el("healthModal").classList.remove("open")});el("healthModal").addEventListener("click",function(e){if(e.target===this)this.classList.remove("open")});
       load();setInterval(load,10000);
     })();
   </script>
