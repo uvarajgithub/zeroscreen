@@ -121,6 +121,8 @@ function strategyFields(strategy: StrategyDefinition, hb: any, state: any, instr
         ? candleFile.log
         : Array.isArray(candleFile?.candles) ? candleFile.candles : [];
     const inTrade = isOptions ? !!(hb.optInTrade || state.optInTrade) : !!(hb.inTrade || state.activeTrade);
+    const rawSymbol = text(isOptions ? (hb.optSymbol || state.optSymbol) : (hb.symbol || state.tradeSymbol));
+    const scopedSymbol = !isOptions && rawSymbol && /\d+(CE|PE)$/i.test(rawSymbol) ? null : rawSymbol;
     const realized = isOptions ? num(hb.optDailyRs) : num(hb.dailyRealRs);
     const unrealized = isOptions ? num(hb.unrealisedPnL) : num(hb.unrealisedPnL);
     return {
@@ -132,7 +134,7 @@ function strategyFields(strategy: StrategyDefinition, hb: any, state: any, instr
       wins: num(isOptions ? hb.optWins : state.drishtiWins) ?? 0,
       losses: num(isOptions ? hb.optLosses : state.drishtiLosses) ?? 0,
       direction: text(isOptions ? (hb.optDir || state.optDir) : (hb.direction || state.tradeDirection)),
-      symbol: text(isOptions ? (hb.optSymbol || state.optSymbol) : (hb.symbol || state.tradeSymbol)),
+      symbol: scopedSymbol,
       entry: num(isOptions ? (hb.optEntryPrem || state.optEntryPrem) : (hb.entryPrice || state.drishtiFuturesEntry || state.entryPrice)),
       live: num(isOptions ? (hb.livePremium || state.livePremium) : hb.livePrice),
       sl: num(isOptions ? state.candleSL : (hb.sl || state.candleSL)),
@@ -169,18 +171,22 @@ function strategyFields(strategy: StrategyDefinition, hb: any, state: any, instr
     losses: num(hb[`${prefix}Losses`]) ?? 0,
     direction,
     symbol: isOptions ? optionSymbol : futuresSymbol,
-    entry: num(hb[isOptions ? `${prefix}OptionEntry` : `${prefix}FuturesEntry`] ?? hb[`${prefix}Entry`]),
-    live: num(hb[isOptions ? `${prefix}OptionLive` : `${prefix}FuturesLive`] ?? hb[`${prefix}Live`]),
+    entry: isOptions
+      ? num(hb[`${prefix}OptionEntry`])
+      : num(hb[`${prefix}FuturesEntry`] ?? hb[`${prefix}Entry`]),
+    live: isOptions
+      ? num(hb[`${prefix}OptionLive`])
+      : num(hb[`${prefix}FuturesLive`] ?? hb[`${prefix}Live`]),
     sl: num(hb[`${prefix}SL`]),
     target: null,
     quantity: num(hb[`${prefix}LiveQty`] ?? hb.qty),
     entryTime: null,
     entryAt: null,
     phase: text(hb[`${prefix}Phase`] || hb.status),
-    dayHigh: num(hb[`${prefix}High`]),
-    dayLow: num(hb[`${prefix}Low`]),
-    volume: num(hb[`${prefix}Volume`]),
-    openInterest: num(hb[`${prefix}OpenInterest`]),
+    dayHigh: num(hb[isOptions ? `${prefix}OptionHigh` : `${prefix}High`]),
+    dayLow: num(hb[isOptions ? `${prefix}OptionLow` : `${prefix}Low`]),
+    volume: num(hb[isOptions ? `${prefix}OptionVolume` : `${prefix}Volume`]),
+    openInterest: num(hb[isOptions ? `${prefix}OptionOpenInterest` : `${prefix}OpenInterest`]),
     rawTrades: Array.isArray(hb[`${prefix}TradeLog`]) ? hb[`${prefix}TradeLog`] : [],
     candleLog: Array.isArray(hb[`${prefix}CandleLog`]) ? hb[`${prefix}CandleLog`] : [],
   };
