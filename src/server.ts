@@ -1853,7 +1853,7 @@ app.get("/", async (req: Request, res: Response) => {
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>ZeroScreen — NSE Stock Screener</title>
-  <link rel="stylesheet" href="/public/css/style.css?v=7">
+  <link rel="stylesheet" href="/public/css/style.css?v=8">
 </head>
 <body>
   ${nav("home", req)}
