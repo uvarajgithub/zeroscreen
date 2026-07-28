@@ -267,6 +267,80 @@ function backtestSummary(strategy: StrategyDefinition): any {
   };
 }
 
+function shadowHistory(strategy: StrategyDefinition, instrument: InstrumentType): any {
+  const byDate = new Map<string, { date: string; pnl: number; trades: number; wins: number; losses: number }>();
+  if (strategy.prefix === "tt1030") {
+    const source = readJson("kite-tt1030-history-closed.json", {});
+    const months = source?.months && typeof source.months === "object" ? source.months : {};
+    for (const month of Object.values(months) as any[]) {
+      const days = month?.TEN_THIRTY?.days || month?.days || {};
+      for (const [date, record] of Object.entries(days) as [string, any][]) {
+        const summary = record?.summary || {};
+        const pnl = num(instrument === "OPTIONS" ? summary.optionsRs : summary.futuresRs);
+        if (pnl === null) continue;
+        byDate.set(date, {
+          date,
+          pnl,
+          trades: num(summary.trades) ?? 0,
+          wins: num(summary.wins) ?? (pnl > 0 ? 1 : 0),
+          losses: num(summary.losses) ?? (pnl < 0 ? 1 : 0),
+        });
+      }
+    }
+  } else if (strategy.prefix === "drishti") {
+    const rows: any[] = readJson("trades.json", []);
+    for (const row of Array.isArray(rows) ? rows : []) {
+      const date = dateKey(row.date || row.exitTime || row.entryTime);
+      if (!date) continue;
+      const symbol = String(row.symbol || row.tradeSymbol || "").toUpperCase();
+      const looksOption = /\d+(CE|PE)$/.test(symbol) || num(row.premiumEntry) !== null;
+      if (instrument === "OPTIONS" ? !looksOption : looksOption) continue;
+      const pnl = num(row.pnlRs ?? row.pnl);
+      if (pnl === null) continue;
+      const current = byDate.get(date) || { date, pnl: 0, trades: 0, wins: 0, losses: 0 };
+      current.pnl += pnl;
+      current.trades += 1;
+      if (pnl > 0) current.wins += 1;
+      if (pnl < 0) current.losses += 1;
+      byDate.set(date, current);
+    }
+  }
+
+  const days = Array.from(byDate.values()).sort((a, b) => a.date.localeCompare(b.date));
+  const aggregate = (keyFor: (date: string) => string) => {
+    const groups = new Map<string, any>();
+    for (const day of days) {
+      const key = keyFor(day.date);
+      const row = groups.get(key) || { period: key, pnl: 0, tradingDays: 0, trades: 0, wins: 0, losses: 0 };
+      row.pnl += day.pnl;
+      row.tradingDays += 1;
+      row.trades += day.trades;
+      row.wins += day.wins;
+      row.losses += day.losses;
+      groups.set(key, row);
+    }
+    return Array.from(groups.values()).map((row: any) => ({
+      ...row,
+      winRate: row.wins + row.losses > 0 ? row.wins / (row.wins + row.losses) * 100 : 0,
+    })).sort((a: any, b: any) => a.period.localeCompare(b.period)).reverse();
+  };
+  const weekKey = (date: string) => {
+    const parsed = new Date(`${date}T00:00:00Z`);
+    const day = parsed.getUTCDay() || 7;
+    parsed.setUTCDate(parsed.getUTCDate() + 4 - day);
+    const yearStart = new Date(Date.UTC(parsed.getUTCFullYear(), 0, 1));
+    const week = Math.ceil((((parsed.getTime() - yearStart.getTime()) / 86400000) + 1) / 7);
+    return `${parsed.getUTCFullYear()}-W${String(week).padStart(2, "0")}`;
+  };
+  return {
+    source: strategy.prefix === "tt1030" ? "kite-tt1030-history-closed.json" : strategy.prefix === "drishti" ? "trades.json" : null,
+    days: [...days].reverse(),
+    weekly: aggregate(weekKey),
+    monthly: aggregate(date => date.slice(0, 7)),
+    yearly: aggregate(date => date.slice(0, 4)),
+  };
+}
+
 function marketStatus(now = new Date()): "OPEN" | "CLOSED" {
   const ist = new Date(now.toLocaleString("en-US", { timeZone: "Asia/Kolkata" }));
   const day = ist.getDay();
@@ -350,6 +424,7 @@ export function buildShadowMonitorPayload(strategyId = "", instrumentValue = "")
       phase: fields.phase,
     },
     backtest: backtestSummary(strategy),
+    history: shadowHistory(strategy, instrument),
     summary: {
       realizedPnl: fields.realized,
       unrealizedPnl: fields.unrealized,
@@ -457,7 +532,7 @@ export function renderShadowStrategyMonitorPage(navHtml: string): string {
       function render(d){state.data=d;renderStrategies(d.strategies);renderHealth(d);renderSummary(d);renderPosition(d);renderTrades(d);renderCandles(d);renderLogs(d);el("todayLabel").textContent="Today | "+d.identity.tradeDate;var m=el("marketStatus");m.className="sm-market "+(d.market.status==="OPEN"?"open":"closed");m.querySelector("span:last-child").textContent="MARKET "+d.market.status;el("refreshMeta").textContent="Refreshed "+dt(d.refreshedAt);document.querySelectorAll("[data-instrument]").forEach(function(b){b.classList.toggle("active",b.dataset.instrument===state.instrument)});el("shadowMonitor").classList.remove("sm-loading")}
       async function load(){var seq=++state.request;if(activeController)activeController.abort();activeController=new AbortController();el("shadowMonitor").classList.add("sm-loading");try{var url="/api/shadow-monitor?strategy="+encodeURIComponent(state.strategy)+"&instrument="+encodeURIComponent(state.instrument);var r=await fetch(url,{cache:"no-store",credentials:"same-origin",signal:activeController.signal});if(!r.ok)throw new Error("HTTP "+r.status);var d=await r.json();if(seq!==state.request)return;if(!d.ok)throw new Error(d.error||"Monitor unavailable");render(d)}catch(e){if(e.name==="AbortError")return;el("refreshMeta").textContent="Refresh failed: "+e.message;el("shadowMonitor").classList.remove("sm-loading")}}
       el("strategySelect").addEventListener("change",function(){state.strategy=this.value;localStorage.setItem("zsShadowStrategy",state.strategy);load()});document.querySelectorAll("[data-instrument]").forEach(function(b){b.addEventListener("click",function(){state.instrument=this.dataset.instrument;localStorage.setItem("zsShadowInstrument",state.instrument);load()})});el("refreshAll").addEventListener("click",load);el("logConsole").addEventListener("scroll",function(){state.logStick=this.scrollHeight-this.scrollTop-this.clientHeight<28;el("resumeLogs").hidden=state.logStick});el("resumeLogs").addEventListener("click",function(){state.logStick=true;el("logConsole").scrollTop=el("logConsole").scrollHeight;this.hidden=true});el("openHistory").addEventListener("click",function(){el("historyModal").classList.add("open");renderHistory("WEEKLY")});el("closeHistory").addEventListener("click",function(){el("historyModal").classList.remove("open")});el("historyModal").addEventListener("click",function(e){if(e.target===this)this.classList.remove("open")});document.querySelectorAll("[data-period]").forEach(function(b){b.addEventListener("click",function(){document.querySelectorAll("[data-period]").forEach(function(x){x.classList.toggle("active",x===b)});renderHistory(b.dataset.period)})});
-      function renderHistory(period){var d=state.data;if(!d)return;var body=el("historyBody");if(period==="BACKTEST"){var b=d.backtest;body.innerHTML=b?'<div class="sm-history-state"><b>Backtest Data</b><p>Source: '+esc(b.source)+'</p><p>Return: '+pct(b.returnPct)+' | Win rate: '+pct(b.winRate)+' | Max drawdown: '+pct(b.maxDrawdown)+' | Trades: '+value(b.totalTrades,0)+'</p></div>':'<div class="sm-history-state">Backtest data is not connected for this strategy.</div>';return}body.innerHTML='<div class="sm-history-state"><b>Historical Shadow Data - '+esc(period)+'</b><p>Today\\'s monitor never mixes backtest values with live shadow P&amp;L.</p><p>No persisted '+esc(period.toLowerCase())+' shadow aggregate is available from the selected strategy data source yet.</p></div>'}
+      function renderHistory(period){var d=state.data;if(!d)return;var body=el("historyBody");if(period==="BACKTEST"){var b=d.backtest;body.innerHTML=b?'<div class="sm-history-state"><b>Backtest Data</b><p>Source: '+esc(b.source)+'</p><p>Return: '+pct(b.returnPct)+' | Win rate: '+pct(b.winRate)+' | Max drawdown: '+pct(b.maxDrawdown)+' | Trades: '+value(b.totalTrades,0)+'</p></div>':'<div class="sm-history-state">Backtest data is not connected for this strategy.</div>';return}var h=d.history||{};var rows=period==="WEEKLY"?h.weekly:period==="MONTHLY"?h.monthly:h.yearly;if(!rows||!rows.length){body.innerHTML='<div class="sm-history-state"><b>Historical Shadow Data - '+esc(period)+'</b><p>No persisted '+esc(period.toLowerCase())+' shadow records are available for this strategy and instrument.</p></div>';return}body.innerHTML='<div class="sm-source" style="margin-bottom:10px">Historical Shadow Data | Source: '+esc(h.source||"Not available")+'</div><div class="sm-table-wrap" style="max-height:54vh"><table class="sm-table"><thead><tr><th>Period</th><th>Net P&L</th><th>Trading Days</th><th>Trades</th><th>Wins</th><th>Losses</th><th>Win Rate</th></tr></thead><tbody>'+rows.map(function(r){return"<tr><td>"+esc(r.period)+"</td><td class='"+clsPnl(r.pnl)+"'>"+money(r.pnl)+"</td><td>"+value(r.tradingDays,0)+"</td><td>"+value(r.trades,0)+"</td><td class='sm-positive'>"+value(r.wins,0)+"</td><td class='sm-negative'>"+value(r.losses,0)+"</td><td>"+pct(r.winRate)+"</td></tr>"}).join("")+"</tbody></table></div>"}
       load();setInterval(load,10000);
     })();
   </script>
