@@ -6399,7 +6399,7 @@ type TradeOpsStrategyConfig = {
   maxDailyLoss: string;
   status: string;
   liveCapable: boolean;
-  source: "tt1030" | "placeholder";
+  source: "tt1030";
   config: Record<string, any>;
 };
 
@@ -6420,40 +6420,6 @@ const TRADEOPS_DEFAULT_STRATEGIES: TradeOpsStrategyConfig[] = [
     liveCapable: true,
     source: "tt1030",
     config: { strategyCode: "TEN_THIRTY_INDEX_FUTURES", timeframe: "15m" },
-  },
-  {
-    id: "tt1000-futures-shadow",
-    name: "10:00 Futures",
-    enabled: true,
-    mode: "SHADOW",
-    instrument: "BANKNIFTY",
-    product: "Futures",
-    entryTime: "10:00",
-    quantity: 30,
-    sl: "Strategy SL",
-    target: "EOD / strategy exit",
-    maxDailyLoss: "Not live enabled",
-    status: "Waiting",
-    liveCapable: false,
-    source: "placeholder",
-    config: { strategyCode: "TEN_OCLOCK_INDEX_FUTURES", timeframe: "15m" },
-  },
-  {
-    id: "normal-breakout-shadow",
-    name: "Normal Breakout",
-    enabled: true,
-    mode: "SHADOW",
-    instrument: "BANKNIFTY",
-    product: "Options",
-    entryTime: "Dynamic",
-    quantity: 30,
-    sl: "Breakout/previous candle low",
-    target: "EOD",
-    maxDailyLoss: "Not live enabled",
-    status: "Waiting",
-    liveCapable: false,
-    source: "placeholder",
-    config: { strategyCode: "NORMAL_CANDLE_BREAKOUT", timeframe: "15m" },
   },
 ];
 
@@ -6485,10 +6451,9 @@ function tradeOpsStrategyList(): TradeOpsStrategyConfig[] {
   });
 }
 
-function tradeOpsResolveStrategy(value?: any) {
+function tradeOpsResolveStrategy(_value?: any) {
   const strategies = tradeOpsStrategyList();
-  const requested = String(value || "").trim();
-  return strategies.find((s) => s.id === requested) || strategies.find((s) => s.enabled) || strategies[0];
+  return strategies[0];
 }
 
 function tradeOpsWriteStrategyOverride(id: string, patch: Partial<TradeOpsStrategyConfig>) {
@@ -7375,36 +7340,7 @@ function tradeOpsApplySelectedStrategy(baseStatus: any, selected: TradeOpsStrate
       config: selectedMeta.config,
     },
   };
-  if (selected.source === "tt1030") return withSelection;
-
-  const waiting = selected.enabled ? "Waiting" : "Disabled";
-  const note = selected.enabled
-    ? `${selected.name} is configured as SHADOW, but the bot runtime is not yet writing separate strategy files.`
-    : `${selected.name} is disabled.`;
-  return {
-    ...withSelection,
-    validations: {
-      ...(withSelection.validations || {}),
-      feed: { ok: false, label: "Strategy feed not connected", source: `${selected.id}/candle-log.json`, lastCandle: null, candleCount: 0, error: note },
-    },
-    strategy: { ...withSelection.strategy, source: "strategy-config", status: waiting },
-    modeControl: {
-      scope: selected.id,
-      runningMode: "SHADOW",
-      envMode: "SHADOW",
-      restartRequired: false,
-      liveAllowed: false,
-      safetyIssues: selected.liveCapable ? [] : ["LIVE is not enabled for this strategy yet."],
-    },
-    pnl: { ...(withSelection.pnl || {}), net: 0, realized: 0, unrealized: 0, todayHigh: 0, todayLow: 0, dayRangeAvailable: false, spark: "", source: note },
-    execution: { ...(withSelection.execution || {}), ready: false, status: waiting, pending: false, blockReason: note, orderValue: 0, openCount: 0, closedToday: 0, rejectedToday: 0, lastRejection: null },
-    positions: [],
-    trades: [],
-    rejections: [],
-    candles: [],
-    history: { source: "strategy_scoped_empty", total: 0, displaySession: withSelection.market?.latestSession || getTodayIST(), todayShadowTrades: 0 },
-    logs: [{ time: tradeOpsTime(new Date().toISOString()), level: selected.enabled ? "WARN" : "INFO", message: note }, ...(Array.isArray(withSelection.logs) ? withSelection.logs.slice(0, 12) : [])],
-  };
+  return withSelection;
 }
 
 app.get("/api/tradeops/status", requireAdmin, async (req: Request, res: Response) => {
@@ -7419,11 +7355,6 @@ app.get("/api/tradeops/status", requireAdmin, async (req: Request, res: Response
 app.get("/api/tradeops/logs", requireAdmin, async (req: Request, res: Response) => {
   try {
     res.setHeader("Cache-Control", "no-store");
-    const selected = tradeOpsResolveStrategy(String(req.query.strategy || ""));
-    if (selected.source !== "tt1030") {
-      const note = selected.enabled ? `${selected.name} shadow runtime logs are waiting for separate strategy files.` : `${selected.name} is disabled.`;
-      return res.json({ ok: true, updatedAt: new Date().toISOString(), logs: [{ time: tradeOpsTime(new Date().toISOString()), level: "WARN", message: note }] });
-    }
     res.json({ ok: true, updatedAt: new Date().toISOString(), logs: buildTradeOpsLogPreview() });
   } catch (e: any) {
     res.status(500).json({ ok: false, error: e?.message || "Logs unavailable" });
@@ -7809,6 +7740,7 @@ body.tradeops-collapsed .help,body.tradeops-collapsed .collapse-btn{justify-cont
 .mode-dot{width:8px;height:8px;border-radius:50%;background:#2563eb;box-shadow:0 0 0 4px rgba(37,99,235,.10)}
 .strategy-select{height:36px!important;max-width:220px!important;min-width:164px!important;border:1px solid #d9e5f2!important;border-radius:12px!important;background:#fff!important;color:#0b1738!important;padding:0 34px 0 12px!important;font-size:13px!important;font-weight:780!important;box-shadow:0 8px 18px rgba(15,23,42,.035)!important;outline:none!important}
 .strategy-select:focus{border-color:#93c5fd!important;box-shadow:0 0 0 3px rgba(37,99,235,.12)!important}
+.strategy-fixed{height:36px;min-width:164px;border:1px solid #d9e5f2;border-radius:12px;background:#fff;color:#0b1738;padding:0 12px;display:inline-flex;align-items:center;justify-content:center;font-size:13px;font-weight:800;box-shadow:0 8px 18px rgba(15,23,42,.035);white-space:nowrap}
 .strategy-mini{font-size:11px!important;color:#64748b!important;font-weight:700!important;margin-left:-4px!important;white-space:nowrap!important}
 .updated-chip{padding-right:7px!important}
 .refresh-mini{width:28px!important;height:28px!important;border:0!important;border-left:1px solid #e5edf7!important;background:transparent!important;color:#2563eb!important;display:grid!important;place-items:center!important;border-radius:9px!important;cursor:pointer!important;margin-left:2px!important}
@@ -8027,7 +7959,7 @@ body.tradeops-collapsed .help,body.tradeops-collapsed .collapse-btn{justify-cont
   <main class="main">
     <header class="top">
       <div class="command-group status-group">
-        <select id="strategySelect" class="strategy-select" title="Select TradeOps strategy"><option value="tt1030-futures">10:30 Futures</option></select>
+        <div class="strategy-fixed" title="TradeOps runs only the 10:30 Futures strategy">10:30 Futures</div>
         <span id="strategyInstrumentMini" class="strategy-mini">BANKNIFTY</span>
         <div class="status-chip"><span id="marketDot" class="dot"></span><span id="marketLabel">Checking</span></div>
         <div class="status-chip"><span id="brokerDot" class="dot"></span><span id="brokerLabel">Broker</span></div>
