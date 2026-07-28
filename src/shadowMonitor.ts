@@ -270,7 +270,7 @@ function backtestSummary(strategy: StrategyDefinition): any {
 function shadowHistory(strategy: StrategyDefinition, instrument: InstrumentType): any {
   const byDate = new Map<string, { date: string; pnl: number; trades: number; wins: number; losses: number }>();
   if (strategy.prefix === "tt1030") {
-    const source = readJson("kite-tt1030-history-closed.json", {});
+    const source = readJson("strategy-monthly-history.json", {});
     const months = source?.months && typeof source.months === "object" ? source.months : {};
     for (const month of Object.values(months) as any[]) {
       const days = month?.TEN_THIRTY?.days || month?.days || {};
@@ -333,7 +333,7 @@ function shadowHistory(strategy: StrategyDefinition, instrument: InstrumentType)
     return `${parsed.getUTCFullYear()}-W${String(week).padStart(2, "0")}`;
   };
   return {
-    source: strategy.prefix === "tt1030" ? "kite-tt1030-history-closed.json" : strategy.prefix === "drishti" ? "trades.json" : null,
+    source: strategy.prefix === "tt1030" ? "strategy-monthly-history.json" : strategy.prefix === "drishti" ? "trades.json" : null,
     days: [...days].reverse(),
     weekly: aggregate(weekKey),
     monthly: aggregate(date => date.slice(0, 7)),
