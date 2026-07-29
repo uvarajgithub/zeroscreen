@@ -12,7 +12,7 @@ const child_process_1 = require("child_process");
 const BOT_DIR = process.env.TRADING_BOT_DIR || "/home/ubuntu/trading-bot";
 const FUTURES_MARGIN_RATE = 0.12;
 const FUTURES_CAPITAL_FALLBACK = 200000;
-const OPTIONS_CAPITAL_FALLBACK = 15000;
+const OPTIONS_CAPITAL_FALLBACK = 50000;
 const HEARTBEAT_HEALTHY_SEC = 60;
 const HEARTBEAT_CRITICAL_SEC = 120;
 const runtimeHealthCache = new Map();
@@ -1088,14 +1088,10 @@ function consolidatedShadowSummary(externalHealth = {}) {
             const fields = strategyFields(strategy, heartbeat, strategyState, instrument);
             const trades = normalizedTrades(fields.rawTrades, strategy, instrument, tradeDate, fields.quantity ?? num(heartbeat.qty) ?? 30);
             const closedTrades = trades.filter((row) => String(row.status).toUpperCase() === "CLOSED");
-            const deployedByClosedTrades = closedTrades.reduce((sum, row) => sum + (num(row.capitalDeployed) ?? capitalForTrade(row, instrument)), 0);
-            const openCapital = fields.inTrade && fields.entry && fields.quantity
-                ? (instrument === "OPTIONS"
-                    ? Math.abs(fields.entry * fields.quantity)
-                    : Math.abs(fields.entry * fields.quantity * FUTURES_MARGIN_RATE))
-                : 0;
-            const capitalDeployed = Math.round(deployedByClosedTrades + openCapital);
             const tradeCount = Math.max(num(fields.trades) ?? 0, closedTrades.length, fields.inTrade ? 1 : 0);
+            const capitalDeployed = tradeCount > 0
+                ? (instrument === "OPTIONS" ? OPTIONS_CAPITAL_FALLBACK : FUTURES_CAPITAL_FALLBACK)
+                : 0;
             const hasEvidence = stateIsCurrent || heartbeatAvailable || trades.length > 0;
             const pnl = hasEvidence ? num(fields.total) : null;
             const returnPct = pnl !== null && capitalDeployed > 0 ? pnl / capitalDeployed * 100 : tradeCount === 0 ? 0 : null;
@@ -1146,7 +1142,15 @@ function consolidatedShadowSummary(externalHealth = {}) {
 function performanceOverview(hb, state, tradeDate) {
     const coverageMonth = tradeDate.slice(0, 7);
     const coverageYear = tradeDate.slice(0, 4);
-    const rows = { TODAY: [], MONTH: [], YEAR: [] };
+    const coverageWeek = (() => {
+        const parsed = new Date(`${tradeDate}T00:00:00Z`);
+        const day = parsed.getUTCDay() || 7;
+        parsed.setUTCDate(parsed.getUTCDate() + 4 - day);
+        const yearStart = new Date(Date.UTC(parsed.getUTCFullYear(), 0, 1));
+        const week = Math.ceil((((parsed.getTime() - yearStart.getTime()) / 86400000) + 1) / 7);
+        return `${parsed.getUTCFullYear()}-W${String(week).padStart(2, "0")}`;
+    })();
+    const rows = { TODAY: [], WEEK: [], MONTH: [], YEAR: [] };
     for (const strategy of STRATEGIES) {
         const strategyHeartbeat = strategy.heartbeatFile ? readJson(strategy.heartbeatFile, {}) : hb;
         const strategyState = strategy.stateFile ? readJson(strategy.stateFile, {}) : state;
@@ -1154,10 +1158,9 @@ function performanceOverview(hb, state, tradeDate) {
         for (const instrument of supportedInstruments) {
             const fields = strategyFields(strategy, strategyHeartbeat, strategyState, instrument);
             const trades = normalizedTrades(fields.rawTrades, strategy, instrument, tradeDate, fields.quantity ?? num(hb.qty) ?? 30);
-            const capitalFromTrades = trades.reduce((sum, row) => sum + capitalForTrade(row, instrument), 0);
             const fallbackPerTrade = instrument === "OPTIONS" ? OPTIONS_CAPITAL_FALLBACK : FUTURES_CAPITAL_FALLBACK;
             const liveTradeCount = Math.max(trades.length, fields.trades, fields.inTrade ? 1 : 0);
-            const liveCapital = capitalFromTrades || (liveTradeCount > 0 ? liveTradeCount * fallbackPerTrade : 0);
+            const liveCapital = liveTradeCount > 0 ? fallbackPerTrade : 0;
             if (liveCapital > 0) {
                 rows.TODAY.push({
                     strategyId: strategy.id,
@@ -1170,31 +1173,45 @@ function performanceOverview(hb, state, tradeDate) {
                 });
             }
             const liveHistory = shadowHistory(strategy, instrument);
+            const week = Array.isArray(liveHistory.weekly)
+                ? liveHistory.weekly.find((row) => row.period === coverageWeek)
+                : null;
+            if (week && num(week.pnl) !== null && (num(week.trades) ?? 0) > 0) {
+                rows.WEEK.push({
+                    strategyId: strategy.id,
+                    strategyName: strategy.name.replace(" (BANKNIFTY)", ""),
+                    instrument,
+                    pnl: num(week.pnl) ?? 0,
+                    capitalUsed: fallbackPerTrade,
+                    returnPct: (num(week.pnl) ?? 0) / fallbackPerTrade * 100,
+                    trades: num(week.trades) ?? 0,
+                });
+            }
             const month = Array.isArray(liveHistory.monthly)
                 ? liveHistory.monthly.find((row) => row.period === coverageMonth)
                 : null;
-            if (month && num(month.capitalDeployed)) {
+            if (month && num(month.pnl) !== null && (num(month.trades) ?? 0) > 0) {
                 rows.MONTH.push({
                     strategyId: strategy.id,
                     strategyName: strategy.name.replace(" (BANKNIFTY)", ""),
                     instrument,
                     pnl: num(month.pnl) ?? 0,
-                    capitalUsed: num(month.capitalDeployed),
-                    returnPct: num(month.returnPct) ?? ((num(month.pnl) ?? 0) / Number(month.capitalDeployed) * 100),
+                    capitalUsed: fallbackPerTrade,
+                    returnPct: (num(month.pnl) ?? 0) / fallbackPerTrade * 100,
                     trades: num(month.trades) ?? 0,
                 });
             }
             const year = Array.isArray(liveHistory.yearly)
                 ? liveHistory.yearly.find((row) => row.period === coverageYear)
                 : null;
-            if (year && num(year.capitalDeployed)) {
+            if (year && num(year.pnl) !== null && (num(year.trades) ?? 0) > 0) {
                 rows.YEAR.push({
                     strategyId: strategy.id,
                     strategyName: strategy.name.replace(" (BANKNIFTY)", ""),
                     instrument,
                     pnl: num(year.pnl) ?? 0,
-                    capitalUsed: num(year.capitalDeployed),
-                    returnPct: num(year.returnPct) ?? ((num(year.pnl) ?? 0) / Number(year.capitalDeployed) * 100),
+                    capitalUsed: fallbackPerTrade,
+                    returnPct: (num(year.pnl) ?? 0) / fallbackPerTrade * 100,
                     trades: num(year.trades) ?? 0,
                 });
             }
@@ -1221,13 +1238,14 @@ function performanceOverview(hb, state, tradeDate) {
         };
     };
     return {
-        definition: "Return on deployed capital = net P&L divided by capital committed to recorded trades.",
+        definition: "Return on allocated strategy capital = net P&L divided by the configured instrument capital.",
         capitalBasis: {
-            futures: "Entry value x quantity x 12% estimated margin",
-            options: "Entry premium x quantity",
+            futures: "Rs.2,00,000 allocated capital",
+            options: "Rs.50,000 allocated capital",
         },
         periods: {
             TODAY: summarize(rows.TODAY, tradeDate, "LIVE"),
+            WEEK: summarize(rows.WEEK, coverageWeek || "Current week", "LIVE"),
             MONTH: summarize(rows.MONTH, coverageMonth || "Latest month", "LIVE"),
             YEAR: summarize(rows.YEAR, coverageYear || "Latest year", "LIVE"),
         },
@@ -1885,43 +1903,53 @@ function renderShadowStrategyMonitorPage(navHtml) {
     .sm-consolidated-mode>.sm-control,.sm-consolidated-mode>.sm-health,.sm-consolidated-mode>.sm-main-grid,.sm-consolidated-mode>.sm-bottom-grid,.sm-consolidated-mode>.sm-console-card,.sm-consolidated-mode>.sm-footer-note{display:none!important}
     .sm-page.sm-consolidated-page{min-height:calc(100vh - 104px);background:radial-gradient(circle at 20% 10%,rgba(49,46,129,.2),transparent 30%),radial-gradient(circle at 82% 14%,rgba(8,145,178,.14),transparent 30%),linear-gradient(135deg,#050b18 0%,#081225 50%,#06101f 100%)}
     .sm-consolidated-mode .sm-head{margin:0 0 16px;padding:18px 20px;border:1px solid rgba(99,102,241,.3);border-radius:14px;background:linear-gradient(135deg,rgba(12,22,43,.98),rgba(20,28,67,.96));box-shadow:inset 0 1px 0 rgba(255,255,255,.05),0 12px 28px rgba(0,0,0,.2)}
-    .sm-consolidated-mode .sm-title{color:#f8fafc}
+    .sm-consolidated-mode .sm-title{color:#f8fafc;font-size:22px;line-height:1.15}
     .sm-consolidated-mode .sm-sub,.sm-consolidated-mode .sm-refresh-meta{color:#9fb0ce}
     .sm-consolidated-mode .sm-shadow-badge{display:none}
     .sm-consolidated-mode .sm-market,.sm-consolidated-mode .sm-refresh{color:#e5e7eb;border-color:rgba(148,163,184,.28);background:rgba(15,23,42,.66)}
     .sm-consolidated{color:#e5e7eb}
-    .sm-consolidated-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:22px 26px}
-    .sm-key-tile{position:relative;isolation:isolate;min-height:180px;padding:20px 24px 18px;border:1px solid rgba(128,148,180,.7);border-radius:14px;background:linear-gradient(145deg,rgba(14,22,38,.99),rgba(4,9,19,.99));color:#94a3b8;box-shadow:inset 0 1px 0 rgba(255,255,255,.07),inset 0 -12px 22px rgba(0,0,0,.24),0 8px 24px rgba(0,0,0,.3);cursor:pointer;text-align:left;display:flex;flex-direction:column;transition:border-color .16s ease,transform .16s ease,box-shadow .16s ease,filter .16s ease;min-width:0;overflow:hidden}
+    .sm-winner-strip{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin-bottom:12px}
+    .sm-winner-card{min-width:0;min-height:82px;padding:11px 13px;border:1px solid rgba(96,165,250,.32);border-radius:10px;background:linear-gradient(145deg,rgba(14,25,48,.96),rgba(7,14,29,.98));box-shadow:inset 0 1px 0 rgba(255,255,255,.05)}
+    .sm-winner-period{display:flex;align-items:center;gap:6px;color:#93c5fd;font-size:10px;font-weight:850;text-transform:uppercase}
+    .sm-winner-period .star{color:#fde047;font-size:13px}
+    .sm-winner-main{display:flex;align-items:end;justify-content:space-between;gap:10px;margin-top:7px}
+    .sm-winner-name{min-width:0;color:#f8fafc;font-size:13px;font-weight:800;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+    .sm-winner-type{display:inline-flex;margin-left:6px;padding:2px 5px;border:1px solid rgba(96,165,250,.35);border-radius:4px;color:#bfdbfe;font-size:9px;vertical-align:1px}
+    .sm-winner-values{flex:0 0 auto;text-align:right}.sm-winner-return{display:block;color:#34d399;font-size:15px;font-weight:850}.sm-winner-pnl{display:block;margin-top:2px;color:#cbd5e1;font-size:10px;font-weight:750}
+    .sm-winner-empty{margin-top:9px;color:#64748b;font-size:12px}
+    .sm-consolidated-grid{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:12px}
+    .sm-key-tile{position:relative;isolation:isolate;min-height:142px;padding:14px 15px 13px;border:1px solid rgba(128,148,180,.7);border-radius:10px;background:linear-gradient(145deg,rgba(14,22,38,.99),rgba(4,9,19,.99));color:#94a3b8;box-shadow:inset 0 1px 0 rgba(255,255,255,.07),inset 0 -12px 22px rgba(0,0,0,.24),0 8px 24px rgba(0,0,0,.3);cursor:pointer;text-align:left;display:flex;flex-direction:column;transition:border-color .16s ease,transform .16s ease,box-shadow .16s ease,filter .16s ease;min-width:0;overflow:hidden}
     .sm-key-tile:before{content:"";position:absolute;z-index:0;inset:0;border-radius:inherit;pointer-events:none;background:radial-gradient(circle at 15% 0,rgba(255,255,255,.08),transparent 28%),linear-gradient(180deg,rgba(255,255,255,.025),transparent 34%);opacity:1}
     .sm-key-tile:hover{transform:translateY(-2px);filter:brightness(1.06);border-color:#60a5fa;box-shadow:inset 0 1px 0 rgba(255,255,255,.1),0 0 20px rgba(59,130,246,.2),0 12px 28px rgba(0,0,0,.38)}
     .sm-key-tile.profit{color:#23e57b;border-color:rgba(55,218,116,.7);background:linear-gradient(145deg,rgba(9,31,29,.99),rgba(3,14,20,.99));box-shadow:inset 0 1px 0 rgba(255,255,255,.07),inset 0 -12px 22px rgba(0,0,0,.26),0 0 16px rgba(34,197,94,.13),0 9px 24px rgba(0,0,0,.34)}
     .sm-key-tile.loss{color:#ff475d;border-color:rgba(244,63,94,.78);background:linear-gradient(145deg,rgba(40,13,27,.99),rgba(14,5,16,.99));box-shadow:inset 0 1px 0 rgba(255,255,255,.06),inset 0 -12px 22px rgba(0,0,0,.28),0 0 17px rgba(244,63,94,.15),0 9px 24px rgba(0,0,0,.35)}
     .sm-key-tile.stale,.sm-key-tile.error{color:#fbbf24;border-color:rgba(245,158,11,.78);background:linear-gradient(145deg,rgba(39,29,10,.99),rgba(15,10,3,.99));box-shadow:inset 0 1px 0 rgba(255,255,255,.06),inset 0 -12px 22px rgba(0,0,0,.28),0 0 17px rgba(245,158,11,.16),0 9px 24px rgba(0,0,0,.35)}
     .sm-key-tile.selected{border-color:#9b63ff;outline:1px solid rgba(139,92,246,.78);outline-offset:3px;box-shadow:inset 0 1px 0 rgba(255,255,255,.1),inset 0 -12px 22px rgba(0,0,0,.26),0 0 0 1px rgba(139,92,246,.25),0 0 24px rgba(124,58,237,.55),0 12px 28px rgba(0,0,0,.42)}
+    .sm-key-tile.top-performer{border-color:#38bdf8;outline:1px solid rgba(56,189,248,.88);outline-offset:2px;box-shadow:inset 0 1px 0 rgba(255,255,255,.1),0 0 0 1px rgba(14,165,233,.25),0 0 22px rgba(14,165,233,.42),0 10px 25px rgba(0,0,0,.4)}
     @keyframes smLiveTilePulse{0%,100%{border-color:#34d399;box-shadow:inset 0 0 16px rgba(16,185,129,.08),0 0 6px rgba(45,212,191,.3)}50%{border-color:#5eead4;box-shadow:inset 0 0 24px rgba(16,185,129,.18),0 0 22px rgba(45,212,191,.72)}}
     @keyframes smSelectedLiveTilePulse{0%,100%{border-color:#8b5cf6;box-shadow:inset 0 2px 0 rgba(255,255,255,.14),inset 0 -12px 18px rgba(0,0,0,.34),0 0 0 1px rgba(139,92,246,.28),0 0 15px rgba(139,92,246,.42),0 10px 22px rgba(0,0,0,.38)}50%{border-color:#c4b5fd;box-shadow:inset 0 2px 0 rgba(255,255,255,.17),inset 0 -12px 18px rgba(0,0,0,.34),0 0 0 1px rgba(167,139,250,.42),0 0 28px rgba(139,92,246,.72),0 12px 24px rgba(0,0,0,.4)}}
     .sm-key-tile.open{animation:smLiveTilePulse 1.15s ease-in-out infinite}
     .sm-key-tile.open.selected{animation:smSelectedLiveTilePulse 1.15s ease-in-out infinite;outline-color:rgba(167,139,250,.88)}
     .sm-key-head{position:relative;z-index:2;display:flex;align-items:center;justify-content:space-between;gap:12px}
-    .sm-key-name{font-size:18px;line-height:1.2;font-weight:800;color:#f8fafc;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-    .sm-key-instrument{flex:0 0 auto;padding:5px 10px;border-radius:6px;background:rgba(5,12,23,.8);border:1px solid rgba(148,163,184,.3);color:#dbeafe;font-size:12px;font-weight:850}
-    .sm-key-pnl{position:relative;z-index:2;margin-top:21px;font-size:30px;line-height:1;font-weight:800;color:#aeb8ca;white-space:nowrap;text-align:center}
+    .sm-key-name{font-size:14px;line-height:1.2;font-weight:800;color:#f8fafc;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+    .sm-key-instrument{flex:0 0 auto;padding:3px 7px;border-radius:5px;background:rgba(5,12,23,.8);border:1px solid rgba(148,163,184,.3);color:#dbeafe;font-size:10px;font-weight:850}
+    .sm-key-pnl{position:relative;z-index:2;margin-top:15px;font-size:23px;line-height:1;font-weight:800;color:#aeb8ca;white-space:nowrap;text-align:center}
     .sm-key-tile.profit .sm-key-pnl{color:#23e57b}.sm-key-tile.loss .sm-key-pnl{color:#ff475d}
-    .sm-key-return{position:relative;z-index:2;margin-top:9px;font-size:17px;font-weight:700;color:#aeb8ca;text-align:center}
+    .sm-key-return{position:relative;z-index:2;margin-top:7px;font-size:13px;font-weight:700;color:#aeb8ca;text-align:center}
     .sm-key-spark{position:absolute;z-index:1;left:18px;right:0;bottom:36px;width:calc(100% - 18px);height:58px;color:inherit;opacity:.28;pointer-events:none}
     .sm-key-spark polyline{fill:none;stroke:currentColor;stroke-width:1.2;vector-effect:non-scaling-stroke}
     .sm-key-select-mark{display:none;position:absolute;z-index:3;right:-1px;top:-1px;width:42px;height:42px;color:#a78bfa;background:linear-gradient(135deg,#7c3aed 0 49%,transparent 50%);font-size:17px;line-height:21px;text-align:right;padding:5px 7px 0 0}
-    .sm-key-tile.selected .sm-key-select-mark{display:block}
-    .sm-key-tile.selected .sm-key-instrument{margin-right:28px}
-    .sm-key-bottom{position:relative;z-index:2;display:flex;align-items:center;justify-content:space-between;gap:8px;margin-top:auto;padding-top:12px;color:#e2e8f0;font-size:12px;font-weight:700;text-transform:uppercase}
+    .sm-key-tile.top-performer .sm-key-select-mark{display:block;color:#fef08a;background:linear-gradient(135deg,#2563eb 0 49%,transparent 50%)}
+    .sm-key-tile.top-performer .sm-key-instrument{margin-right:28px}
+    .sm-key-bottom{position:relative;z-index:2;display:flex;align-items:center;justify-content:space-between;gap:7px;margin-top:auto;padding-top:9px;color:#e2e8f0;font-size:10px;font-weight:700;text-transform:uppercase}
     .sm-key-state{display:inline-flex;align-items:center;gap:7px;padding:0;background:transparent;font-size:12px;font-weight:800}
     .sm-key-state.open,.sm-key-state.closed{color:#4ade80}.sm-key-state.stale,.sm-key-state.error{color:#fbbf24}
     .sm-key-state.open:before{content:"";width:7px;height:7px;border-radius:50%;background:#34d399;box-shadow:0 0 0 4px rgba(52,211,153,.12)}
     .sm-consolidated-empty{padding:50px 20px;text-align:center;border:1px dashed rgba(148,163,184,.3);border-radius:14px;color:#94a3b8}
     .sm-consolidated-empty b{display:block;color:#f8fafc;font-size:18px;margin-bottom:7px}
-    @media(max-width:1350px){.sm-consolidated-grid{grid-template-columns:repeat(3,minmax(0,1fr));gap:18px}.sm-key-tile{min-height:164px}}
-    @media(max-width:1023px){.sm-consolidated-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
-    @media(max-width:700px){.sm-consolidated-mode .sm-head{padding:14px;align-items:stretch}.sm-consolidated-mode .sm-head-actions{display:grid;grid-template-columns:1fr auto;gap:8px}.sm-consolidated-mode .sm-refresh-meta{grid-column:1/-1;text-align:left}.sm-consolidated-toggle{height:40px;padding:0 11px}.sm-consolidated-grid{grid-template-columns:1fr;gap:14px}.sm-key-tile{min-height:156px;padding:17px 18px}.sm-key-name{font-size:16px}.sm-key-pnl{margin-top:18px;font-size:27px}.sm-key-return{font-size:15px}}
+    @media(max-width:1350px){.sm-consolidated-grid{grid-template-columns:repeat(6,minmax(0,1fr));gap:9px}.sm-key-tile{min-height:136px;padding:12px}.sm-key-name{font-size:12px}.sm-key-pnl{font-size:20px}}
+    @media(max-width:1023px){.sm-winner-strip{grid-template-columns:repeat(2,minmax(0,1fr))}.sm-consolidated-grid{grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}.sm-key-tile{min-height:142px}.sm-key-name{font-size:14px}.sm-key-pnl{font-size:23px}}
+    @media(max-width:700px){.sm-consolidated-mode .sm-head{padding:14px;align-items:stretch}.sm-consolidated-mode .sm-head-actions{display:grid;grid-template-columns:1fr auto;gap:8px}.sm-consolidated-mode .sm-refresh-meta{grid-column:1/-1;text-align:left}.sm-consolidated-toggle{height:40px;padding:0 11px}.sm-winner-strip{grid-template-columns:1fr}.sm-consolidated-grid{grid-template-columns:1fr;gap:14px}.sm-key-tile{min-height:156px;padding:17px 18px}.sm-key-name{font-size:16px}.sm-key-pnl{margin-top:18px;font-size:27px}.sm-key-return{font-size:15px}}
     @media(max-width:1100px){.sm-pnl{min-height:292px}.sm-pnl .sm-metrics{grid-template-columns:repeat(3,minmax(0,1fr));row-gap:2px}.sm-pnl .sm-metric:nth-child(4){border-left:0}.sm-pnl-value{font-size:clamp(46px,6vw,56px)}}
     @media(max-width:700px){.sm-pnl{min-height:0;padding:16px 14px;border-radius:18px}.sm-pnl-heading{gap:9px}.sm-pnl-heading-icon{width:40px;height:40px;flex-basis:40px}.sm-pnl-heading-copy h2,.sm-pnl .sm-card-head h2{font-size:16px}.sm-pnl-heading-copy p{font-size:10px}.sm-pnl .sm-live-chip{height:30px;min-width:76px;font-size:10px}.sm-pnl-value{margin-top:12px;font-size:clamp(40px,11vw,50px)}.sm-pnl .sm-metrics{grid-template-columns:repeat(2,minmax(0,1fr));row-gap:2px}.sm-pnl .sm-metric,.sm-pnl .sm-metric:nth-child(4){justify-content:flex-start;min-height:56px;padding:7px 6px;border-left:0;border-top:1px solid rgba(151,178,220,.18)}.sm-pnl .sm-metric:nth-child(1),.sm-pnl .sm-metric:nth-child(2){border-top:0}.sm-pnl .sm-metric:nth-child(even){border-left:1px solid rgba(151,178,220,.18)}.sm-pnl-metric-icon{width:32px;height:32px;flex-basis:32px}.sm-pnl .sm-metric b{font-size:14px}.sm-pnl .sm-metric span:not(.sm-pnl-metric-icon){font-size:9px}.sm-pnl .sm-card-foot{align-items:flex-start;line-height:1.4}.sm-backtest-card .sm-backtest{grid-template-columns:repeat(2,minmax(0,1fr))}.sm-backtest-card .sm-bt-cell b{font-size:12px}}
     @media(prefers-reduced-motion:reduce){.sm-loader-mark img,.sm-loader-ring,.sm-market .sm-dot,.sm-status-dot,.sm-pnl .sm-live-chip .sm-dot,.sm-key-tile.open{animation:none}}
@@ -1945,6 +1973,7 @@ function renderShadowStrategyMonitorPage(navHtml) {
         </div>
       </header>
       <section class="sm-consolidated sm-consolidated-view" id="consolidatedView" hidden>
+        <div class="sm-winner-strip" id="consolidatedWinners"></div>
         <div class="sm-consolidated-grid" id="consolidatedGrid"></div>
       </section>
       <section class="sm-control" aria-label="Monitor controls">
@@ -2010,7 +2039,8 @@ function renderShadowStrategyMonitorPage(navHtml) {
       function renderSection(name,fn){try{fn()}catch(error){console.error("Shadow monitor "+name+" render failed",error)}}
       function consolidatedKey(t){return [t.strategyId,t.strategyVersion,t.instrumentType,t.executionMode,t.tradeDate].join("|")}
       function tileClass(t){if(t.positionState==="ERROR")return"error";if(t.positionState==="STALE")return"stale";if(t.positionState==="OPEN")return"open";return Number(t.pnl)>0?"profit":Number(t.pnl)<0?"loss":"no-trade"}
-      function renderConsolidated(d){var c=d.consolidated||{};var tiles=c.tiles||[];var grid=el("consolidatedGrid");if(!tiles.length){grid.innerHTML='<div class="sm-consolidated-empty"><b>No active shadow strategies</b>Configure at least one Futures or Options shadow strategy to view consolidated P&amp;L.</div>';return}var expected=tiles.map(consolidatedKey).join(",");if(grid.dataset.keys!==expected){grid.dataset.keys=expected;grid.innerHTML=tiles.map(function(t){var key=consolidatedKey(t);return'<button class="sm-key-tile" type="button" data-tile-key="'+esc(key)+'" data-strategy="'+esc(t.strategyId)+'" data-instrument="'+esc(t.instrumentType)+'"><span class="sm-key-select-mark" aria-hidden="true">&#9733;</span><div class="sm-key-head"><span class="sm-key-name"></span><span class="sm-key-instrument"></span></div><div class="sm-key-pnl"></div><div class="sm-key-return"></div><svg class="sm-key-spark" viewBox="0 0 320 58" preserveAspectRatio="none" aria-hidden="true"><polyline points="0,43 18,38 34,42 50,34 68,36 86,30 103,33 120,28 138,31 156,24 175,27 193,20 211,23 230,17 248,19 266,12 284,15 302,8 320,4"/></svg><div class="sm-key-bottom"><span class="sm-key-trades"></span><span class="sm-key-state"></span></div></button>'}).join("")}tiles.forEach(function(t){var key=consolidatedKey(t);var tile=grid.querySelector('[data-tile-key="'+CSS.escape(key)+'"]');if(!tile)return;var cls=tileClass(t);tile.className="sm-key-tile "+cls+(t.strategyId===state.strategy&&t.instrumentType===state.instrument?" selected":"");tile.querySelector(".sm-key-name").textContent=t.strategyName;tile.querySelector(".sm-key-instrument").textContent=t.instrumentType==="FUTURES"?"FUT":"OPT";tile.querySelector(".sm-key-pnl").innerHTML=t.pnl==null?"Not available":money(t.pnl);tile.querySelector(".sm-key-return").textContent=t.returnPct==null?"Return unavailable":pct(t.returnPct)+" return";tile.querySelector(".sm-key-trades").textContent=value(t.trades,0)+" "+(Number(t.trades)===1?"trade":"trades");var stateNode=tile.querySelector(".sm-key-state");stateNode.className="sm-key-state "+String(t.positionState||"").toLowerCase().replace(/\\s+/g,"-");stateNode.textContent=t.positionState||"--";tile.title=t.pnl==null?"No valid current-day shadow data":t.strategyName+" "+t.instrumentType+" | Capital deployed "+value(t.capitalDeployed,0)})}
+      function winnerCard(period,label){var best=period&&period.bestOverall;if(!best)return'<article class="sm-winner-card"><div class="sm-winner-period"><span class="star">&#9733;</span>'+esc(label)+'</div><div class="sm-winner-empty">No completed trades</div></article>';var positive=Number(best.returnPct)>=0;return'<article class="sm-winner-card"><div class="sm-winner-period"><span class="star">&#9733;</span>'+esc(label)+'</div><div class="sm-winner-main"><div class="sm-winner-name">'+esc(best.strategyName)+'<span class="sm-winner-type">'+esc(best.instrument==="FUTURES"?"FUT":"OPT")+'</span></div><div class="sm-winner-values"><span class="sm-winner-return '+(positive?"sm-positive":"sm-negative")+'">'+pct(best.returnPct)+'</span><span class="sm-winner-pnl">'+money(best.pnl)+' · '+money(best.capitalUsed).replace(/^\\+/,"")+' capital</span></div></div></article>'}
+      function renderConsolidated(d){var c=d.consolidated||{};var tiles=c.tiles||[];var periods=d.performance&&d.performance.periods||{};el("consolidatedWinners").innerHTML=winnerCard(periods.TODAY,"Winner Today")+winnerCard(periods.WEEK,"Winner This Week")+winnerCard(periods.MONTH,"Winner This Month")+winnerCard(periods.YEAR,"Winner This Year");var grid=el("consolidatedGrid");if(!tiles.length){grid.innerHTML='<div class="sm-consolidated-empty"><b>No active shadow strategies</b>Configure at least one Futures or Options shadow strategy to view consolidated P&amp;L.</div>';return}var todayBest=periods.TODAY&&periods.TODAY.bestOverall;var top=todayBest?tiles.find(function(t){return t.strategyId===todayBest.strategyId&&t.instrumentType===todayBest.instrument}):null;var topKey=top?consolidatedKey(top):"";var expected=tiles.map(consolidatedKey).join(",");if(grid.dataset.keys!==expected){grid.dataset.keys=expected;grid.innerHTML=tiles.map(function(t){var key=consolidatedKey(t);return'<button class="sm-key-tile" type="button" data-tile-key="'+esc(key)+'" data-strategy="'+esc(t.strategyId)+'" data-instrument="'+esc(t.instrumentType)+'"><span class="sm-key-select-mark" aria-hidden="true" title="Top performer today">&#9733;</span><div class="sm-key-head"><span class="sm-key-name"></span><span class="sm-key-instrument"></span></div><div class="sm-key-pnl"></div><div class="sm-key-return"></div><svg class="sm-key-spark" viewBox="0 0 320 58" preserveAspectRatio="none" aria-hidden="true"><polyline points="0,43 18,38 34,42 50,34 68,36 86,30 103,33 120,28 138,31 156,24 175,27 193,20 211,23 230,17 248,19 266,12 284,15 302,8 320,4"/></svg><div class="sm-key-bottom"><span class="sm-key-trades"></span><span class="sm-key-state"></span></div></button>'}).join("")}tiles.forEach(function(t){var key=consolidatedKey(t);var tile=grid.querySelector('[data-tile-key="'+CSS.escape(key)+'"]');if(!tile)return;var cls=tileClass(t);tile.className="sm-key-tile "+cls+(t.strategyId===state.strategy&&t.instrumentType===state.instrument?" selected":"")+(key===topKey?" top-performer":"");tile.querySelector(".sm-key-name").textContent=t.strategyName;tile.querySelector(".sm-key-instrument").textContent=t.instrumentType==="FUTURES"?"FUT":"OPT";tile.querySelector(".sm-key-pnl").innerHTML=t.pnl==null?"Not available":money(t.pnl);tile.querySelector(".sm-key-return").textContent=t.returnPct==null?"Return unavailable":pct(t.returnPct)+" return";tile.querySelector(".sm-key-trades").textContent=value(t.trades,0)+" "+(Number(t.trades)===1?"trade":"trades");var stateNode=tile.querySelector(".sm-key-state");stateNode.className="sm-key-state "+String(t.positionState||"").toLowerCase().replace(/\\s+/g,"-");stateNode.textContent=t.positionState||"--";tile.title=(key===topKey?"Top performer today | ":"")+(t.pnl==null?"No valid current-day shadow data":t.strategyName+" "+t.instrumentType+" | Allocated capital "+value(t.capitalDeployed,0))})}
       function setViewMode(mode){state.viewMode=mode;var consolidated=mode==="consolidated";el("shadowMonitor").classList.toggle("sm-consolidated-mode",consolidated);el("shadowPage").classList.toggle("sm-consolidated-page",consolidated);el("consolidatedView").hidden=!consolidated;el("monitorTitle").textContent=consolidated?"Consolidated Shadow P&L":"Shadow Strategy Monitor";el("monitorSubtitle").textContent=consolidated?"Today's P&L across all shadow strategies and instruments":"Simulated trades only. No real broker orders are placed.";el("consolidatedToggle").querySelector("span").textContent=consolidated?"Back to Dashboard":"Consolidated P&L";if(consolidated&&state.data)renderConsolidated(state.data);if(refreshTimer)scheduleRefresh();window.scrollTo({top:0,behavior:"auto"})}
       function render(d){state.data=d;state.instrument=d.identity.instrumentType||state.instrument;localStorage.setItem("zsShadowInstrument",state.instrument);renderSection("strategies",function(){renderStrategies(d.strategies)});renderSection("trades",function(){renderTrades(d)});renderSection("candles",function(){renderCandles(d)});renderSection("health",function(){renderHealth(d);el("healthAction").textContent="View Checks"});renderSection("summary",function(){renderSummary(d)});renderSection("logs",function(){renderLogs(d)});renderSection("consolidated",function(){renderConsolidated(d)});var m=el("marketStatus");m.className="sm-market "+(d.market.status==="OPEN"?"open":"closed");m.querySelector("span:last-child").textContent="Market "+(d.market.status==="OPEN"?"Open":"Closed");el("refreshMeta").textContent="Last refreshed: "+dt(d.refreshedAt);document.querySelectorAll(".sm-segment [data-instrument]").forEach(function(b){b.classList.toggle("active",b.dataset.instrument===state.instrument)});el("shadowMonitor").classList.remove("sm-loading");el("monitorLoader").classList.remove("active")}
       async function load(trigger){var interactive=trigger===true||!!(trigger&&trigger.type)||state.userRequestedLoad===true;state.userRequestedLoad=false;var seq=++state.request;if(activeController)activeController.abort();activeController=new AbortController();if(interactive){el("monitorLoader").classList.add("active");el("shadowMonitor").classList.add("sm-loading")}try{var url="/api/shadow-monitor?strategy="+encodeURIComponent(state.strategy)+"&instrument="+encodeURIComponent(state.instrument);var r=await fetch(url,{cache:"no-store",credentials:"same-origin",signal:activeController.signal});if(!r.ok)throw new Error("HTTP "+r.status);var d=await r.json();if(seq!==state.request)return;if(!d.ok)throw new Error(d.error||"Monitor unavailable");render(d)}catch(e){if(e.name==="AbortError")return;el("refreshMeta").textContent="Refresh failed: "+e.message;el("shadowMonitor").classList.remove("sm-loading");el("monitorLoader").classList.remove("active")}}

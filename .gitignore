@@ -2,7 +2,7 @@
 node_modules/
 
 # Build output - track compiled JS (VPS runs these directly)
-dist/*.tsbuildinfo
+*.tsbuildinfo
 dist/src/
 
 # Databases (sensitive - never commit)
@@ -13,6 +13,7 @@ dist/src/
 # Environment secrets
 .env
 .env.*
+.claude/settings.local.json
 
 # Sessions
 sessions.db
