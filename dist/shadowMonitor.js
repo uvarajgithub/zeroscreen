@@ -1,1305 +1,1252 @@
-import fs from "fs";
-import os from "os";
-import path from "path";
-import { execFileSync } from "child_process";
-
-type InstrumentType = "FUTURES" | "OPTIONS";
-
-type StrategyDefinition = {
-  id: string;
-  name: string;
-  version: string;
-  prefix: "drishti" | "drishtiV2" | "tt1030" | "tt1000" | "tt0945" | "normalBreakoutShadow" | "hybridShadow";
-  backtestFile?: string;
-  instruments?: InstrumentType[];
-  processName?: string;
-  heartbeatFile?: string;
-  stateFile?: string;
+"use strict";
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
 };
-
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.buildShadowMonitorPayload = buildShadowMonitorPayload;
+exports.renderShadowStrategyMonitorPage = renderShadowStrategyMonitorPage;
+const fs_1 = __importDefault(require("fs"));
+const os_1 = __importDefault(require("os"));
+const path_1 = __importDefault(require("path"));
+const child_process_1 = require("child_process");
 const BOT_DIR = process.env.TRADING_BOT_DIR || "/home/ubuntu/trading-bot";
 const FUTURES_MARGIN_RATE = 0.12;
 const FUTURES_CAPITAL_FALLBACK = 200000;
 const OPTIONS_CAPITAL_FALLBACK = 15000;
 const HEARTBEAT_HEALTHY_SEC = 60;
 const HEARTBEAT_CRITICAL_SEC = 120;
-
-type HealthLevel = "PASS" | "WARN" | "FAIL" | "INFO";
-type HealthCheck = {
-  id: string;
-  label: string;
-  level: HealthLevel;
-  value: string;
-  detail: string;
-  source: string;
-  critical: boolean;
-};
-
-const runtimeHealthCache = new Map<string, { checkedAt: number; value: any }>();
-
-const STRATEGIES: StrategyDefinition[] = [
-  { id: "drishti", name: "DRISHTI (BANKNIFTY)", version: "Current", prefix: "drishti", backtestFile: "shadow-strategy-5yr-results.json", instruments: ["FUTURES"] },
-  {
-    id: "drishti-v2",
-    name: "DRISHTI V2 Challenger (BANKNIFTY)",
-    version: "V2 Shadow",
-    prefix: "drishtiV2",
-    backtestFile: "drishti-v2-backtest.json",
-    instruments: ["FUTURES"],
-    processName: "drishti-v2-shadow",
-    heartbeatFile: "drishti-v2-heartbeat.json",
-    stateFile: "drishti-v2-state.json",
-  },
-  { id: "tt1030", name: "10:30 Breakout (BANKNIFTY)", version: "Current", prefix: "tt1030", backtestFile: "shadow-strategy-5yr-results.json" },
-  { id: "tt1000", name: "10:00 Breakout (BANKNIFTY)", version: "V1", prefix: "tt1000", backtestFile: "shadow-strategy-5yr-results.json" },
-  { id: "tt0945", name: "09:45 Breakout (BANKNIFTY)", version: "V2 Shadow", prefix: "tt0945", backtestFile: "shadow-strategy-5yr-results.json" },
-  { id: "normal-breakout", name: "Normal Breakout (BANKNIFTY)", version: "V1", prefix: "normalBreakoutShadow", backtestFile: "shadow-strategy-5yr-results.json" },
-  { id: "hybrid-body", name: "Hybrid Body Breakout (BANKNIFTY)", version: "Current", prefix: "hybridShadow", backtestFile: "shadow-strategy-5yr-results.json" },
+const runtimeHealthCache = new Map();
+const STRATEGIES = [
+    { id: "drishti", name: "DRISHTI (BANKNIFTY)", version: "Current", prefix: "drishti", backtestFile: "shadow-strategy-5yr-results.json", instruments: ["FUTURES"] },
+    {
+        id: "drishti-v2",
+        name: "DRISHTI V2 Challenger (BANKNIFTY)",
+        version: "V2 Shadow",
+        prefix: "drishtiV2",
+        backtestFile: "drishti-v2-backtest.json",
+        instruments: ["FUTURES"],
+        processName: "drishti-v2-shadow",
+        heartbeatFile: "drishti-v2-heartbeat.json",
+        stateFile: "drishti-v2-state.json",
+    },
+    { id: "tt1030", name: "10:30 Breakout (BANKNIFTY)", version: "Current", prefix: "tt1030", backtestFile: "shadow-strategy-5yr-results.json" },
+    { id: "tt1000", name: "10:00 Breakout (BANKNIFTY)", version: "V1", prefix: "tt1000", backtestFile: "shadow-strategy-5yr-results.json" },
+    { id: "tt0945", name: "09:45 Breakout (BANKNIFTY)", version: "V2 Shadow", prefix: "tt0945", backtestFile: "shadow-strategy-5yr-results.json" },
+    { id: "normal-breakout", name: "Normal Breakout (BANKNIFTY)", version: "V1", prefix: "normalBreakoutShadow", backtestFile: "shadow-strategy-5yr-results.json" },
+    { id: "hybrid-body", name: "Hybrid Body Breakout (BANKNIFTY)", version: "Current", prefix: "hybridShadow", backtestFile: "shadow-strategy-5yr-results.json" },
 ];
-
-function readJson(file: string, fallback: any): any {
-  try {
-    const filePath = path.join(BOT_DIR, file);
-    if (!fs.existsSync(filePath)) return fallback;
-    const raw = fs.readFileSync(filePath, "utf8").replace(/^\uFEFF/, "");
+function readJson(file, fallback) {
     try {
-      return JSON.parse(raw);
-    } catch {
-      const objectAt = raw.indexOf("{");
-      const arrayAt = raw.indexOf("[");
-      const start = objectAt < 0 ? arrayAt : arrayAt < 0 ? objectAt : Math.min(objectAt, arrayAt);
-      return start >= 0 ? JSON.parse(raw.slice(start)) : fallback;
+        const filePath = path_1.default.join(BOT_DIR, file);
+        if (!fs_1.default.existsSync(filePath))
+            return fallback;
+        const raw = fs_1.default.readFileSync(filePath, "utf8").replace(/^\uFEFF/, "");
+        try {
+            return JSON.parse(raw);
+        }
+        catch {
+            const objectAt = raw.indexOf("{");
+            const arrayAt = raw.indexOf("[");
+            const start = objectAt < 0 ? arrayAt : arrayAt < 0 ? objectAt : Math.min(objectAt, arrayAt);
+            return start >= 0 ? JSON.parse(raw.slice(start)) : fallback;
+        }
     }
-  } catch {
-    return fallback;
-  }
+    catch {
+        return fallback;
+    }
 }
-
-function num(value: any): number | null {
-  if (value === null || value === undefined || value === "") return null;
-  const parsed = Number(value);
-  return Number.isFinite(parsed) ? parsed : null;
+function num(value) {
+    if (value === null || value === undefined || value === "")
+        return null;
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : null;
 }
-
-function text(value: any): string | null {
-  const cleaned = String(value ?? "").trim();
-  return cleaned || null;
+function text(value) {
+    const cleaned = String(value ?? "").trim();
+    return cleaned || null;
 }
-
-function todayIST(): string {
-  return new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" });
+function todayIST() {
+    return new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" });
 }
-
-function dateKey(value: any): string {
-  if (!value) return "";
-  const parsed = new Date(value);
-  if (Number.isFinite(parsed.getTime())) {
-    return parsed.toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" });
-  }
-  const match = String(value).match(/\d{4}-\d{2}-\d{2}/);
-  return match ? match[0] : "";
+function dateKey(value) {
+    if (!value)
+        return "";
+    const parsed = new Date(value);
+    if (Number.isFinite(parsed.getTime())) {
+        return parsed.toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" });
+    }
+    const match = String(value).match(/\d{4}-\d{2}-\d{2}/);
+    return match ? match[0] : "";
 }
-
-function timeValue(value: any): string | null {
-  if (!value) return null;
-  const parsed = new Date(value);
-  if (Number.isFinite(parsed.getTime())) {
-    return parsed.toLocaleTimeString("en-IN", {
-      timeZone: "Asia/Kolkata",
-      hour: "2-digit",
-      minute: "2-digit",
-      second: "2-digit",
+function timeValue(value) {
+    if (!value)
+        return null;
+    const parsed = new Date(value);
+    if (Number.isFinite(parsed.getTime())) {
+        return parsed.toLocaleTimeString("en-IN", {
+            timeZone: "Asia/Kolkata",
+            hour: "2-digit",
+            minute: "2-digit",
+            second: "2-digit",
+        });
+    }
+    return text(value);
+}
+function sanitizeLog(value) {
+    return String(value ?? "")
+        .replace(/access[_ -]?token\s*[:=]\s*\S+/gi, "access_token=[redacted]")
+        .replace(/api[_ -]?key\s*[:=]\s*\S+/gi, "api_key=[redacted]")
+        .replace(/authorization\s*[:=]\s*\S+/gi, "authorization=[redacted]")
+        .replace(/\s+/g, " ")
+        .trim()
+        .slice(0, 360);
+}
+function recentServerLogs(strategy) {
+    const candidates = strategy.processName
+        ? [
+            `/root/.pm2/logs/${strategy.processName}-out.log`,
+            `/home/ubuntu/.pm2/logs/${strategy.processName}-out.log`,
+        ]
+        : [
+            "/root/.pm2/logs/trading-bot-out.log",
+            "/home/ubuntu/.pm2/logs/trading-bot-out.log",
+            path_1.default.join(BOT_DIR, "logs/server.log"),
+            path_1.default.join(BOT_DIR, "logs/bot-out.log"),
+        ];
+    const rows = [];
+    const seen = new Set();
+    const strategyPattern = strategy.id === "drishti"
+        ? /drishti/i
+        : strategy.id === "drishti-v2"
+            ? /drishti[_ -]?v2|challenger/i
+            : strategy.id === "tt1030"
+                ? /\b10[:.]?30\b|\btt1030\b/i
+                : strategy.id === "tt1000"
+                    ? /\b10[:.]?00\b|\btt1000\b/i
+                    : strategy.id === "normal-breakout"
+                        ? /\bnormal\b|\bbreakout\b/i
+                        : /\bhybrid\b|\bbody\b/i;
+    const operationalPattern = /\bheartbeat\b|\btoken\b|\bfeed\b|\bcandle\b|\bmarket\b|\bserver\b|\bconnected\b|\bsleep(?:ing)?\b|\bwake\b|\bstarted\b|\bstopped\b/i;
+    for (const file of candidates) {
+        try {
+            if (!fs_1.default.existsSync(file))
+                continue;
+            const lines = fs_1.default.readFileSync(file, "utf8").split(/\r?\n/).filter(Boolean).slice(-120);
+            for (const line of lines) {
+                if (/access[_ -]?token|authorization:|api[_ -]?key/i.test(line))
+                    continue;
+                const message = sanitizeLog(line);
+                if (!message || /^\s*at\s|node:internal|requireStack/i.test(message))
+                    continue;
+                if (!strategyPattern.test(message) && !operationalPattern.test(message))
+                    continue;
+                const dedupeKey = message
+                    .replace(/\b\d{2}:\d{2}:\d{2}\b/g, "")
+                    .replace(/\b\d+(?:\.\d+)?(?:ms|s)\b/gi, "")
+                    .trim();
+                if (seen.has(dedupeKey))
+                    continue;
+                seen.add(dedupeKey);
+                const timeMatch = message.match(/\b(\d{2}:\d{2}:\d{2})\b/);
+                const level = /error|failed|rejected|exception/i.test(message)
+                    ? "ERROR"
+                    : /warn|waiting|stale|skip/i.test(message)
+                        ? "WARN"
+                        : /debug/i.test(message) ? "DEBUG" : "INFO";
+                rows.push({ time: timeMatch?.[1] || "", level, message });
+            }
+        }
+        catch { }
+    }
+    return rows.slice(-40);
+}
+function strategyFields(strategy, hb, state, instrument) {
+    const isOptions = instrument === "OPTIONS";
+    if (strategy.prefix === "drishtiV2") {
+        const candleFile = readJson("drishti-v2-candle-log.json", {});
+        const candleRows = Array.isArray(candleFile)
+            ? candleFile
+            : Array.isArray(candleFile?.candles) ? candleFile.candles : [];
+        const rawTrades = readJson("drishti-v2-trades.json", []);
+        const inTrade = !!state.inTrade;
+        const realized = num(state.realizedPnl ?? hb.realizedPnl) ?? 0;
+        const unrealized = inTrade ? num(state.unrealizedPnl ?? hb.unrealizedPnl) ?? 0 : 0;
+        return {
+            inTrade,
+            realized,
+            unrealized,
+            total: realized + unrealized,
+            trades: num(state.tradeCount ?? hb.trades) ?? 0,
+            wins: num(state.wins ?? hb.wins) ?? 0,
+            losses: num(state.losses ?? hb.losses) ?? 0,
+            direction: text(state.side ?? hb.side),
+            symbol: text(state.futuresSymbol ?? hb.symbol),
+            entry: num(state.entryPrice ?? hb.futuresEntry),
+            live: num(state.lastPrice ?? hb.futuresLive),
+            sl: num(state.stopLoss ?? hb.stopLoss),
+            target: num(state.target ?? hb.target),
+            quantity: num(hb.quantity) ?? 30,
+            entryTime: timeValue(state.entryTime),
+            entryAt: state.entryTime || null,
+            phase: text(state.phase ?? hb.status),
+            dayHigh: null,
+            dayLow: null,
+            volume: null,
+            openInterest: null,
+            rawTrades: Array.isArray(rawTrades) ? rawTrades : [],
+            candleLog: candleFile?.date && dateKey(candleFile.date) !== todayIST() ? [] : candleRows,
+        };
+    }
+    if (strategy.prefix === "drishti") {
+        const candleFile = readJson("candle-log.json", []);
+        const fileCandleRows = Array.isArray(candleFile)
+            ? candleFile
+            : Array.isArray(candleFile?.log)
+                ? candleFile.log
+                : Array.isArray(candleFile?.candles) ? candleFile.candles : [];
+        const heartbeatCandleRows = Array.isArray(hb.DrishtiCandleLog) ? hb.DrishtiCandleLog : [];
+        const candleRows = heartbeatCandleRows.length
+            ? heartbeatCandleRows
+            : candleFile?.date && dateKey(candleFile.date) !== todayIST() ? [] : fileCandleRows;
+        const inTrade = isOptions ? !!hb.optInTrade : !!hb.inTrade;
+        const rawSymbol = text(isOptions ? hb.optSymbol : hb.symbol);
+        const scopedSymbol = !isOptions && rawSymbol && /\d+(CE|PE)$/i.test(rawSymbol) ? null : rawSymbol;
+        const realized = isOptions ? num(hb.optDailyRs) : num(hb.dailyRealRs);
+        const unrealized = isOptions ? num(hb.unrealisedPnL) : num(hb.unrealisedPnL);
+        const tradeCount = num(isOptions ? hb.optRecentTrades?.length : hb.tradeCount) ?? 0;
+        return {
+            inTrade,
+            realized,
+            unrealized: inTrade ? unrealized : 0,
+            total: (realized ?? 0) + (inTrade ? (unrealized ?? 0) : 0),
+            trades: tradeCount,
+            wins: num(isOptions ? hb.optWins : state.drishtiWins) ?? 0,
+            losses: num(isOptions ? hb.optLosses : state.drishtiLosses) ?? 0,
+            direction: text(isOptions ? hb.optDir : hb.direction),
+            symbol: scopedSymbol,
+            entry: num(isOptions ? hb.optEntryPrem : (hb.drishtiFuturesEntry || hb.entryPrice)),
+            live: num(isOptions ? hb.livePremium : hb.livePrice),
+            sl: num(hb.sl),
+            target: null,
+            quantity: num(hb.qty),
+            entryTime: timeValue(isOptions ? hb.optEntryTime : hb.entryTime),
+            entryAt: isOptions ? hb.optEntryTime : hb.entryTime,
+            phase: text(hb.status),
+            dayHigh: null,
+            dayLow: null,
+            volume: null,
+            openInterest: null,
+            rawTrades: isOptions && Array.isArray(hb.optRecentTrades)
+                ? hb.optRecentTrades
+                : tradeCount > 0 ? readJson("trades.json", []) : [],
+            candleLog: candleRows,
+        };
+    }
+    const prefix = strategy.prefix;
+    const inTrade = !!hb[`${prefix}InTrade`];
+    const total = num(hb[isOptions ? `${prefix}OptPnL` : `${prefix}PnL`]) ?? 0;
+    const closed = num(hb[isOptions ? `${prefix}OptClosedPnL` : `${prefix}ClosedPnL`]);
+    const realized = closed ?? (inTrade ? null : total);
+    const unrealized = inTrade && realized !== null ? total - realized : (inTrade ? total : 0);
+    const optionSymbol = text(hb[`${prefix}OptionSymbol`]);
+    const futuresSymbol = text(hb[`${prefix}FuturesSymbol`]);
+    const direction = text(hb[`${prefix}Dir`]);
+    const persisted = prefix === "normalBreakoutShadow"
+        ? readJson("normal-breakout-v1-state.json", {})
+        : prefix === "hybridShadow" ? readJson("hybrid-state.json", {}) : {};
+    return {
+        inTrade,
+        realized,
+        unrealized,
+        total,
+        trades: num(hb[`${prefix}Trades`]) ?? 0,
+        wins: num(hb[isOptions ? `${prefix}OptWins` : `${prefix}Wins`]) ?? num(hb[`${prefix}Wins`]) ?? 0,
+        losses: num(hb[isOptions ? `${prefix}OptLosses` : `${prefix}Losses`]) ?? num(hb[`${prefix}Losses`]) ?? 0,
+        direction,
+        symbol: isOptions ? optionSymbol : futuresSymbol,
+        entry: isOptions
+            ? num(hb[`${prefix}OptionEntry`])
+            : num(hb[`${prefix}FuturesEntry`] ?? hb[`${prefix}Entry`]),
+        live: isOptions
+            ? num(hb[`${prefix}OptionLive`])
+            : num(hb[`${prefix}FuturesLive`] ?? hb[`${prefix}Live`]),
+        sl: num(hb[`${prefix}SL`]),
+        target: null,
+        quantity: num(hb[`${prefix}LiveQty`] ?? hb.qty),
+        entryTime: timeValue(hb[`${prefix}EntryTime`] ?? persisted.entryTime),
+        entryAt: hb[`${prefix}EntryAt`] ?? (persisted.date && persisted.entryTime ? `${persisted.date}T${persisted.entryTime}:00+05:30` : null),
+        phase: text(hb[`${prefix}Phase`] || hb.status),
+        dayHigh: num(hb[isOptions ? `${prefix}OptionHigh` : `${prefix}High`]),
+        dayLow: num(hb[isOptions ? `${prefix}OptionLow` : `${prefix}Low`]),
+        volume: num(hb[isOptions ? `${prefix}OptionVolume` : `${prefix}Volume`]),
+        openInterest: num(hb[isOptions ? `${prefix}OptionOpenInterest` : `${prefix}OpenInterest`]),
+        rawTrades: Array.isArray(hb[`${prefix}TradeLog`]) ? hb[`${prefix}TradeLog`] : [],
+        candleLog: Array.isArray(hb[`${prefix}CandleLog`]) ? hb[`${prefix}CandleLog`] : [],
+    };
+}
+function normalizedTrades(rawTrades, strategy, instrument, tradeDate, defaultQuantity = 30) {
+    const normalized = rawTrades
+        .filter((row) => {
+        const rowDate = dateKey(row.date || row.at || row.entryTime || row.exitTime);
+        return !rowDate || rowDate === tradeDate;
+    })
+        .filter((row) => {
+        const symbol = String(row.symbol || row.tradeSymbol || row.contract || "").toUpperCase();
+        const hasPremium = num(row.premiumEntry ?? row.entryPremium ?? row.premIn) !== null;
+        const hasIndexTrade = num(row.entry ?? row.entryPrice) !== null;
+        const looksOption = /\d+(CE|PE)$/.test(symbol) || hasPremium;
+        return instrument === "OPTIONS" ? looksOption : hasIndexTrade || !looksOption;
+    })
+        .map((row, index) => {
+        const direction = (text(row.direction || row.dir || row.side) || "").toUpperCase();
+        const rawSymbol = text(row.symbol || row.tradeSymbol || row.contract) || "";
+        const quantity = num(row.qty ?? row.quantity ?? row.lots) ?? defaultQuantity;
+        const isOptions = instrument === "OPTIONS";
+        const entry = isOptions
+            ? num(row.premiumEntry ?? row.entryPremium ?? row.premIn)
+            : num(row.entryPrice ?? row.entry);
+        const exit = isOptions
+            ? num(row.premiumExit ?? row.exitPremium ?? row.premOut)
+            : num(row.exitPrice ?? row.exit);
+        const premiumPnl = isOptions && entry !== null && exit !== null
+            ? (exit - entry) * quantity
+            : null;
+        const pnl = isOptions
+            ? premiumPnl ?? num(row.optionPnlRs ?? row.optPnlRs ?? row.optionPnl)
+            : num(row.pnlRs ?? row.pnl ?? row.points ?? row.pts);
+        const contract = /\b(CE|PE)\b/i.test(direction)
+            ? direction.match(/\b(CE|PE)\b/i)?.[1]?.toUpperCase()
+            : rawSymbol.match(/(CE|PE)$/i)?.[1]?.toUpperCase() || null;
+        const action = isOptions
+            ? "BUY"
+            : contract === "PE" || /\bSELL|SHORT\b/i.test(direction) ? "SELL" : "BUY";
+        const exitAction = action === "BUY" ? "SELL" : "BUY";
+        const symbol = isOptions
+            ? rawSymbol || `BANKNIFTY ${contract || "OPTION"}`
+            : text(row.futuresSymbol) || "BANKNIFTY FUTURES";
+        const stableId = text(row.tradeId || row.signalId) || [
+            strategy.id, instrument, tradeDate, symbol, direction, entry, row.entryTime || row.date || index,
+        ].join("|");
+        const capitalDeployed = entry !== null && quantity > 0
+            ? (isOptions ? entry * quantity : entry * quantity * FUTURES_MARGIN_RATE)
+            : null;
+        return {
+            id: stableId,
+            tradeId: stableId,
+            strategyId: strategy.id,
+            strategyVersion: strategy.version,
+            instrumentType: instrument,
+            executionMode: "SHADOW",
+            tradeDate,
+            time: timeValue(row.entryTime || row.date || row.at || row.time),
+            instrument: symbol,
+            side: direction,
+            contract,
+            action,
+            exitAction,
+            quantity,
+            entry,
+            exit,
+            stopLoss: num(row.sl ?? row.stopLoss),
+            target: num(row.target),
+            pnl,
+            capitalDeployed,
+            returnPct: pnl !== null && capitalDeployed ? pnl / capitalDeployed * 100 : null,
+            result: pnl === null ? null : pnl > 0 ? "WIN" : pnl < 0 ? "LOSS" : "FLAT",
+            status: text(row.status) || (exit !== null && exit > 0 ? "CLOSED" : "OPEN"),
+            reason: text(row.reasonExit || row.reason || row.note),
+        };
     });
-  }
-  return text(value);
+    const consolidated = new Map();
+    for (const row of normalized) {
+        const tradeKey = text(row.id) && !String(row.id).includes("|")
+            ? `id:${row.id}`
+            : [row.instrument, row.contract, row.side, row.entry].join("|");
+        const existing = consolidated.get(tradeKey);
+        if (!existing || (existing.exit == null && row.exit != null)) {
+            consolidated.set(tradeKey, row);
+        }
+    }
+    return [...consolidated.values()]
+        .slice(-25)
+        .reverse();
 }
-
-function sanitizeLog(value: any): string {
-  return String(value ?? "")
-    .replace(/access[_ -]?token\s*[:=]\s*\S+/gi, "access_token=[redacted]")
-    .replace(/api[_ -]?key\s*[:=]\s*\S+/gi, "api_key=[redacted]")
-    .replace(/authorization\s*[:=]\s*\S+/gi, "authorization=[redacted]")
-    .replace(/\s+/g, " ")
-    .trim()
-    .slice(0, 360);
-}
-
-function recentServerLogs(strategy: StrategyDefinition): any[] {
-  const candidates = strategy.processName
-    ? [
-      `/root/.pm2/logs/${strategy.processName}-out.log`,
-      `/home/ubuntu/.pm2/logs/${strategy.processName}-out.log`,
-    ]
-    : [
-      "/root/.pm2/logs/trading-bot-out.log",
-      "/home/ubuntu/.pm2/logs/trading-bot-out.log",
-      path.join(BOT_DIR, "logs/server.log"),
-      path.join(BOT_DIR, "logs/bot-out.log"),
-    ];
-  const rows: any[] = [];
-  const seen = new Set<string>();
-  const strategyPattern = strategy.id === "drishti"
-    ? /drishti/i
-    : strategy.id === "drishti-v2"
-      ? /drishti[_ -]?v2|challenger/i
-    : strategy.id === "tt1030"
-      ? /\b10[:.]?30\b|\btt1030\b/i
-      : strategy.id === "tt1000"
-        ? /\b10[:.]?00\b|\btt1000\b/i
-        : strategy.id === "normal-breakout"
-          ? /\bnormal\b|\bbreakout\b/i
-          : /\bhybrid\b|\bbody\b/i;
-  const operationalPattern =
-    /\bheartbeat\b|\btoken\b|\bfeed\b|\bcandle\b|\bmarket\b|\bserver\b|\bconnected\b|\bsleep(?:ing)?\b|\bwake\b|\bstarted\b|\bstopped\b/i;
-  for (const file of candidates) {
-    try {
-      if (!fs.existsSync(file)) continue;
-      const lines = fs.readFileSync(file, "utf8").split(/\r?\n/).filter(Boolean).slice(-120);
-      for (const line of lines) {
-        if (/access[_ -]?token|authorization:|api[_ -]?key/i.test(line)) continue;
-        const message = sanitizeLog(line);
-        if (!message || /^\s*at\s|node:internal|requireStack/i.test(message)) continue;
-        if (!strategyPattern.test(message) && !operationalPattern.test(message)) continue;
-        const dedupeKey = message
-          .replace(/\b\d{2}:\d{2}:\d{2}\b/g, "")
-          .replace(/\b\d+(?:\.\d+)?(?:ms|s)\b/gi, "")
-          .trim();
-        if (seen.has(dedupeKey)) continue;
-        seen.add(dedupeKey);
-        const timeMatch = message.match(/\b(\d{2}:\d{2}:\d{2})\b/);
-        const level = /error|failed|rejected|exception/i.test(message)
-          ? "ERROR"
-          : /warn|waiting|stale|skip/i.test(message)
-            ? "WARN"
-            : /debug/i.test(message) ? "DEBUG" : "INFO";
-        rows.push({ time: timeMatch?.[1] || "", level, message });
-      }
-    } catch {}
-  }
-  return rows.slice(-40);
-}
-
-function strategyFields(strategy: StrategyDefinition, hb: any, state: any, instrument: InstrumentType) {
-  const isOptions = instrument === "OPTIONS";
-  if (strategy.prefix === "drishtiV2") {
-    const candleFile = readJson("drishti-v2-candle-log.json", {});
-    const candleRows = Array.isArray(candleFile)
-      ? candleFile
-      : Array.isArray(candleFile?.candles) ? candleFile.candles : [];
-    const rawTrades = readJson("drishti-v2-trades.json", []);
-    const inTrade = !!state.inTrade;
-    const realized = num(state.realizedPnl ?? hb.realizedPnl) ?? 0;
-    const unrealized = inTrade ? num(state.unrealizedPnl ?? hb.unrealizedPnl) ?? 0 : 0;
-    return {
-      inTrade,
-      realized,
-      unrealized,
-      total: realized + unrealized,
-      trades: num(state.tradeCount ?? hb.trades) ?? 0,
-      wins: num(state.wins ?? hb.wins) ?? 0,
-      losses: num(state.losses ?? hb.losses) ?? 0,
-      direction: text(state.side ?? hb.side),
-      symbol: text(state.futuresSymbol ?? hb.symbol),
-      entry: num(state.entryPrice ?? hb.futuresEntry),
-      live: num(state.lastPrice ?? hb.futuresLive),
-      sl: num(state.stopLoss ?? hb.stopLoss),
-      target: num(state.target ?? hb.target),
-      quantity: num(hb.quantity) ?? 30,
-      entryTime: timeValue(state.entryTime),
-      entryAt: state.entryTime || null,
-      phase: text(state.phase ?? hb.status),
-      dayHigh: null,
-      dayLow: null,
-      volume: null,
-      openInterest: null,
-      rawTrades: Array.isArray(rawTrades) ? rawTrades : [],
-      candleLog: candleFile?.date && dateKey(candleFile.date) !== todayIST() ? [] : candleRows,
-    };
-  }
-  if (strategy.prefix === "drishti") {
-    const candleFile = readJson("candle-log.json", []);
-    const fileCandleRows = Array.isArray(candleFile)
-      ? candleFile
-      : Array.isArray(candleFile?.log)
-        ? candleFile.log
-        : Array.isArray(candleFile?.candles) ? candleFile.candles : [];
-    const heartbeatCandleRows = Array.isArray(hb.DrishtiCandleLog) ? hb.DrishtiCandleLog : [];
-    const candleRows = heartbeatCandleRows.length
-      ? heartbeatCandleRows
-      : candleFile?.date && dateKey(candleFile.date) !== todayIST() ? [] : fileCandleRows;
-    const inTrade = isOptions ? !!hb.optInTrade : !!hb.inTrade;
-    const rawSymbol = text(isOptions ? hb.optSymbol : hb.symbol);
-    const scopedSymbol = !isOptions && rawSymbol && /\d+(CE|PE)$/i.test(rawSymbol) ? null : rawSymbol;
-    const realized = isOptions ? num(hb.optDailyRs) : num(hb.dailyRealRs);
-    const unrealized = isOptions ? num(hb.unrealisedPnL) : num(hb.unrealisedPnL);
-    const tradeCount = num(isOptions ? hb.optRecentTrades?.length : hb.tradeCount) ?? 0;
-    return {
-      inTrade,
-      realized,
-      unrealized: inTrade ? unrealized : 0,
-      total: (realized ?? 0) + (inTrade ? (unrealized ?? 0) : 0),
-      trades: tradeCount,
-      wins: num(isOptions ? hb.optWins : state.drishtiWins) ?? 0,
-      losses: num(isOptions ? hb.optLosses : state.drishtiLosses) ?? 0,
-      direction: text(isOptions ? hb.optDir : hb.direction),
-      symbol: scopedSymbol,
-      entry: num(isOptions ? hb.optEntryPrem : (hb.drishtiFuturesEntry || hb.entryPrice)),
-      live: num(isOptions ? hb.livePremium : hb.livePrice),
-      sl: num(hb.sl),
-      target: null,
-      quantity: num(hb.qty),
-      entryTime: timeValue(isOptions ? hb.optEntryTime : hb.entryTime),
-      entryAt: isOptions ? hb.optEntryTime : hb.entryTime,
-      phase: text(hb.status),
-      dayHigh: null,
-      dayLow: null,
-      volume: null,
-      openInterest: null,
-      rawTrades: isOptions && Array.isArray(hb.optRecentTrades)
-        ? hb.optRecentTrades
-        : tradeCount > 0 ? readJson("trades.json", []) : [],
-      candleLog: candleRows,
-    };
-  }
-
-  const prefix = strategy.prefix;
-  const inTrade = !!hb[`${prefix}InTrade`];
-  const total = num(hb[isOptions ? `${prefix}OptPnL` : `${prefix}PnL`]) ?? 0;
-  const closed = num(hb[isOptions ? `${prefix}OptClosedPnL` : `${prefix}ClosedPnL`]);
-  const realized = closed ?? (inTrade ? null : total);
-  const unrealized = inTrade && realized !== null ? total - realized : (inTrade ? total : 0);
-  const optionSymbol = text(hb[`${prefix}OptionSymbol`]);
-  const futuresSymbol = text(hb[`${prefix}FuturesSymbol`]);
-  const direction = text(hb[`${prefix}Dir`]);
-  const persisted = prefix === "normalBreakoutShadow"
-    ? readJson("normal-breakout-v1-state.json", {})
-    : prefix === "hybridShadow" ? readJson("hybrid-state.json", {}) : {};
-  return {
-    inTrade,
-    realized,
-    unrealized,
-    total,
-    trades: num(hb[`${prefix}Trades`]) ?? 0,
-    wins: num(hb[isOptions ? `${prefix}OptWins` : `${prefix}Wins`]) ?? num(hb[`${prefix}Wins`]) ?? 0,
-    losses: num(hb[isOptions ? `${prefix}OptLosses` : `${prefix}Losses`]) ?? num(hb[`${prefix}Losses`]) ?? 0,
-    direction,
-    symbol: isOptions ? optionSymbol : futuresSymbol,
-    entry: isOptions
-      ? num(hb[`${prefix}OptionEntry`])
-      : num(hb[`${prefix}FuturesEntry`] ?? hb[`${prefix}Entry`]),
-    live: isOptions
-      ? num(hb[`${prefix}OptionLive`])
-      : num(hb[`${prefix}FuturesLive`] ?? hb[`${prefix}Live`]),
-    sl: num(hb[`${prefix}SL`]),
-    target: null,
-    quantity: num(hb[`${prefix}LiveQty`] ?? hb.qty),
-    entryTime: timeValue(hb[`${prefix}EntryTime`] ?? persisted.entryTime),
-    entryAt: hb[`${prefix}EntryAt`] ?? (persisted.date && persisted.entryTime ? `${persisted.date}T${persisted.entryTime}:00+05:30` : null),
-    phase: text(hb[`${prefix}Phase`] || hb.status),
-    dayHigh: num(hb[isOptions ? `${prefix}OptionHigh` : `${prefix}High`]),
-    dayLow: num(hb[isOptions ? `${prefix}OptionLow` : `${prefix}Low`]),
-    volume: num(hb[isOptions ? `${prefix}OptionVolume` : `${prefix}Volume`]),
-    openInterest: num(hb[isOptions ? `${prefix}OptionOpenInterest` : `${prefix}OpenInterest`]),
-    rawTrades: Array.isArray(hb[`${prefix}TradeLog`]) ? hb[`${prefix}TradeLog`] : [],
-    candleLog: Array.isArray(hb[`${prefix}CandleLog`]) ? hb[`${prefix}CandleLog`] : [],
-  };
-}
-
-function normalizedTrades(rawTrades: any[], strategy: StrategyDefinition, instrument: InstrumentType, tradeDate: string, defaultQuantity = 30) {
-  const normalized = rawTrades
-    .filter((row: any) => {
-      const rowDate = dateKey(row.date || row.at || row.entryTime || row.exitTime);
-      return !rowDate || rowDate === tradeDate;
-    })
-    .filter((row: any) => {
-      const symbol = String(row.symbol || row.tradeSymbol || row.contract || "").toUpperCase();
-      const hasPremium = num(row.premiumEntry ?? row.entryPremium ?? row.premIn) !== null;
-      const hasIndexTrade = num(row.entry ?? row.entryPrice) !== null;
-      const looksOption = /\d+(CE|PE)$/.test(symbol) || hasPremium;
-      return instrument === "OPTIONS" ? looksOption : hasIndexTrade || !looksOption;
-    })
-    .map((row: any, index: number) => {
-      const direction = (text(row.direction || row.dir || row.side) || "").toUpperCase();
-      const rawSymbol = text(row.symbol || row.tradeSymbol || row.contract) || "";
-      const quantity = num(row.qty ?? row.quantity ?? row.lots) ?? defaultQuantity;
-      const isOptions = instrument === "OPTIONS";
-      const entry = isOptions
-        ? num(row.premiumEntry ?? row.entryPremium ?? row.premIn)
-        : num(row.entryPrice ?? row.entry);
-      const exit = isOptions
-        ? num(row.premiumExit ?? row.exitPremium ?? row.premOut)
-        : num(row.exitPrice ?? row.exit);
-      const premiumPnl = isOptions && entry !== null && exit !== null
-        ? (exit - entry) * quantity
-        : null;
-      const pnl = isOptions
-        ? premiumPnl ?? num(row.optionPnlRs ?? row.optPnlRs ?? row.optionPnl)
-        : num(row.pnlRs ?? row.pnl ?? row.points ?? row.pts);
-      const contract = /\b(CE|PE)\b/i.test(direction)
-        ? direction.match(/\b(CE|PE)\b/i)?.[1]?.toUpperCase()
-        : rawSymbol.match(/(CE|PE)$/i)?.[1]?.toUpperCase() || null;
-      const action = isOptions
-        ? "BUY"
-        : contract === "PE" || /\bSELL|SHORT\b/i.test(direction) ? "SELL" : "BUY";
-      const exitAction = action === "BUY" ? "SELL" : "BUY";
-      const symbol = isOptions
-        ? rawSymbol || `BANKNIFTY ${contract || "OPTION"}`
-        : text(row.futuresSymbol) || "BANKNIFTY FUTURES";
-      const stableId = text(row.tradeId || row.signalId) || [
-        strategy.id, instrument, tradeDate, symbol, direction, entry, row.entryTime || row.date || index,
-      ].join("|");
-      const capitalDeployed = entry !== null && quantity > 0
-        ? (isOptions ? entry * quantity : entry * quantity * FUTURES_MARGIN_RATE)
-        : null;
-      return {
-        id: stableId,
-        tradeId: stableId,
-        strategyId: strategy.id,
-        strategyVersion: strategy.version,
-        instrumentType: instrument,
-        executionMode: "SHADOW",
-        tradeDate,
-        time: timeValue(row.entryTime || row.date || row.at || row.time),
-        instrument: symbol,
-        side: direction,
-        contract,
-        action,
-        exitAction,
-        quantity,
-        entry,
-        exit,
+function normalizedCandles(raw, hb) {
+    const rows = Array.isArray(raw) ? raw : [];
+    return rows.slice().reverse().map((row) => ({
+        number: num(row.idx ?? row.num),
+        time: text(row.time) || timeValue(row.at || row.date),
+        timeframe: text(row.timeframe || row.tf) || "15m",
+        open: num(row.open ?? row.o),
+        high: num(row.high ?? row.h),
+        low: num(row.low ?? row.l),
+        close: num(row.close ?? row.c),
+        volume: num(row.volume ?? row.v),
+        status: text(row.status || row.state),
+        side: text(row.dir || row.direction || row.side),
+        entry: num(row.entry ?? row.entryPrice),
         stopLoss: num(row.sl ?? row.stopLoss),
-        target: num(row.target),
+        exit: num(row.exit ?? row.exitPrice),
+        pnl: num(row.pnlRs ?? row.pnl ?? row.pnlPts),
+        note: text(row.note || row.reason) || "No evaluation note recorded",
+    })).map((row) => ({ ...row, receivedAt: hb?.at || null }));
+}
+function backtestSummary(strategy, instrument) {
+    if (!strategy.backtestFile)
+        return null;
+    const data = readJson(strategy.backtestFile, null);
+    if (!data)
+        return null;
+    const normalized = data?.strategies?.[strategy.id]?.[instrument];
+    if (normalized?.summary) {
+        const summary = normalized.summary;
+        return {
+            source: strategy.backtestFile,
+            coverage: data.coverage?.from && data.coverage?.to
+                ? `${String(data.coverage.from).slice(0, 4)}-${String(data.coverage.to).slice(0, 4)}`
+                : "5Y",
+            coverageFrom: data.coverage?.from || null,
+            coverageTo: data.coverage?.to || null,
+            pnl: num(summary.total),
+            pnlUnit: "rupees",
+            winRate: num(summary.winRate),
+            maxDrawdown: num(summary.maxDrawdown),
+            avgMonthlyPnl: num(summary.avgMonthlyPnl),
+            capitalUsed: num(summary.capitalUsed),
+            returnPct: num(summary.returnPct),
+            avgMonthlyReturnPct: num(summary.avgMonthlyReturnPct),
+            totalTrades: num(summary.totalTrades),
+            dailyRecords: Array.isArray(normalized.days) ? normalized.days.length : 0,
+            monthlyRecords: Array.isArray(normalized.months) ? normalized.months.length : 0,
+            modelled: !!normalized.modelled,
+            methodology: text(normalized.methodology),
+            days: strategy.id === "drishti-v2"
+                ? []
+                : Array.isArray(normalized.days) ? normalized.days : [],
+            weeks: Array.isArray(normalized.weeks) ? normalized.weeks : [],
+            months: Array.isArray(normalized.months) ? normalized.months : [],
+            years: Array.isArray(normalized.years) ? normalized.years : [],
+            generatedAt: data.generatedAt || null,
+        };
+    }
+    if (strategy.prefix === "tt1030" && data.summary) {
+        const stats = instrument === "OPTIONS" ? data.summary.optStats : data.summary.futStats;
+        const months = data.months && typeof data.months === "object" ? Object.keys(data.months).length : 0;
+        if (!stats)
+            return null;
+        return {
+            source: strategy.backtestFile,
+            coverage: "2021-2026",
+            pnl: num(stats.total),
+            pnlUnit: "rupees",
+            winRate: num(stats.winRate),
+            maxDrawdown: num(stats.maxDD),
+            avgMonthlyPnl: months ? (num(stats.total) ?? 0) / months : null,
+            totalTrades: num(data.summary.trades),
+            dailyRecords: num(data.summary.days) ?? 0,
+            monthlyRecords: months,
+        };
+    }
+    const totals = data.totals || data.summary || data.total || {};
+    const daily = Array.isArray(data.daily) ? data.daily : [];
+    const monthly = data.monthly && typeof data.monthly === "object" ? Object.values(data.monthly) : [];
+    const totalTrades = num(totals.trades ?? totals.totalTrades ?? data.tradedDays);
+    const wins = num(totals.wins ?? totals.totalWins);
+    const winRate = num(data.winRate ?? totals.winRate ?? totals.tradeWinRate) ?? (totalTrades && wins !== null ? (wins / totalTrades) * 100 : null);
+    const maxDrawdown = num(totals.maxDDRs ?? totals.maxDrawdown ?? data.maxDrawdown);
+    const cashPnl = num(totals.totalPnlRs ?? totals.pnl ?? totals.totalPnl);
+    const pnl = cashPnl ?? num(totals.bodyBreakout);
+    const pnlUnit = cashPnl !== null ? "rupees" : "points";
+    const dailyValues = daily.map((row) => num(row.pnl ?? row.bbPnL)).filter((value) => value !== null);
+    let derivedDrawdown = 0;
+    let equity = 0;
+    let peak = 0;
+    for (const value of dailyValues) {
+        equity += value;
+        peak = Math.max(peak, equity);
+        derivedDrawdown = Math.max(derivedDrawdown, peak - equity);
+    }
+    const resolvedDrawdown = maxDrawdown ?? (dailyValues.length ? derivedDrawdown : null);
+    const avgMonthlyPnl = monthly.length && pnl !== null ? pnl / monthly.length : null;
+    if ([totalTrades, winRate, resolvedDrawdown, avgMonthlyPnl, pnl].every(v => v === null))
+        return null;
+    return {
+        source: strategy.backtestFile,
+        coverage: data.period?.from && data.period?.to ? `${String(data.period.from).slice(0, 4)}-${String(data.period.to).slice(0, 4)}` : null,
+        pnlUnit,
+        winRate,
+        maxDrawdown: resolvedDrawdown,
+        avgMonthlyPnl,
+        totalTrades,
         pnl,
-        capitalDeployed,
-        returnPct: pnl !== null && capitalDeployed ? pnl / capitalDeployed * 100 : null,
-        result: pnl === null ? null : pnl > 0 ? "WIN" : pnl < 0 ? "LOSS" : "FLAT",
-        status: text(row.status) || (exit !== null && exit > 0 ? "CLOSED" : "OPEN"),
-        reason: text(row.reasonExit || row.reason || row.note),
-      };
-    });
-
-  const consolidated = new Map<string, any>();
-  for (const row of normalized) {
-    const tradeKey = text(row.id) && !String(row.id).includes("|")
-      ? `id:${row.id}`
-      : [row.instrument, row.contract, row.side, row.entry].join("|");
-    const existing = consolidated.get(tradeKey);
-    if (!existing || (existing.exit == null && row.exit != null)) {
-      consolidated.set(tradeKey, row);
-    }
-  }
-
-  return [...consolidated.values()]
-    .slice(-25)
-    .reverse();
-}
-
-function normalizedCandles(raw: any[], hb: any): any[] {
-  const rows = Array.isArray(raw) ? raw : [];
-  return rows.slice().reverse().map((row: any) => ({
-    number: num(row.idx ?? row.num),
-    time: text(row.time) || timeValue(row.at || row.date),
-    timeframe: text(row.timeframe || row.tf) || "15m",
-    open: num(row.open ?? row.o),
-    high: num(row.high ?? row.h),
-    low: num(row.low ?? row.l),
-    close: num(row.close ?? row.c),
-    volume: num(row.volume ?? row.v),
-    status: text(row.status || row.state),
-    side: text(row.dir || row.direction || row.side),
-    entry: num(row.entry ?? row.entryPrice),
-    stopLoss: num(row.sl ?? row.stopLoss),
-    exit: num(row.exit ?? row.exitPrice),
-    pnl: num(row.pnlRs ?? row.pnl ?? row.pnlPts),
-    note: text(row.note || row.reason) || "No evaluation note recorded",
-  })).map((row: any) => ({ ...row, receivedAt: hb?.at || null }));
-}
-
-function backtestSummary(strategy: StrategyDefinition, instrument: InstrumentType): any {
-  if (!strategy.backtestFile) return null;
-  const data = readJson(strategy.backtestFile, null);
-  if (!data) return null;
-  const normalized = data?.strategies?.[strategy.id]?.[instrument];
-  if (normalized?.summary) {
-    const summary = normalized.summary;
-    return {
-      source: strategy.backtestFile,
-      coverage: data.coverage?.from && data.coverage?.to
-        ? `${String(data.coverage.from).slice(0, 4)}-${String(data.coverage.to).slice(0, 4)}`
-        : "5Y",
-      coverageFrom: data.coverage?.from || null,
-      coverageTo: data.coverage?.to || null,
-      pnl: num(summary.total),
-      pnlUnit: "rupees",
-      winRate: num(summary.winRate),
-      maxDrawdown: num(summary.maxDrawdown),
-      avgMonthlyPnl: num(summary.avgMonthlyPnl),
-      capitalUsed: num(summary.capitalUsed),
-      returnPct: num(summary.returnPct),
-      avgMonthlyReturnPct: num(summary.avgMonthlyReturnPct),
-      totalTrades: num(summary.totalTrades),
-      dailyRecords: Array.isArray(normalized.days) ? normalized.days.length : 0,
-      monthlyRecords: Array.isArray(normalized.months) ? normalized.months.length : 0,
-      modelled: !!normalized.modelled,
-      methodology: text(normalized.methodology),
-      days: strategy.id === "drishti-v2"
-        ? []
-        : Array.isArray(normalized.days) ? normalized.days : [],
-      weeks: Array.isArray(normalized.weeks) ? normalized.weeks : [],
-      months: Array.isArray(normalized.months) ? normalized.months : [],
-      years: Array.isArray(normalized.years) ? normalized.years : [],
-      generatedAt: data.generatedAt || null,
+        dailyRecords: daily.length,
+        monthlyRecords: monthly.length,
     };
-  }
-  if (strategy.prefix === "tt1030" && data.summary) {
-    const stats = instrument === "OPTIONS" ? data.summary.optStats : data.summary.futStats;
-    const months = data.months && typeof data.months === "object" ? Object.keys(data.months).length : 0;
-    if (!stats) return null;
-    return {
-      source: strategy.backtestFile,
-      coverage: "2021-2026",
-      pnl: num(stats.total),
-      pnlUnit: "rupees",
-      winRate: num(stats.winRate),
-      maxDrawdown: num(stats.maxDD),
-      avgMonthlyPnl: months ? (num(stats.total) ?? 0) / months : null,
-      totalTrades: num(data.summary.trades),
-      dailyRecords: num(data.summary.days) ?? 0,
-      monthlyRecords: months,
+}
+function shadowHistory(strategy, instrument) {
+    const byDate = new Map();
+    const tradeDetails = [];
+    const appendTradeDetail = (date, row) => {
+        const direction = text(row?.dir ?? row?.direction ?? row?.side).toUpperCase();
+        const quantity = num(row?.qty ?? row?.quantity) ?? 30;
+        const entry = num(instrument === "OPTIONS"
+            ? row?.premIn ?? row?.premiumEntry ?? row?.entryPremium
+            : row?.entry ?? row?.entryPrice);
+        const exit = num(instrument === "OPTIONS"
+            ? row?.premOut ?? row?.premiumExit ?? row?.exitPremium
+            : row?.exit ?? row?.exitPrice);
+        if (entry === null && exit === null)
+            return;
+        const action = instrument === "OPTIONS"
+            ? text(row?.action || "BUY").toUpperCase()
+            : text(row?.action || (direction === "PE" || direction === "SELL" ? "SELL" : "BUY")).toUpperCase();
+        const exitAction = action === "SELL" ? "BUY" : "SELL";
+        const calculatedPnl = entry !== null && exit !== null
+            ? (exit - entry) * quantity * (action === "SELL" ? -1 : 1)
+            : null;
+        const storedPnl = instrument === "OPTIONS"
+            ? num(row?.optionsPnl ?? row?.optionPnl ?? row?.premiumPnl)
+            : num(row?.pnlRs ?? row?.pnl);
+        const pnl = strategy.prefix === "drishtiV2"
+            ? storedPnl ?? calculatedPnl
+            : calculatedPnl ?? storedPnl;
+        const capitalDeployed = entry && quantity
+            ? (instrument === "OPTIONS" ? entry * quantity : entry * quantity * FUTURES_MARGIN_RATE)
+            : 0;
+        tradeDetails.push({
+            tradeId: text(row?.tradeId ?? row?.id) || `${strategy.id}-${instrument}-${date}-${text(row?.time)}-${tradeDetails.length + 1}`,
+            date,
+            time: text(row?.time ?? row?.entryTime ?? row?.timestamp) || "--",
+            instrument: instrument === "OPTIONS"
+                ? text(row?.symbol ?? row?.tradeSymbol) || `BANKNIFTY ${direction}`
+                : "BANKNIFTY FUTURES",
+            contract: direction || "--",
+            action,
+            exitAction,
+            entry,
+            exit,
+            quantity,
+            pnl,
+            capitalDeployed: Math.round(capitalDeployed),
+            returnPct: capitalDeployed > 0 && pnl !== null ? pnl / capitalDeployed * 100 : null,
+            status: exit !== null || pnl !== null ? "CLOSED" : "OPEN",
+            reason: text(row?.reason ?? row?.exitReason ?? row?.note) || "--",
+        });
     };
-  }
-  const totals = data.totals || data.summary || data.total || {};
-  const daily = Array.isArray(data.daily) ? data.daily : [];
-  const monthly = data.monthly && typeof data.monthly === "object" ? Object.values(data.monthly) : [];
-  const totalTrades = num(totals.trades ?? totals.totalTrades ?? data.tradedDays);
-  const wins = num(totals.wins ?? totals.totalWins);
-  const winRate = num(data.winRate ?? totals.winRate ?? totals.tradeWinRate) ?? (
-    totalTrades && wins !== null ? (wins / totalTrades) * 100 : null
-  );
-  const maxDrawdown = num(totals.maxDDRs ?? totals.maxDrawdown ?? data.maxDrawdown);
-  const cashPnl = num(totals.totalPnlRs ?? totals.pnl ?? totals.totalPnl);
-  const pnl = cashPnl ?? num(totals.bodyBreakout);
-  const pnlUnit = cashPnl !== null ? "rupees" : "points";
-  const dailyValues = daily.map((row: any) => num(row.pnl ?? row.bbPnL)).filter((value: number | null): value is number => value !== null);
-  let derivedDrawdown = 0;
-  let equity = 0;
-  let peak = 0;
-  for (const value of dailyValues) {
-    equity += value;
-    peak = Math.max(peak, equity);
-    derivedDrawdown = Math.max(derivedDrawdown, peak - equity);
-  }
-  const resolvedDrawdown = maxDrawdown ?? (dailyValues.length ? derivedDrawdown : null);
-  const avgMonthlyPnl = monthly.length && pnl !== null ? pnl / monthly.length : null;
-  if ([totalTrades, winRate, resolvedDrawdown, avgMonthlyPnl, pnl].every(v => v === null)) return null;
-  return {
-    source: strategy.backtestFile,
-    coverage: data.period?.from && data.period?.to ? `${String(data.period.from).slice(0, 4)}-${String(data.period.to).slice(0, 4)}` : null,
-    pnlUnit,
-    winRate,
-    maxDrawdown: resolvedDrawdown,
-    avgMonthlyPnl,
-    totalTrades,
-    pnl,
-    dailyRecords: daily.length,
-    monthlyRecords: monthly.length,
-  };
+    const monthlyHistoryKey = {
+        tt1030: "TEN_THIRTY",
+        tt1000: "TEN_O_CLOCK",
+        tt0945: "NINE_FORTY_FIVE",
+        normalBreakoutShadow: "NORMAL_BREAKOUT_V1",
+        hybridShadow: "HYBRID_BODY",
+    };
+    const historyKey = monthlyHistoryKey[strategy.prefix];
+    if (historyKey) {
+        const source = readJson("strategy-monthly-history.json", {});
+        const months = source?.months && typeof source.months === "object" ? source.months : {};
+        for (const month of Object.values(months)) {
+            const days = month?.[historyKey]?.days || {};
+            for (const [date, record] of Object.entries(days)) {
+                const summary = record?.summary || {};
+                const pnl = num(instrument === "OPTIONS" ? summary.optionsRs : summary.futuresRs);
+                if (pnl === null)
+                    continue;
+                const tradeRows = Array.isArray(record?.trades) ? record.trades : [];
+                tradeRows.forEach((row) => appendTradeDetail(date, row));
+                const completedRows = tradeRows.filter((row) => num(instrument === "OPTIONS" ? row.premOut ?? row.premiumExit : row.exit ?? row.exitPrice) !== null
+                    || num(row.pnlRs ?? row.pnl ?? row.pts) !== null);
+                const capitalRows = completedRows.length ? completedRows : tradeRows.filter((row) => num(instrument === "OPTIONS" ? row.premIn ?? row.premiumEntry : row.entry ?? row.entryPrice) !== null);
+                const capitalDeployed = capitalRows.reduce((sum, row) => {
+                    const entry = num(instrument === "OPTIONS" ? row.premIn ?? row.premiumEntry : row.entry ?? row.entryPrice);
+                    const quantity = num(row.qty ?? row.quantity) ?? 30;
+                    return sum + (entry && quantity ? (instrument === "OPTIONS" ? entry * quantity : entry * quantity * FUTURES_MARGIN_RATE) : 0);
+                }, 0);
+                byDate.set(date, {
+                    date,
+                    pnl,
+                    capitalDeployed: Math.round(capitalDeployed),
+                    trades: num(summary.trades) ?? 0,
+                    wins: num(instrument === "OPTIONS" ? summary.optionsWins : summary.wins) ?? (pnl > 0 ? 1 : 0),
+                    losses: num(instrument === "OPTIONS" ? summary.optionsLosses : summary.losses) ?? (pnl < 0 ? 1 : 0),
+                });
+            }
+        }
+    }
+    else if (strategy.prefix === "drishti" || strategy.prefix === "drishtiV2") {
+        const historyFile = strategy.prefix === "drishtiV2" ? "drishti-v2-trades.json" : "trades.json";
+        const rows = readJson(historyFile, []);
+        for (const row of Array.isArray(rows) ? rows : []) {
+            const date = dateKey(row.date || row.exitTime || row.entryTime);
+            if (!date)
+                continue;
+            const symbol = String(row.symbol || row.tradeSymbol || "").toUpperCase();
+            const looksOption = /\d+(CE|PE)$/.test(symbol) || num(row.premiumEntry) !== null;
+            if (instrument === "OPTIONS" ? !looksOption : looksOption)
+                continue;
+            const pnl = num(row.netPnlRs ?? row.pnlRs ?? row.pnl);
+            if (pnl === null)
+                continue;
+            const current = byDate.get(date) || { date, pnl: 0, capitalDeployed: 0, trades: 0, wins: 0, losses: 0 };
+            current.pnl += pnl;
+            const entry = num(instrument === "OPTIONS" ? row.premiumEntry ?? row.entryPremium : row.entryPrice ?? row.entry);
+            const quantity = num(row.qty ?? row.quantity) ?? 30;
+            current.capitalDeployed += entry && quantity
+                ? (instrument === "OPTIONS" ? entry * quantity : entry * quantity * FUTURES_MARGIN_RATE)
+                : 0;
+            current.trades += 1;
+            if (pnl > 0)
+                current.wins += 1;
+            if (pnl < 0)
+                current.losses += 1;
+            byDate.set(date, current);
+            appendTradeDetail(date, row);
+        }
+    }
+    const days = Array.from(byDate.values()).map(day => ({
+        ...day,
+        capitalDeployed: Math.round(day.capitalDeployed),
+        returnPct: day.capitalDeployed > 0 ? day.pnl / day.capitalDeployed * 100 : null,
+    })).sort((a, b) => a.date.localeCompare(b.date));
+    const aggregate = (keyFor) => {
+        const groups = new Map();
+        for (const day of days) {
+            const key = keyFor(day.date);
+            const row = groups.get(key) || { period: key, pnl: 0, capitalDeployed: 0, tradingDays: 0, trades: 0, wins: 0, losses: 0 };
+            row.pnl += day.pnl;
+            row.capitalDeployed += day.capitalDeployed;
+            row.tradingDays += 1;
+            row.trades += day.trades;
+            row.wins += day.wins;
+            row.losses += day.losses;
+            groups.set(key, row);
+        }
+        return Array.from(groups.values()).map((row) => ({
+            ...row,
+            winRate: row.wins + row.losses > 0 ? row.wins / (row.wins + row.losses) * 100 : 0,
+            returnPct: row.capitalDeployed > 0 ? row.pnl / row.capitalDeployed * 100 : null,
+        })).sort((a, b) => a.period.localeCompare(b.period)).reverse();
+    };
+    const weekKey = (date) => {
+        const parsed = new Date(`${date}T00:00:00Z`);
+        const day = parsed.getUTCDay() || 7;
+        parsed.setUTCDate(parsed.getUTCDate() + 4 - day);
+        const yearStart = new Date(Date.UTC(parsed.getUTCFullYear(), 0, 1));
+        const week = Math.ceil((((parsed.getTime() - yearStart.getTime()) / 86400000) + 1) / 7);
+        return `${parsed.getUTCFullYear()}-W${String(week).padStart(2, "0")}`;
+    };
+    return {
+        source: historyKey
+            ? "strategy-monthly-history.json"
+            : strategy.prefix === "drishtiV2"
+                ? "drishti-v2-trades.json"
+                : strategy.prefix === "drishti" ? "trades.json" : null,
+        trades: tradeDetails.sort((a, b) => `${b.date} ${b.time}`.localeCompare(`${a.date} ${a.time}`)),
+        days: [...days].reverse(),
+        weekly: aggregate(weekKey),
+        monthly: aggregate(date => date.slice(0, 7)),
+        yearly: aggregate(date => date.slice(0, 4)),
+    };
 }
-
-function shadowHistory(strategy: StrategyDefinition, instrument: InstrumentType): any {
-  const byDate = new Map<string, { date: string; pnl: number; capitalDeployed: number; trades: number; wins: number; losses: number }>();
-  const tradeDetails: any[] = [];
-  const appendTradeDetail = (date: string, row: any) => {
-    const direction = text(row?.dir ?? row?.direction ?? row?.side).toUpperCase();
-    const quantity = num(row?.qty ?? row?.quantity) ?? 30;
-    const entry = num(instrument === "OPTIONS"
-      ? row?.premIn ?? row?.premiumEntry ?? row?.entryPremium
-      : row?.entry ?? row?.entryPrice);
-    const exit = num(instrument === "OPTIONS"
-      ? row?.premOut ?? row?.premiumExit ?? row?.exitPremium
-      : row?.exit ?? row?.exitPrice);
-    if (entry === null && exit === null) return;
-    const action = instrument === "OPTIONS"
-      ? text(row?.action || "BUY").toUpperCase()
-      : text(row?.action || (direction === "PE" || direction === "SELL" ? "SELL" : "BUY")).toUpperCase();
-    const exitAction = action === "SELL" ? "BUY" : "SELL";
-    const calculatedPnl = entry !== null && exit !== null
-      ? (exit - entry) * quantity * (action === "SELL" ? -1 : 1)
-      : null;
-    const storedPnl = instrument === "OPTIONS"
-      ? num(row?.optionsPnl ?? row?.optionPnl ?? row?.premiumPnl)
-      : num(row?.pnlRs ?? row?.pnl);
-    const pnl = strategy.prefix === "drishtiV2"
-      ? storedPnl ?? calculatedPnl
-      : calculatedPnl ?? storedPnl;
-    const capitalDeployed = entry && quantity
-      ? (instrument === "OPTIONS" ? entry * quantity : entry * quantity * FUTURES_MARGIN_RATE)
-      : 0;
-    tradeDetails.push({
-      tradeId: text(row?.tradeId ?? row?.id) || `${strategy.id}-${instrument}-${date}-${text(row?.time)}-${tradeDetails.length + 1}`,
-      date,
-      time: text(row?.time ?? row?.entryTime ?? row?.timestamp) || "--",
-      instrument: instrument === "OPTIONS"
-        ? text(row?.symbol ?? row?.tradeSymbol) || `BANKNIFTY ${direction}`
-        : "BANKNIFTY FUTURES",
-      contract: direction || "--",
-      action,
-      exitAction,
-      entry,
-      exit,
-      quantity,
-      pnl,
-      capitalDeployed: Math.round(capitalDeployed),
-      returnPct: capitalDeployed > 0 && pnl !== null ? pnl / capitalDeployed * 100 : null,
-      status: exit !== null || pnl !== null ? "CLOSED" : "OPEN",
-      reason: text(row?.reason ?? row?.exitReason ?? row?.note) || "--",
-    });
-  };
-  const monthlyHistoryKey: Partial<Record<StrategyDefinition["prefix"], string>> = {
-    tt1030: "TEN_THIRTY",
-    tt1000: "TEN_O_CLOCK",
-    tt0945: "NINE_FORTY_FIVE",
-    normalBreakoutShadow: "NORMAL_BREAKOUT_V1",
-    hybridShadow: "HYBRID_BODY",
-  };
-  const historyKey = monthlyHistoryKey[strategy.prefix];
-  if (historyKey) {
-    const source = readJson("strategy-monthly-history.json", {});
-    const months = source?.months && typeof source.months === "object" ? source.months : {};
-    for (const month of Object.values(months) as any[]) {
-      const days = month?.[historyKey]?.days || {};
-      for (const [date, record] of Object.entries(days) as [string, any][]) {
-        const summary = record?.summary || {};
-        const pnl = num(instrument === "OPTIONS" ? summary.optionsRs : summary.futuresRs);
-        if (pnl === null) continue;
-        const tradeRows = Array.isArray(record?.trades) ? record.trades : [];
-        tradeRows.forEach((row: any) => appendTradeDetail(date, row));
-        const completedRows = tradeRows.filter((row: any) =>
-          num(instrument === "OPTIONS" ? row.premOut ?? row.premiumExit : row.exit ?? row.exitPrice) !== null
-          || num(row.pnlRs ?? row.pnl ?? row.pts) !== null
-        );
-        const capitalRows = completedRows.length ? completedRows : tradeRows.filter((row: any) =>
-          num(instrument === "OPTIONS" ? row.premIn ?? row.premiumEntry : row.entry ?? row.entryPrice) !== null
-        );
-        const capitalDeployed = capitalRows.reduce((sum: number, row: any) => {
-          const entry = num(instrument === "OPTIONS" ? row.premIn ?? row.premiumEntry : row.entry ?? row.entryPrice);
-          const quantity = num(row.qty ?? row.quantity) ?? 30;
-          return sum + (entry && quantity ? (instrument === "OPTIONS" ? entry * quantity : entry * quantity * FUTURES_MARGIN_RATE) : 0);
-        }, 0);
-        byDate.set(date, {
-          date,
-          pnl,
-          capitalDeployed: Math.round(capitalDeployed),
-          trades: num(summary.trades) ?? 0,
-          wins: num(instrument === "OPTIONS" ? summary.optionsWins : summary.wins) ?? (pnl > 0 ? 1 : 0),
-          losses: num(instrument === "OPTIONS" ? summary.optionsLosses : summary.losses) ?? (pnl < 0 ? 1 : 0),
+function runtimeEvidence(processName = "trading-bot") {
+    const cached = runtimeHealthCache.get(processName);
+    if (cached?.value && Date.now() - cached.checkedAt < 15000) {
+        return cached.value;
+    }
+    let processInfo = null;
+    try {
+        const raw = (0, child_process_1.execFileSync)("pm2", ["jlist"], {
+            encoding: "utf8",
+            timeout: 2500,
+            windowsHide: true,
+            stdio: ["ignore", "pipe", "ignore"],
         });
-      }
+        const rows = JSON.parse(raw);
+        const tradingBot = Array.isArray(rows) ? rows.find((row) => row?.name === processName) : null;
+        if (tradingBot) {
+            processInfo = {
+                status: text(tradingBot?.pm2_env?.status)?.toUpperCase() || "UNKNOWN",
+                pid: num(tradingBot?.pid),
+                uptimeStartedAt: num(tradingBot?.pm2_env?.pm_uptime),
+                restarts: num(tradingBot?.pm2_env?.restart_time) ?? 0,
+                unstableRestarts: num(tradingBot?.pm2_env?.unstable_restarts) ?? 0,
+            };
+        }
     }
-  } else if (strategy.prefix === "drishti" || strategy.prefix === "drishtiV2") {
-    const historyFile = strategy.prefix === "drishtiV2" ? "drishti-v2-trades.json" : "trades.json";
-    const rows: any[] = readJson(historyFile, []);
-    for (const row of Array.isArray(rows) ? rows : []) {
-      const date = dateKey(row.date || row.exitTime || row.entryTime);
-      if (!date) continue;
-      const symbol = String(row.symbol || row.tradeSymbol || "").toUpperCase();
-      const looksOption = /\d+(CE|PE)$/.test(symbol) || num(row.premiumEntry) !== null;
-      if (instrument === "OPTIONS" ? !looksOption : looksOption) continue;
-      const pnl = num(row.netPnlRs ?? row.pnlRs ?? row.pnl);
-      if (pnl === null) continue;
-      const current = byDate.get(date) || { date, pnl: 0, capitalDeployed: 0, trades: 0, wins: 0, losses: 0 };
-      current.pnl += pnl;
-      const entry = num(instrument === "OPTIONS" ? row.premiumEntry ?? row.entryPremium : row.entryPrice ?? row.entry);
-      const quantity = num(row.qty ?? row.quantity) ?? 30;
-      current.capitalDeployed += entry && quantity
-        ? (instrument === "OPTIONS" ? entry * quantity : entry * quantity * FUTURES_MARGIN_RATE)
-        : 0;
-      current.trades += 1;
-      if (pnl > 0) current.wins += 1;
-      if (pnl < 0) current.losses += 1;
-      byDate.set(date, current);
-      appendTradeDetail(date, row);
+    catch {
+        processInfo = null;
     }
-  }
-
-  const days = Array.from(byDate.values()).map(day => ({
-    ...day,
-    capitalDeployed: Math.round(day.capitalDeployed),
-    returnPct: day.capitalDeployed > 0 ? day.pnl / day.capitalDeployed * 100 : null,
-  })).sort((a, b) => a.date.localeCompare(b.date));
-  const aggregate = (keyFor: (date: string) => string) => {
-    const groups = new Map<string, any>();
-    for (const day of days) {
-      const key = keyFor(day.date);
-      const row = groups.get(key) || { period: key, pnl: 0, capitalDeployed: 0, tradingDays: 0, trades: 0, wins: 0, losses: 0 };
-      row.pnl += day.pnl;
-      row.capitalDeployed += day.capitalDeployed;
-      row.tradingDays += 1;
-      row.trades += day.trades;
-      row.wins += day.wins;
-      row.losses += day.losses;
-      groups.set(key, row);
+    const cpuCount = Math.max(1, os_1.default.cpus()?.length || 1);
+    const cpuLoadPct = Math.max(0, os_1.default.loadavg()[0] / cpuCount * 100);
+    const memoryUsedPct = os_1.default.totalmem() > 0 ? (1 - os_1.default.freemem() / os_1.default.totalmem()) * 100 : 0;
+    let diskUsedPct = null;
+    try {
+        const stats = fs_1.default.statfsSync(BOT_DIR);
+        const total = Number(stats.blocks) * Number(stats.bsize);
+        const free = Number(stats.bavail) * Number(stats.bsize);
+        diskUsedPct = total > 0 ? (1 - free / total) * 100 : null;
     }
-    return Array.from(groups.values()).map((row: any) => ({
-      ...row,
-      winRate: row.wins + row.losses > 0 ? row.wins / (row.wins + row.losses) * 100 : 0,
-      returnPct: row.capitalDeployed > 0 ? row.pnl / row.capitalDeployed * 100 : null,
-    })).sort((a: any, b: any) => a.period.localeCompare(b.period)).reverse();
-  };
-  const weekKey = (date: string) => {
-    const parsed = new Date(`${date}T00:00:00Z`);
-    const day = parsed.getUTCDay() || 7;
-    parsed.setUTCDate(parsed.getUTCDate() + 4 - day);
-    const yearStart = new Date(Date.UTC(parsed.getUTCFullYear(), 0, 1));
-    const week = Math.ceil((((parsed.getTime() - yearStart.getTime()) / 86400000) + 1) / 7);
-    return `${parsed.getUTCFullYear()}-W${String(week).padStart(2, "0")}`;
-  };
-  return {
-    source: historyKey
-      ? "strategy-monthly-history.json"
-      : strategy.prefix === "drishtiV2"
-        ? "drishti-v2-trades.json"
-        : strategy.prefix === "drishti" ? "trades.json" : null,
-    trades: tradeDetails.sort((a, b) => `${b.date} ${b.time}`.localeCompare(`${a.date} ${a.time}`)),
-    days: [...days].reverse(),
-    weekly: aggregate(weekKey),
-    monthly: aggregate(date => date.slice(0, 7)),
-    yearly: aggregate(date => date.slice(0, 4)),
-  };
-}
-
-function runtimeEvidence(processName = "trading-bot"): any {
-  const cached = runtimeHealthCache.get(processName);
-  if (cached?.value && Date.now() - cached.checkedAt < 15000) {
-    return cached.value;
-  }
-  let processInfo: any = null;
-  try {
-    const raw = execFileSync("pm2", ["jlist"], {
-      encoding: "utf8",
-      timeout: 2500,
-      windowsHide: true,
-      stdio: ["ignore", "pipe", "ignore"],
-    });
-    const rows = JSON.parse(raw);
-    const tradingBot = Array.isArray(rows) ? rows.find((row: any) => row?.name === processName) : null;
-    if (tradingBot) {
-      processInfo = {
-        status: text(tradingBot?.pm2_env?.status)?.toUpperCase() || "UNKNOWN",
-        pid: num(tradingBot?.pid),
-        uptimeStartedAt: num(tradingBot?.pm2_env?.pm_uptime),
-        restarts: num(tradingBot?.pm2_env?.restart_time) ?? 0,
-        unstableRestarts: num(tradingBot?.pm2_env?.unstable_restarts) ?? 0,
-      };
+    catch {
+        diskUsedPct = null;
     }
-  } catch {
-    processInfo = null;
-  }
-
-  const cpuCount = Math.max(1, os.cpus()?.length || 1);
-  const cpuLoadPct = Math.max(0, os.loadavg()[0] / cpuCount * 100);
-  const memoryUsedPct = os.totalmem() > 0 ? (1 - os.freemem() / os.totalmem()) * 100 : 0;
-  let diskUsedPct: number | null = null;
-  try {
-    const stats = fs.statfsSync(BOT_DIR);
-    const total = Number(stats.blocks) * Number(stats.bsize);
-    const free = Number(stats.bavail) * Number(stats.bsize);
-    diskUsedPct = total > 0 ? (1 - free / total) * 100 : null;
-  } catch {
-    diskUsedPct = null;
-  }
-  const value = { process: processInfo, resources: { cpuLoadPct, memoryUsedPct, diskUsedPct } };
-  runtimeHealthCache.set(processName, { checkedAt: Date.now(), value });
-  return value;
+    const value = { process: processInfo, resources: { cpuLoadPct, memoryUsedPct, diskUsedPct } };
+    runtimeHealthCache.set(processName, { checkedAt: Date.now(), value });
+    return value;
 }
-
-function minuteOfDay(value: any): number | null {
-  const match = String(value || "").match(/(\d{1,2}):(\d{2})/);
-  if (!match) return null;
-  return Number(match[1]) * 60 + Number(match[2]);
+function minuteOfDay(value) {
+    const match = String(value || "").match(/(\d{1,2}):(\d{2})/);
+    if (!match)
+        return null;
+    return Number(match[1]) * 60 + Number(match[2]);
 }
-
-function istClock(): { weekday: number; minutes: number; time: string } {
-  const now = new Date();
-  const parts = new Intl.DateTimeFormat("en-GB", {
-    timeZone: "Asia/Kolkata",
-    weekday: "short",
-    hour: "2-digit",
-    minute: "2-digit",
-    hour12: false,
-  }).formatToParts(now);
-  const part = (type: string) => parts.find(row => row.type === type)?.value || "";
-  const weekdays: Record<string, number> = { Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6, Sun: 0 };
-  const hour = Number(part("hour") || 0);
-  const minute = Number(part("minute") || 0);
-  return { weekday: weekdays[part("weekday")] ?? now.getDay(), minutes: hour * 60 + minute, time: `${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}` };
+function istClock() {
+    const now = new Date();
+    const parts = new Intl.DateTimeFormat("en-GB", {
+        timeZone: "Asia/Kolkata",
+        weekday: "short",
+        hour: "2-digit",
+        minute: "2-digit",
+        hour12: false,
+    }).formatToParts(now);
+    const part = (type) => parts.find(row => row.type === type)?.value || "";
+    const weekdays = { Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6, Sun: 0 };
+    const hour = Number(part("hour") || 0);
+    const minute = Number(part("minute") || 0);
+    return { weekday: weekdays[part("weekday")] ?? now.getDay(), minutes: hour * 60 + minute, time: `${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}` };
 }
-
-function systemHealth(
-  strategy: StrategyDefinition,
-  hb: any,
-  fields: ReturnType<typeof strategyFields>,
-  candles: any[],
-  heartbeatAgeSec: number | null,
-  externalHealth: any,
-): any {
-  const processName = strategy.processName || "trading-bot";
-  const evidence = runtimeEvidence(processName);
-  const processState = String(evidence.process?.status || "UNKNOWN");
-  const processOnline = processState === "ONLINE";
-  const clock = istClock();
-  const tradingDay = clock.weekday >= 1 && clock.weekday <= 5;
-  const marketOpen = tradingDay && clock.minutes >= 555 && clock.minutes <= 930;
-  const triggerByStrategy: Record<string, { time: string; minutes: number }> = {
-    drishti: { time: "09:25", minutes: 565 },
-    "drishti-v2": { time: "09:30", minutes: 570 },
-    tt1000: { time: "10:00", minutes: 600 },
-    tt0945: { time: "09:45", minutes: 585 },
-    tt1030: { time: "10:30", minutes: 630 },
-    "normal-breakout": { time: "09:45", minutes: 585 },
-    "hybrid-body": { time: "09:30", minutes: 570 },
-  };
-  const trigger = triggerByStrategy[strategy.id] || { time: "--", minutes: 555 };
-  const candleTimes = candles.map(row => minuteOfDay(row.time)).filter((value): value is number => value !== null);
-  const uniqueTimes = new Set(candleTimes);
-  const duplicateCandles = candleTimes.length - uniqueTimes.size;
-  const sortedTimes = [...uniqueTimes].sort((a, b) => a - b);
-  const gapCount = sortedTimes.slice(1).filter((value, index) => value - sortedTimes[index] > 20).length;
-  const latestCandleMinute = sortedTimes.length ? sortedTimes[sortedTimes.length - 1] : null;
-  const triggerDue = tradingDay && clock.minutes >= trigger.minutes + 20;
-  const triggerCompleted = candleTimes.some(value => value >= trigger.minutes);
-  const missedTriggers = triggerDue && !triggerCompleted ? 1 : 0;
-  const freshHeartbeat = heartbeatAgeSec !== null && heartbeatAgeSec <= HEARTBEAT_HEALTHY_SEC;
-  const delayedHeartbeat = heartbeatAgeSec !== null && heartbeatAgeSec <= HEARTBEAT_CRITICAL_SEC;
-  const livePrice = num(fields.live ?? hb?.price);
-  const strategyMarker = text(
-    hb?.[`${strategy.prefix}Strategy`]
-      ?? (strategy.id === "drishti" ? hb?.strategy : null)
-      ?? fields.phase,
-  );
-  const recentLogs = recentServerLogs(strategy);
-  const recentRuntimeErrors = recentLogs.filter(row => /UNCAUGHT|CRASH|FATAL|SAVE_FAIL|WRITE_FAIL/i.test(String(row.message || "")));
-  let storageWritable = false;
-  try {
-    fs.accessSync(BOT_DIR, fs.constants.R_OK | fs.constants.W_OK);
-    storageWritable = true;
-  } catch {
-    storageWritable = false;
-  }
-  const heartbeatFile = path.join(BOT_DIR, strategy.heartbeatFile || "bot-heartbeat.json");
-  const snapshotReadable = fs.existsSync(heartbeatFile);
-  const tokenValid = externalHealth?.token?.valid === true;
-  const tokenChecked = !!externalHealth?.token?.source;
-  const databaseOK = externalHealth?.database?.ok === true;
-  const autoRefreshImplemented = externalHealth?.token?.autoRefreshImplemented === true;
-  const autoRefreshVerified = externalHealth?.token?.autoRefreshVerified === true;
-  const autoRefreshFailed = externalHealth?.token?.autoRefreshFailed === true;
-  const autoRefreshDetail = autoRefreshVerified
-    ? `last successful run ${externalHealth?.token?.lastAutoRefreshLogAt || "recorded"}`
-    : autoRefreshFailed
-      ? "latest attempt reports a failure"
-      : autoRefreshImplemented
-        ? "helper present but no verified success evidence"
-        : "not implemented";
-  const strategyState = readJson(strategy.stateFile || "trade-state.json", {});
-  const futuresFields = strategyFields(strategy, hb, strategyState, "FUTURES");
-  const optionsFields = strategyFields(strategy, hb, strategyState, "OPTIONS");
-  const resourceValues = [
-    Number(evidence.resources?.cpuLoadPct || 0),
-    Number(evidence.resources?.memoryUsedPct || 0),
-    Number(evidence.resources?.diskUsedPct || 0),
-  ];
-  const resourceCritical = resourceValues.some(value => value >= 95);
-  const resourceWarning = resourceValues.some(value => value >= 85) || Number(evidence.process?.unstableRestarts || 0) > 0;
-  const processUptimeMs = evidence.process?.uptimeStartedAt
-    ? Math.max(0, Date.now() - Number(evidence.process.uptimeStartedAt))
-    : null;
-  const processUptime = processUptimeMs === null
-    ? "--"
-    : `${Math.floor(processUptimeMs / 86400000)}d ${Math.floor(processUptimeMs % 86400000 / 3600000)}h`;
-  const latestFeedLog = recentLogs.find(row => /\b(FEED|TICK|MARKET DATA|HEARTBEAT)\b/i.test(String(row.message || "")));
-  const futuresReady = processOnline && !!(futuresFields.phase || futuresFields.rawTrades?.length || strategyMarker);
-  const optionsReady = processOnline && !!(optionsFields.phase || optionsFields.rawTrades?.length || strategyMarker);
-  const supportsOptions = !strategy.instruments || strategy.instruments.includes("OPTIONS");
-
-  const checks: HealthCheck[] = [
-    {
-      id: "process",
-      label: "Bot Process",
-      level: processOnline ? "PASS" : "FAIL",
-      value: processOnline ? "Online" : processState === "UNKNOWN" ? "Unknown" : processState,
-      detail: processOnline
-        ? `PID ${evidence.process?.pid || "--"}; uptime ${processUptime}; ${evidence.process?.restarts || 0} lifetime restarts`
-        : `PM2 ${processName} process is not online.`,
-      source: `PM2 jlist (${processName})`,
-      critical: true,
-    },
-    {
-      id: "scheduler",
-      label: "Scheduler",
-      level: !processOnline ? "FAIL" : missedTriggers ? "FAIL" : triggerCompleted ? "PASS" : "INFO",
-      value: !processOnline ? "Stopped" : missedTriggers ? "Missed trigger" : triggerCompleted ? "Active" : "Waiting",
-      detail: `Expected ${trigger.time}; last evaluation ${latestCandleMinute === null ? "--" : `${String(Math.floor(latestCandleMinute / 60)).padStart(2, "0")}:${String(latestCandleMinute % 60).padStart(2, "0")}`}; missed ${missedTriggers}`,
-      source: "PM2 + strategy candle evaluation log",
-      critical: true,
-    },
-    {
-      id: "trigger",
-      label: "Latest Automatic Trigger",
-      level: missedTriggers ? "FAIL" : triggerCompleted ? "PASS" : triggerDue ? "WARN" : "INFO",
-      value: missedTriggers ? "Missed" : triggerCompleted ? "Completed" : "Pending",
-      detail: `Scheduled ${trigger.time}; latest strategy evaluation ${latestCandleMinute === null ? "--" : `${String(Math.floor(latestCandleMinute / 60)).padStart(2, "0")}:${String(latestCandleMinute % 60).padStart(2, "0")}`}`,
-      source: "Scheduled trigger + selected strategy candle log",
-      critical: true,
-    },
-    {
-      id: "heartbeat",
-      label: "Strategy Heartbeat",
-      level: freshHeartbeat ? "PASS" : delayedHeartbeat ? "WARN" : "FAIL",
-      value: heartbeatAgeSec === null ? "Missing" : `${heartbeatAgeSec}s ago`,
-      detail: `Expected within ${HEARTBEAT_HEALTHY_SEC}s; critical after ${HEARTBEAT_CRITICAL_SEC}s`,
-      source: "bot-heartbeat.json",
-      critical: true,
-    },
-    {
-      id: "marketHeartbeat",
-      label: "Market Data Heartbeat",
-      level: !marketOpen ? "INFO" : freshHeartbeat && livePrice !== null && livePrice > 0 ? "PASS" : delayedHeartbeat ? "WARN" : "FAIL",
-      value: !marketOpen ? "Market closed" : freshHeartbeat ? "Receiving" : "Stale",
-      detail: `Latest price ${livePrice ?? "--"}; heartbeat ${heartbeatAgeSec === null ? "missing" : `${heartbeatAgeSec}s ago`}`,
-      source: "Bot heartbeat market fields",
-      critical: true,
-    },
-    {
-      id: "feed",
-      label: "Feed Freshness",
-      level: !marketOpen ? "INFO" : freshHeartbeat && livePrice !== null && livePrice > 0 ? "PASS" : delayedHeartbeat ? "WARN" : "FAIL",
-      value: !marketOpen ? "Market closed" : livePrice ? "Fresh" : "No price",
-      detail: !marketOpen
-        ? `Fresh ticks are not required outside market hours. Last event: ${latestFeedLog?.message || "not published"}`
-        : `Latest price evidence ${livePrice ?? "--"}; last feed event ${latestFeedLog?.message || "not published"}.`,
-      source: "Heartbeat price evidence",
-      critical: true,
-    },
-    {
-      id: "candles",
-      label: "Candle Generation",
-      level: duplicateCandles > 0 ? "FAIL" : missedTriggers ? "FAIL" : gapCount > 0 ? "WARN" : triggerCompleted ? "PASS" : "INFO",
-      value: duplicateCandles ? `${duplicateCandles} duplicate` : gapCount ? `${gapCount} gap` : triggerCompleted ? "Updating" : "Waiting",
-      detail: `${candles.length} candles; latest ${candles[0]?.time || "--"}; duplicate ${duplicateCandles}; gaps ${gapCount}`,
-      source: "Selected strategy candle log",
-      critical: true,
-    },
-    {
-      id: "strategy",
-      label: "Strategy Engine",
-      level: !processOnline || recentRuntimeErrors.length ? "FAIL" : strategyMarker || candles.length ? "PASS" : "WARN",
-      value: !processOnline ? "Offline" : recentRuntimeErrors.length ? "Runtime error" : strategyMarker || candles.length ? "Loaded" : "Unverified",
-      detail: `${strategy.name}; version ${strategy.version}; phase ${fields.phase || "--"}; recent fatal errors ${recentRuntimeErrors.length}`,
-      source: "Heartbeat strategy fields + PM2 logs",
-      critical: true,
-    },
-    {
-      id: "futuresExecutor",
-      label: "Futures Shadow Executor",
-      level: futuresReady ? "PASS" : processOnline ? "WARN" : "FAIL",
-      value: futuresReady ? "Ready" : "Unverified",
-      detail: `Futures execution adapter; selected strategy ${strategy.name}; mode SHADOW`,
-      source: "Futures strategy runtime fields",
-      critical: true,
-    },
-    {
-      id: "optionsExecutor",
-      label: "Options Shadow Executor",
-      level: supportsOptions ? (optionsReady ? "PASS" : processOnline ? "WARN" : "FAIL") : "INFO",
-      value: supportsOptions ? (optionsReady ? "Ready" : "Unverified") : "Not used",
-      detail: supportsOptions
-        ? `Options execution adapter; selected strategy ${strategy.name}; mode SHADOW`
-        : `${strategy.name} is intentionally futures-only.`,
-      source: "Options strategy runtime fields",
-      critical: supportsOptions,
-    },
-    {
-      id: "storage",
-      label: "Database & Storage",
-      level: databaseOK && storageWritable && snapshotReadable && !recentRuntimeErrors.some(row => /SAVE_FAIL|WRITE_FAIL/i.test(String(row.message || ""))) ? "PASS" : "FAIL",
-      value: databaseOK && storageWritable ? "Connected" : "Unavailable",
-      detail: `SQLite ${databaseOK ? "readable" : "failed"}; bot storage ${storageWritable ? "writable" : "not writable"}; heartbeat snapshot ${snapshotReadable ? "readable" : "missing"}`,
-      source: "SQLite SELECT 1 + filesystem access",
-      critical: true,
-    },
-    {
-      id: "token",
-      label: "Broker Token",
-      level: tokenValid ? "PASS" : marketOpen ? "FAIL" : tokenChecked ? "WARN" : "INFO",
-      value: tokenValid ? "Valid" : tokenChecked ? "Invalid" : "Not verified",
-      detail: tokenValid
-        ? `Kite profile verified; auto refresh ${autoRefreshDetail}`
-        : `${externalHealth?.token?.error || "Profile validation unavailable"}; auto refresh ${autoRefreshDetail}`,
-      source: externalHealth?.token?.source || "Kite profile validation",
-      critical: true,
-    },
-    ...(autoRefreshImplemented ? [{
-      id: "autoTokenRefresh",
-      label: "Auto Token Refresh",
-      level: (autoRefreshVerified ? "PASS" : autoRefreshFailed ? "FAIL" : "WARN") as HealthLevel,
-      value: autoRefreshVerified ? "Verified" : autoRefreshFailed ? "Failed" : "Unverified",
-      detail: autoRefreshDetail,
-      source: "auto_token.js + refresh log",
-      critical: false,
-    }] : []),
-    {
-      id: "tokenValidation",
-      label: "Last Token Validation",
-      level: tokenValid ? "PASS" : tokenChecked ? "WARN" : "INFO",
-      value: externalHealth?.checkedAt || "Not verified",
-      detail: tokenValid ? "Latest Kite profile validation succeeded." : "No successful token validation is currently available.",
-      source: externalHealth?.token?.source || "Kite profile validation",
-      critical: false,
-    },
-    {
-      id: "resources",
-      label: "Server Resources",
-      level: resourceCritical ? "FAIL" : resourceWarning ? "WARN" : "PASS",
-      value: resourceCritical ? "Critical" : resourceWarning ? "Elevated" : "Normal",
-      detail: `CPU ${evidence.resources?.cpuLoadPct?.toFixed(1) ?? "--"}%; memory ${evidence.resources?.memoryUsedPct?.toFixed(1) ?? "--"}%; disk ${evidence.resources?.diskUsedPct?.toFixed(1) ?? "--"}%; API ${externalHealth?.apiLatencyMs ?? "--"}ms`,
-      source: "VPS operating system + API probe",
-      critical: false,
-    },
-  ];
-  const criticalChecks = checks.filter(check => check.critical);
-  const passedCritical = criticalChecks.filter(check => check.level === "PASS" || check.level === "INFO").length;
-  const failedCritical = criticalChecks.filter(check => check.level === "FAIL").length;
-  const warningCount = checks.filter(check => check.level === "WARN").length;
-  const state = failedCritical > 0 ? "CRITICAL" : warningCount > 0 ? "WARNING" : "HEALTHY";
-  return {
-    state,
-    label: state === "HEALTHY" ? "Healthy" : state === "WARNING" ? "Warning" : "Critical",
-    summary: `${passedCritical} of ${criticalChecks.length} critical checks passed`,
-    passedCritical,
-    criticalTotal: criticalChecks.length,
-    warningCount,
-    failedCritical,
-    checks,
-    checkedAt: externalHealth?.checkedAt || new Date().toISOString(),
-  };
-}
-
-function marketStatus(now = new Date()): "OPEN" | "CLOSED" {
-  const ist = new Date(now.toLocaleString("en-US", { timeZone: "Asia/Kolkata" }));
-  const day = ist.getDay();
-  const minutes = ist.getHours() * 60 + ist.getMinutes();
-  return day >= 1 && day <= 5 && minutes >= 555 && minutes <= 930 ? "OPEN" : "CLOSED";
-}
-
-function capitalForTrade(row: any, instrument: InstrumentType): number {
-  const entry = Math.abs(num(row?.entry) ?? 0);
-  const quantity = Math.abs(num(row?.quantity) ?? 0);
-  if (!entry || !quantity) return 0;
-  return instrument === "OPTIONS"
-    ? entry * quantity
-    : entry * quantity * FUTURES_MARGIN_RATE;
-}
-
-function performanceOverview(hb: any, state: any, tradeDate: string): any {
-  const coverageMonth = tradeDate.slice(0, 7);
-  const coverageYear = tradeDate.slice(0, 4);
-  const rows: Record<"TODAY" | "MONTH" | "YEAR", any[]> = { TODAY: [], MONTH: [], YEAR: [] };
-
-  for (const strategy of STRATEGIES) {
-    const strategyHeartbeat = strategy.heartbeatFile ? readJson(strategy.heartbeatFile, {}) : hb;
-    const strategyState = strategy.stateFile ? readJson(strategy.stateFile, {}) : state;
-    const supportedInstruments = strategy.instruments || (["FUTURES", "OPTIONS"] as InstrumentType[]);
-    for (const instrument of supportedInstruments) {
-      const fields = strategyFields(strategy, strategyHeartbeat, strategyState, instrument);
-      const trades = normalizedTrades(
-        fields.rawTrades,
-        strategy,
-        instrument,
-        tradeDate,
-        fields.quantity ?? num(hb.qty) ?? 30,
-      );
-      const capitalFromTrades = trades.reduce((sum: number, row: any) => sum + capitalForTrade(row, instrument), 0);
-      const fallbackPerTrade = instrument === "OPTIONS" ? OPTIONS_CAPITAL_FALLBACK : FUTURES_CAPITAL_FALLBACK;
-      const liveTradeCount = Math.max(trades.length, fields.trades, fields.inTrade ? 1 : 0);
-      const liveCapital = capitalFromTrades || (liveTradeCount > 0 ? liveTradeCount * fallbackPerTrade : 0);
-      if (liveCapital > 0) {
-        rows.TODAY.push({
-          strategyId: strategy.id,
-          strategyName: strategy.name.replace(" (BANKNIFTY)", ""),
-          instrument,
-          pnl: fields.total,
-          capitalUsed: Math.round(liveCapital),
-          returnPct: fields.total / liveCapital * 100,
-          trades: liveTradeCount,
-        });
-      }
-
-      const liveHistory = shadowHistory(strategy, instrument);
-      const month = Array.isArray(liveHistory.monthly)
-        ? liveHistory.monthly.find((row: any) => row.period === coverageMonth)
+function systemHealth(strategy, hb, fields, candles, heartbeatAgeSec, externalHealth) {
+    const processName = strategy.processName || "trading-bot";
+    const evidence = runtimeEvidence(processName);
+    const processState = String(evidence.process?.status || "UNKNOWN");
+    const processOnline = processState === "ONLINE";
+    const clock = istClock();
+    const tradingDay = clock.weekday >= 1 && clock.weekday <= 5;
+    const marketOpen = tradingDay && clock.minutes >= 555 && clock.minutes <= 930;
+    const triggerByStrategy = {
+        drishti: { time: "09:25", minutes: 565 },
+        "drishti-v2": { time: "09:30", minutes: 570 },
+        tt1000: { time: "10:00", minutes: 600 },
+        tt0945: { time: "09:45", minutes: 585 },
+        tt1030: { time: "10:30", minutes: 630 },
+        "normal-breakout": { time: "09:45", minutes: 585 },
+        "hybrid-body": { time: "09:30", minutes: 570 },
+    };
+    const trigger = triggerByStrategy[strategy.id] || { time: "--", minutes: 555 };
+    const candleTimes = candles.map(row => minuteOfDay(row.time)).filter((value) => value !== null);
+    const uniqueTimes = new Set(candleTimes);
+    const duplicateCandles = candleTimes.length - uniqueTimes.size;
+    const sortedTimes = [...uniqueTimes].sort((a, b) => a - b);
+    const gapCount = sortedTimes.slice(1).filter((value, index) => value - sortedTimes[index] > 20).length;
+    const latestCandleMinute = sortedTimes.length ? sortedTimes[sortedTimes.length - 1] : null;
+    const triggerDue = tradingDay && clock.minutes >= trigger.minutes + 20;
+    const triggerCompleted = candleTimes.some(value => value >= trigger.minutes);
+    const missedTriggers = triggerDue && !triggerCompleted ? 1 : 0;
+    const freshHeartbeat = heartbeatAgeSec !== null && heartbeatAgeSec <= HEARTBEAT_HEALTHY_SEC;
+    const delayedHeartbeat = heartbeatAgeSec !== null && heartbeatAgeSec <= HEARTBEAT_CRITICAL_SEC;
+    const livePrice = num(fields.live ?? hb?.price);
+    const strategyMarker = text(hb?.[`${strategy.prefix}Strategy`]
+        ?? (strategy.id === "drishti" ? hb?.strategy : null)
+        ?? fields.phase);
+    const recentLogs = recentServerLogs(strategy);
+    const recentRuntimeErrors = recentLogs.filter(row => /UNCAUGHT|CRASH|FATAL|SAVE_FAIL|WRITE_FAIL/i.test(String(row.message || "")));
+    let storageWritable = false;
+    try {
+        fs_1.default.accessSync(BOT_DIR, fs_1.default.constants.R_OK | fs_1.default.constants.W_OK);
+        storageWritable = true;
+    }
+    catch {
+        storageWritable = false;
+    }
+    const heartbeatFile = path_1.default.join(BOT_DIR, strategy.heartbeatFile || "bot-heartbeat.json");
+    const snapshotReadable = fs_1.default.existsSync(heartbeatFile);
+    const tokenValid = externalHealth?.token?.valid === true;
+    const tokenChecked = !!externalHealth?.token?.source;
+    const databaseOK = externalHealth?.database?.ok === true;
+    const autoRefreshImplemented = externalHealth?.token?.autoRefreshImplemented === true;
+    const autoRefreshVerified = externalHealth?.token?.autoRefreshVerified === true;
+    const autoRefreshFailed = externalHealth?.token?.autoRefreshFailed === true;
+    const autoRefreshDetail = autoRefreshVerified
+        ? `last successful run ${externalHealth?.token?.lastAutoRefreshLogAt || "recorded"}`
+        : autoRefreshFailed
+            ? "latest attempt reports a failure"
+            : autoRefreshImplemented
+                ? "helper present but no verified success evidence"
+                : "not implemented";
+    const strategyState = readJson(strategy.stateFile || "trade-state.json", {});
+    const futuresFields = strategyFields(strategy, hb, strategyState, "FUTURES");
+    const optionsFields = strategyFields(strategy, hb, strategyState, "OPTIONS");
+    const resourceValues = [
+        Number(evidence.resources?.cpuLoadPct || 0),
+        Number(evidence.resources?.memoryUsedPct || 0),
+        Number(evidence.resources?.diskUsedPct || 0),
+    ];
+    const resourceCritical = resourceValues.some(value => value >= 95);
+    const resourceWarning = resourceValues.some(value => value >= 85) || Number(evidence.process?.unstableRestarts || 0) > 0;
+    const processUptimeMs = evidence.process?.uptimeStartedAt
+        ? Math.max(0, Date.now() - Number(evidence.process.uptimeStartedAt))
         : null;
-      if (month && num(month.capitalDeployed)) {
-        rows.MONTH.push({
-          strategyId: strategy.id,
-          strategyName: strategy.name.replace(" (BANKNIFTY)", ""),
-          instrument,
-          pnl: num(month.pnl) ?? 0,
-          capitalUsed: num(month.capitalDeployed),
-          returnPct: num(month.returnPct) ?? ((num(month.pnl) ?? 0) / Number(month.capitalDeployed) * 100),
-          trades: num(month.trades) ?? 0,
-        });
-      }
-      const year = Array.isArray(liveHistory.yearly)
-        ? liveHistory.yearly.find((row: any) => row.period === coverageYear)
-        : null;
-      if (year && num(year.capitalDeployed)) {
-        rows.YEAR.push({
-          strategyId: strategy.id,
-          strategyName: strategy.name.replace(" (BANKNIFTY)", ""),
-          instrument,
-          pnl: num(year.pnl) ?? 0,
-          capitalUsed: num(year.capitalDeployed),
-          returnPct: num(year.returnPct) ?? ((num(year.pnl) ?? 0) / Number(year.capitalDeployed) * 100),
-          trades: num(year.trades) ?? 0,
-        });
-      }
-    }
-  }
-
-  const summarize = (periodRows: any[], label: string, source: "LIVE" | "BACKTEST") => {
-    const capitalUsed = periodRows.reduce((sum, row) => sum + Number(row.capitalUsed || 0), 0);
-    const pnl = periodRows.reduce((sum, row) => sum + Number(row.pnl || 0), 0);
-    const best = (instrument: InstrumentType) => periodRows
-      .filter(row => row.instrument === instrument)
-      .sort((a, b) => Number(b.returnPct) - Number(a.returnPct))[0] || null;
-    const bestOverall = [...periodRows]
-      .sort((a, b) => Number(b.returnPct) - Number(a.returnPct))[0] || null;
+    const processUptime = processUptimeMs === null
+        ? "--"
+        : `${Math.floor(processUptimeMs / 86400000)}d ${Math.floor(processUptimeMs % 86400000 / 3600000)}h`;
+    const latestFeedLog = recentLogs.find(row => /\b(FEED|TICK|MARKET DATA|HEARTBEAT)\b/i.test(String(row.message || "")));
+    const futuresReady = processOnline && !!(futuresFields.phase || futuresFields.rawTrades?.length || strategyMarker);
+    const optionsReady = processOnline && !!(optionsFields.phase || optionsFields.rawTrades?.length || strategyMarker);
+    const supportsOptions = !strategy.instruments || strategy.instruments.includes("OPTIONS");
+    const checks = [
+        {
+            id: "process",
+            label: "Bot Process",
+            level: processOnline ? "PASS" : "FAIL",
+            value: processOnline ? "Online" : processState === "UNKNOWN" ? "Unknown" : processState,
+            detail: processOnline
+                ? `PID ${evidence.process?.pid || "--"}; uptime ${processUptime}; ${evidence.process?.restarts || 0} lifetime restarts`
+                : `PM2 ${processName} process is not online.`,
+            source: `PM2 jlist (${processName})`,
+            critical: true,
+        },
+        {
+            id: "scheduler",
+            label: "Scheduler",
+            level: !processOnline ? "FAIL" : missedTriggers ? "FAIL" : triggerCompleted ? "PASS" : "INFO",
+            value: !processOnline ? "Stopped" : missedTriggers ? "Missed trigger" : triggerCompleted ? "Active" : "Waiting",
+            detail: `Expected ${trigger.time}; last evaluation ${latestCandleMinute === null ? "--" : `${String(Math.floor(latestCandleMinute / 60)).padStart(2, "0")}:${String(latestCandleMinute % 60).padStart(2, "0")}`}; missed ${missedTriggers}`,
+            source: "PM2 + strategy candle evaluation log",
+            critical: true,
+        },
+        {
+            id: "trigger",
+            label: "Latest Automatic Trigger",
+            level: missedTriggers ? "FAIL" : triggerCompleted ? "PASS" : triggerDue ? "WARN" : "INFO",
+            value: missedTriggers ? "Missed" : triggerCompleted ? "Completed" : "Pending",
+            detail: `Scheduled ${trigger.time}; latest strategy evaluation ${latestCandleMinute === null ? "--" : `${String(Math.floor(latestCandleMinute / 60)).padStart(2, "0")}:${String(latestCandleMinute % 60).padStart(2, "0")}`}`,
+            source: "Scheduled trigger + selected strategy candle log",
+            critical: true,
+        },
+        {
+            id: "heartbeat",
+            label: "Strategy Heartbeat",
+            level: freshHeartbeat ? "PASS" : delayedHeartbeat ? "WARN" : "FAIL",
+            value: heartbeatAgeSec === null ? "Missing" : `${heartbeatAgeSec}s ago`,
+            detail: `Expected within ${HEARTBEAT_HEALTHY_SEC}s; critical after ${HEARTBEAT_CRITICAL_SEC}s`,
+            source: "bot-heartbeat.json",
+            critical: true,
+        },
+        {
+            id: "marketHeartbeat",
+            label: "Market Data Heartbeat",
+            level: !marketOpen ? "INFO" : freshHeartbeat && livePrice !== null && livePrice > 0 ? "PASS" : delayedHeartbeat ? "WARN" : "FAIL",
+            value: !marketOpen ? "Market closed" : freshHeartbeat ? "Receiving" : "Stale",
+            detail: `Latest price ${livePrice ?? "--"}; heartbeat ${heartbeatAgeSec === null ? "missing" : `${heartbeatAgeSec}s ago`}`,
+            source: "Bot heartbeat market fields",
+            critical: true,
+        },
+        {
+            id: "feed",
+            label: "Feed Freshness",
+            level: !marketOpen ? "INFO" : freshHeartbeat && livePrice !== null && livePrice > 0 ? "PASS" : delayedHeartbeat ? "WARN" : "FAIL",
+            value: !marketOpen ? "Market closed" : livePrice ? "Fresh" : "No price",
+            detail: !marketOpen
+                ? `Fresh ticks are not required outside market hours. Last event: ${latestFeedLog?.message || "not published"}`
+                : `Latest price evidence ${livePrice ?? "--"}; last feed event ${latestFeedLog?.message || "not published"}.`,
+            source: "Heartbeat price evidence",
+            critical: true,
+        },
+        {
+            id: "candles",
+            label: "Candle Generation",
+            level: duplicateCandles > 0 ? "FAIL" : missedTriggers ? "FAIL" : gapCount > 0 ? "WARN" : triggerCompleted ? "PASS" : "INFO",
+            value: duplicateCandles ? `${duplicateCandles} duplicate` : gapCount ? `${gapCount} gap` : triggerCompleted ? "Updating" : "Waiting",
+            detail: `${candles.length} candles; latest ${candles[0]?.time || "--"}; duplicate ${duplicateCandles}; gaps ${gapCount}`,
+            source: "Selected strategy candle log",
+            critical: true,
+        },
+        {
+            id: "strategy",
+            label: "Strategy Engine",
+            level: !processOnline || recentRuntimeErrors.length ? "FAIL" : strategyMarker || candles.length ? "PASS" : "WARN",
+            value: !processOnline ? "Offline" : recentRuntimeErrors.length ? "Runtime error" : strategyMarker || candles.length ? "Loaded" : "Unverified",
+            detail: `${strategy.name}; version ${strategy.version}; phase ${fields.phase || "--"}; recent fatal errors ${recentRuntimeErrors.length}`,
+            source: "Heartbeat strategy fields + PM2 logs",
+            critical: true,
+        },
+        {
+            id: "futuresExecutor",
+            label: "Futures Shadow Executor",
+            level: futuresReady ? "PASS" : processOnline ? "WARN" : "FAIL",
+            value: futuresReady ? "Ready" : "Unverified",
+            detail: `Futures execution adapter; selected strategy ${strategy.name}; mode SHADOW`,
+            source: "Futures strategy runtime fields",
+            critical: true,
+        },
+        {
+            id: "optionsExecutor",
+            label: "Options Shadow Executor",
+            level: supportsOptions ? (optionsReady ? "PASS" : processOnline ? "WARN" : "FAIL") : "INFO",
+            value: supportsOptions ? (optionsReady ? "Ready" : "Unverified") : "Not used",
+            detail: supportsOptions
+                ? `Options execution adapter; selected strategy ${strategy.name}; mode SHADOW`
+                : `${strategy.name} is intentionally futures-only.`,
+            source: "Options strategy runtime fields",
+            critical: supportsOptions,
+        },
+        {
+            id: "storage",
+            label: "Database & Storage",
+            level: databaseOK && storageWritable && snapshotReadable && !recentRuntimeErrors.some(row => /SAVE_FAIL|WRITE_FAIL/i.test(String(row.message || ""))) ? "PASS" : "FAIL",
+            value: databaseOK && storageWritable ? "Connected" : "Unavailable",
+            detail: `SQLite ${databaseOK ? "readable" : "failed"}; bot storage ${storageWritable ? "writable" : "not writable"}; heartbeat snapshot ${snapshotReadable ? "readable" : "missing"}`,
+            source: "SQLite SELECT 1 + filesystem access",
+            critical: true,
+        },
+        {
+            id: "token",
+            label: "Broker Token",
+            level: tokenValid ? "PASS" : marketOpen ? "FAIL" : tokenChecked ? "WARN" : "INFO",
+            value: tokenValid ? "Valid" : tokenChecked ? "Invalid" : "Not verified",
+            detail: tokenValid
+                ? `Kite profile verified; auto refresh ${autoRefreshDetail}`
+                : `${externalHealth?.token?.error || "Profile validation unavailable"}; auto refresh ${autoRefreshDetail}`,
+            source: externalHealth?.token?.source || "Kite profile validation",
+            critical: true,
+        },
+        ...(autoRefreshImplemented ? [{
+                id: "autoTokenRefresh",
+                label: "Auto Token Refresh",
+                level: (autoRefreshVerified ? "PASS" : autoRefreshFailed ? "FAIL" : "WARN"),
+                value: autoRefreshVerified ? "Verified" : autoRefreshFailed ? "Failed" : "Unverified",
+                detail: autoRefreshDetail,
+                source: "auto_token.js + refresh log",
+                critical: false,
+            }] : []),
+        {
+            id: "tokenValidation",
+            label: "Last Token Validation",
+            level: tokenValid ? "PASS" : tokenChecked ? "WARN" : "INFO",
+            value: externalHealth?.checkedAt || "Not verified",
+            detail: tokenValid ? "Latest Kite profile validation succeeded." : "No successful token validation is currently available.",
+            source: externalHealth?.token?.source || "Kite profile validation",
+            critical: false,
+        },
+        {
+            id: "resources",
+            label: "Server Resources",
+            level: resourceCritical ? "FAIL" : resourceWarning ? "WARN" : "PASS",
+            value: resourceCritical ? "Critical" : resourceWarning ? "Elevated" : "Normal",
+            detail: `CPU ${evidence.resources?.cpuLoadPct?.toFixed(1) ?? "--"}%; memory ${evidence.resources?.memoryUsedPct?.toFixed(1) ?? "--"}%; disk ${evidence.resources?.diskUsedPct?.toFixed(1) ?? "--"}%; API ${externalHealth?.apiLatencyMs ?? "--"}ms`,
+            source: "VPS operating system + API probe",
+            critical: false,
+        },
+    ];
+    const criticalChecks = checks.filter(check => check.critical);
+    const passedCritical = criticalChecks.filter(check => check.level === "PASS" || check.level === "INFO").length;
+    const failedCritical = criticalChecks.filter(check => check.level === "FAIL").length;
+    const warningCount = checks.filter(check => check.level === "WARN").length;
+    const state = failedCritical > 0 ? "CRITICAL" : warningCount > 0 ? "WARNING" : "HEALTHY";
     return {
-      label,
-      source,
-      averageReturnPct: capitalUsed > 0 ? pnl / capitalUsed * 100 : null,
-      capitalUsed: Math.round(capitalUsed),
-      pnl: Math.round(pnl),
-      strategiesCompared: periodRows.length,
-      bestOverall,
-      bestFutures: best("FUTURES"),
-      bestOptions: best("OPTIONS"),
+        state,
+        label: state === "HEALTHY" ? "Healthy" : state === "WARNING" ? "Warning" : "Critical",
+        summary: `${passedCritical} of ${criticalChecks.length} critical checks passed`,
+        passedCritical,
+        criticalTotal: criticalChecks.length,
+        warningCount,
+        failedCritical,
+        checks,
+        checkedAt: externalHealth?.checkedAt || new Date().toISOString(),
     };
-  };
-
-  return {
-    definition: "Return on deployed capital = net P&L divided by capital committed to recorded trades.",
-    capitalBasis: {
-      futures: "Entry value x quantity x 12% estimated margin",
-      options: "Entry premium x quantity",
-    },
-    periods: {
-      TODAY: summarize(rows.TODAY, tradeDate, "LIVE"),
-      MONTH: summarize(rows.MONTH, coverageMonth || "Latest month", "LIVE"),
-      YEAR: summarize(
-        rows.YEAR,
-        coverageYear || "Latest year",
-        "LIVE",
-      ),
-    },
-  };
 }
-
-export function buildShadowMonitorPayload(strategyId = "", instrumentValue = "", externalHealth: any = {}): any {
-  const tradeDate = todayIST();
-  const strategy = STRATEGIES.find(item => item.id === strategyId) || STRATEGIES[0];
-  const requestedInstrument: InstrumentType = instrumentValue === "OPTIONS" ? "OPTIONS" : "FUTURES";
-  const instrument: InstrumentType = strategy.instruments?.includes(requestedInstrument)
-    ? requestedInstrument
-    : strategy.instruments?.[0] || requestedInstrument;
-  const hb = readJson(strategy.heartbeatFile || "bot-heartbeat.json", {});
-  const state = readJson(strategy.stateFile || "trade-state.json", {});
-  const heartbeatAt = hb?.at ? new Date(hb.at).getTime() : 0;
-  const heartbeatAgeSec = heartbeatAt ? Math.max(0, Math.round((Date.now() - heartbeatAt) / 1000)) : null;
-  const connected = heartbeatAgeSec !== null && heartbeatAgeSec < 180;
-  const fields = strategyFields(strategy, hb, state, instrument);
-  const trades = normalizedTrades(fields.rawTrades, strategy, instrument, tradeDate, fields.quantity ?? num(hb.qty) ?? 30);
-  const history = shadowHistory(strategy, instrument);
-  const persistedTodayTrades = (history.trades || []).filter((row: any) =>
-    String(row.date || row.tradeDate || "") === tradeDate
-  );
-  if (fields.inTrade && !trades.some((row: any) => row.status === "OPEN")) {
-    const openContract = /\b(CE|PE)\b/i.test(String(fields.direction || ""))
-      ? String(fields.direction).match(/\b(CE|PE)\b/i)?.[1]?.toUpperCase()
-      : String(fields.symbol || "").match(/(CE|PE)$/i)?.[1]?.toUpperCase() || null;
-    const openAction = instrument === "OPTIONS"
-      ? "BUY"
-      : openContract === "PE" ? "SELL" : "BUY";
-    const openCapital = fields.entry && fields.quantity
-      ? (instrument === "OPTIONS"
-        ? fields.entry * fields.quantity
-        : fields.entry * fields.quantity * FUTURES_MARGIN_RATE)
-      : null;
-    const openTradeId = `${strategy.id}|${instrument}|${tradeDate}|open`;
-    trades.unshift({
-      id: openTradeId,
-      tradeId: openTradeId,
-      strategyId: strategy.id,
-      strategyVersion: strategy.version,
-      instrumentType: instrument,
-      executionMode: "SHADOW",
-      tradeDate,
-      time: fields.entryTime,
-      instrument: fields.symbol || (instrument === "OPTIONS" ? "BANKNIFTY option" : "BANKNIFTY"),
-      side: fields.direction,
-      contract: openContract,
-      action: openAction,
-      exitAction: openAction === "BUY" ? "SELL" : "BUY",
-      quantity: fields.quantity,
-      entry: fields.entry,
-      exit: null,
-      stopLoss: fields.sl,
-      target: fields.target,
-      pnl: fields.unrealized,
-      capitalDeployed: openCapital,
-      returnPct: fields.unrealized !== null && openCapital ? fields.unrealized / openCapital * 100 : null,
-      result: null,
-      status: "OPEN",
-      reason: "Live shadow position",
-    });
-  }
-  const candles = normalizedCandles(fields.candleLog, hb);
-  const aggregateHealth = systemHealth(strategy, hb, fields, candles, heartbeatAgeSec, externalHealth);
-  const closedTrades = trades.filter((row: any) => String(row.status).toUpperCase() === "CLOSED");
-  const wins = fields.wins || closedTrades.filter((row: any) => (row.pnl ?? 0) > 0).length;
-  const losses = fields.losses || closedTrades.filter((row: any) => (row.pnl ?? 0) < 0).length;
-  const recordedTrades = strategy.prefix === "drishti" || strategy.prefix === "drishtiV2"
-    ? fields.trades
-    : closedTrades.length;
-  const tradeCount = Math.max(fields.trades, recordedTrades, fields.inTrade ? 1 : 0);
-  const winRate = wins + losses > 0 ? wins / (wins + losses) * 100 : 0;
-  const nowIso = new Date().toISOString();
-  const runtimeStatus = connected
-    ? fields.inTrade ? "RUNNING" : (fields.phase || "WAITING")
-    : marketStatus() === "CLOSED" ? "SLEEPING" : "OFFLINE";
-  const observationTime = timeValue(nowIso) || "";
-  const logs = [
-    ...recentServerLogs(strategy),
-    {
-      time: observationTime,
-      level: connected ? "INFO" : "WARN",
-      message: `[SYSTEM] Bot heartbeat ${connected ? "connected" : "stale"} (${heartbeatAgeSec ?? "unknown"}s)`,
-    },
-    {
-      time: observationTime,
-      level: "INFO",
-      message: `[STRATEGY] ${strategy.name} ${runtimeStatus}; ${instrument} shadow view selected`,
-    },
-    {
-      time: observationTime,
-      level: candles.length ? "INFO" : "WARN",
-      message: `[CANDLE] ${candles.length ? `Latest ${candles[0]?.time || ""} candle available` : "No strategy candle recorded yet"}`,
-    },
-    {
-      time: observationTime,
-      level: "INFO",
-      message: `[P&L] Shadow total ${fields.total.toFixed(2)}; realized ${fields.realized === null ? "unavailable" : fields.realized.toFixed(2)}; unrealized ${fields.unrealized === null ? "unavailable" : fields.unrealized.toFixed(2)}`,
-    },
-  ].slice(-120);
-
-  return {
-    ok: true,
-    identity: {
-      strategyId: strategy.id,
-      strategyName: strategy.name,
-      strategyVersion: strategy.version,
-      instrumentType: instrument,
-      tradeDate,
-      executionMode: "SHADOW",
-    },
-    strategies: STRATEGIES.map(item => ({
-      id: item.id,
-      name: item.name,
-      version: item.version,
-      instruments: item.instruments || ["FUTURES", "OPTIONS"],
-    })),
-    market: { status: marketStatus(), checkedAt: nowIso },
-    health: {
-      overall: aggregateHealth.state,
-      label: aggregateHealth.label,
-      summary: aggregateHealth.summary,
-      passedCritical: aggregateHealth.passedCritical,
-      criticalTotal: aggregateHealth.criticalTotal,
-      warningCount: aggregateHealth.warningCount,
-      failedCritical: aggregateHealth.failedCritical,
-      checks: aggregateHealth.checks,
-      connected,
-      heartbeatAgeSec,
-      lastCheckedAt: nowIso,
-      feed: connected ? "CONNECTED" : "DISCONNECTED",
-      feedLatencyMs: num(hb.feedLatencyMs ?? hb.latencyMs),
-      lastTickAt: hb.at || null,
-      heartbeatState: heartbeatAgeSec === null ? "MISSING" : heartbeatAgeSec <= HEARTBEAT_HEALTHY_SEC ? "FRESH" : heartbeatAgeSec <= HEARTBEAT_CRITICAL_SEC ? "DELAYED" : "STALE",
-      lastFeedEvent: logs.find(row => /\b(FEED|TICK|MARKET DATA|HEARTBEAT)\b/i.test(String(row.message || ""))) || null,
-    },
-    runtime: {
-      status: runtimeStatus,
-      selectedStrategy: strategy.name,
-      lastEvaluatedAt: hb.at || null,
-      nextEvaluationAt: null,
-      version: strategy.version,
-      phase: fields.phase,
-    },
-    performance: performanceOverview(hb, state, tradeDate),
-    backtest: backtestSummary(strategy, instrument),
-    history,
-    summary: {
-      realizedPnl: fields.realized,
-      unrealizedPnl: fields.unrealized,
-      totalPnl: fields.total,
-      trades: tradeCount,
-      wins,
-      losses,
-      winRate,
-      openPositions: fields.inTrade ? 1 : 0,
-      lastUpdatedAt: hb.at || null,
-    },
-    position: fields.inTrade ? {
-      instrument: fields.symbol,
-      side: fields.direction,
-      entryPrice: fields.entry,
-      ltp: fields.live,
-      stopLoss: fields.sl,
-      target: fields.target,
-      quantity: fields.quantity,
-      entryTime: fields.entryTime,
-      entryAt: fields.entryAt,
-      currentPnl: fields.unrealized,
-      status: "OPEN",
-    } : null,
-    instrumentSummary: {
-      contract: fields.symbol,
-      type: fields.symbol && /CE$/i.test(fields.symbol) ? "CE" : fields.symbol && /PE$/i.test(fields.symbol) ? "PE" : null,
-      strike: fields.symbol ? num(String(fields.symbol).match(/(\d+)(?:CE|PE)$/i)?.[1]) : null,
-      expiry: null,
-      lotSize: fields.quantity,
-      tickSize: null,
-      ltp: fields.live,
-      change: null,
-      dayHigh: fields.dayHigh,
-      dayLow: fields.dayLow,
-      openInterest: fields.openInterest,
-      volume: fields.volume,
-      impliedVolatility: null,
-      lastUpdatedAt: hb.at || null,
-    },
-    lastSignal: fields.phase || "No Signal",
-    trades: trades.length ? trades : persistedTodayTrades,
-    candles,
-    logs,
-    refreshedAt: nowIso,
-  };
+function marketStatus(now = new Date()) {
+    const ist = new Date(now.toLocaleString("en-US", { timeZone: "Asia/Kolkata" }));
+    const day = ist.getDay();
+    const minutes = ist.getHours() * 60 + ist.getMinutes();
+    return day >= 1 && day <= 5 && minutes >= 555 && minutes <= 930 ? "OPEN" : "CLOSED";
 }
-
-export function renderShadowStrategyMonitorPage(navHtml: string): string {
-  return `<!doctype html>
+function capitalForTrade(row, instrument) {
+    const entry = Math.abs(num(row?.entry) ?? 0);
+    const quantity = Math.abs(num(row?.quantity) ?? 0);
+    if (!entry || !quantity)
+        return 0;
+    return instrument === "OPTIONS"
+        ? entry * quantity
+        : entry * quantity * FUTURES_MARGIN_RATE;
+}
+function performanceOverview(hb, state, tradeDate) {
+    const coverageMonth = tradeDate.slice(0, 7);
+    const coverageYear = tradeDate.slice(0, 4);
+    const rows = { TODAY: [], MONTH: [], YEAR: [] };
+    for (const strategy of STRATEGIES) {
+        const strategyHeartbeat = strategy.heartbeatFile ? readJson(strategy.heartbeatFile, {}) : hb;
+        const strategyState = strategy.stateFile ? readJson(strategy.stateFile, {}) : state;
+        const supportedInstruments = strategy.instruments || ["FUTURES", "OPTIONS"];
+        for (const instrument of supportedInstruments) {
+            const fields = strategyFields(strategy, strategyHeartbeat, strategyState, instrument);
+            const trades = normalizedTrades(fields.rawTrades, strategy, instrument, tradeDate, fields.quantity ?? num(hb.qty) ?? 30);
+            const capitalFromTrades = trades.reduce((sum, row) => sum + capitalForTrade(row, instrument), 0);
+            const fallbackPerTrade = instrument === "OPTIONS" ? OPTIONS_CAPITAL_FALLBACK : FUTURES_CAPITAL_FALLBACK;
+            const liveTradeCount = Math.max(trades.length, fields.trades, fields.inTrade ? 1 : 0);
+            const liveCapital = capitalFromTrades || (liveTradeCount > 0 ? liveTradeCount * fallbackPerTrade : 0);
+            if (liveCapital > 0) {
+                rows.TODAY.push({
+                    strategyId: strategy.id,
+                    strategyName: strategy.name.replace(" (BANKNIFTY)", ""),
+                    instrument,
+                    pnl: fields.total,
+                    capitalUsed: Math.round(liveCapital),
+                    returnPct: fields.total / liveCapital * 100,
+                    trades: liveTradeCount,
+                });
+            }
+            const liveHistory = shadowHistory(strategy, instrument);
+            const month = Array.isArray(liveHistory.monthly)
+                ? liveHistory.monthly.find((row) => row.period === coverageMonth)
+                : null;
+            if (month && num(month.capitalDeployed)) {
+                rows.MONTH.push({
+                    strategyId: strategy.id,
+                    strategyName: strategy.name.replace(" (BANKNIFTY)", ""),
+                    instrument,
+                    pnl: num(month.pnl) ?? 0,
+                    capitalUsed: num(month.capitalDeployed),
+                    returnPct: num(month.returnPct) ?? ((num(month.pnl) ?? 0) / Number(month.capitalDeployed) * 100),
+                    trades: num(month.trades) ?? 0,
+                });
+            }
+            const year = Array.isArray(liveHistory.yearly)
+                ? liveHistory.yearly.find((row) => row.period === coverageYear)
+                : null;
+            if (year && num(year.capitalDeployed)) {
+                rows.YEAR.push({
+                    strategyId: strategy.id,
+                    strategyName: strategy.name.replace(" (BANKNIFTY)", ""),
+                    instrument,
+                    pnl: num(year.pnl) ?? 0,
+                    capitalUsed: num(year.capitalDeployed),
+                    returnPct: num(year.returnPct) ?? ((num(year.pnl) ?? 0) / Number(year.capitalDeployed) * 100),
+                    trades: num(year.trades) ?? 0,
+                });
+            }
+        }
+    }
+    const summarize = (periodRows, label, source) => {
+        const capitalUsed = periodRows.reduce((sum, row) => sum + Number(row.capitalUsed || 0), 0);
+        const pnl = periodRows.reduce((sum, row) => sum + Number(row.pnl || 0), 0);
+        const best = (instrument) => periodRows
+            .filter(row => row.instrument === instrument)
+            .sort((a, b) => Number(b.returnPct) - Number(a.returnPct))[0] || null;
+        const bestOverall = [...periodRows]
+            .sort((a, b) => Number(b.returnPct) - Number(a.returnPct))[0] || null;
+        return {
+            label,
+            source,
+            averageReturnPct: capitalUsed > 0 ? pnl / capitalUsed * 100 : null,
+            capitalUsed: Math.round(capitalUsed),
+            pnl: Math.round(pnl),
+            strategiesCompared: periodRows.length,
+            bestOverall,
+            bestFutures: best("FUTURES"),
+            bestOptions: best("OPTIONS"),
+        };
+    };
+    return {
+        definition: "Return on deployed capital = net P&L divided by capital committed to recorded trades.",
+        capitalBasis: {
+            futures: "Entry value x quantity x 12% estimated margin",
+            options: "Entry premium x quantity",
+        },
+        periods: {
+            TODAY: summarize(rows.TODAY, tradeDate, "LIVE"),
+            MONTH: summarize(rows.MONTH, coverageMonth || "Latest month", "LIVE"),
+            YEAR: summarize(rows.YEAR, coverageYear || "Latest year", "LIVE"),
+        },
+    };
+}
+function buildShadowMonitorPayload(strategyId = "", instrumentValue = "", externalHealth = {}) {
+    const tradeDate = todayIST();
+    const strategy = STRATEGIES.find(item => item.id === strategyId) || STRATEGIES[0];
+    const requestedInstrument = instrumentValue === "OPTIONS" ? "OPTIONS" : "FUTURES";
+    const instrument = strategy.instruments?.includes(requestedInstrument)
+        ? requestedInstrument
+        : strategy.instruments?.[0] || requestedInstrument;
+    const hb = readJson(strategy.heartbeatFile || "bot-heartbeat.json", {});
+    const state = readJson(strategy.stateFile || "trade-state.json", {});
+    const heartbeatAt = hb?.at ? new Date(hb.at).getTime() : 0;
+    const heartbeatAgeSec = heartbeatAt ? Math.max(0, Math.round((Date.now() - heartbeatAt) / 1000)) : null;
+    const connected = heartbeatAgeSec !== null && heartbeatAgeSec < 180;
+    const fields = strategyFields(strategy, hb, state, instrument);
+    const trades = normalizedTrades(fields.rawTrades, strategy, instrument, tradeDate, fields.quantity ?? num(hb.qty) ?? 30);
+    const history = shadowHistory(strategy, instrument);
+    const persistedTodayTrades = (history.trades || []).filter((row) => String(row.date || row.tradeDate || "") === tradeDate);
+    if (fields.inTrade && !trades.some((row) => row.status === "OPEN")) {
+        const openContract = /\b(CE|PE)\b/i.test(String(fields.direction || ""))
+            ? String(fields.direction).match(/\b(CE|PE)\b/i)?.[1]?.toUpperCase()
+            : String(fields.symbol || "").match(/(CE|PE)$/i)?.[1]?.toUpperCase() || null;
+        const openAction = instrument === "OPTIONS"
+            ? "BUY"
+            : openContract === "PE" ? "SELL" : "BUY";
+        const openCapital = fields.entry && fields.quantity
+            ? (instrument === "OPTIONS"
+                ? fields.entry * fields.quantity
+                : fields.entry * fields.quantity * FUTURES_MARGIN_RATE)
+            : null;
+        const openTradeId = `${strategy.id}|${instrument}|${tradeDate}|open`;
+        trades.unshift({
+            id: openTradeId,
+            tradeId: openTradeId,
+            strategyId: strategy.id,
+            strategyVersion: strategy.version,
+            instrumentType: instrument,
+            executionMode: "SHADOW",
+            tradeDate,
+            time: fields.entryTime,
+            instrument: fields.symbol || (instrument === "OPTIONS" ? "BANKNIFTY option" : "BANKNIFTY"),
+            side: fields.direction,
+            contract: openContract,
+            action: openAction,
+            exitAction: openAction === "BUY" ? "SELL" : "BUY",
+            quantity: fields.quantity,
+            entry: fields.entry,
+            exit: null,
+            stopLoss: fields.sl,
+            target: fields.target,
+            pnl: fields.unrealized,
+            capitalDeployed: openCapital,
+            returnPct: fields.unrealized !== null && openCapital ? fields.unrealized / openCapital * 100 : null,
+            result: null,
+            status: "OPEN",
+            reason: "Live shadow position",
+        });
+    }
+    const candles = normalizedCandles(fields.candleLog, hb);
+    const aggregateHealth = systemHealth(strategy, hb, fields, candles, heartbeatAgeSec, externalHealth);
+    const closedTrades = trades.filter((row) => String(row.status).toUpperCase() === "CLOSED");
+    const wins = fields.wins || closedTrades.filter((row) => (row.pnl ?? 0) > 0).length;
+    const losses = fields.losses || closedTrades.filter((row) => (row.pnl ?? 0) < 0).length;
+    const recordedTrades = strategy.prefix === "drishti" || strategy.prefix === "drishtiV2"
+        ? fields.trades
+        : closedTrades.length;
+    const tradeCount = Math.max(fields.trades, recordedTrades, fields.inTrade ? 1 : 0);
+    const winRate = wins + losses > 0 ? wins / (wins + losses) * 100 : 0;
+    const nowIso = new Date().toISOString();
+    const runtimeStatus = connected
+        ? fields.inTrade ? "RUNNING" : (fields.phase || "WAITING")
+        : marketStatus() === "CLOSED" ? "SLEEPING" : "OFFLINE";
+    const observationTime = timeValue(nowIso) || "";
+    const logs = [
+        ...recentServerLogs(strategy),
+        {
+            time: observationTime,
+            level: connected ? "INFO" : "WARN",
+            message: `[SYSTEM] Bot heartbeat ${connected ? "connected" : "stale"} (${heartbeatAgeSec ?? "unknown"}s)`,
+        },
+        {
+            time: observationTime,
+            level: "INFO",
+            message: `[STRATEGY] ${strategy.name} ${runtimeStatus}; ${instrument} shadow view selected`,
+        },
+        {
+            time: observationTime,
+            level: candles.length ? "INFO" : "WARN",
+            message: `[CANDLE] ${candles.length ? `Latest ${candles[0]?.time || ""} candle available` : "No strategy candle recorded yet"}`,
+        },
+        {
+            time: observationTime,
+            level: "INFO",
+            message: `[P&L] Shadow total ${fields.total.toFixed(2)}; realized ${fields.realized === null ? "unavailable" : fields.realized.toFixed(2)}; unrealized ${fields.unrealized === null ? "unavailable" : fields.unrealized.toFixed(2)}`,
+        },
+    ].slice(-120);
+    return {
+        ok: true,
+        identity: {
+            strategyId: strategy.id,
+            strategyName: strategy.name,
+            strategyVersion: strategy.version,
+            instrumentType: instrument,
+            tradeDate,
+            executionMode: "SHADOW",
+        },
+        strategies: STRATEGIES.map(item => ({
+            id: item.id,
+            name: item.name,
+            version: item.version,
+            instruments: item.instruments || ["FUTURES", "OPTIONS"],
+        })),
+        market: { status: marketStatus(), checkedAt: nowIso },
+        health: {
+            overall: aggregateHealth.state,
+            label: aggregateHealth.label,
+            summary: aggregateHealth.summary,
+            passedCritical: aggregateHealth.passedCritical,
+            criticalTotal: aggregateHealth.criticalTotal,
+            warningCount: aggregateHealth.warningCount,
+            failedCritical: aggregateHealth.failedCritical,
+            checks: aggregateHealth.checks,
+            connected,
+            heartbeatAgeSec,
+            lastCheckedAt: nowIso,
+            feed: connected ? "CONNECTED" : "DISCONNECTED",
+            feedLatencyMs: num(hb.feedLatencyMs ?? hb.latencyMs),
+            lastTickAt: hb.at || null,
+            heartbeatState: heartbeatAgeSec === null ? "MISSING" : heartbeatAgeSec <= HEARTBEAT_HEALTHY_SEC ? "FRESH" : heartbeatAgeSec <= HEARTBEAT_CRITICAL_SEC ? "DELAYED" : "STALE",
+            lastFeedEvent: logs.find(row => /\b(FEED|TICK|MARKET DATA|HEARTBEAT)\b/i.test(String(row.message || ""))) || null,
+        },
+        runtime: {
+            status: runtimeStatus,
+            selectedStrategy: strategy.name,
+            lastEvaluatedAt: hb.at || null,
+            nextEvaluationAt: null,
+            version: strategy.version,
+            phase: fields.phase,
+        },
+        performance: performanceOverview(hb, state, tradeDate),
+        backtest: backtestSummary(strategy, instrument),
+        history,
+        summary: {
+            realizedPnl: fields.realized,
+            unrealizedPnl: fields.unrealized,
+            totalPnl: fields.total,
+            trades: tradeCount,
+            wins,
+            losses,
+            winRate,
+            openPositions: fields.inTrade ? 1 : 0,
+            lastUpdatedAt: hb.at || null,
+        },
+        position: fields.inTrade ? {
+            instrument: fields.symbol,
+            side: fields.direction,
+            entryPrice: fields.entry,
+            ltp: fields.live,
+            stopLoss: fields.sl,
+            target: fields.target,
+            quantity: fields.quantity,
+            entryTime: fields.entryTime,
+            entryAt: fields.entryAt,
+            currentPnl: fields.unrealized,
+            status: "OPEN",
+        } : null,
+        instrumentSummary: {
+            contract: fields.symbol,
+            type: fields.symbol && /CE$/i.test(fields.symbol) ? "CE" : fields.symbol && /PE$/i.test(fields.symbol) ? "PE" : null,
+            strike: fields.symbol ? num(String(fields.symbol).match(/(\d+)(?:CE|PE)$/i)?.[1]) : null,
+            expiry: null,
+            lotSize: fields.quantity,
+            tickSize: null,
+            ltp: fields.live,
+            change: null,
+            dayHigh: fields.dayHigh,
+            dayLow: fields.dayLow,
+            openInterest: fields.openInterest,
+            volume: fields.volume,
+            impliedVolatility: null,
+            lastUpdatedAt: hb.at || null,
+        },
+        lastSignal: fields.phase || "No Signal",
+        trades: trades.length ? trades : persistedTodayTrades,
+        candles,
+        logs,
+        refreshedAt: nowIso,
+    };
+}
+function renderShadowStrategyMonitorPage(navHtml) {
+    return `<!doctype html>
 <html lang="en">
 <head>
   <meta charset="utf-8">
