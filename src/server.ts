@@ -6910,9 +6910,48 @@ async function buildTradeOpsStatus(strategyId = "") {
     const key = `${tradeOpsDateKey(t?.date || t?.exitTime || t?.entryTime)}|${tradeOpsSanitizeSymbol(t?.symbol || t?.tradeSymbol || "")}|${String(t?.direction || t?.side || "").toUpperCase()}|${tradeOpsPnl(t)}`;
     strategyTradeMap.set(key, t);
   }
-  const strategyTrades = Array.from(strategyTradeMap.values()).sort((a: any, b: any) => new Date(a?.date || a?.exitTime || a?.entryTime || 0).getTime() - new Date(b?.date || b?.exitTime || b?.entryTime || 0).getTime());
-  const todayHasTrades = strategyTrades.some(t => tradeOpsDateKey(t?.date || t?.exitTime || t?.entryTime) === today);
-  const latestTradeSession = strategyTrades.map(t => tradeOpsDateKey(t?.date || t?.exitTime || t?.entryTime)).filter(Boolean).sort().pop() || today;
+  const strategyTradeCandidates = Array.from(strategyTradeMap.values()).sort((a: any, b: any) => new Date(a?.date || a?.exitTime || a?.entryTime || 0).getTime() - new Date(b?.date || b?.exitTime || b?.entryTime || 0).getTime());
+  const strategyTrades: any[] = [];
+  for (const candidate of strategyTradeCandidates) {
+    const candidateAt = new Date(candidate?.date || candidate?.exitTime || candidate?.entryTime || 0).getTime();
+    const candidateKey = [
+      tradeOpsDateKey(candidate?.date || candidate?.exitTime || candidate?.entryTime),
+      tradeOpsSanitizeSymbol(candidate?.symbol || candidate?.tradeSymbol || ""),
+      String(candidate?.direction || candidate?.side || "").toUpperCase(),
+      tradeOpsNum(candidate?.qty ?? candidate?.quantity ?? candidate?.mainQty ?? 30),
+      tradeOpsNum(candidate?.entryPrice ?? candidate?.premiumEntry),
+    ].join("|");
+    const duplicateIndex = strategyTrades.findIndex(existing => {
+      const existingKey = [
+        tradeOpsDateKey(existing?.date || existing?.exitTime || existing?.entryTime),
+        tradeOpsSanitizeSymbol(existing?.symbol || existing?.tradeSymbol || ""),
+        String(existing?.direction || existing?.side || "").toUpperCase(),
+        tradeOpsNum(existing?.qty ?? existing?.quantity ?? existing?.mainQty ?? 30),
+        tradeOpsNum(existing?.entryPrice ?? existing?.premiumEntry),
+      ].join("|");
+      const existingAt = new Date(existing?.date || existing?.exitTime || existing?.entryTime || 0).getTime();
+      return existingKey === candidateKey && Number.isFinite(candidateAt) && Number.isFinite(existingAt) && Math.abs(candidateAt - existingAt) <= 60_000;
+    });
+    if (duplicateIndex < 0) {
+      strategyTrades.push(candidate);
+      continue;
+    }
+    const existing = strategyTrades[duplicateIndex];
+    const existingLive = tradeOpsIsVerifiedLiveFuturesTrade(existing);
+    const candidateLive = tradeOpsIsVerifiedLiveFuturesTrade(candidate);
+    const existingAt = new Date(existing?.date || existing?.exitTime || existing?.entryTime || 0).getTime();
+    if ((candidateLive && !existingLive) || (candidateLive === existingLive && candidateAt >= existingAt)) {
+      strategyTrades[duplicateIndex] = candidate;
+    }
+  }
+  // TradeOps is the live 10:30 futures workspace. Current-session shadow/simulated
+  // results belong in ZeroScreen and must never appear as live TradeOps P&L/history.
+  const reportingTrades = [
+    ...strategyTrades.filter(t => tradeOpsDateKey(t?.date || t?.exitTime || t?.entryTime) !== today),
+    ...verifiedLiveTrades.filter(t => tradeOpsDateKey(t?.date || t?.exitTime || t?.entryTime) === today),
+  ];
+  const todayHasTrades = reportingTrades.some(t => tradeOpsDateKey(t?.date || t?.exitTime || t?.entryTime) === today);
+  const latestTradeSession = reportingTrades.map(t => tradeOpsDateKey(t?.date || t?.exitTime || t?.entryTime)).filter(Boolean).sort().pop() || today;
   const botSessionDate = tradeOpsDateKey(tt1030State?.date || tt1030CandleFile?.date || hb?.at || today);
   const botSessionHasOperationalData = !!botSessionDate && (
     (Array.isArray(tt1030State?.candleLog) && tt1030State.candleLog.length > 0)
@@ -6923,9 +6962,9 @@ async function buildTradeOpsStatus(strategyId = "") {
     ? botSessionDate
     : latestTradeSession;
   const displaySession = (tradeOpsMarketStartedToday() || todayHasTrades) ? today : latestKnownSession;
-  const displayTrades = strategyTrades.filter(t => tradeOpsDateKey(t?.date || t?.exitTime || t?.entryTime) === displaySession);
+  const displayTrades = reportingTrades.filter(t => tradeOpsDateKey(t?.date || t?.exitTime || t?.entryTime) === displaySession);
   const displayClosed = displayTrades.filter(t => tradeOpsNum(t?.exitPrice) > 0 || tradeOpsNum(t?.premiumExit) > 0);
-  const todayTrades = strategyTrades.filter(t => tradeOpsDateKey(t?.date || t?.exitTime || t?.entryTime) === today);
+  const todayTrades = reportingTrades.filter(t => tradeOpsDateKey(t?.date || t?.exitTime || t?.entryTime) === today);
   const todayClosed = todayTrades.filter(t => tradeOpsNum(t?.exitPrice) > 0 || tradeOpsNum(t?.premiumExit) > 0);
   const todayPnl = todayClosed.reduce((sum, t) => sum + tradeOpsPnl(t), 0);
   const todayStateActive = tradeOpsDateKey(tt1030State?.date || today) === today;
@@ -7032,7 +7071,7 @@ async function buildTradeOpsStatus(strategyId = "") {
     executionMode: "LIVE",
     brokerOrderId: t?.brokerOrderId || t?.orderId || t?.entryOrderId || "",
   }));
-  const historyTradeRows = strategyTrades
+  const historyTradeRows = reportingTrades
     .filter(t => tradeOpsNum(t?.exitPrice) > 0 || tradeOpsNum(t?.premiumExit) > 0)
     .slice(-500)
     .reverse()
