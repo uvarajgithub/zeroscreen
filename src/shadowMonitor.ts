@@ -12,6 +12,7 @@ type StrategyDefinition = {
   prefix: string;
   backtestFile?: string;
   instruments?: InstrumentType[];
+  tileInstruments?: InstrumentType[];
   processName?: string;
   heartbeatFile?: string;
   stateFile?: string;
@@ -46,6 +47,7 @@ const STRATEGIES: StrategyDefinition[] = [
     prefix: "drishtiV2",
     backtestFile: "drishti-v2-backtest.json",
     instruments: ["FUTURES"],
+    tileInstruments: ["FUTURES", "OPTIONS"],
     processName: "drishti-v2-shadow",
     heartbeatFile: "drishti-v2-heartbeat.json",
     stateFile: "drishti-v2-state.json",
@@ -55,10 +57,10 @@ const STRATEGIES: StrategyDefinition[] = [
   { id: "tt0945", name: "09:45 Breakout (BANKNIFTY)", version: "V2 Shadow", prefix: "tt0945", backtestFile: "shadow-strategy-5yr-results.json", stateFile: "tt0945-state.json" },
   { id: "normal-breakout", name: "Normal Breakout (BANKNIFTY)", version: "V1", prefix: "normalBreakoutShadow", backtestFile: "shadow-strategy-5yr-results.json", stateFile: "normal-breakout-v1-state.json" },
   { id: "hybrid-body", name: "Hybrid Body Breakout (BANKNIFTY)", version: "Current", prefix: "hybridShadow", backtestFile: "shadow-strategy-5yr-results.json", stateFile: "hybrid-state.json" },
-  { id: "vwap-trend", name: "VWAP Trend (BANKNIFTY)", version: "Validated Shadow", prefix: "vwapTrend", backtestFile: "indicator-strategy-sweep-result.json", instruments: ["OPTIONS"], processName: "indicator-shadow", heartbeatFile: "indicator-shadow-heartbeat.json", stateFile: "vwap-trend-state.json" },
-  { id: "pivot-trend", name: "Pivot Trend (BANKNIFTY)", version: "Validated Shadow", prefix: "pivotTrend", backtestFile: "indicator-strategy-sweep-result.json", instruments: ["OPTIONS"], processName: "indicator-shadow", heartbeatFile: "indicator-shadow-heartbeat.json", stateFile: "pivot-trend-state.json" },
-  { id: "ema-trend", name: "EMA Trend (BANKNIFTY)", version: "Validated Shadow", prefix: "emaTrend", backtestFile: "indicator-strategy-sweep-result.json", instruments: ["OPTIONS"], processName: "indicator-shadow", heartbeatFile: "indicator-shadow-heartbeat.json", stateFile: "ema-trend-state.json" },
-  { id: "smma-trend", name: "SMMA Trend (BANKNIFTY)", version: "Validated Shadow", prefix: "smmaTrend", backtestFile: "indicator-strategy-sweep-result.json", instruments: ["OPTIONS"], processName: "indicator-shadow", heartbeatFile: "indicator-shadow-heartbeat.json", stateFile: "smma-trend-state.json" },
+  { id: "vwap-trend", name: "VWAP Trend (BANKNIFTY)", version: "Validated Shadow", prefix: "vwapTrend", backtestFile: "indicator-strategy-sweep-result.json", instruments: ["FUTURES", "OPTIONS"], processName: "indicator-shadow", heartbeatFile: "indicator-shadow-heartbeat.json", stateFile: "vwap-trend-state.json" },
+  { id: "pivot-trend", name: "Pivot Trend (BANKNIFTY)", version: "Validated Shadow", prefix: "pivotTrend", backtestFile: "indicator-strategy-sweep-result.json", instruments: ["FUTURES", "OPTIONS"], processName: "indicator-shadow", heartbeatFile: "indicator-shadow-heartbeat.json", stateFile: "pivot-trend-state.json" },
+  { id: "ema-trend", name: "EMA Trend (BANKNIFTY)", version: "Validated Shadow", prefix: "emaTrend", backtestFile: "indicator-strategy-sweep-result.json", instruments: ["FUTURES", "OPTIONS"], processName: "indicator-shadow", heartbeatFile: "indicator-shadow-heartbeat.json", stateFile: "ema-trend-state.json" },
+  { id: "smma-trend", name: "SMMA Trend (BANKNIFTY)", version: "Validated Shadow", prefix: "smmaTrend", backtestFile: "indicator-strategy-sweep-result.json", instruments: ["FUTURES", "OPTIONS"], processName: "indicator-shadow", heartbeatFile: "indicator-shadow-heartbeat.json", stateFile: "smma-trend-state.json" },
 ];
 
 function readJson(file: string, fallback: any): any {
@@ -1111,7 +1113,28 @@ function consolidatedShadowSummary(externalHealth: any = {}): any {
     const heartbeatAvailable = !!heartbeatAt;
     const stale = market === "OPEN" && (!heartbeatAvailable || (heartbeatAgeSec ?? Infinity) > HEARTBEAT_CRITICAL_SEC);
 
-    for (const instrument of strategy.instruments || (["FUTURES", "OPTIONS"] as InstrumentType[])) {
+    for (const instrument of strategy.tileInstruments || strategy.instruments || (["FUTURES", "OPTIONS"] as InstrumentType[])) {
+      const configured = !strategy.instruments || strategy.instruments.includes(instrument);
+      if (!configured) {
+        tiles.push({
+          strategyId: strategy.id,
+          strategyName: strategy.name.replace(/\s*\(BANKNIFTY\)\s*$/i, ""),
+          strategyVersion: strategy.version,
+          instrumentType: instrument,
+          executionMode: "SHADOW",
+          tradeDate,
+          pnl: null,
+          returnPct: null,
+          capitalDeployed: 0,
+          trades: 0,
+          openPositions: 0,
+          positionState: "NOT CONFIGURED",
+          stale: false,
+          configured: false,
+          lastUpdatedAt: heartbeat?.at || strategyState?.savedAt || null,
+        });
+        continue;
+      }
       const fields = strategyFields(strategy, heartbeat, strategyState, instrument);
       const trades = normalizedTrades(
         fields.rawTrades,
@@ -1157,6 +1180,7 @@ function consolidatedShadowSummary(externalHealth: any = {}): any {
         openPositions: fields.inTrade ? 1 : 0,
         positionState,
         stale,
+        configured: true,
         lastUpdatedAt: heartbeat?.at || strategyState?.savedAt || null,
       });
     }
@@ -1173,6 +1197,8 @@ function consolidatedShadowSummary(externalHealth: any = {}): any {
       profitableTiles: validTiles.filter(tile => Number(tile.pnl) > 0).length,
       lossMakingTiles: validTiles.filter(tile => Number(tile.pnl) < 0).length,
       openPositions: tiles.reduce((sum, tile) => sum + Number(tile.openPositions || 0), 0),
+      totalTiles: tiles.length,
+      configuredTiles: tiles.filter(tile => tile.configured !== false).length,
     },
     source: "CURRENT_DAY_PERSISTED_SHADOW_STATE",
     tokenCheckedAt: externalHealth?.checkedAt || null,
@@ -1953,28 +1979,29 @@ export function renderShadowStrategyMonitorPage(navHtml: string): string {
     .sm-consolidated-metric span{font-size:11px;color:#93a4c0;text-transform:uppercase;font-weight:800;letter-spacing:.04em}
     .sm-consolidated-metric b{margin-top:6px;font-size:24px;color:#f8fafc;white-space:nowrap}
     .sm-consolidated-metric:first-child b{font-size:30px}
-    .sm-consolidated-grid{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:12px}
-    .sm-key-tile{position:relative;min-height:136px;padding:12px 13px;border:1px solid rgba(148,163,184,.18);border-radius:10px;background:linear-gradient(180deg,rgba(17,30,55,.96),rgba(5,13,29,.98));color:#e5e7eb;box-shadow:inset 0 1px 0 rgba(255,255,255,.05),inset 0 -8px 20px rgba(0,0,0,.2),0 5px 14px rgba(0,0,0,.2);cursor:pointer;text-align:left;display:flex;flex-direction:column;transition:border-color .16s ease,transform .16s ease,box-shadow .16s ease;min-width:0}
-    .sm-key-tile:hover{transform:translateY(-2px);border-color:rgba(129,140,248,.75)}
-    .sm-key-tile.selected{outline:2px solid #818cf8;outline-offset:2px}
-    .sm-key-tile.profit{border-color:rgba(34,197,94,.65);background:linear-gradient(180deg,rgba(13,47,50,.96),rgba(5,20,28,.98));box-shadow:inset 0 1px 0 rgba(255,255,255,.05),0 0 0 1px rgba(34,197,94,.08),0 8px 22px rgba(15,120,65,.18)}
-    .sm-key-tile.loss{border-color:rgba(248,113,113,.65);background:linear-gradient(180deg,rgba(58,25,43,.96),rgba(25,10,24,.98));box-shadow:inset 0 1px 0 rgba(255,255,255,.05),0 0 0 1px rgba(248,113,113,.08),0 8px 22px rgba(127,29,29,.2)}
-    .sm-key-tile.open{box-shadow:inset 0 1px 0 rgba(255,255,255,.06),0 0 0 1px rgba(45,212,191,.24),0 10px 28px rgba(13,148,136,.22)}
-    .sm-key-tile.stale,.sm-key-tile.error{border-color:rgba(245,158,11,.72)}
-    .sm-key-head{display:flex;align-items:flex-start;justify-content:space-between;gap:10px}
-    .sm-key-name{font-size:14px;line-height:1.25;font-weight:800;color:#f8fafc;min-width:0}
-    .sm-key-instrument{flex:0 0 auto;padding:5px 8px;border-radius:6px;background:rgba(99,102,241,.18);border:1px solid rgba(129,140,248,.32);color:#c7d2fe;font-size:10px;font-weight:900}
-    .sm-key-pnl{margin-top:10px;font-size:25px;line-height:1;font-weight:850;color:#94a3b8;white-space:nowrap}
+    .sm-consolidated-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px}
+    .sm-key-tile{position:relative;min-height:116px;padding:10px 14px;border:1px solid rgba(111,145,190,.55);border-radius:9px;background:linear-gradient(145deg,rgba(14,27,51,.98),rgba(4,11,25,.99));color:#e5e7eb;box-shadow:inset 0 1px 0 rgba(255,255,255,.08),inset 0 -12px 24px rgba(0,0,0,.22),0 0 0 1px rgba(56,189,248,.05),0 7px 18px rgba(0,0,0,.26);cursor:pointer;text-align:center;display:flex;flex-direction:column;transition:border-color .16s ease,transform .16s ease,box-shadow .16s ease;min-width:0;overflow:hidden}
+    .sm-key-tile:before{content:"";position:absolute;inset:0;pointer-events:none;background:linear-gradient(115deg,rgba(255,255,255,.06),transparent 28%,transparent 72%,rgba(34,211,238,.04))}
+    .sm-key-tile:hover{transform:translateY(-2px);border-color:#60a5fa;box-shadow:0 0 18px rgba(59,130,246,.22),0 10px 22px rgba(0,0,0,.3)}
+    .sm-key-tile.selected{border-color:#8b5cf6;outline:1px solid #6366f1;outline-offset:2px;box-shadow:0 0 0 1px rgba(139,92,246,.65),0 0 22px rgba(99,102,241,.52),inset 0 0 22px rgba(79,70,229,.13)}
+    .sm-key-tile.profit{border-color:rgba(74,222,128,.82);background:linear-gradient(145deg,rgba(10,42,41,.98),rgba(4,18,27,.99));box-shadow:inset 0 1px 0 rgba(255,255,255,.07),0 0 14px rgba(34,197,94,.2),0 8px 20px rgba(0,0,0,.26)}
+    .sm-key-tile.loss{border-color:rgba(248,82,82,.9);background:linear-gradient(145deg,rgba(55,21,35,.98),rgba(26,8,20,.99));box-shadow:inset 0 1px 0 rgba(255,255,255,.06),0 0 15px rgba(239,68,68,.24),0 8px 20px rgba(0,0,0,.28)}
+    .sm-key-tile.open{box-shadow:inset 0 1px 0 rgba(255,255,255,.08),0 0 0 1px rgba(45,212,191,.2),0 0 20px rgba(13,148,136,.25)}
+    .sm-key-tile.stale,.sm-key-tile.error{border-color:rgba(245,158,11,.8)}
+    .sm-key-tile.not-configured{cursor:default;border-color:rgba(100,116,139,.48);background:linear-gradient(145deg,rgba(20,29,45,.94),rgba(9,15,27,.98));box-shadow:inset 0 1px 0 rgba(255,255,255,.04)}
+    .sm-key-head{position:relative;display:flex;align-items:center;justify-content:center;gap:8px}
+    .sm-key-name{font-size:14px;line-height:1.2;font-weight:850;color:#f8fafc;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+    .sm-key-instrument{flex:0 0 auto;padding:3px 6px;border-radius:4px;background:rgba(37,99,235,.16);border:1px solid rgba(96,165,250,.32);color:#bfdbfe;font-size:9px;font-weight:900}
+    .sm-key-pnl{position:relative;margin-top:7px;font-size:24px;line-height:1;font-weight:900;color:#94a3b8;white-space:nowrap}
     .sm-key-tile.profit .sm-key-pnl{color:#4ade80}.sm-key-tile.loss .sm-key-pnl{color:#fb7185}
-    .sm-key-return{margin-top:8px;font-size:14px;font-weight:800;color:#94a3b8}
-    .sm-key-bottom{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-top:auto;padding-top:8px;color:#9fb0ce;font-size:10px}
-    .sm-key-state{display:inline-flex;align-items:center;gap:6px;padding:5px 8px;border-radius:6px;background:rgba(148,163,184,.12);font-size:10px;font-weight:900}
+    .sm-key-return{position:relative;margin-top:5px;font-size:13px;font-weight:850;color:#94a3b8}
+    .sm-key-bottom{position:relative;display:flex;align-items:center;justify-content:space-between;gap:8px;margin-top:auto;padding-top:7px;color:#c0cbe0;font-size:10px;font-weight:700;text-transform:uppercase}
+    .sm-key-state{display:inline-flex;align-items:center;gap:6px;padding:0;background:transparent;font-size:10px;font-weight:900}
     .sm-key-state.open,.sm-key-state.closed{color:#4ade80}.sm-key-state.stale,.sm-key-state.error{color:#fbbf24}
     .sm-key-state.open:before{content:"";width:7px;height:7px;border-radius:50%;background:#34d399;box-shadow:0 0 0 4px rgba(52,211,153,.12)}
     .sm-consolidated-empty{padding:50px 20px;text-align:center;border:1px dashed rgba(148,163,184,.3);border-radius:14px;color:#94a3b8}
     .sm-consolidated-empty b{display:block;color:#f8fafc;font-size:18px;margin-bottom:7px}
-    @media(max-width:1366px){.sm-consolidated-grid{grid-template-columns:repeat(4,minmax(0,1fr))}}
-    @media(max-width:1100px){.sm-consolidated-grid{grid-template-columns:repeat(3,minmax(0,1fr))}}
+    @media(max-width:1200px){.sm-consolidated-grid{grid-template-columns:repeat(3,minmax(0,1fr))}}
     @media(max-width:1023px){.sm-consolidated-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.sm-consolidated-summary{grid-template-columns:repeat(2,1fr)}.sm-consolidated-metric:nth-child(3){border-left:0;border-top:1px solid rgba(148,163,184,.16)}.sm-consolidated-metric:nth-child(4){border-top:1px solid rgba(148,163,184,.16)}}
     @media(max-width:700px){.sm-consolidated-mode .sm-head{padding:14px;align-items:stretch}.sm-consolidated-mode .sm-head-actions{display:grid;grid-template-columns:1fr auto;gap:8px}.sm-consolidated-mode .sm-refresh-meta{grid-column:1/-1;text-align:left}.sm-consolidated-toggle{height:40px;padding:0 11px}.sm-consolidated-summary{grid-template-columns:1fr 1fr}.sm-consolidated-metric{min-height:76px;padding:13px}.sm-consolidated-metric b,.sm-consolidated-metric:first-child b{font-size:20px}.sm-consolidated-grid{grid-template-columns:1fr;gap:9px}.sm-key-tile{min-height:132px}.sm-key-pnl{font-size:25px}}
     @media(max-width:1100px){.sm-pnl{min-height:292px}.sm-pnl .sm-metrics{grid-template-columns:repeat(3,minmax(0,1fr));row-gap:2px}.sm-pnl .sm-metric:nth-child(4){border-left:0}.sm-pnl-value{font-size:clamp(46px,6vw,56px)}}
@@ -2065,8 +2092,8 @@ export function renderShadowStrategyMonitorPage(navHtml: string): string {
       function renderLogs(d){var box=el("logConsole");var nearBottom=box.scrollHeight-box.scrollTop-box.clientHeight<28;var rows=(d.logs||[]).map(function(l){return'<div class="sm-log-line"><span>'+esc(l.time||"--:--:--")+'</span><b class="'+esc(l.level)+'">'+esc(l.level)+'</b><span>'+esc(l.message)+'</span></div>'}).join("");box.innerHTML=rows||'<div class="sm-muted">No server log entries available.</div>';if(state.logStick&&nearBottom)box.scrollTop=box.scrollHeight;el("resumeLogs").hidden=state.logStick}
       function renderSection(name,fn){try{fn()}catch(error){console.error("Shadow monitor "+name+" render failed",error)}}
       function consolidatedKey(t){return [t.strategyId,t.strategyVersion,t.instrumentType,t.executionMode,t.tradeDate].join("|")}
-      function tileClass(t){if(t.positionState==="ERROR")return"error";if(t.positionState==="STALE")return"stale";if(t.positionState==="OPEN")return"open";return Number(t.pnl)>0?"profit":Number(t.pnl)<0?"loss":"no-trade"}
-      function renderConsolidated(d){var c=d.consolidated||{};var s=c.summary||{};var summary=el("consolidatedSummary");if(!summary.children.length)summary.innerHTML='<div class="sm-consolidated-metric"><span>Total Today P&amp;L</span><b id="consolidatedTotal">--</b></div><div class="sm-consolidated-metric"><span>Profitable Tiles</span><b id="consolidatedProfit">0</b></div><div class="sm-consolidated-metric"><span>Loss-Making Tiles</span><b id="consolidatedLoss">0</b></div><div class="sm-consolidated-metric"><span>Open Positions</span><b id="consolidatedOpen">0</b></div>';el("consolidatedTotal").innerHTML=money(s.totalPnl);el("consolidatedProfit").textContent=value(s.profitableTiles,0);el("consolidatedLoss").textContent=value(s.lossMakingTiles,0);el("consolidatedOpen").textContent=value(s.openPositions,0);var tiles=c.tiles||[];var grid=el("consolidatedGrid");if(!tiles.length){grid.innerHTML='<div class="sm-consolidated-empty"><b>No active shadow strategies</b>Configure at least one Futures or Options shadow strategy to view consolidated P&amp;L.</div>';return}var expected=tiles.map(consolidatedKey).join(",");if(grid.dataset.keys!==expected){grid.dataset.keys=expected;grid.innerHTML=tiles.map(function(t){var key=consolidatedKey(t);return'<button class="sm-key-tile" type="button" data-tile-key="'+esc(key)+'" data-strategy="'+esc(t.strategyId)+'" data-instrument="'+esc(t.instrumentType)+'"><div class="sm-key-head"><span class="sm-key-name"></span><span class="sm-key-instrument"></span></div><div class="sm-key-pnl"></div><div class="sm-key-return"></div><div class="sm-key-bottom"><span class="sm-key-trades"></span><span class="sm-key-state"></span></div></button>'}).join("")}tiles.forEach(function(t){var key=consolidatedKey(t);var tile=grid.querySelector('[data-tile-key="'+CSS.escape(key)+'"]');if(!tile)return;var cls=tileClass(t);tile.className="sm-key-tile "+cls+(t.strategyId===state.strategy&&t.instrumentType===state.instrument?" selected":"");tile.querySelector(".sm-key-name").textContent=t.strategyName;tile.querySelector(".sm-key-instrument").textContent=t.instrumentType;tile.querySelector(".sm-key-pnl").innerHTML=t.pnl==null?"Not available":money(t.pnl);tile.querySelector(".sm-key-return").textContent=t.returnPct==null?"Return unavailable":pct(t.returnPct)+" return";tile.querySelector(".sm-key-trades").textContent=value(t.trades,0)+" "+(Number(t.trades)===1?"trade":"trades");var stateNode=tile.querySelector(".sm-key-state");stateNode.className="sm-key-state "+String(t.positionState||"").toLowerCase().replace(/\\s+/g,"-");stateNode.textContent=t.positionState||"--";tile.title=t.pnl==null?"No valid current-day shadow data":t.strategyName+" "+t.instrumentType+" | Capital deployed "+value(t.capitalDeployed,0)})}
+      function tileClass(t){if(t.positionState==="NOT CONFIGURED")return"not-configured";if(t.positionState==="ERROR")return"error";if(t.positionState==="STALE")return"stale";if(t.positionState==="OPEN")return"open";return Number(t.pnl)>0?"profit":Number(t.pnl)<0?"loss":"no-trade"}
+      function renderConsolidated(d){var c=d.consolidated||{};var s=c.summary||{};var totalTiles=Number(s.totalTiles||((c.tiles||[]).length)||0);var summary=el("consolidatedSummary");if(!summary.children.length)summary.innerHTML='<div class="sm-consolidated-metric"><span>Total Today P&amp;L</span><b id="consolidatedTotal">--</b></div><div class="sm-consolidated-metric"><span>Profitable Strategies</span><b id="consolidatedProfit">0</b></div><div class="sm-consolidated-metric"><span>Losing Strategies</span><b id="consolidatedLoss">0</b></div><div class="sm-consolidated-metric"><span>Open Positions</span><b id="consolidatedOpen">0</b></div>';el("consolidatedTotal").innerHTML=money(s.totalPnl);el("consolidatedProfit").textContent=value(s.profitableTiles,0)+" / "+totalTiles;el("consolidatedLoss").textContent=value(s.lossMakingTiles,0)+" / "+totalTiles;el("consolidatedOpen").textContent=value(s.openPositions,0);var tiles=c.tiles||[];var grid=el("consolidatedGrid");if(!tiles.length){grid.innerHTML='<div class="sm-consolidated-empty"><b>No active shadow strategies</b>Configure at least one Futures or Options shadow strategy to view consolidated P&amp;L.</div>';return}var expected=tiles.map(consolidatedKey).join(",");if(grid.dataset.keys!==expected){grid.dataset.keys=expected;grid.innerHTML=tiles.map(function(t){var key=consolidatedKey(t);return'<button class="sm-key-tile" type="button" data-tile-key="'+esc(key)+'" data-strategy="'+esc(t.strategyId)+'" data-instrument="'+esc(t.instrumentType)+'"><div class="sm-key-head"><span class="sm-key-name"></span><span class="sm-key-instrument"></span></div><div class="sm-key-pnl"></div><div class="sm-key-return"></div><div class="sm-key-bottom"><span class="sm-key-trades"></span><span class="sm-key-state"></span></div></button>'}).join("")}tiles.forEach(function(t){var key=consolidatedKey(t);var tile=grid.querySelector('[data-tile-key="'+CSS.escape(key)+'"]');if(!tile)return;var cls=tileClass(t);tile.className="sm-key-tile "+cls+(t.configured!==false&&t.strategyId===state.strategy&&t.instrumentType===state.instrument?" selected":"");tile.disabled=t.configured===false;tile.querySelector(".sm-key-name").textContent=t.strategyName;tile.querySelector(".sm-key-instrument").textContent=t.instrumentType==="FUTURES"?"FUT":"OPT";tile.querySelector(".sm-key-pnl").innerHTML=t.configured===false?"Not configured":t.pnl==null?"Not available":money(t.pnl);tile.querySelector(".sm-key-return").textContent=t.configured===false?"Options runtime required":t.returnPct==null?"Return unavailable":pct(t.returnPct)+" return";tile.querySelector(".sm-key-trades").textContent=value(t.trades,0)+" "+(Number(t.trades)===1?"trade":"trades");var stateNode=tile.querySelector(".sm-key-state");stateNode.className="sm-key-state "+String(t.positionState||"").toLowerCase().replace(/\\s+/g,"-");stateNode.textContent=t.positionState||"--";tile.title=t.configured===false?"This strategy does not publish an Options shadow stream yet":t.pnl==null?"No valid current-day shadow data":t.strategyName+" "+t.instrumentType+" | Capital deployed "+value(t.capitalDeployed,0)})}
       function setViewMode(mode){state.viewMode=mode;var consolidated=mode==="consolidated";el("shadowMonitor").classList.toggle("sm-consolidated-mode",consolidated);el("shadowPage").classList.toggle("sm-consolidated-page",consolidated);el("consolidatedView").hidden=!consolidated;el("monitorTitle").textContent=consolidated?"Consolidated Shadow P&L":"Shadow Strategy Monitor";el("monitorSubtitle").textContent=consolidated?"Today's P&L across all shadow strategies and instruments":"Simulated trades only. No real broker orders are placed.";el("consolidatedToggle").querySelector("span").textContent=consolidated?"Back to Dashboard":"Consolidated P&L";if(consolidated&&state.data)renderConsolidated(state.data);window.scrollTo({top:0,behavior:"auto"})}
       function render(d){state.data=d;state.instrument=d.identity.instrumentType||state.instrument;localStorage.setItem("zsShadowInstrument",state.instrument);renderSection("strategies",function(){renderStrategies(d.strategies)});renderSection("trades",function(){renderTrades(d)});renderSection("candles",function(){renderCandles(d)});renderSection("health",function(){renderHealth(d);el("healthAction").textContent="View Checks"});renderSection("summary",function(){renderSummary(d)});renderSection("logs",function(){renderLogs(d)});renderSection("consolidated",function(){renderConsolidated(d)});var m=el("marketStatus");m.className="sm-market "+(d.market.status==="OPEN"?"open":"closed");m.querySelector("span:last-child").textContent="Market "+(d.market.status==="OPEN"?"Open":"Closed");el("refreshMeta").textContent="Last refreshed: "+dt(d.refreshedAt);document.querySelectorAll(".sm-segment [data-instrument]").forEach(function(b){b.classList.toggle("active",b.dataset.instrument===state.instrument)});el("shadowMonitor").classList.remove("sm-loading");el("monitorLoader").classList.remove("active")}
       async function load(trigger){var interactive=trigger===true||!!(trigger&&trigger.type)||state.userRequestedLoad===true;state.userRequestedLoad=false;var seq=++state.request;if(activeController)activeController.abort();activeController=new AbortController();if(interactive){el("monitorLoader").classList.add("active");el("shadowMonitor").classList.add("sm-loading")}try{var url="/api/shadow-monitor?strategy="+encodeURIComponent(state.strategy)+"&instrument="+encodeURIComponent(state.instrument);var r=await fetch(url,{cache:"no-store",credentials:"same-origin",signal:activeController.signal});if(!r.ok)throw new Error("HTTP "+r.status);var d=await r.json();if(seq!==state.request)return;if(!d.ok)throw new Error(d.error||"Monitor unavailable");render(d)}catch(e){if(e.name==="AbortError")return;el("refreshMeta").textContent="Refresh failed: "+e.message;el("shadowMonitor").classList.remove("sm-loading");el("monitorLoader").classList.remove("active")}}
