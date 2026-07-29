@@ -9,8 +9,12 @@ type StrategyDefinition = {
   id: string;
   name: string;
   version: string;
-  prefix: "drishti" | "tt1030" | "tt1000" | "normalBreakoutShadow" | "hybridShadow";
+  prefix: "drishti" | "drishtiV2" | "tt1030" | "tt1000" | "normalBreakoutShadow" | "hybridShadow";
   backtestFile?: string;
+  instruments?: InstrumentType[];
+  processName?: string;
+  heartbeatFile?: string;
+  stateFile?: string;
 };
 
 const BOT_DIR = process.env.TRADING_BOT_DIR || "/home/ubuntu/trading-bot";
@@ -31,10 +35,21 @@ type HealthCheck = {
   critical: boolean;
 };
 
-let runtimeHealthCache: { checkedAt: number; value: any } = { checkedAt: 0, value: null };
+const runtimeHealthCache = new Map<string, { checkedAt: number; value: any }>();
 
 const STRATEGIES: StrategyDefinition[] = [
   { id: "drishti", name: "DRISHTI (BANKNIFTY)", version: "Current", prefix: "drishti", backtestFile: "shadow-strategy-5yr-results.json" },
+  {
+    id: "drishti-v2",
+    name: "DRISHTI V2 Challenger (BANKNIFTY)",
+    version: "V2 Shadow",
+    prefix: "drishtiV2",
+    backtestFile: "drishti-v2-backtest.json",
+    instruments: ["FUTURES"],
+    processName: "drishti-v2-shadow",
+    heartbeatFile: "drishti-v2-heartbeat.json",
+    stateFile: "drishti-v2-state.json",
+  },
   { id: "tt1030", name: "10:30 Breakout (BANKNIFTY)", version: "Current", prefix: "tt1030", backtestFile: "shadow-strategy-5yr-results.json" },
   { id: "tt1000", name: "10:00 Breakout (BANKNIFTY)", version: "V1", prefix: "tt1000", backtestFile: "shadow-strategy-5yr-results.json" },
   { id: "normal-breakout", name: "Normal Breakout (BANKNIFTY)", version: "V1", prefix: "normalBreakoutShadow", backtestFile: "shadow-strategy-5yr-results.json" },
@@ -109,16 +124,23 @@ function sanitizeLog(value: any): string {
 }
 
 function recentServerLogs(strategy: StrategyDefinition): any[] {
-  const candidates = [
-    "/root/.pm2/logs/trading-bot-out.log",
-    "/home/ubuntu/.pm2/logs/trading-bot-out.log",
-    path.join(BOT_DIR, "logs/server.log"),
-    path.join(BOT_DIR, "logs/bot-out.log"),
-  ];
+  const candidates = strategy.processName
+    ? [
+      `/root/.pm2/logs/${strategy.processName}-out.log`,
+      `/home/ubuntu/.pm2/logs/${strategy.processName}-out.log`,
+    ]
+    : [
+      "/root/.pm2/logs/trading-bot-out.log",
+      "/home/ubuntu/.pm2/logs/trading-bot-out.log",
+      path.join(BOT_DIR, "logs/server.log"),
+      path.join(BOT_DIR, "logs/bot-out.log"),
+    ];
   const rows: any[] = [];
   const seen = new Set<string>();
   const strategyPattern = strategy.id === "drishti"
     ? /drishti/i
+    : strategy.id === "drishti-v2"
+      ? /drishti[_ -]?v2|challenger/i
     : strategy.id === "tt1030"
       ? /\b10[:.]?30\b|\btt1030\b/i
       : strategy.id === "tt1000"
@@ -158,6 +180,41 @@ function recentServerLogs(strategy: StrategyDefinition): any[] {
 
 function strategyFields(strategy: StrategyDefinition, hb: any, state: any, instrument: InstrumentType) {
   const isOptions = instrument === "OPTIONS";
+  if (strategy.prefix === "drishtiV2") {
+    const candleFile = readJson("drishti-v2-candle-log.json", {});
+    const candleRows = Array.isArray(candleFile)
+      ? candleFile
+      : Array.isArray(candleFile?.candles) ? candleFile.candles : [];
+    const rawTrades = readJson("drishti-v2-trades.json", []);
+    const inTrade = !!state.inTrade;
+    const realized = num(state.realizedPnl ?? hb.realizedPnl) ?? 0;
+    const unrealized = inTrade ? num(state.unrealizedPnl ?? hb.unrealizedPnl) ?? 0 : 0;
+    return {
+      inTrade,
+      realized,
+      unrealized,
+      total: realized + unrealized,
+      trades: num(state.tradeCount ?? hb.trades) ?? 0,
+      wins: num(state.wins ?? hb.wins) ?? 0,
+      losses: num(state.losses ?? hb.losses) ?? 0,
+      direction: text(state.side ?? hb.side),
+      symbol: text(state.futuresSymbol ?? hb.symbol),
+      entry: num(state.entryPrice ?? hb.futuresEntry),
+      live: num(state.lastPrice ?? hb.futuresLive),
+      sl: num(state.stopLoss ?? hb.stopLoss),
+      target: num(state.target ?? hb.target),
+      quantity: num(hb.quantity) ?? 30,
+      entryTime: timeValue(state.entryTime),
+      entryAt: state.entryTime || null,
+      phase: text(state.phase ?? hb.status),
+      dayHigh: null,
+      dayLow: null,
+      volume: null,
+      openInterest: null,
+      rawTrades: Array.isArray(rawTrades) ? rawTrades : [],
+      candleLog: candleFile?.date && dateKey(candleFile.date) !== todayIST() ? [] : candleRows,
+    };
+  }
   if (strategy.prefix === "drishti") {
     const candleFile = readJson("candle-log.json", []);
     const fileCandleRows = Array.isArray(candleFile)
@@ -385,8 +442,12 @@ function backtestSummary(strategy: StrategyDefinition, instrument: InstrumentTyp
       monthlyRecords: Array.isArray(normalized.months) ? normalized.months.length : 0,
       modelled: !!normalized.modelled,
       methodology: text(normalized.methodology),
-      days: Array.isArray(normalized.days) ? normalized.days : [],
+      days: strategy.id === "drishti-v2"
+        ? []
+        : Array.isArray(normalized.days) ? normalized.days : [],
+      weeks: Array.isArray(normalized.weeks) ? normalized.weeks : [],
       months: Array.isArray(normalized.months) ? normalized.months : [],
+      years: Array.isArray(normalized.years) ? normalized.years : [],
       generatedAt: data.generatedAt || null,
     };
   }
@@ -468,7 +529,9 @@ function shadowHistory(strategy: StrategyDefinition, instrument: InstrumentType)
     const storedPnl = instrument === "OPTIONS"
       ? num(row?.optionsPnl ?? row?.optionPnl ?? row?.premiumPnl)
       : num(row?.pnlRs ?? row?.pnl);
-    const pnl = calculatedPnl ?? storedPnl;
+    const pnl = strategy.prefix === "drishtiV2"
+      ? storedPnl ?? calculatedPnl
+      : calculatedPnl ?? storedPnl;
     const capitalDeployed = entry && quantity
       ? (instrument === "OPTIONS" ? entry * quantity : entry * quantity * FUTURES_MARGIN_RATE)
       : 0;
@@ -532,15 +595,16 @@ function shadowHistory(strategy: StrategyDefinition, instrument: InstrumentType)
         });
       }
     }
-  } else if (strategy.prefix === "drishti") {
-    const rows: any[] = readJson("trades.json", []);
+  } else if (strategy.prefix === "drishti" || strategy.prefix === "drishtiV2") {
+    const historyFile = strategy.prefix === "drishtiV2" ? "drishti-v2-trades.json" : "trades.json";
+    const rows: any[] = readJson(historyFile, []);
     for (const row of Array.isArray(rows) ? rows : []) {
       const date = dateKey(row.date || row.exitTime || row.entryTime);
       if (!date) continue;
       const symbol = String(row.symbol || row.tradeSymbol || "").toUpperCase();
       const looksOption = /\d+(CE|PE)$/.test(symbol) || num(row.premiumEntry) !== null;
       if (instrument === "OPTIONS" ? !looksOption : looksOption) continue;
-      const pnl = num(row.pnlRs ?? row.pnl);
+      const pnl = num(row.netPnlRs ?? row.pnlRs ?? row.pnl);
       if (pnl === null) continue;
       const current = byDate.get(date) || { date, pnl: 0, capitalDeployed: 0, trades: 0, wins: 0, losses: 0 };
       current.pnl += pnl;
@@ -590,7 +654,11 @@ function shadowHistory(strategy: StrategyDefinition, instrument: InstrumentType)
     return `${parsed.getUTCFullYear()}-W${String(week).padStart(2, "0")}`;
   };
   return {
-    source: historyKey ? "strategy-monthly-history.json" : strategy.prefix === "drishti" ? "trades.json" : null,
+    source: historyKey
+      ? "strategy-monthly-history.json"
+      : strategy.prefix === "drishtiV2"
+        ? "drishti-v2-trades.json"
+        : strategy.prefix === "drishti" ? "trades.json" : null,
     trades: tradeDetails.sort((a, b) => `${b.date} ${b.time}`.localeCompare(`${a.date} ${a.time}`)),
     days: [...days].reverse(),
     weekly: aggregate(weekKey),
@@ -599,9 +667,10 @@ function shadowHistory(strategy: StrategyDefinition, instrument: InstrumentType)
   };
 }
 
-function runtimeEvidence(): any {
-  if (runtimeHealthCache.value && Date.now() - runtimeHealthCache.checkedAt < 15000) {
-    return runtimeHealthCache.value;
+function runtimeEvidence(processName = "trading-bot"): any {
+  const cached = runtimeHealthCache.get(processName);
+  if (cached?.value && Date.now() - cached.checkedAt < 15000) {
+    return cached.value;
   }
   let processInfo: any = null;
   try {
@@ -612,7 +681,7 @@ function runtimeEvidence(): any {
       stdio: ["ignore", "pipe", "ignore"],
     });
     const rows = JSON.parse(raw);
-    const tradingBot = Array.isArray(rows) ? rows.find((row: any) => row?.name === "trading-bot") : null;
+    const tradingBot = Array.isArray(rows) ? rows.find((row: any) => row?.name === processName) : null;
     if (tradingBot) {
       processInfo = {
         status: text(tradingBot?.pm2_env?.status)?.toUpperCase() || "UNKNOWN",
@@ -639,7 +708,7 @@ function runtimeEvidence(): any {
     diskUsedPct = null;
   }
   const value = { process: processInfo, resources: { cpuLoadPct, memoryUsedPct, diskUsedPct } };
-  runtimeHealthCache = { checkedAt: Date.now(), value };
+  runtimeHealthCache.set(processName, { checkedAt: Date.now(), value });
   return value;
 }
 
@@ -673,7 +742,8 @@ function systemHealth(
   heartbeatAgeSec: number | null,
   externalHealth: any,
 ): any {
-  const evidence = runtimeEvidence();
+  const processName = strategy.processName || "trading-bot";
+  const evidence = runtimeEvidence(processName);
   const processState = String(evidence.process?.status || "UNKNOWN");
   const processOnline = processState === "ONLINE";
   const clock = istClock();
@@ -681,6 +751,7 @@ function systemHealth(
   const marketOpen = tradingDay && clock.minutes >= 555 && clock.minutes <= 930;
   const triggerByStrategy: Record<string, { time: string; minutes: number }> = {
     drishti: { time: "09:25", minutes: 565 },
+    "drishti-v2": { time: "09:30", minutes: 570 },
     tt1000: { time: "10:00", minutes: 600 },
     tt1030: { time: "10:30", minutes: 630 },
     "normal-breakout": { time: "09:45", minutes: 585 },
@@ -713,7 +784,7 @@ function systemHealth(
   } catch {
     storageWritable = false;
   }
-  const heartbeatFile = path.join(BOT_DIR, "bot-heartbeat.json");
+  const heartbeatFile = path.join(BOT_DIR, strategy.heartbeatFile || "bot-heartbeat.json");
   const snapshotReadable = fs.existsSync(heartbeatFile);
   const tokenValid = externalHealth?.token?.valid === true;
   const tokenChecked = !!externalHealth?.token?.source;
@@ -728,8 +799,9 @@ function systemHealth(
       : autoRefreshImplemented
         ? "helper present but no verified success evidence"
         : "not implemented";
-  const futuresFields = strategyFields(strategy, hb, readJson("trade-state.json", {}), "FUTURES");
-  const optionsFields = strategyFields(strategy, hb, readJson("trade-state.json", {}), "OPTIONS");
+  const strategyState = readJson(strategy.stateFile || "trade-state.json", {});
+  const futuresFields = strategyFields(strategy, hb, strategyState, "FUTURES");
+  const optionsFields = strategyFields(strategy, hb, strategyState, "OPTIONS");
   const resourceValues = [
     Number(evidence.resources?.cpuLoadPct || 0),
     Number(evidence.resources?.memoryUsedPct || 0),
@@ -746,6 +818,7 @@ function systemHealth(
   const latestFeedLog = recentLogs.find(row => /\b(FEED|TICK|MARKET DATA|HEARTBEAT)\b/i.test(String(row.message || "")));
   const futuresReady = processOnline && !!(futuresFields.phase || futuresFields.rawTrades?.length || strategyMarker);
   const optionsReady = processOnline && !!(optionsFields.phase || optionsFields.rawTrades?.length || strategyMarker);
+  const supportsOptions = !strategy.instruments || strategy.instruments.includes("OPTIONS");
 
   const checks: HealthCheck[] = [
     {
@@ -755,8 +828,8 @@ function systemHealth(
       value: processOnline ? "Online" : processState === "UNKNOWN" ? "Unknown" : processState,
       detail: processOnline
         ? `PID ${evidence.process?.pid || "--"}; uptime ${processUptime}; ${evidence.process?.restarts || 0} lifetime restarts`
-        : "PM2 trading-bot process is not online.",
-      source: "PM2 jlist",
+        : `PM2 ${processName} process is not online.`,
+      source: `PM2 jlist (${processName})`,
       critical: true,
     },
     {
@@ -836,11 +909,13 @@ function systemHealth(
     {
       id: "optionsExecutor",
       label: "Options Shadow Executor",
-      level: optionsReady ? "PASS" : processOnline ? "WARN" : "FAIL",
-      value: optionsReady ? "Ready" : "Unverified",
-      detail: `Options execution adapter; selected strategy ${strategy.name}; mode SHADOW`,
+      level: supportsOptions ? (optionsReady ? "PASS" : processOnline ? "WARN" : "FAIL") : "INFO",
+      value: supportsOptions ? (optionsReady ? "Ready" : "Unverified") : "Not used",
+      detail: supportsOptions
+        ? `Options execution adapter; selected strategy ${strategy.name}; mode SHADOW`
+        : `${strategy.name} is intentionally futures-only.`,
       source: "Options strategy runtime fields",
-      critical: true,
+      critical: supportsOptions,
     },
     {
       id: "storage",
@@ -930,8 +1005,11 @@ function performanceOverview(hb: any, state: any, tradeDate: string): any {
   const rows: Record<"TODAY" | "MONTH" | "YEAR", any[]> = { TODAY: [], MONTH: [], YEAR: [] };
 
   for (const strategy of STRATEGIES) {
-    for (const instrument of ["FUTURES", "OPTIONS"] as InstrumentType[]) {
-      const fields = strategyFields(strategy, hb, state, instrument);
+    const strategyHeartbeat = strategy.heartbeatFile ? readJson(strategy.heartbeatFile, {}) : hb;
+    const strategyState = strategy.stateFile ? readJson(strategy.stateFile, {}) : state;
+    const supportedInstruments = strategy.instruments || (["FUTURES", "OPTIONS"] as InstrumentType[]);
+    for (const instrument of supportedInstruments) {
+      const fields = strategyFields(strategy, strategyHeartbeat, strategyState, instrument);
       const trades = normalizedTrades(
         fields.rawTrades,
         strategy,
@@ -1029,9 +1107,12 @@ function performanceOverview(hb: any, state: any, tradeDate: string): any {
 export function buildShadowMonitorPayload(strategyId = "", instrumentValue = "", externalHealth: any = {}): any {
   const tradeDate = todayIST();
   const strategy = STRATEGIES.find(item => item.id === strategyId) || STRATEGIES[0];
-  const instrument: InstrumentType = instrumentValue === "OPTIONS" ? "OPTIONS" : "FUTURES";
-  const hb = readJson("bot-heartbeat.json", {});
-  const state = readJson("trade-state.json", {});
+  const requestedInstrument: InstrumentType = instrumentValue === "OPTIONS" ? "OPTIONS" : "FUTURES";
+  const instrument: InstrumentType = strategy.instruments?.includes(requestedInstrument)
+    ? requestedInstrument
+    : strategy.instruments?.[0] || requestedInstrument;
+  const hb = readJson(strategy.heartbeatFile || "bot-heartbeat.json", {});
+  const state = readJson(strategy.stateFile || "trade-state.json", {});
   const heartbeatAt = hb?.at ? new Date(hb.at).getTime() : 0;
   const heartbeatAgeSec = heartbeatAt ? Math.max(0, Math.round((Date.now() - heartbeatAt) / 1000)) : null;
   const connected = heartbeatAgeSec !== null && heartbeatAgeSec < 180;
@@ -1086,7 +1167,9 @@ export function buildShadowMonitorPayload(strategyId = "", instrumentValue = "",
   const closedTrades = trades.filter((row: any) => String(row.status).toUpperCase() === "CLOSED");
   const wins = fields.wins || closedTrades.filter((row: any) => (row.pnl ?? 0) > 0).length;
   const losses = fields.losses || closedTrades.filter((row: any) => (row.pnl ?? 0) < 0).length;
-  const recordedTrades = strategy.prefix === "drishti" ? fields.trades : closedTrades.length;
+  const recordedTrades = strategy.prefix === "drishti" || strategy.prefix === "drishtiV2"
+    ? fields.trades
+    : closedTrades.length;
   const tradeCount = Math.max(fields.trades, recordedTrades, fields.inTrade ? 1 : 0);
   const winRate = wins + losses > 0 ? wins / (wins + losses) * 100 : 0;
   const nowIso = new Date().toISOString();
@@ -1128,7 +1211,12 @@ export function buildShadowMonitorPayload(strategyId = "", instrumentValue = "",
       tradeDate,
       executionMode: "SHADOW",
     },
-    strategies: STRATEGIES.map(item => ({ id: item.id, name: item.name, version: item.version })),
+    strategies: STRATEGIES.map(item => ({
+      id: item.id,
+      name: item.name,
+      version: item.version,
+      instruments: item.instruments || ["FUTURES", "OPTIONS"],
+    })),
     market: { status: marketStatus(), checkedAt: nowIso },
     health: {
       overall: aggregateHealth.state,
@@ -1589,6 +1677,7 @@ export function renderShadowStrategyMonitorPage(navHtml: string): string {
     .sm-control .sm-instrument-control .sm-segment button:not(.active){background:#fff;border-color:#e1e6ef;color:#56627a;box-shadow:0 1px 2px rgba(15,23,42,.04)}
     .sm-control .sm-instrument-control .sm-segment button:not(.active):hover{border-color:#aebcf4;color:#4338ca;background:#f8f9ff}
     .sm-control .sm-instrument-control .sm-segment button.active{transform:translateY(-1px);background:#5148e8;color:#fff;border-color:#5148e8;box-shadow:0 6px 16px rgba(81,72,232,.26)}
+    .sm-control .sm-instrument-control .sm-segment button:disabled{cursor:not-allowed;opacity:.4;transform:none;background:#f3f5f9;color:#94a3b8;border-color:#e2e8f0;box-shadow:none}
     .sm-control .sm-instrument-control .sm-segment button:focus-visible{outline:3px solid rgba(79,70,229,.2);outline-offset:1px}
     /* Shadow Live P&L presentation only. Data bindings remain in renderSummary. */
     .sm-pnl{isolation:isolate;position:relative;width:100%;min-height:238px;padding:14px 20px 12px;overflow:hidden;border:1px solid rgba(81,129,255,.3);border-radius:20px;background:linear-gradient(118deg,#071a4d 0%,#0c1947 38%,#241052 69%,#073e4d 100%);box-shadow:0 14px 30px rgba(13,25,64,.18),inset 0 1px 0 rgba(255,255,255,.1);color:#f8fbff}
@@ -1705,7 +1794,7 @@ export function renderShadowStrategyMonitorPage(navHtml: string): string {
       <p class="sm-footer-note">Shadow mode trades are not executed in the market. All P&amp;L values are hypothetical.</p>
     </div>
   </main>
-  <div class="sm-modal" id="historyModal" role="dialog" aria-modal="true" aria-labelledby="historyTitle"><div class="sm-modal-panel"><div class="sm-modal-head"><h2 id="historyTitle">Shadow Trade History</h2><button class="sm-close" id="closeHistory" type="button" aria-label="Close">&times;</button></div><div class="sm-history-tabs"><button class="active" data-period="TRADES">Trades</button><button data-period="DAILY">Daily</button><button data-period="MONTHLY">Monthly</button><button data-period="YEARLY">Yearly</button></div><div class="sm-history-body" id="historyBody"></div></div></div>
+  <div class="sm-modal" id="historyModal" role="dialog" aria-modal="true" aria-labelledby="historyTitle"><div class="sm-modal-panel"><div class="sm-modal-head"><h2 id="historyTitle">Shadow Trade History</h2><button class="sm-close" id="closeHistory" type="button" aria-label="Close">&times;</button></div><div class="sm-history-tabs"><button class="active" data-period="TRADES">Trades</button><button data-period="DAILY">Daily</button><button data-period="WEEKLY">Weekly</button><button data-period="MONTHLY">Monthly</button><button data-period="YEARLY">Yearly</button><button data-period="BT_WEEKLY">5Y Weekly</button><button data-period="BT_MONTHLY">5Y Monthly</button><button data-period="BT_YEARLY">5Y Yearly</button></div><div class="sm-history-body" id="historyBody"></div></div></div>
   <div class="sm-modal" id="candleModal" role="dialog" aria-modal="true" aria-labelledby="candleModalTitle"><div class="sm-modal-panel"><div class="sm-modal-head"><div><h2 id="candleModalTitle">Today's Candle Log</h2><div class="sm-health-note" id="candleModalSub">Selected shadow strategy</div></div><button class="sm-close" id="closeCandles" type="button" aria-label="Close">&times;</button></div><div class="sm-history-body"><div class="sm-table-wrap" style="max-height:70vh"><table class="sm-table candles sm-candle-full" id="candleFullTable"></table></div></div></div></div>
   <div class="sm-modal" id="healthModal" role="dialog" aria-modal="true" aria-labelledby="healthModalTitle"><div class="sm-modal-panel sm-health-panel"><div class="sm-modal-head"><div><h2 id="healthModalTitle">System Health Evidence</h2><div class="sm-health-note">Live process, scheduler, feed, execution, storage and token checks</div></div><button class="sm-close" id="closeHealth" type="button" aria-label="Close">&times;</button></div><div class="sm-health-summary"><strong class="sm-health-state" id="healthModalState">CHECKING</strong><div><b id="healthModalSummary">Running checks</b><span>Critical services must pass before the monitor reports healthy.</span></div><div class="sm-health-checked" id="healthModalChecked">Checked: --</div></div><div class="sm-health-list" id="healthDetails"></div></div></div>
   <script>
@@ -1723,7 +1812,7 @@ export function renderShadowStrategyMonitorPage(navHtml: string): string {
       function clsPnl(v){return Number(v)>0?"sm-positive":Number(v)<0?"sm-negative":"sm-muted"}
       function metricIcon(label){var icons={"Realized P&L":'<svg class="sm-icon" viewBox="0 0 24 24"><ellipse cx="9" cy="6" rx="5" ry="3"/><path d="M4 6v5c0 1.7 2.2 3 5 3s5-1.3 5-3V6M4 11v5c0 1.7 2.2 3 5 3 1 0 1.9-.2 2.7-.5"/><ellipse cx="17" cy="16" rx="4" ry="2.5"/><path d="M13 16v3c0 1.4 1.8 2.5 4 2.5s4-1.1 4-2.5v-3"/></svg>',"Unrealized P&L":'<svg class="sm-icon" viewBox="0 0 24 24"><path d="M4 7h14a2 2 0 0 1 2 2v10H4a2 2 0 0 1-2-2V6a3 3 0 0 1 3-3h12"/><path d="M16 12h5v4h-5a2 2 0 0 1 0-4Z"/></svg>',"Today Trades":'<svg class="sm-icon" viewBox="0 0 24 24"><path d="M4 20V13h4v7H4Zm6 0V8h4v12h-4Zm6 0V4h4v16h-4Z"/><path d="M2 20h20"/></svg>',"Win Rate":'<svg class="sm-icon" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="4"/><path d="m12 12 7-7M16 5h3v3"/></svg>',"Open Position":'<svg class="sm-icon" viewBox="0 0 24 24"><path d="M4 8h16v12H4zM9 8V5h6v3M4 12h16"/><path d="M10 12v2h4v-2"/></svg>',"Last Update":'<svg class="sm-icon" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>'};return icons[label]||icons["Today Trades"]}
       function metric(label,val,cls){return'<div class="sm-metric"><span class="sm-pnl-metric-icon" aria-hidden="true">'+metricIcon(label)+'</span><div class="sm-pnl-metric-copy"><span>'+esc(label)+'</span><b class="'+(cls||"")+'">'+val+'</b></div></div>'}
-      function renderStrategies(list){var select=el("strategySelect");var html=(list||[]).map(function(s){return'<option value="'+esc(s.id)+'" '+(s.id===state.strategy?"selected":"")+'>'+esc(s.name)+'</option>'}).join("");select.innerHTML=html;if(!list.some(function(s){return s.id===state.strategy})){state.strategy=list[0]?list[0].id:"";select.value=state.strategy}}
+      function renderStrategies(list){var select=el("strategySelect");var html=(list||[]).map(function(s){return'<option value="'+esc(s.id)+'" '+(s.id===state.strategy?"selected":"")+'>'+esc(s.name)+'</option>'}).join("");select.innerHTML=html;if(!list.some(function(s){return s.id===state.strategy})){state.strategy=list[0]?list[0].id:"";select.value=state.strategy}var selected=(list||[]).find(function(s){return s.id===state.strategy});var allowed=selected&&selected.instruments||["FUTURES","OPTIONS"];if(allowed.indexOf(state.instrument)<0){state.instrument=allowed[0]||"FUTURES";localStorage.setItem("zsShadowInstrument",state.instrument)}document.querySelectorAll("[data-instrument]").forEach(function(button){var enabled=allowed.indexOf(button.dataset.instrument)>=0;button.disabled=!enabled;button.title=enabled?"":"Not available for this strategy";button.classList.toggle("active",button.dataset.instrument===state.instrument)})}
       function renderHealth(d){var good=d.health.connected;var runtimeGood=good&&!/OFFLINE|ERROR|BLOCKED/i.test(d.runtime.status||"");var candles=d.candles||[];var count=function(tf){return candles.filter(function(c){return String(c.timeframe).toLowerCase()===tf}).length};el("healthStep").classList.toggle("good-step",good);el("feedStep").classList.toggle("good-step",good);el("runtimeStep").classList.toggle("good-step",runtimeGood);el("healthIcon").className="sm-health-icon health "+(good?"good":"warn");el("healthValue").textContent=d.health.overall;el("healthNote").textContent=good?"All systems operational":"Heartbeat needs attention";el("feedIcon").className="sm-health-icon feed "+(good?"good":"warn");el("feedValue").textContent=d.health.feed;el("feedNote").textContent=good?"Market data active":"Market data unavailable";el("runtimeValue").textContent=d.runtime.status;el("runtimeNote").textContent=d.runtime.status+" | "+d.runtime.version;el("candleLatest").textContent="Latest: "+(candles[0]?.time||"--");el("count1m").textContent=count("1m");el("count5m").textContent=count("5m");el("count15m").textContent=count("15m");var b=d.backtest;el("backtestStep").classList.toggle("good-step",!!b);el("backtestSummary").innerHTML='<div class="sm-health-icon backtest '+(b?"good":"warn")+'"><svg class="sm-icon" viewBox="0 0 24 24"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10Z"/><path d="'+(b?"m8.5 12 2.2 2.2 4.8-5":"M12 8v5m0 3h.01")+'"/></svg></div>'+(b?'<div class="sm-bt-cell"><span>5Y Backtest</span><b title="'+esc((b.coverage||"5Y")+(b.modelled?" · Modelled":" · Historical")+" · "+(b.methodology||b.source))+'">'+esc(b.coverage||"5Y")+'</b></div><div class="sm-bt-cell"><span>5Y P&amp;L</span><b class="'+clsPnl(b.pnl)+'">'+compactMoney(b.pnl,false)+'</b></div><div class="sm-bt-cell"><span>Win Rate</span><b>'+pct(b.winRate)+'</b></div><div class="sm-bt-cell"><span>Max Drawdown</span><b class="sm-negative">'+compactMoney(b.maxDrawdown,true)+'</b></div><div class="sm-bt-cell"><span>Avg Monthly</span><b>'+compactMoney(b.avgMonthlyPnl,false)+'</b></div>':'<div class="sm-bt-cell" style="grid-column:2/-1"><span>5Y Backtest Summary</span><b>No strategy-specific result available</b></div>')}
       function renderPerformance(d){var p=d.performance&&d.performance.periods&&d.performance.periods[state.performancePeriod];if(!p)return;var leader=function(row,label){if(!row)return'<div class="sm-performance-metric"><span>'+label+'</span><b>--</b><small>No qualifying trades</small></div>';return'<div class="sm-performance-metric"><span>'+label+'</span><b class="'+clsPnl(row.returnPct)+'">'+pct(row.returnPct)+'</b><small>'+esc(row.strategyName)+' · '+compactMoney(row.pnl,false)+'</small></div>'};el("performanceGrid").innerHTML='<div class="sm-performance-metric"><span>Average Return</span><b class="'+clsPnl(p.averageReturnPct)+'">'+pct(p.averageReturnPct)+'</b><small>'+value(p.strategiesCompared,0)+' strategy/instrument results</small></div>'+leader(p.bestFutures,"Best Futures")+leader(p.bestOptions,"Best Options")+'<div class="sm-performance-metric"><span>Capital Deployed</span><b>'+compactMoney(p.capitalUsed,false).replace(/^\\+/,"")+'</b><small>Combined net P&amp;L '+compactMoney(p.pnl,false)+'</small></div>';el("performanceScope").textContent=(p.source==="LIVE"?"Live":"Backtest")+" · "+p.label;el("performanceFormula").textContent=d.performance.definition;document.querySelectorAll("[data-performance-period]").forEach(function(b){b.classList.toggle("active",b.dataset.performancePeriod===state.performancePeriod)})}
       function renderSummary(d){var s=d.summary;var total=Number(s.totalPnl);var hasOpen=Number(s.openPositions)>0;var marketOpen=d.market&&d.market.status==="OPEN";var card=el("pnlCard");card.classList.toggle("profit",total>0);card.classList.toggle("loss",total<0);el("totalPnl").innerHTML=money(s.totalPnl);var stateText=total>0?"PROFIT":total<0?"LOSS":hasOpen?"LIVE POSITION":"NO TRADE";el("pnlState").textContent=stateText;var liveChip=el("pnlLiveChip");var liveState=marketOpen||hasOpen;liveChip.className="sm-live-chip "+(liveState?"is-live":"is-closed");liveChip.querySelector("span:last-child").textContent=hasOpen?"POSITION ACTIVE":marketOpen?"LIVE":"MARKET CLOSED";el("pnlMetrics").innerHTML=metric("Realized P&L",money(s.realizedPnl),clsPnl(s.realizedPnl))+metric("Unrealized P&L",money(s.unrealizedPnl),clsPnl(s.unrealizedPnl))+metric("Today Trades",value(s.trades,0))+metric("Win Rate",pct(s.winRate))+metric("Open Position",value(s.openPositions,0))+metric("Last Update",dt(s.lastUpdatedAt));var strategy=d.identity.strategyName;var instrument=d.identity.instrumentType==="OPTIONS"?"options":"futures";el("pnlFoot").textContent=hasOpen?"Live shadow P&L is updated continuously. Trades are appended to today's history in real time.":Number(s.trades)>0?"Today's completed shadow P&L. No live broker orders were placed.":strategy+" has no "+instrument+" shadow entry today. Current P&L is \u20b90.00."}
@@ -1734,10 +1823,10 @@ export function renderShadowStrategyMonitorPage(navHtml: string): string {
       function renderCandles(d){var rows=d.candles||[];el("candleTable").innerHTML=candleTable(rows.slice(0,5),true);el("candleFullTable").innerHTML=candleTable(rows,false);el("candleModalTitle").textContent="Today's Candle Log - "+d.identity.strategyName;el("candleModalSub").textContent=d.identity.instrumentType+" | "+d.identity.tradeDate+" | "+rows.length+" candles"}
       function renderLogs(d){var box=el("logConsole");var nearBottom=box.scrollHeight-box.scrollTop-box.clientHeight<28;var rows=(d.logs||[]).map(function(l){return'<div class="sm-log-line"><span>'+esc(l.time||"--:--:--")+'</span><b class="'+esc(l.level)+'">'+esc(l.level)+'</b><span>'+esc(l.message)+'</span></div>'}).join("");box.innerHTML=rows||'<div class="sm-muted">No server log entries available.</div>';if(state.logStick&&nearBottom)box.scrollTop=box.scrollHeight;el("resumeLogs").hidden=state.logStick}
       function renderSection(name,fn){try{fn()}catch(error){console.error("Shadow monitor "+name+" render failed",error)}}
-      function render(d){state.data=d;renderSection("strategies",function(){renderStrategies(d.strategies)});renderSection("trades",function(){renderTrades(d)});renderSection("candles",function(){renderCandles(d)});renderSection("health",function(){renderHealth(d);el("healthAction").textContent="View Checks"});renderSection("summary",function(){renderSummary(d)});renderSection("logs",function(){renderLogs(d)});var m=el("marketStatus");m.className="sm-market "+(d.market.status==="OPEN"?"open":"closed");m.querySelector("span:last-child").textContent="Market "+(d.market.status==="OPEN"?"Open":"Closed");el("refreshMeta").textContent="Last refreshed: "+dt(d.refreshedAt);document.querySelectorAll("[data-instrument]").forEach(function(b){b.classList.toggle("active",b.dataset.instrument===state.instrument)});el("shadowMonitor").classList.remove("sm-loading");el("monitorLoader").classList.remove("active")}
+      function render(d){state.data=d;state.instrument=d.identity.instrumentType||state.instrument;localStorage.setItem("zsShadowInstrument",state.instrument);renderSection("strategies",function(){renderStrategies(d.strategies)});renderSection("trades",function(){renderTrades(d)});renderSection("candles",function(){renderCandles(d)});renderSection("health",function(){renderHealth(d);el("healthAction").textContent="View Checks"});renderSection("summary",function(){renderSummary(d)});renderSection("logs",function(){renderLogs(d)});var m=el("marketStatus");m.className="sm-market "+(d.market.status==="OPEN"?"open":"closed");m.querySelector("span:last-child").textContent="Market "+(d.market.status==="OPEN"?"Open":"Closed");el("refreshMeta").textContent="Last refreshed: "+dt(d.refreshedAt);document.querySelectorAll("[data-instrument]").forEach(function(b){b.classList.toggle("active",b.dataset.instrument===state.instrument)});el("shadowMonitor").classList.remove("sm-loading");el("monitorLoader").classList.remove("active")}
       async function load(trigger){var interactive=trigger===true||!!(trigger&&trigger.type)||state.userRequestedLoad===true;state.userRequestedLoad=false;var seq=++state.request;if(activeController)activeController.abort();activeController=new AbortController();if(interactive){el("monitorLoader").classList.add("active");el("shadowMonitor").classList.add("sm-loading")}try{var url="/api/shadow-monitor?strategy="+encodeURIComponent(state.strategy)+"&instrument="+encodeURIComponent(state.instrument);var r=await fetch(url,{cache:"no-store",credentials:"same-origin",signal:activeController.signal});if(!r.ok)throw new Error("HTTP "+r.status);var d=await r.json();if(seq!==state.request)return;if(!d.ok)throw new Error(d.error||"Monitor unavailable");render(d)}catch(e){if(e.name==="AbortError")return;el("refreshMeta").textContent="Refresh failed: "+e.message;el("shadowMonitor").classList.remove("sm-loading");el("monitorLoader").classList.remove("active")}}
       el("strategySelect").addEventListener("change",function(){state.userRequestedLoad=true},{capture:true});document.querySelectorAll("[data-instrument]").forEach(function(button){button.addEventListener("click",function(){state.userRequestedLoad=true},{capture:true})});
-      el("strategySelect").addEventListener("change",function(){state.strategy=this.value;localStorage.setItem("zsShadowStrategy",state.strategy);load()});document.querySelectorAll("[data-instrument]").forEach(function(b){b.addEventListener("click",function(){state.instrument=this.dataset.instrument;localStorage.setItem("zsShadowInstrument",state.instrument);load()})});document.querySelectorAll("[data-performance-period]").forEach(function(b){b.addEventListener("click",function(){state.performancePeriod=this.dataset.performancePeriod;localStorage.setItem("zsShadowPerformancePeriod",state.performancePeriod);if(state.data)renderPerformance(state.data)})});el("refreshAll").addEventListener("click",load);el("logConsole").addEventListener("scroll",function(){if(this.scrollHeight-this.scrollTop-this.clientHeight>=28){state.logStick=false;el("resumeLogs").hidden=false;el("pauseLogs").hidden=true}});el("pauseLogs").addEventListener("click",function(){state.logStick=false;this.hidden=true;el("resumeLogs").hidden=false});el("resumeLogs").addEventListener("click",function(){state.logStick=true;el("logConsole").scrollTop=el("logConsole").scrollHeight;this.hidden=true;el("pauseLogs").hidden=false});el("openHistory").addEventListener("click",function(){var period=state.data&&state.data.history&&state.data.history.trades&&state.data.history.trades.length?"TRADES":"DAILY";document.querySelectorAll("[data-period]").forEach(function(x){x.classList.toggle("active",x.dataset.period===period)});el("historyModal").classList.add("open");renderHistory(period)});el("closeHistory").addEventListener("click",function(){el("historyModal").classList.remove("open")});el("historyModal").addEventListener("click",function(e){if(e.target===this)this.classList.remove("open")});el("openCandles").addEventListener("click",function(){el("candleModal").classList.add("open")});el("closeCandles").addEventListener("click",function(){el("candleModal").classList.remove("open")});el("candleModal").addEventListener("click",function(e){if(e.target===this)this.classList.remove("open")});document.querySelectorAll("[data-period]").forEach(function(b){b.addEventListener("click",function(){document.querySelectorAll("[data-period]").forEach(function(x){x.classList.toggle("active",x===b)});renderHistory(b.dataset.period)})});
+      el("strategySelect").addEventListener("change",function(){state.strategy=this.value;var selected=state.data&&state.data.strategies&&state.data.strategies.find(function(s){return s.id===state.strategy});var allowed=selected&&selected.instruments||["FUTURES","OPTIONS"];if(allowed.indexOf(state.instrument)<0)state.instrument=allowed[0]||"FUTURES";localStorage.setItem("zsShadowStrategy",state.strategy);localStorage.setItem("zsShadowInstrument",state.instrument);load()});document.querySelectorAll("[data-instrument]").forEach(function(b){b.addEventListener("click",function(){if(this.disabled)return;state.instrument=this.dataset.instrument;localStorage.setItem("zsShadowInstrument",state.instrument);load()})});document.querySelectorAll("[data-performance-period]").forEach(function(b){b.addEventListener("click",function(){state.performancePeriod=this.dataset.performancePeriod;localStorage.setItem("zsShadowPerformancePeriod",state.performancePeriod);if(state.data)renderPerformance(state.data)})});el("refreshAll").addEventListener("click",load);el("logConsole").addEventListener("scroll",function(){if(this.scrollHeight-this.scrollTop-this.clientHeight>=28){state.logStick=false;el("resumeLogs").hidden=false;el("pauseLogs").hidden=true}});el("pauseLogs").addEventListener("click",function(){state.logStick=false;this.hidden=true;el("resumeLogs").hidden=false});el("resumeLogs").addEventListener("click",function(){state.logStick=true;el("logConsole").scrollTop=el("logConsole").scrollHeight;this.hidden=true;el("pauseLogs").hidden=false});el("openHistory").addEventListener("click",function(){var period=state.data&&state.data.history&&state.data.history.trades&&state.data.history.trades.length?"TRADES":"DAILY";document.querySelectorAll("[data-period]").forEach(function(x){x.classList.toggle("active",x.dataset.period===period)});el("historyModal").classList.add("open");renderHistory(period)});el("closeHistory").addEventListener("click",function(){el("historyModal").classList.remove("open")});el("historyModal").addEventListener("click",function(e){if(e.target===this)this.classList.remove("open")});el("openCandles").addEventListener("click",function(){el("candleModal").classList.add("open")});el("closeCandles").addEventListener("click",function(){el("candleModal").classList.remove("open")});el("candleModal").addEventListener("click",function(e){if(e.target===this)this.classList.remove("open")});document.querySelectorAll("[data-period]").forEach(function(b){b.addEventListener("click",function(){document.querySelectorAll("[data-period]").forEach(function(x){x.classList.toggle("active",x===b)});renderHistory(b.dataset.period)})});
       function historyRows(rows,withAction){return'<div class="sm-table-wrap" style="max-height:58vh"><table class="sm-table"><thead><tr><th>Period</th><th>Net P&amp;L</th><th>Capital Used</th><th>Return</th><th>Points</th><th>Trading Days</th><th>Trades</th><th>Wins</th><th>Losses</th><th>Win Rate</th>'+(withAction?'<th>Details</th>':'')+'</tr></thead><tbody>'+rows.map(function(r){return"<tr><td>"+esc(r.period)+"</td><td class='"+clsPnl(r.pnl)+"'>"+money(r.pnl)+"</td><td>"+money(r.capitalUsed).replace(/^\\+/,"")+"</td><td class='"+clsPnl(r.returnPct)+"'>"+pct(r.returnPct)+"</td><td>"+value(r.points)+"</td><td>"+value(r.tradingDays,0)+"</td><td>"+value(r.trades,0)+"</td><td class='sm-positive'>"+value(r.wins,0)+"</td><td class='sm-negative'>"+value(r.losses,0)+"</td><td>"+pct(r.winRate)+"</td>"+(withAction?'<td><button class="sm-month-open" data-month-open="'+esc(r.period)+'">View days</button></td>':'')+"</tr>"}).join("")+"</tbody></table></div>"}
       function renderMonthDays(month){var d=state.data;var b=d&&d.backtest;var rows=(b&&b.days||[]).filter(function(r){return String(r.date||"").slice(0,7)===month}).sort(function(a,z){return String(a.date).localeCompare(String(z.date))});var body=el("historyBody");body.innerHTML='<div class="sm-history-toolbar"><div><h3>'+esc(month)+' daily results</h3><div class="sm-health-note">'+esc(d.identity.strategyName)+' · '+esc(d.identity.instrumentType)+(b.modelled?' · Modelled options':' · Historical candles')+'</div></div><button class="sm-history-btn" id="backToMonths" type="button">Back to months</button></div><div class="sm-table-wrap" style="max-height:58vh"><table class="sm-table"><thead><tr><th>Date</th><th>Net P&amp;L</th><th>Capital Used</th><th>Return</th><th>Gross P&amp;L</th><th>Points</th><th>Trades</th><th>Wins</th><th>Losses</th><th>Exit reasons</th></tr></thead><tbody>'+rows.map(function(r){return"<tr><td>"+esc(r.date)+"</td><td class='"+clsPnl(r.pnl)+"'>"+money(r.pnl)+"</td><td>"+money(r.capitalUsed).replace(/^\\+/,"")+"</td><td class='"+clsPnl(r.returnPct)+"'>"+pct(r.returnPct)+"</td><td class='"+clsPnl(r.grossPnl)+"'>"+money(r.grossPnl)+"</td><td>"+value(r.points)+"</td><td>"+value(r.trades,0)+"</td><td class='sm-positive'>"+value(r.wins,0)+"</td><td class='sm-negative'>"+value(r.losses,0)+"</td><td title='"+esc((r.reasons||[]).join(", "))+"'>"+esc((r.reasons||[]).join(", ")||"--")+"</td></tr>"}).join("")+"</tbody></table></div>";el("backToMonths").addEventListener("click",function(){renderHistory("MONTHLY")})}
       function renderHistory(period){var d=state.data;if(!d)return;var body=el("historyBody");var b=d.backtest;if(!b){body.innerHTML='<div class="sm-history-state"><b>No strategy-specific five-year result</b><p>This view will not substitute another strategy&apos;s data.</p></div>';return}if(period==="BACKTEST"){body.innerHTML='<div class="sm-history-method"><b>'+(b.modelled?'Modelled options backtest':'Historical-candle backtest')+' · '+esc(b.coverage||"5Y")+'</b><div>'+esc(b.methodology||"Methodology not recorded")+'</div><div style="margin-top:8px">Source: '+esc(b.source)+' · Generated: '+esc(b.generatedAt||"--")+'</div><div style="margin-top:8px">Net P&amp;L: '+btValue(b.pnl,b.pnlUnit)+' · Return on deployed capital: '+pct(b.returnPct)+' · Win rate: '+pct(b.winRate)+' · Max drawdown: '+btValue(b.maxDrawdown,b.pnlUnit)+' · Trades: '+value(b.totalTrades,0)+'</div></div>';return}var rows=(b.months||[]).slice().sort(function(a,z){return String(z.period).localeCompare(String(a.period))});if(period==="YEARLY"){var years={};rows.forEach(function(r){var y=String(r.period).slice(0,4);var x=years[y]||(years[y]={period:y,pnl:0,capitalUsed:0,points:0,tradingDays:0,trades:0,wins:0,losses:0});x.pnl+=Number(r.pnl||0);x.capitalUsed+=Number(r.capitalUsed||0);x.points+=Number(r.points||0);x.tradingDays+=Number(r.tradingDays||0);x.trades+=Number(r.trades||0);x.wins+=Number(r.wins||0);x.losses+=Number(r.losses||0)});rows=Object.values(years).map(function(r){r.winRate=r.wins+r.losses?r.wins/(r.wins+r.losses)*100:0;r.returnPct=r.capitalUsed?r.pnl/r.capitalUsed*100:null;return r}).sort(function(a,z){return z.period.localeCompare(a.period)});body.innerHTML=historyRows(rows,false);return}body.innerHTML='<div class="sm-history-toolbar"><div><h3>Monthly backtest history</h3><div class="sm-health-note">Open any month to see every traded day.</div></div><div class="sm-source">'+esc(b.coverage||"5Y")+' · '+(b.modelled?"MODELLED OPTIONS":"HISTORICAL CANDLES")+'</div></div>'+historyRows(rows,true);body.querySelectorAll("[data-month-open]").forEach(function(button){button.addEventListener("click",function(){renderMonthDays(button.dataset.monthOpen)})})}
@@ -1751,6 +1840,7 @@ export function renderShadowStrategyMonitorPage(navHtml: string): string {
       function liveHistoryTable(rows,withAction){return'<div class="sm-table-wrap" style="max-height:58vh"><table class="sm-table"><thead><tr><th>Period</th><th>Net P&amp;L</th><th>Capital Deployed</th><th>Return %</th><th>Trading Days</th><th>Trades</th><th>Wins</th><th>Losses</th><th>Win Rate</th>'+(withAction?'<th>Details</th>':'')+'</tr></thead><tbody>'+rows.map(function(r){return"<tr><td>"+esc(r.period||r.date)+"</td><td class='"+clsPnl(r.pnl)+"'>"+money(r.pnl)+"</td><td>"+(r.capitalDeployed?money(r.capitalDeployed).replace(/^\\+/,""):"--")+"</td><td class='"+clsPnl(r.returnPct)+"'>"+pct(r.returnPct)+"</td><td>"+value(r.tradingDays==null?1:r.tradingDays,0)+"</td><td>"+value(r.trades,0)+"</td><td class='sm-positive'>"+value(r.wins,0)+"</td><td class='sm-negative'>"+value(r.losses,0)+"</td><td>"+pct(r.winRate==null?(r.wins+r.losses?r.wins/(r.wins+r.losses)*100:0):r.winRate)+"</td>"+(withAction?'<td><button class="sm-month-open" data-month-open="'+esc(r.period)+'">View days</button></td>':'')+"</tr>"}).join("")+"</tbody></table></div>"}
       renderMonthDays=function(month){var d=state.data;var rows=((d&&d.history&&d.history.days)||[]).filter(function(r){return String(r.date||"").slice(0,7)===month});el("historyBody").innerHTML='<div class="sm-history-toolbar"><div><h3>'+esc(month)+' daily shadow results</h3><div class="sm-health-note">'+esc(d.identity.strategyName)+' · '+esc(d.identity.instrumentType)+' · SHADOW</div></div><button class="sm-history-btn" id="backToMonths" type="button">Back to months</button></div>'+liveHistoryTable(rows,false);el("backToMonths").addEventListener("click",function(){renderHistory("MONTHLY")})};
       renderHistory=function(period){var d=state.data;if(!d)return;var h=d.history||{};var body=el("historyBody");if(period==="TRADES"&&!(h.trades||[]).length&&(h.days||[]).length){period="DAILY";document.querySelectorAll("[data-period]").forEach(function(x){x.classList.toggle("active",x.dataset.period===period)})}var rows=period==="TRADES"?(h.trades||[]):period==="DAILY"?(h.days||[]):period==="YEARLY"?(h.yearly||[]):(h.monthly||[]);if(!rows.length){body.innerHTML='<div class="sm-history-state"><b>No stored shadow '+esc(period.toLowerCase())+' for this selection</b><p>'+esc(d.identity.strategyName)+' · '+esc(d.identity.instrumentType)+' · SHADOW</p></div>';return}body.innerHTML='<div class="sm-history-toolbar"><div><h3>'+esc(period==="TRADES"?"All stored trades":period.charAt(0)+period.slice(1).toLowerCase()+" shadow history")+'</h3><div class="sm-health-note">Selected strategy and instrument only. Values come from persisted shadow records.</div></div><div class="sm-source">LIVE SHADOW</div></div>'+(period==="TRADES"?tradeHistoryTable(rows):liveHistoryTable(rows,period==="MONTHLY"));if(period==="MONTHLY")body.querySelectorAll("[data-month-open]").forEach(function(button){button.addEventListener("click",function(){renderMonthDays(button.dataset.monthOpen)})})};
+      renderHistory=function(period){var d=state.data;if(!d)return;var h=d.history||{};var body=el("historyBody");if(/^BT_/.test(period)){var b=d.backtest||{};var key=period==="BT_WEEKLY"?"weeks":period==="BT_YEARLY"?"years":"months";var backtestRows=(b[key]||[]).slice().sort(function(a,z){return String(z.period).localeCompare(String(a.period))});if(!backtestRows.length){body.innerHTML='<div class="sm-history-state"><b>No '+esc(key)+' backtest records for this selection</b><p>Backtest data is kept separate from live shadow history.</p></div>';return}body.innerHTML='<div class="sm-history-toolbar"><div><h3>5Y '+esc(key.charAt(0).toUpperCase()+key.slice(1))+' Backtest</h3><div class="sm-health-note">'+esc(d.identity.strategyName)+' · '+esc(d.identity.instrumentType)+' · historical candles</div></div><div class="sm-source">BACKTEST ONLY</div></div>'+historyRows(backtestRows,false);return}if(period==="TRADES"&&!(h.trades||[]).length&&(h.days||[]).length){period="DAILY";document.querySelectorAll("[data-period]").forEach(function(x){x.classList.toggle("active",x.dataset.period===period)})}var rows=period==="TRADES"?(h.trades||[]):period==="DAILY"?(h.days||[]):period==="WEEKLY"?(h.weekly||[]):period==="YEARLY"?(h.yearly||[]):(h.monthly||[]);if(!rows.length){body.innerHTML='<div class="sm-history-state"><b>No stored shadow '+esc(period.toLowerCase())+' for this selection</b><p>'+esc(d.identity.strategyName)+' · '+esc(d.identity.instrumentType)+' · SHADOW</p></div>';return}body.innerHTML='<div class="sm-history-toolbar"><div><h3>'+esc(period==="TRADES"?"All stored trades":period.charAt(0)+period.slice(1).toLowerCase()+" shadow history")+'</h3><div class="sm-health-note">Selected strategy and instrument only. Values come from persisted shadow records.</div></div><div class="sm-source">LIVE SHADOW</div></div>'+(period==="TRADES"?tradeHistoryTable(rows):liveHistoryTable(rows,period==="MONTHLY"));if(period==="MONTHLY")body.querySelectorAll("[data-month-open]").forEach(function(button){button.addEventListener("click",function(){renderMonthDays(button.dataset.monthOpen)})})};
       function openHealth(){if(state.data)renderHealthDetails(state.data.health);el("healthModal").classList.add("open")}
       el("healthStep").addEventListener("click",openHealth);el("healthStep").addEventListener("keydown",function(e){if(e.key==="Enter"||e.key===" "){e.preventDefault();openHealth()}});el("closeHealth").addEventListener("click",function(){el("healthModal").classList.remove("open")});el("healthModal").addEventListener("click",function(e){if(e.target===this)this.classList.remove("open")});
       load();setInterval(load,10000);
