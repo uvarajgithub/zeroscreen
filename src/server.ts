@@ -7019,6 +7019,7 @@ async function buildTradeOpsStatus(strategyId = "") {
   const tradeRows = verifiedLiveTrades.slice(-500).reverse().map(t => ({
     time: tradeOpsTime(t?.date || t?.exitTime || t?.entryTime),
     date: tradeOpsDateKey(t?.date || t?.exitTime || t?.entryTime),
+    direction: String(t?.direction || t?.side || "").toUpperCase(),
     side: tradeOpsSide(t?.direction || t?.side),
     symbol: tradeOpsSanitizeSymbol(t?.tradeSymbol || t?.symbol || "Completed trade"),
     qty: tradeOpsNum(t?.qty ?? t?.quantity ?? t?.mainQty ?? 0),
@@ -7031,6 +7032,29 @@ async function buildTradeOpsStatus(strategyId = "") {
     executionMode: "LIVE",
     brokerOrderId: t?.brokerOrderId || t?.orderId || t?.entryOrderId || "",
   }));
+  const historyTradeRows = strategyTrades
+    .filter(t => tradeOpsNum(t?.exitPrice) > 0 || tradeOpsNum(t?.premiumExit) > 0)
+    .slice(-500)
+    .reverse()
+    .map(t => {
+      const verifiedLive = tradeOpsIsVerifiedLiveFuturesTrade(t);
+      return {
+        time: tradeOpsTime(t?.date || t?.exitTime || t?.entryTime),
+        date: tradeOpsDateKey(t?.date || t?.exitTime || t?.entryTime),
+        direction: String(t?.direction || t?.side || "").toUpperCase(),
+        side: tradeOpsSide(t?.direction || t?.side),
+        symbol: tradeOpsSanitizeSymbol(t?.tradeSymbol || t?.symbol || "BANKNIFTY"),
+        qty: tradeOpsNum(t?.qty ?? t?.quantity ?? t?.mainQty ?? 30),
+        entry: tradeOpsNum(t?.entryPrice ?? t?.premiumEntry),
+        exit: tradeOpsNum(t?.exitPrice ?? t?.premiumExit),
+        pnl: tradeOpsPnl(t),
+        status: t?.status || "Filled",
+        note: tradeOpsSanitizeLog(t?.reasonExit || t?.status || t?.source || ""),
+        source: verifiedLive ? "verified_live_broker_order" : "recorded_1030_bot_result",
+        executionMode: verifiedLive ? "LIVE" : "RECORDED",
+        brokerOrderId: t?.brokerOrderId || t?.orderId || t?.entryOrderId || "",
+      };
+    });
 
   const candleQty = tradeOpsNum(hb?.tt1030Qty ?? hb?.qty ?? 30);
   const stateEvents = (Array.isArray(tt1030State?.log) ? tt1030State.log : []).map((x: any) => ({
@@ -7324,6 +7348,7 @@ async function buildTradeOpsStatus(strategyId = "") {
     },
     positions: openPositions,
     trades: tradeRows,
+    historyTrades: historyTradeRows,
     rejections: allRejectionRows.slice(-200).reverse().map((x: any, idx: number) => ({
       id: x?.id || x?.code || `rejection-${idx}`,
       date: tradeOpsDateKey(x?.ts || x?.at || today),
@@ -7340,8 +7365,9 @@ async function buildTradeOpsStatus(strategyId = "") {
       source: "TradeOps live audit",
     })),
     history: {
-      source: "verified_live_broker_orders",
-      total: tradeRows.length,
+      source: "recorded_1030_bot_results",
+      total: historyTradeRows.length,
+      verifiedLiveTotal: tradeRows.length,
       displaySession,
       operationalEvents: strategyTrades.length,
       todayShadowTrades: heartbeatTrades.length,
@@ -8183,6 +8209,7 @@ function render(d){
   d.validations=d.validations||{};
   d.positions=Array.isArray(d.positions)?d.positions:[];
   d.trades=Array.isArray(d.trades)?d.trades:[];
+  d.historyTrades=Array.isArray(d.historyTrades)?d.historyTrades:d.trades;
   d.rejections=Array.isArray(d.rejections)?d.rejections:[];
   d.candles=Array.isArray(d.candles)?d.candles:[];
   d.logs=Array.isArray(d.logs)?d.logs:[];
@@ -8379,6 +8406,8 @@ function render(d){
   const root=document.getElementById('detailGrid');
   if(!root)return;
   const trades=Array.isArray(d.trades)?d.trades:[];
+  const historyTrades=Array.isArray(d.historyTrades)?d.historyTrades:trades;
+  const allRejectionRows=Array.isArray(d.rejections)?d.rejections:[];
   const positions=Array.isArray(d.positions)?d.positions:[];
   const candles=Array.isArray(d.candles)?d.candles:[];
   const logs=Array.isArray(d.logs)?d.logs:[];
@@ -8432,13 +8461,13 @@ function render(d){
   }
   if(PAGE==='executions'){
     const status=txt(d.execution&&d.execution.status||'Checking');
-    const executionRows=trades.concat(rejections).sort(function(a,b){return String(b.date||'').localeCompare(String(a.date||''))||String(b.time||'').localeCompare(String(a.time||''))});
+    const executionRows=trades.concat(allRejectionRows).sort(function(a,b){return String(b.date||'').localeCompare(String(a.date||''))||String(b.time||'').localeCompare(String(a.time||''))});
     const executionRowHtml=function(list){return list.map(function(t){const rejected=/blocked|reject|fail|error/i.test(String(t.status||''));return '<tr data-date="'+txt(t.date||'')+'"><td>'+txt(t.date||'')+'</td><td>'+txt(t.time||'')+'</td><td title="'+txt(t.symbol||'')+'">'+txt(t.symbol||'')+'</td><td>'+pill(t.side||'--',String(t.side||'').toUpperCase()==='SELL'?'bad':'ok')+'</td><td class="right">'+txt(t.qty||'--')+'</td><td class="right">'+(t.entry==null?'--':txt(t.entry))+'</td><td class="right">'+(t.exit==null?'--':txt(t.exit))+'</td><td class="right '+(Number(t.pnl||0)>=0?'ok':'bad')+'">'+(rejected?'--':rs(t.pnl||0))+'</td><td>'+pill(t.status||'Recorded',rejected?'bad':'ok')+(rejected?'<div class="execution-reason">'+txt(t.reason||t.note||'Execution blocked')+'</div>':'')+'</td></tr>'}).join('')};
     const todayExecution=executionRows.filter(function(t){return tradeDate(t)===(tradeOpsSessionDate||'')});
-    standardPage('Executions','Review verified broker execution events and pre-order failures.',[kpi('Execution State',status,pill(status,status==='Blocked'?'bad':status==='Ready'?'ok':'warn'),'&#9889;'),kpi('Broker Orders',String(trades.filter(function(t){return tradeDate(t)===(tradeOpsSessionDate||'')}).length),pill('Today','ok'),'&#10003;'),kpi('Blocked Attempts',String(rejections.filter(function(t){return tradeDate(t)===(tradeOpsSessionDate||'')}).length),pill('Today',rejections.length?'bad':'ok'),'&#10005;'),kpi('Broker',brokerOk?'Connected':'Not synced',pill(brokerOk?'OK':'Issue',brokerOk?'ok':'bad'),'&#9679;')],filterBar('<select><option>All Status</option><option>Filled</option><option>Blocked</option><option>Rejected</option></select>'),tableCard('Execution Events',[{t:'Date'},{t:'Time'},{t:'Symbol'},{t:'Side'},{t:'Qty',right:1},{t:'Entry',right:1},{t:'Exit',right:1},{t:'P&L',right:1},{t:'Status'}],executionRowHtml(todayExecution),empty('&#9889;','No execution events today','No broker order or blocked live attempt was recorded today.'),' '+todayExecution.length+' today events',executionRowHtml(executionRows)),sidePanel('Manual Review Panel',[['Current State',status],['Block Reason',d.execution&&d.execution.blockReason?txt(d.execution.blockReason):'None'],['Next Action',status==='Blocked'?'Review failure reason':'Monitor'],['Last Check',txt(d.updatedAt||'Not available')]]));return;
+    standardPage('Executions','Review verified broker execution events and pre-order failures.',[kpi('Execution State',status,pill(status,status==='Blocked'?'bad':status==='Ready'?'ok':'warn'),'&#9889;'),kpi('Broker Orders',String(trades.filter(function(t){return tradeDate(t)===(tradeOpsSessionDate||'')}).length),pill('Today','ok'),'&#10003;'),kpi('Blocked Attempts',String(allRejectionRows.filter(function(t){return tradeDate(t)===(tradeOpsSessionDate||'')}).length),pill('Today',allRejectionRows.length?'bad':'ok'),'&#10005;'),kpi('Broker',brokerOk?'Connected':'Not synced',pill(brokerOk?'OK':'Issue',brokerOk?'ok':'bad'),'&#9679;')],filterBar('<select><option>All Status</option><option>Filled</option><option>Blocked</option><option>Rejected</option></select>'),tableCard('Execution Events',[{t:'Date'},{t:'Time'},{t:'Symbol'},{t:'Side'},{t:'Qty',right:1},{t:'Entry',right:1},{t:'Exit',right:1},{t:'P&L',right:1},{t:'Status'}],executionRowHtml(todayExecution),empty('&#9889;','No execution events today','No broker order or blocked live attempt was recorded today.'),' '+todayExecution.length+' today events',executionRowHtml(executionRows)),sidePanel('Manual Review Panel',[['Current State',status],['Block Reason',d.execution&&d.execution.blockReason?txt(d.execution.blockReason):'None'],['Next Action',status==='Blocked'?'Review failure reason':'Monitor'],['Last Check',txt(d.updatedAt||'Not available')]]));return;
   }
   if(PAGE==='trade-history'){
-    const allTrades=trades.slice();
+    const allTrades=historyTrades.slice();
     const baseDate=(tradeOpsSessionDate||new Date().toLocaleDateString('en-CA',{timeZone:'Asia/Kolkata'})).slice(0,10);
     const latestTradeDate=allTrades.reduce((m,t)=>{const k=tradeDate(t);return k&&(!m||k>m)?k:m},'');
     const tradedMonths=Array.from(new Set(allTrades.map(t=>tradeDate(t).slice(0,7)).filter(Boolean))).sort().reverse();
@@ -8455,7 +8484,7 @@ function render(d){
     function stats(list){const pnl=list.reduce((a,t)=>a+Number(t.pnl||0),0);const wins=list.filter(t=>Number(t.pnl||0)>0).length;const losses=list.filter(t=>Number(t.pnl||0)<0).length;return {count:list.length,pnl,wins,losses,avg:list.length?pnl/list.length:0,winRate:list.length?Math.round(wins/list.length*100):0,best:list.length?Math.max.apply(null,list.map(t=>Number(t.pnl||0))):null,worst:list.length?Math.min.apply(null,list.map(t=>Number(t.pnl||0))):null}}
     function dayGroups(list){const by={};list.forEach(t=>{const k=tradeDate(t);if(!k)return;(by[k]=by[k]||[]).push(t)});return Object.keys(by).sort().reverse().map(k=>{const rows=by[k];const s=stats(rows);const sides=Array.from(new Set(rows.map(t=>String(t.direction||t.side||'').toUpperCase()).filter(Boolean))).join(' / ')||'--';const qty=rows.reduce((a,t)=>a+Number(t.qty||0),0);const first=rows[rows.length-1]||{};const last=rows[0]||{};return {date:k,rows,s,sides,qty,firstTime:first.time||'--',lastTime:last.time||'--'}})}
     function dayRow(g){return '<tr class="trade-day-row" data-day="'+txt(g.date)+'"><td>'+txt(g.date)+'</td><td>'+txt(g.firstTime)+' - '+txt(g.lastTime)+'</td><td class="right">'+g.s.count+'</td><td>'+txt(g.sides)+'</td><td class="right">'+txt(g.qty)+'</td><td class="right '+(g.s.pnl>=0?'ok':'bad')+'">'+rs(g.s.pnl)+'</td><td>'+pill(g.s.wins+' W / '+g.s.losses+' L',g.s.pnl>=0?'ok':'bad')+'</td><td><button class="btn th-day-view" type="button">View</button></td></tr>'}
-    const scope='<section class="ws-card scope-card"><div class="ws-card-b"><div class="scope-title">Data Scope</div><div class="scope-text">Showing one row per trading day. Click View to inspect every verified broker trade from that date.</div><div class="scope-badges"><span class="ws-pill ok">Live orders only</span><span class="ws-pill ok">Monthly default</span><span class="ws-pill warn">Simulations excluded</span></div></div></section>';
+    const scope='<section class="ws-card scope-card"><div class="ws-card-b"><div class="scope-title">Data Scope</div><div class="scope-text">Showing one row per trading day from recorded 10:30 bot results. Click View to inspect every result from that date.</div><div class="scope-badges"><span class="ws-pill ok">Recorded bot history</span><span class="ws-pill ok">Monthly default</span><span class="ws-pill warn">Broker verified when available</span></div></div></section>';
     root.innerHTML=header('Trade History','Monthly day-wise TradeOps history. Open a day to review all trades executed on that date.')+scope+'<div id="thSummary" class="ws-summary"></div><section class="ws-card"><div class="ws-card-b"><div class="filter-bar trade-history-filters" data-skip-workspace-wire="1"><button class="seg" data-th-range="today" type="button">Today</button><button class="seg" data-th-range="latest-session" type="button">Latest Session</button><button class="seg" data-th-range="weekly" type="button">Weekly</button><button class="seg active" data-th-range="monthly" type="button">Monthly</button><input id="thDay" type="date" value="'+txt(baseDate)+'"><button id="thDayApply" class="btn" type="button">View Day</button><select id="thMonth">'+monthOptions+'</select><select id="thType"><option value="all">All Trades</option><option value="winners">Winning Trades</option><option value="losers">Losing Trades</option><option value="buy">Buy</option><option value="sell">Sell</option><option value="closed">Closed</option><option value="rejected">Rejected</option></select><input id="thSearch" placeholder="Search day trades..."><button id="thApply" class="btn primary" type="button">Apply Filter</button><button id="thReset" class="btn" type="button">Reset</button></div></div></section><div class="ws-grid"><div class="ws-main"><section class="ws-card"><div class="ws-card-h"><span id="thTableTitle">Monthly Trade History</span><span id="thCount" class="muted">0 days</span></div><div class="ws-card-b"><div class="ws-table-wrap"><table class="ws-table"><thead><tr><th>Date</th><th>Session Time</th><th class="right">Trades</th><th>Side</th><th class="right">Total Qty</th><th class="right">Day P&L</th><th>Result</th><th>Details</th></tr></thead><tbody id="thBody"></tbody></table></div><div id="thTotals" class="workflow-line" style="margin-top:10px"></div><div class="ws-table-footer"><span id="thPageTotal">Showing 0-0 of 0</span><div class="ws-pager"><button id="thPrev" class="btn" type="button">Prev</button><span id="thPageInfo">Page 1 of 1</span><button id="thNext" class="btn" type="button">Next</button></div></div></div></section></div><aside class="ws-side"><section class="ws-card"><div class="ws-card-h"><span id="thDayTitle">Selected Day</span></div><div id="thDayDetail" class="ws-card-b side-list"><div class="ws-empty compact"><div class="ws-empty-icon">&#8594;</div><div><b>Select a day</b><span>Click View to see all trades from that date.</span></div></div></div></section></aside></div></section>';
     const state={range:'monthly',type:'all',q:'',page:1,day:baseDate,month:defaultMonth};const pageSize=10;
     function tradeLine(t){const pnl=Number(t.pnl||0);return '<div class="side-row"><label>'+txt(t.time||'')+' | '+txt(rowSymbol(t))+' | '+txt(t.side||'')+' / '+txt(t.qty||'')+'</label><b class="'+(pnl>=0?'ok':'bad')+'">'+rs(pnl)+'</b></div><div class="side-row"><label>Entry '+txt(t.entry||'--')+' -> Exit '+txt(t.exit||'--')+'</label><b>'+txt(t.status||'Filled')+'</b></div>'}
