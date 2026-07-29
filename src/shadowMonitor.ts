@@ -12,7 +12,6 @@ type StrategyDefinition = {
   prefix: string;
   backtestFile?: string;
   instruments?: InstrumentType[];
-  tileInstruments?: InstrumentType[];
   processName?: string;
   heartbeatFile?: string;
   stateFile?: string;
@@ -46,8 +45,7 @@ const STRATEGIES: StrategyDefinition[] = [
     version: "V2 Shadow",
     prefix: "drishtiV2",
     backtestFile: "drishti-v2-backtest.json",
-    instruments: ["FUTURES"],
-    tileInstruments: ["FUTURES", "OPTIONS"],
+    instruments: ["FUTURES", "OPTIONS"],
     processName: "drishti-v2-shadow",
     heartbeatFile: "drishti-v2-heartbeat.json",
     stateFile: "drishti-v2-state.json",
@@ -195,21 +193,27 @@ function strategyFields(strategy: StrategyDefinition, hb: any, state: any, instr
       ? candleFile
       : Array.isArray(candleFile?.candles) ? candleFile.candles : [];
     const rawTrades = readJson("drishti-v2-trades.json", []);
-    const inTrade = !!state.inTrade;
-    const realized = num(state.realizedPnl ?? hb.realizedPnl) ?? 0;
-    const unrealized = inTrade ? num(state.unrealizedPnl ?? hb.unrealizedPnl) ?? 0 : 0;
+    const inTrade = isOptions ? !!(state.optionInTrade ?? hb.optionInTrade) : !!state.inTrade;
+    const realized = isOptions
+      ? num(state.optionRealizedPnl ?? hb.optionRealizedPnl) ?? 0
+      : num(state.realizedPnl ?? hb.realizedPnl) ?? 0;
+    const unrealized = inTrade
+      ? isOptions
+        ? num(state.optionUnrealizedPnl ?? hb.optionUnrealizedPnl) ?? 0
+        : num(state.unrealizedPnl ?? hb.unrealizedPnl) ?? 0
+      : 0;
     return {
       inTrade,
       realized,
       unrealized,
       total: realized + unrealized,
-      trades: num(state.tradeCount ?? hb.trades) ?? 0,
-      wins: num(state.wins ?? hb.wins) ?? 0,
-      losses: num(state.losses ?? hb.losses) ?? 0,
+      trades: isOptions ? num(state.optionTradeCount ?? hb.optionTrades) ?? 0 : num(state.tradeCount ?? hb.trades) ?? 0,
+      wins: isOptions ? num(state.optionWins ?? hb.optionWins) ?? 0 : num(state.wins ?? hb.wins) ?? 0,
+      losses: isOptions ? num(state.optionLosses ?? hb.optionLosses) ?? 0 : num(state.losses ?? hb.losses) ?? 0,
       direction: text(state.side ?? hb.side),
-      symbol: text(state.futuresSymbol ?? hb.symbol),
-      entry: num(state.entryPrice ?? hb.futuresEntry),
-      live: num(state.lastPrice ?? hb.futuresLive),
+      symbol: text(isOptions ? state.optionSymbol ?? hb.optionSymbol : state.futuresSymbol ?? hb.symbol),
+      entry: num(isOptions ? state.optionEntryPrice ?? hb.optionEntry : state.entryPrice ?? hb.futuresEntry),
+      live: num(isOptions ? state.optionLastPrice ?? hb.optionLive : state.lastPrice ?? hb.futuresLive),
       sl: num(state.stopLoss ?? hb.stopLoss),
       target: num(state.target ?? hb.target),
       quantity: num(hb.quantity) ?? 30,
@@ -369,13 +373,15 @@ function normalizedTrades(rawTrades: any[], strategy: StrategyDefinition, instru
       const storedPnl = num(row.pnlRs ?? row.pnl ?? row.optionPnlRs ?? row.optPnlRs ?? row.optionPnl);
       const explicitStatus = String(row.status || "").toUpperCase();
       return underlyingExit !== null || premiumExit !== null || storedPnl !== null
-        || explicitStatus === "CLOSED" || explicitStatus === "REJECTED";
+        || explicitStatus === "OPEN" || explicitStatus === "CLOSED" || explicitStatus === "REJECTED";
     })
     .map((row: any, index: number) => {
       const direction = (text(row.direction || row.dir || row.side) || "").toUpperCase();
-      const rawSymbol = text(row.symbol || row.tradeSymbol || row.contract) || "";
-      const quantity = num(row.qty ?? row.quantity ?? row.lots) ?? defaultQuantity;
       const isOptions = instrument === "OPTIONS";
+      const rawSymbol = text(isOptions
+        ? row.optionSymbol || row.symbol || row.tradeSymbol || row.contract
+        : row.symbol || row.tradeSymbol || row.contract) || "";
+      const quantity = num(row.qty ?? row.quantity ?? row.lots) ?? defaultQuantity;
       const entry = isOptions
         ? num(row.premiumEntry ?? row.entryPremium ?? row.premIn)
         : num(row.entryPrice ?? row.entry);
@@ -386,7 +392,7 @@ function normalizedTrades(rawTrades: any[], strategy: StrategyDefinition, instru
         ? (exit - entry) * quantity
         : null;
       const pnl = isOptions
-        ? premiumPnl ?? num(row.optionPnlRs ?? row.optPnlRs ?? row.optionPnl)
+        ? num(row.optionPnlRs ?? row.optPnlRs ?? row.optionPnl) ?? premiumPnl
         : num(row.pnlRs ?? row.pnl ?? row.points ?? row.pts);
       const contract = /\b(CE|PE)\b/i.test(direction)
         ? direction.match(/\b(CE|PE)\b/i)?.[1]?.toUpperCase()
@@ -427,7 +433,7 @@ function normalizedTrades(rawTrades: any[], strategy: StrategyDefinition, instru
         capitalDeployed,
         returnPct: pnl !== null && capitalDeployed ? pnl / capitalDeployed * 100 : null,
         result: pnl === null ? null : pnl > 0 ? "WIN" : pnl < 0 ? "LOSS" : "FLAT",
-        status: text(row.status)
+        status: text(isOptions ? row.optionStatus ?? row.status : row.status)
           || (isOptions && num(row.exit ?? row.exitPrice) !== null && exit === null
             ? "DATA UNAVAILABLE"
             : exit !== null || pnl !== null ? "CLOSED" : "OPEN"),
@@ -1113,28 +1119,7 @@ function consolidatedShadowSummary(externalHealth: any = {}): any {
     const heartbeatAvailable = !!heartbeatAt;
     const stale = market === "OPEN" && (!heartbeatAvailable || (heartbeatAgeSec ?? Infinity) > HEARTBEAT_CRITICAL_SEC);
 
-    for (const instrument of strategy.tileInstruments || strategy.instruments || (["FUTURES", "OPTIONS"] as InstrumentType[])) {
-      const configured = !strategy.instruments || strategy.instruments.includes(instrument);
-      if (!configured) {
-        tiles.push({
-          strategyId: strategy.id,
-          strategyName: strategy.name.replace(/\s*\(BANKNIFTY\)\s*$/i, ""),
-          strategyVersion: strategy.version,
-          instrumentType: instrument,
-          executionMode: "SHADOW",
-          tradeDate,
-          pnl: null,
-          returnPct: null,
-          capitalDeployed: 0,
-          trades: 0,
-          openPositions: 0,
-          positionState: "NOT CONFIGURED",
-          stale: false,
-          configured: false,
-          lastUpdatedAt: heartbeat?.at || strategyState?.savedAt || null,
-        });
-        continue;
-      }
+    for (const instrument of strategy.instruments || (["FUTURES", "OPTIONS"] as InstrumentType[])) {
       const fields = strategyFields(strategy, heartbeat, strategyState, instrument);
       const trades = normalizedTrades(
         fields.rawTrades,
@@ -1973,40 +1958,35 @@ export function renderShadowStrategyMonitorPage(navHtml: string): string {
     .sm-consolidated-mode .sm-shadow-badge{display:none}
     .sm-consolidated-mode .sm-market,.sm-consolidated-mode .sm-refresh{color:#e5e7eb;border-color:rgba(148,163,184,.28);background:rgba(15,23,42,.66)}
     .sm-consolidated{color:#e5e7eb}
-    .sm-consolidated-summary{display:grid;grid-template-columns:1.5fr repeat(3,1fr);align-items:center;margin-bottom:16px;border:1px solid rgba(148,163,184,.2);border-radius:14px;background:rgba(8,18,37,.82);box-shadow:inset 0 1px 0 rgba(255,255,255,.05),0 12px 28px rgba(0,0,0,.22);overflow:hidden}
-    .sm-consolidated-metric{min-height:86px;padding:17px 20px;display:flex;flex-direction:column;justify-content:center;border-left:1px solid rgba(148,163,184,.16)}
-    .sm-consolidated-metric:first-child{border-left:0}
-    .sm-consolidated-metric span{font-size:11px;color:#93a4c0;text-transform:uppercase;font-weight:800;letter-spacing:.04em}
-    .sm-consolidated-metric b{margin-top:6px;font-size:24px;color:#f8fafc;white-space:nowrap}
-    .sm-consolidated-metric:first-child b{font-size:30px}
-    .sm-consolidated-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px}
-    .sm-key-tile{position:relative;min-height:116px;padding:10px 14px;border:1px solid rgba(111,145,190,.55);border-radius:9px;background:linear-gradient(145deg,rgba(14,27,51,.98),rgba(4,11,25,.99));color:#e5e7eb;box-shadow:inset 0 1px 0 rgba(255,255,255,.08),inset 0 -12px 24px rgba(0,0,0,.22),0 0 0 1px rgba(56,189,248,.05),0 7px 18px rgba(0,0,0,.26);cursor:pointer;text-align:center;display:flex;flex-direction:column;transition:border-color .16s ease,transform .16s ease,box-shadow .16s ease;min-width:0;overflow:hidden}
+    .sm-consolidated-grid{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:8px}
+    .sm-key-tile{position:relative;min-height:96px;padding:8px 11px;border:1px solid rgba(111,145,190,.55);border-radius:8px;background:linear-gradient(145deg,rgba(14,27,51,.98),rgba(4,11,25,.99));color:#e5e7eb;box-shadow:inset 0 1px 0 rgba(255,255,255,.08),inset 0 -12px 24px rgba(0,0,0,.22),0 0 0 1px rgba(56,189,248,.05),0 6px 14px rgba(0,0,0,.24);cursor:pointer;text-align:center;display:flex;flex-direction:column;transition:border-color .16s ease,transform .16s ease,box-shadow .16s ease;min-width:0;overflow:hidden}
     .sm-key-tile:before{content:"";position:absolute;inset:0;pointer-events:none;background:linear-gradient(115deg,rgba(255,255,255,.06),transparent 28%,transparent 72%,rgba(34,211,238,.04))}
     .sm-key-tile:hover{transform:translateY(-2px);border-color:#60a5fa;box-shadow:0 0 18px rgba(59,130,246,.22),0 10px 22px rgba(0,0,0,.3)}
     .sm-key-tile.selected{border-color:#8b5cf6;outline:1px solid #6366f1;outline-offset:2px;box-shadow:0 0 0 1px rgba(139,92,246,.65),0 0 22px rgba(99,102,241,.52),inset 0 0 22px rgba(79,70,229,.13)}
     .sm-key-tile.profit{border-color:rgba(74,222,128,.82);background:linear-gradient(145deg,rgba(10,42,41,.98),rgba(4,18,27,.99));box-shadow:inset 0 1px 0 rgba(255,255,255,.07),0 0 14px rgba(34,197,94,.2),0 8px 20px rgba(0,0,0,.26)}
     .sm-key-tile.loss{border-color:rgba(248,82,82,.9);background:linear-gradient(145deg,rgba(55,21,35,.98),rgba(26,8,20,.99));box-shadow:inset 0 1px 0 rgba(255,255,255,.06),0 0 15px rgba(239,68,68,.24),0 8px 20px rgba(0,0,0,.28)}
-    .sm-key-tile.open{box-shadow:inset 0 1px 0 rgba(255,255,255,.08),0 0 0 1px rgba(45,212,191,.2),0 0 20px rgba(13,148,136,.25)}
+    @keyframes smLiveTilePulse{0%,100%{border-color:#34d399;box-shadow:inset 0 0 16px rgba(16,185,129,.08),0 0 6px rgba(45,212,191,.3)}50%{border-color:#5eead4;box-shadow:inset 0 0 24px rgba(16,185,129,.18),0 0 22px rgba(45,212,191,.72)}}
+    .sm-key-tile.open{animation:smLiveTilePulse 1.15s ease-in-out infinite}
     .sm-key-tile.stale,.sm-key-tile.error{border-color:rgba(245,158,11,.8)}
-    .sm-key-tile.not-configured{cursor:default;border-color:rgba(100,116,139,.48);background:linear-gradient(145deg,rgba(20,29,45,.94),rgba(9,15,27,.98));box-shadow:inset 0 1px 0 rgba(255,255,255,.04)}
     .sm-key-head{position:relative;display:flex;align-items:center;justify-content:center;gap:8px}
-    .sm-key-name{font-size:14px;line-height:1.2;font-weight:850;color:#f8fafc;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+    .sm-key-name{font-size:12px;line-height:1.15;font-weight:850;color:#f8fafc;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
     .sm-key-instrument{flex:0 0 auto;padding:3px 6px;border-radius:4px;background:rgba(37,99,235,.16);border:1px solid rgba(96,165,250,.32);color:#bfdbfe;font-size:9px;font-weight:900}
-    .sm-key-pnl{position:relative;margin-top:7px;font-size:24px;line-height:1;font-weight:900;color:#94a3b8;white-space:nowrap}
+    .sm-key-pnl{position:relative;margin-top:5px;font-size:20px;line-height:1;font-weight:900;color:#94a3b8;white-space:nowrap}
     .sm-key-tile.profit .sm-key-pnl{color:#4ade80}.sm-key-tile.loss .sm-key-pnl{color:#fb7185}
-    .sm-key-return{position:relative;margin-top:5px;font-size:13px;font-weight:850;color:#94a3b8}
-    .sm-key-bottom{position:relative;display:flex;align-items:center;justify-content:space-between;gap:8px;margin-top:auto;padding-top:7px;color:#c0cbe0;font-size:10px;font-weight:700;text-transform:uppercase}
-    .sm-key-state{display:inline-flex;align-items:center;gap:6px;padding:0;background:transparent;font-size:10px;font-weight:900}
+    .sm-key-return{position:relative;margin-top:4px;font-size:11px;font-weight:850;color:#94a3b8}
+    .sm-key-bottom{position:relative;display:flex;align-items:center;justify-content:space-between;gap:6px;margin-top:auto;padding-top:5px;color:#c0cbe0;font-size:9px;font-weight:700;text-transform:uppercase}
+    .sm-key-state{display:inline-flex;align-items:center;gap:5px;padding:0;background:transparent;font-size:9px;font-weight:900}
     .sm-key-state.open,.sm-key-state.closed{color:#4ade80}.sm-key-state.stale,.sm-key-state.error{color:#fbbf24}
     .sm-key-state.open:before{content:"";width:7px;height:7px;border-radius:50%;background:#34d399;box-shadow:0 0 0 4px rgba(52,211,153,.12)}
     .sm-consolidated-empty{padding:50px 20px;text-align:center;border:1px dashed rgba(148,163,184,.3);border-radius:14px;color:#94a3b8}
     .sm-consolidated-empty b{display:block;color:#f8fafc;font-size:18px;margin-bottom:7px}
-    @media(max-width:1200px){.sm-consolidated-grid{grid-template-columns:repeat(3,minmax(0,1fr))}}
-    @media(max-width:1023px){.sm-consolidated-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.sm-consolidated-summary{grid-template-columns:repeat(2,1fr)}.sm-consolidated-metric:nth-child(3){border-left:0;border-top:1px solid rgba(148,163,184,.16)}.sm-consolidated-metric:nth-child(4){border-top:1px solid rgba(148,163,184,.16)}}
-    @media(max-width:700px){.sm-consolidated-mode .sm-head{padding:14px;align-items:stretch}.sm-consolidated-mode .sm-head-actions{display:grid;grid-template-columns:1fr auto;gap:8px}.sm-consolidated-mode .sm-refresh-meta{grid-column:1/-1;text-align:left}.sm-consolidated-toggle{height:40px;padding:0 11px}.sm-consolidated-summary{grid-template-columns:1fr 1fr}.sm-consolidated-metric{min-height:76px;padding:13px}.sm-consolidated-metric b,.sm-consolidated-metric:first-child b{font-size:20px}.sm-consolidated-grid{grid-template-columns:1fr;gap:9px}.sm-key-tile{min-height:132px}.sm-key-pnl{font-size:25px}}
+    @media(max-width:1350px){.sm-consolidated-grid{grid-template-columns:repeat(4,minmax(0,1fr))}}
+    @media(max-width:1050px){.sm-consolidated-grid{grid-template-columns:repeat(3,minmax(0,1fr))}}
+    @media(max-width:1023px){.sm-consolidated-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
+    @media(max-width:700px){.sm-consolidated-mode .sm-head{padding:14px;align-items:stretch}.sm-consolidated-mode .sm-head-actions{display:grid;grid-template-columns:1fr auto;gap:8px}.sm-consolidated-mode .sm-refresh-meta{grid-column:1/-1;text-align:left}.sm-consolidated-toggle{height:40px;padding:0 11px}.sm-consolidated-grid{grid-template-columns:1fr;gap:8px}.sm-key-tile{min-height:96px}.sm-key-pnl{font-size:21px}}
     @media(max-width:1100px){.sm-pnl{min-height:292px}.sm-pnl .sm-metrics{grid-template-columns:repeat(3,minmax(0,1fr));row-gap:2px}.sm-pnl .sm-metric:nth-child(4){border-left:0}.sm-pnl-value{font-size:clamp(46px,6vw,56px)}}
     @media(max-width:700px){.sm-pnl{min-height:0;padding:16px 14px;border-radius:18px}.sm-pnl-heading{gap:9px}.sm-pnl-heading-icon{width:40px;height:40px;flex-basis:40px}.sm-pnl-heading-copy h2,.sm-pnl .sm-card-head h2{font-size:16px}.sm-pnl-heading-copy p{font-size:10px}.sm-pnl .sm-live-chip{height:30px;min-width:76px;font-size:10px}.sm-pnl-value{margin-top:12px;font-size:clamp(40px,11vw,50px)}.sm-pnl .sm-metrics{grid-template-columns:repeat(2,minmax(0,1fr));row-gap:2px}.sm-pnl .sm-metric,.sm-pnl .sm-metric:nth-child(4){justify-content:flex-start;min-height:56px;padding:7px 6px;border-left:0;border-top:1px solid rgba(151,178,220,.18)}.sm-pnl .sm-metric:nth-child(1),.sm-pnl .sm-metric:nth-child(2){border-top:0}.sm-pnl .sm-metric:nth-child(even){border-left:1px solid rgba(151,178,220,.18)}.sm-pnl-metric-icon{width:32px;height:32px;flex-basis:32px}.sm-pnl .sm-metric b{font-size:14px}.sm-pnl .sm-metric span:not(.sm-pnl-metric-icon){font-size:9px}.sm-pnl .sm-card-foot{align-items:flex-start;line-height:1.4}.sm-backtest-card .sm-backtest{grid-template-columns:repeat(2,minmax(0,1fr))}.sm-backtest-card .sm-bt-cell b{font-size:12px}}
-    @media(prefers-reduced-motion:reduce){.sm-loader-mark img,.sm-loader-ring,.sm-market .sm-dot,.sm-status-dot,.sm-pnl .sm-live-chip .sm-dot{animation:none}}
+    @media(prefers-reduced-motion:reduce){.sm-loader-mark img,.sm-loader-ring,.sm-market .sm-dot,.sm-status-dot,.sm-pnl .sm-live-chip .sm-dot,.sm-key-tile.open{animation:none}}
   </style>
 </head>
 <body>
@@ -2027,7 +2007,6 @@ export function renderShadowStrategyMonitorPage(navHtml: string): string {
         </div>
       </header>
       <section class="sm-consolidated sm-consolidated-view" id="consolidatedView" hidden>
-        <div class="sm-consolidated-summary" id="consolidatedSummary"></div>
         <div class="sm-consolidated-grid" id="consolidatedGrid"></div>
       </section>
       <section class="sm-control" aria-label="Monitor controls">
@@ -2092,9 +2071,9 @@ export function renderShadowStrategyMonitorPage(navHtml: string): string {
       function renderLogs(d){var box=el("logConsole");var nearBottom=box.scrollHeight-box.scrollTop-box.clientHeight<28;var rows=(d.logs||[]).map(function(l){return'<div class="sm-log-line"><span>'+esc(l.time||"--:--:--")+'</span><b class="'+esc(l.level)+'">'+esc(l.level)+'</b><span>'+esc(l.message)+'</span></div>'}).join("");box.innerHTML=rows||'<div class="sm-muted">No server log entries available.</div>';if(state.logStick&&nearBottom)box.scrollTop=box.scrollHeight;el("resumeLogs").hidden=state.logStick}
       function renderSection(name,fn){try{fn()}catch(error){console.error("Shadow monitor "+name+" render failed",error)}}
       function consolidatedKey(t){return [t.strategyId,t.strategyVersion,t.instrumentType,t.executionMode,t.tradeDate].join("|")}
-      function tileClass(t){if(t.positionState==="NOT CONFIGURED")return"not-configured";if(t.positionState==="ERROR")return"error";if(t.positionState==="STALE")return"stale";if(t.positionState==="OPEN")return"open";return Number(t.pnl)>0?"profit":Number(t.pnl)<0?"loss":"no-trade"}
-      function renderConsolidated(d){var c=d.consolidated||{};var s=c.summary||{};var totalTiles=Number(s.totalTiles||((c.tiles||[]).length)||0);var summary=el("consolidatedSummary");if(!summary.children.length)summary.innerHTML='<div class="sm-consolidated-metric"><span>Total Today P&amp;L</span><b id="consolidatedTotal">--</b></div><div class="sm-consolidated-metric"><span>Profitable Strategies</span><b id="consolidatedProfit">0</b></div><div class="sm-consolidated-metric"><span>Losing Strategies</span><b id="consolidatedLoss">0</b></div><div class="sm-consolidated-metric"><span>Open Positions</span><b id="consolidatedOpen">0</b></div>';el("consolidatedTotal").innerHTML=money(s.totalPnl);el("consolidatedProfit").textContent=value(s.profitableTiles,0)+" / "+totalTiles;el("consolidatedLoss").textContent=value(s.lossMakingTiles,0)+" / "+totalTiles;el("consolidatedOpen").textContent=value(s.openPositions,0);var tiles=c.tiles||[];var grid=el("consolidatedGrid");if(!tiles.length){grid.innerHTML='<div class="sm-consolidated-empty"><b>No active shadow strategies</b>Configure at least one Futures or Options shadow strategy to view consolidated P&amp;L.</div>';return}var expected=tiles.map(consolidatedKey).join(",");if(grid.dataset.keys!==expected){grid.dataset.keys=expected;grid.innerHTML=tiles.map(function(t){var key=consolidatedKey(t);return'<button class="sm-key-tile" type="button" data-tile-key="'+esc(key)+'" data-strategy="'+esc(t.strategyId)+'" data-instrument="'+esc(t.instrumentType)+'"><div class="sm-key-head"><span class="sm-key-name"></span><span class="sm-key-instrument"></span></div><div class="sm-key-pnl"></div><div class="sm-key-return"></div><div class="sm-key-bottom"><span class="sm-key-trades"></span><span class="sm-key-state"></span></div></button>'}).join("")}tiles.forEach(function(t){var key=consolidatedKey(t);var tile=grid.querySelector('[data-tile-key="'+CSS.escape(key)+'"]');if(!tile)return;var cls=tileClass(t);tile.className="sm-key-tile "+cls+(t.configured!==false&&t.strategyId===state.strategy&&t.instrumentType===state.instrument?" selected":"");tile.disabled=t.configured===false;tile.querySelector(".sm-key-name").textContent=t.strategyName;tile.querySelector(".sm-key-instrument").textContent=t.instrumentType==="FUTURES"?"FUT":"OPT";tile.querySelector(".sm-key-pnl").innerHTML=t.configured===false?"Not configured":t.pnl==null?"Not available":money(t.pnl);tile.querySelector(".sm-key-return").textContent=t.configured===false?"Options runtime required":t.returnPct==null?"Return unavailable":pct(t.returnPct)+" return";tile.querySelector(".sm-key-trades").textContent=value(t.trades,0)+" "+(Number(t.trades)===1?"trade":"trades");var stateNode=tile.querySelector(".sm-key-state");stateNode.className="sm-key-state "+String(t.positionState||"").toLowerCase().replace(/\\s+/g,"-");stateNode.textContent=t.positionState||"--";tile.title=t.configured===false?"This strategy does not publish an Options shadow stream yet":t.pnl==null?"No valid current-day shadow data":t.strategyName+" "+t.instrumentType+" | Capital deployed "+value(t.capitalDeployed,0)})}
-      function setViewMode(mode){state.viewMode=mode;var consolidated=mode==="consolidated";el("shadowMonitor").classList.toggle("sm-consolidated-mode",consolidated);el("shadowPage").classList.toggle("sm-consolidated-page",consolidated);el("consolidatedView").hidden=!consolidated;el("monitorTitle").textContent=consolidated?"Consolidated Shadow P&L":"Shadow Strategy Monitor";el("monitorSubtitle").textContent=consolidated?"Today's P&L across all shadow strategies and instruments":"Simulated trades only. No real broker orders are placed.";el("consolidatedToggle").querySelector("span").textContent=consolidated?"Back to Dashboard":"Consolidated P&L";if(consolidated&&state.data)renderConsolidated(state.data);window.scrollTo({top:0,behavior:"auto"})}
+      function tileClass(t){if(t.positionState==="ERROR")return"error";if(t.positionState==="STALE")return"stale";if(t.positionState==="OPEN")return"open";return Number(t.pnl)>0?"profit":Number(t.pnl)<0?"loss":"no-trade"}
+      function renderConsolidated(d){var c=d.consolidated||{};var tiles=c.tiles||[];var grid=el("consolidatedGrid");if(!tiles.length){grid.innerHTML='<div class="sm-consolidated-empty"><b>No active shadow strategies</b>Configure at least one Futures or Options shadow strategy to view consolidated P&amp;L.</div>';return}var expected=tiles.map(consolidatedKey).join(",");if(grid.dataset.keys!==expected){grid.dataset.keys=expected;grid.innerHTML=tiles.map(function(t){var key=consolidatedKey(t);return'<button class="sm-key-tile" type="button" data-tile-key="'+esc(key)+'" data-strategy="'+esc(t.strategyId)+'" data-instrument="'+esc(t.instrumentType)+'"><div class="sm-key-head"><span class="sm-key-name"></span><span class="sm-key-instrument"></span></div><div class="sm-key-pnl"></div><div class="sm-key-return"></div><div class="sm-key-bottom"><span class="sm-key-trades"></span><span class="sm-key-state"></span></div></button>'}).join("")}tiles.forEach(function(t){var key=consolidatedKey(t);var tile=grid.querySelector('[data-tile-key="'+CSS.escape(key)+'"]');if(!tile)return;var cls=tileClass(t);tile.className="sm-key-tile "+cls+(t.strategyId===state.strategy&&t.instrumentType===state.instrument?" selected":"");tile.querySelector(".sm-key-name").textContent=t.strategyName;tile.querySelector(".sm-key-instrument").textContent=t.instrumentType==="FUTURES"?"FUT":"OPT";tile.querySelector(".sm-key-pnl").innerHTML=t.pnl==null?"Not available":money(t.pnl);tile.querySelector(".sm-key-return").textContent=t.returnPct==null?"Return unavailable":pct(t.returnPct)+" return";tile.querySelector(".sm-key-trades").textContent=value(t.trades,0)+" "+(Number(t.trades)===1?"trade":"trades");var stateNode=tile.querySelector(".sm-key-state");stateNode.className="sm-key-state "+String(t.positionState||"").toLowerCase().replace(/\\s+/g,"-");stateNode.textContent=t.positionState||"--";tile.title=t.pnl==null?"No valid current-day shadow data":t.strategyName+" "+t.instrumentType+" | Capital deployed "+value(t.capitalDeployed,0)})}
+      function setViewMode(mode){state.viewMode=mode;var consolidated=mode==="consolidated";el("shadowMonitor").classList.toggle("sm-consolidated-mode",consolidated);el("shadowPage").classList.toggle("sm-consolidated-page",consolidated);el("consolidatedView").hidden=!consolidated;el("monitorTitle").textContent=consolidated?"Consolidated Shadow P&L":"Shadow Strategy Monitor";el("monitorSubtitle").textContent=consolidated?"Today's P&L across all shadow strategies and instruments":"Simulated trades only. No real broker orders are placed.";el("consolidatedToggle").querySelector("span").textContent=consolidated?"Back to Dashboard":"Consolidated P&L";if(consolidated&&state.data)renderConsolidated(state.data);if(refreshTimer)scheduleRefresh();window.scrollTo({top:0,behavior:"auto"})}
       function render(d){state.data=d;state.instrument=d.identity.instrumentType||state.instrument;localStorage.setItem("zsShadowInstrument",state.instrument);renderSection("strategies",function(){renderStrategies(d.strategies)});renderSection("trades",function(){renderTrades(d)});renderSection("candles",function(){renderCandles(d)});renderSection("health",function(){renderHealth(d);el("healthAction").textContent="View Checks"});renderSection("summary",function(){renderSummary(d)});renderSection("logs",function(){renderLogs(d)});renderSection("consolidated",function(){renderConsolidated(d)});var m=el("marketStatus");m.className="sm-market "+(d.market.status==="OPEN"?"open":"closed");m.querySelector("span:last-child").textContent="Market "+(d.market.status==="OPEN"?"Open":"Closed");el("refreshMeta").textContent="Last refreshed: "+dt(d.refreshedAt);document.querySelectorAll(".sm-segment [data-instrument]").forEach(function(b){b.classList.toggle("active",b.dataset.instrument===state.instrument)});el("shadowMonitor").classList.remove("sm-loading");el("monitorLoader").classList.remove("active")}
       async function load(trigger){var interactive=trigger===true||!!(trigger&&trigger.type)||state.userRequestedLoad===true;state.userRequestedLoad=false;var seq=++state.request;if(activeController)activeController.abort();activeController=new AbortController();if(interactive){el("monitorLoader").classList.add("active");el("shadowMonitor").classList.add("sm-loading")}try{var url="/api/shadow-monitor?strategy="+encodeURIComponent(state.strategy)+"&instrument="+encodeURIComponent(state.instrument);var r=await fetch(url,{cache:"no-store",credentials:"same-origin",signal:activeController.signal});if(!r.ok)throw new Error("HTTP "+r.status);var d=await r.json();if(seq!==state.request)return;if(!d.ok)throw new Error(d.error||"Monitor unavailable");render(d)}catch(e){if(e.name==="AbortError")return;el("refreshMeta").textContent="Refresh failed: "+e.message;el("shadowMonitor").classList.remove("sm-loading");el("monitorLoader").classList.remove("active")}}
       el("strategySelect").addEventListener("change",function(){state.userRequestedLoad=true},{capture:true});document.querySelectorAll("[data-instrument]").forEach(function(button){button.addEventListener("click",function(){state.userRequestedLoad=true},{capture:true})});
@@ -2120,7 +2099,7 @@ export function renderShadowStrategyMonitorPage(navHtml: string): string {
       function openHealth(){if(state.data)renderHealthDetails(state.data.health);el("healthModal").classList.add("open")}
       el("healthStep").addEventListener("click",openHealth);el("healthStep").addEventListener("keydown",function(e){if(e.key==="Enter"||e.key===" "){e.preventDefault();openHealth()}});el("closeHealth").addEventListener("click",function(){el("healthModal").classList.remove("open")});el("healthModal").addEventListener("click",function(e){if(e.target===this)this.classList.remove("open")});
       var refreshTimer=null;
-      function scheduleRefresh(){if(refreshTimer)clearTimeout(refreshTimer);var marketOpen=state.data&&state.data.market&&state.data.market.status==="OPEN";refreshTimer=setTimeout(async function(){await load();scheduleRefresh()},marketOpen?10000:45000)}
+      function scheduleRefresh(){if(refreshTimer)clearTimeout(refreshTimer);var marketOpen=state.data&&state.data.market&&state.data.market.status==="OPEN";var interval=marketOpen?(state.viewMode==="consolidated"?5000:10000):45000;refreshTimer=setTimeout(async function(){await load();scheduleRefresh()},interval)}
       load().finally(scheduleRefresh);
     })();
   </script>

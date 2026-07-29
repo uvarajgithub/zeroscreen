@@ -13,6 +13,7 @@ const QUANTITY = Number(process.env.DRISHTI_V2_QTY || 30);
 const TARGET_POINTS = Number(process.env.DRISHTI_V2_TARGET_POINTS || 350);
 const STOP_POINTS = Number(process.env.DRISHTI_V2_STOP_POINTS || 100);
 const ROUND_TRIP_COST = Number(process.env.DRISHTI_V2_ROUND_TRIP_COST || 150);
+const OPTION_ROUND_TRIP_COST = Number(process.env.DRISHTI_V2_OPTION_ROUND_TRIP_COST || 40);
 const MARKET_POLL_MS = Number(process.env.DRISHTI_V2_MARKET_POLL_MS || 5000);
 const CANDLE_REFRESH_MS = Number(process.env.DRISHTI_V2_CANDLE_REFRESH_MS || 30000);
 const STATE_FILE = path.join(BOT_DIR, 'drishti-v2-state.json');
@@ -37,6 +38,7 @@ const timeFormatter = new Intl.DateTimeFormat('en-GB', {
 let kite = null;
 let tokenFingerprint = '';
 let futuresContract = null;
+let nfoInstruments = null;
 let lastCandleRefreshAt = 0;
 let previousCandles = [];
 let signalCandles = [];
@@ -93,6 +95,15 @@ function defaultState(date) {
     inTrade: false,
     side: null,
     futuresSymbol: null,
+    optionSymbol: null,
+    optionInTrade: false,
+    optionEntryPrice: null,
+    optionLastPrice: null,
+    optionRealizedPnl: 0,
+    optionUnrealizedPnl: 0,
+    optionTradeCount: 0,
+    optionWins: 0,
+    optionLosses: 0,
     entryIndex: null,
     entryPrice: null,
     entryTime: null,
@@ -144,6 +155,7 @@ function ensureKite() {
     kite.setAccessToken(token);
     tokenFingerprint = fingerprint;
     futuresContract = null;
+    nfoInstruments = null;
   }
   return kite;
 }
@@ -222,7 +234,7 @@ function previousDayRangeOkay(candles) {
 
 async function resolveFuturesContract() {
   if (futuresContract) return futuresContract;
-  const instruments = await ensureKite().getInstruments('NFO');
+  const instruments = await resolveNfoInstruments();
   const now = new Date();
   const contracts = instruments
     .filter((row) => row.name === 'BANKNIFTY' && row.instrument_type === 'FUT')
@@ -232,6 +244,39 @@ async function resolveFuturesContract() {
   if (!contracts.length) throw new Error('No active BANKNIFTY futures contract found');
   futuresContract = contracts[0];
   return futuresContract;
+}
+
+async function resolveNfoInstruments() {
+  if (!nfoInstruments) nfoInstruments = await ensureKite().getInstruments('NFO');
+  return nfoInstruments;
+}
+
+async function resolveOptionContract(side, underlyingPrice) {
+  const instruments = await resolveNfoInstruments();
+  const now = new Date();
+  const optionType = side === 'PE' ? 'PE' : 'CE';
+  const contracts = instruments
+    .filter((row) => row.name === 'BANKNIFTY' && row.instrument_type === optionType)
+    .map((row) => ({ ...row, expiryDate: new Date(row.expiry) }))
+    .filter((row) => Number.isFinite(row.expiryDate.getTime()) && row.expiryDate >= now)
+    .sort((a, b) => {
+      const expiryDifference = a.expiryDate - b.expiryDate;
+      return expiryDifference || Math.abs(Number(a.strike) - underlyingPrice) - Math.abs(Number(b.strike) - underlyingPrice);
+    });
+  if (!contracts.length) throw new Error(`No active BANKNIFTY ${optionType} contract found`);
+  const nearestExpiry = contracts[0].expiryDate.getTime();
+  return contracts
+    .filter((row) => row.expiryDate.getTime() === nearestExpiry)
+    .sort((a, b) => Math.abs(Number(a.strike) - underlyingPrice) - Math.abs(Number(b.strike) - underlyingPrice))[0];
+}
+
+async function latestOptionPrice(symbol) {
+  if (!symbol) throw new Error('Option symbol is unavailable');
+  const key = `NFO:${symbol}`;
+  const response = await ensureKite().getLTP([key]);
+  const price = Number(response?.[key]?.last_price);
+  if (!Number.isFinite(price) || price <= 0) throw new Error(`No live option premium for ${symbol}`);
+  return price;
 }
 
 async function latestFuturesPrice() {
@@ -312,6 +357,7 @@ function candleLogRows() {
       target: state.inTrade && state.entrySignalIndex <= index ? state.entryIndex + (state.side === 'CE' ? TARGET_POINTS : -TARGET_POINTS) : null,
       exit: event?.exitPrice ?? null,
       pnlRs: event?.netPnlRs ?? storedPnl ?? (closePoints === null ? null : Math.round(closePoints * QUANTITY)),
+      optionPnlRs: event?.optionPnlRs ?? null,
       note: event?.reason || (state.inTrade && state.entrySignalIndex <= index
         ? 'Shadow position monitored on live futures LTP'
         : 'Waiting for a completed 15m breakout'),
@@ -319,7 +365,7 @@ function candleLogRows() {
   });
 }
 
-function enterShadow(signal, signalIndex, futures) {
+async function enterShadow(signal, signalIndex, futures) {
   const current = nowIST();
   const tradeId = `drishti-v2-${current.date}-${signalIndex}-${Date.now()}`;
   state.inTrade = true;
@@ -334,6 +380,22 @@ function enterShadow(signal, signalIndex, futures) {
   state.tradeCount += 1;
   state.unrealizedPnl = 0;
   state.activeTradeId = tradeId;
+  state.optionSymbol = null;
+  state.optionInTrade = false;
+  state.optionEntryPrice = null;
+  state.optionLastPrice = null;
+  state.optionUnrealizedPnl = 0;
+  try {
+    const optionContract = await resolveOptionContract(signal.side, state.entryIndex);
+    const optionEntryPrice = await latestOptionPrice(optionContract.tradingsymbol);
+    state.optionSymbol = optionContract.tradingsymbol;
+    state.optionInTrade = true;
+    state.optionEntryPrice = optionEntryPrice;
+    state.optionLastPrice = optionEntryPrice;
+    state.optionTradeCount += 1;
+  } catch (error) {
+    console.warn(`[DRISHTI_V2] OPTIONS ENTRY SKIPPED: ${error?.message || error}`);
+  }
   state.lastSignal = {
     event: state.tradeCount === 1 ? 'entry' : 're-entry',
     side: signal.side,
@@ -361,15 +423,31 @@ function enterShadow(signal, signalIndex, futures) {
     target: state.target,
     status: 'OPEN',
     reason: signal.reason,
+    optionSymbol: state.optionSymbol,
+    premiumEntry: state.optionEntryPrice,
+    optionStatus: state.optionInTrade ? 'OPEN' : 'DATA_UNAVAILABLE',
   });
-  console.log(`[DRISHTI_V2] SHADOW ENTRY ${signal.side} ${futures.symbol} @ ${futures.price.toFixed(2)} target ${state.target.toFixed(2)} SL ${state.stopLoss.toFixed(2)}`);
+  console.log(`[DRISHTI_V2] SHADOW ENTRY ${signal.side} ${futures.symbol} @ ${futures.price.toFixed(2)} target ${state.target.toFixed(2)} SL ${state.stopLoss.toFixed(2)} option=${state.optionSymbol || 'unavailable'} premium=${state.optionEntryPrice ?? 'unavailable'}`);
 }
 
-function exitShadow(futures, reason) {
+async function exitShadow(futures, reason) {
   const current = nowIST();
   const points = tradePoints(futures.price);
   const grossPnlRs = Math.round(points * QUANTITY);
   const netPnlRs = grossPnlRs - ROUND_TRIP_COST;
+  let optionExitPrice = null;
+  let optionPnlRs = null;
+  if (state.optionInTrade && state.optionSymbol && Number.isFinite(state.optionEntryPrice)) {
+    try {
+      optionExitPrice = await latestOptionPrice(state.optionSymbol);
+      optionPnlRs = Math.round((optionExitPrice - state.optionEntryPrice) * QUANTITY) - OPTION_ROUND_TRIP_COST;
+      state.optionRealizedPnl += optionPnlRs;
+      if (optionPnlRs > 0) state.optionWins += 1;
+      else if (optionPnlRs < 0) state.optionLosses += 1;
+    } catch (error) {
+      console.warn(`[DRISHTI_V2] OPTIONS EXIT PREMIUM UNAVAILABLE: ${error?.message || error}`);
+    }
+  }
   state.grossRealizedPnl += grossPnlRs;
   state.realizedPnl += netPnlRs;
   state.unrealizedPnl = 0;
@@ -386,6 +464,10 @@ function exitShadow(futures, reason) {
     costsRs: ROUND_TRIP_COST,
     netPnlRs,
     pnlRs: netPnlRs,
+    premiumExit: optionExitPrice,
+    optionPnlRs,
+    optionCostsRs: optionPnlRs === null ? null : OPTION_ROUND_TRIP_COST,
+    optionStatus: optionPnlRs === null ? 'DATA_UNAVAILABLE' : 'CLOSED',
     status: 'CLOSED',
     exitReason: reason,
   });
@@ -396,6 +478,7 @@ function exitShadow(futures, reason) {
     signalIndex: Math.max(0, signalCandles.length - 1),
     exitPrice: futures.price,
     netPnlRs,
+    optionPnlRs,
     at: current.iso,
   };
   state.events.push(state.lastSignal);
@@ -409,6 +492,10 @@ function exitShadow(futures, reason) {
   state.stopLoss = null;
   state.target = null;
   state.activeTradeId = null;
+  state.optionInTrade = false;
+  state.optionEntryPrice = null;
+  state.optionLastPrice = optionExitPrice;
+  state.optionUnrealizedPnl = 0;
 }
 
 async function evaluateEntry(futures) {
@@ -424,7 +511,7 @@ async function evaluateEntry(futures) {
   } else if (signalIndex > state.lastExitSignalIndex) {
     signal = freshBreakoutSignal(signalCandles, signalIndex, previousCandles);
   }
-  if (signal) enterShadow(signal, signalIndex, futures);
+  if (signal) await enterShadow(signal, signalIndex, futures);
 }
 
 function persist(phase, error = null) {
@@ -454,6 +541,16 @@ function persist(phase, error = null) {
     grossRealizedPnl: state.grossRealizedPnl,
     unrealizedPnl: state.unrealizedPnl,
     totalPnl: state.realizedPnl + state.unrealizedPnl,
+    optionInTrade: state.optionInTrade,
+    optionSymbol: state.optionSymbol,
+    optionEntry: state.optionEntryPrice,
+    optionLive: state.optionLastPrice,
+    optionRealizedPnl: state.optionRealizedPnl,
+    optionUnrealizedPnl: state.optionUnrealizedPnl,
+    optionTotalPnl: state.optionRealizedPnl + state.optionUnrealizedPnl,
+    optionTrades: state.optionTradeCount,
+    optionWins: state.optionWins,
+    optionLosses: state.optionLosses,
     trades: state.tradeCount,
     wins: state.wins,
     losses: state.losses,
@@ -482,6 +579,16 @@ async function tick() {
     state.futuresSymbol = futures.symbol;
     state.lastPrice = futures.price;
     state.unrealizedPnl = state.inTrade ? Math.round(tradePoints(futures.price) * QUANTITY) : 0;
+    if (state.optionInTrade && state.optionSymbol && Number.isFinite(state.optionEntryPrice)) {
+      try {
+        state.optionLastPrice = await latestOptionPrice(state.optionSymbol);
+        state.optionUnrealizedPnl = Math.round((state.optionLastPrice - state.optionEntryPrice) * QUANTITY);
+      } catch (error) {
+        state.lastError = `Option premium refresh failed: ${error?.message || error}`;
+      }
+    } else {
+      state.optionUnrealizedPnl = 0;
+    }
     if (state.inTrade) {
       for (let index = state.entrySignalIndex; index < signalCandles.length; index++) {
         const candle = signalCandles[index];
@@ -493,9 +600,9 @@ async function tick() {
     }
     if (state.inTrade) {
       const points = tradePoints(futures.price);
-      if (points >= TARGET_POINTS) exitShadow(futures, 'profit_target');
-      else if (points <= -STOP_POINTS) exitShadow(futures, 'stop_loss');
-      else if (clock.minute >= 925) exitShadow(futures, 'eod_exit');
+      if (points >= TARGET_POINTS) await exitShadow(futures, 'profit_target');
+      else if (points <= -STOP_POINTS) await exitShadow(futures, 'stop_loss');
+      else if (clock.minute >= 925) await exitShadow(futures, 'eod_exit');
     }
     if (!state.inTrade && clock.minute < 925) await evaluateEntry(futures);
     persist(state.inTrade ? 'RUNNING' : 'WATCHING');
