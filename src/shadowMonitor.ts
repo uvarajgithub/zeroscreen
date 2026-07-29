@@ -38,7 +38,7 @@ type HealthCheck = {
 const runtimeHealthCache = new Map<string, { checkedAt: number; value: any }>();
 
 const STRATEGIES: StrategyDefinition[] = [
-  { id: "drishti", name: "DRISHTI (BANKNIFTY)", version: "Current", prefix: "drishti", backtestFile: "shadow-strategy-5yr-results.json" },
+  { id: "drishti", name: "DRISHTI (BANKNIFTY)", version: "Current", prefix: "drishti", backtestFile: "shadow-strategy-5yr-results.json", instruments: ["FUTURES"] },
   {
     id: "drishti-v2",
     name: "DRISHTI V2 Challenger (BANKNIFTY)",
