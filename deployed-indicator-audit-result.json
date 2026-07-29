@@ -1,0 +1,282 @@
+{
+  "bb-percent": {
+    "futures": {
+      "all": {
+        "pnl": -901128,
+        "trades": 1576,
+        "winRate": 52.09390862944162,
+        "profitFactor": 0.7883217165633404,
+        "maxDrawdown": 994158,
+        "profitableMonthPct": 29.850746268656714
+      },
+      "train": {
+        "pnl": -700791,
+        "trades": 1145,
+        "winRate": 51.61572052401747,
+        "profitFactor": 0.7741517772401495,
+        "maxDrawdown": 763707,
+        "profitableMonthPct": 27.083333333333332
+      },
+      "validation": {
+        "pnl": -200337,
+        "trades": 431,
+        "winRate": 53.36426914153132,
+        "profitFactor": 0.8264180533473121,
+        "maxDrawdown": 269316,
+        "profitableMonthPct": 36.84210526315789
+      },
+      "recent": {
+        "pnl": -74852,
+        "trades": 149,
+        "winRate": 53.691275167785236,
+        "profitFactor": 0.845846196302467,
+        "maxDrawdown": 153543,
+        "profitableMonthPct": 42.857142857142854
+      }
+    },
+    "options": {
+      "all": {
+        "pnl": -315389,
+        "trades": 1576,
+        "winRate": 51.14213197969543,
+        "profitFactor": 0.8454442188045178,
+        "maxDrawdown": 374845,
+        "profitableMonthPct": 35.82089552238806
+      },
+      "train": {
+        "pnl": -243332,
+        "trades": 1145,
+        "winRate": 50.65502183406113,
+        "profitFactor": 0.8352352481133768,
+        "maxDrawdown": 284430,
+        "profitableMonthPct": 35.41666666666667
+      },
+      "validation": {
+        "pnl": -72057,
+        "trades": 431,
+        "winRate": 52.43619489559165,
+        "profitFactor": 0.8721874661875123,
+        "maxDrawdown": 116407,
+        "profitableMonthPct": 36.84210526315789
+      },
+      "recent": {
+        "pnl": -17402,
+        "trades": 149,
+        "winRate": 53.691275167785236,
+        "profitFactor": 0.9252610195115037,
+        "maxDrawdown": 68360,
+        "profitableMonthPct": 42.857142857142854
+      }
+    }
+  },
+  "bb-breakout": {
+    "futures": {
+      "all": {
+        "pnl": 30614,
+        "trades": 1009,
+        "winRate": 42.51734390485629,
+        "profitFactor": 1.0124182534615263,
+        "maxDrawdown": 245002,
+        "profitableMonthPct": 50.74626865671642
+      },
+      "train": {
+        "pnl": 92626,
+        "trades": 720,
+        "winRate": 42.638888888888886,
+        "profitFactor": 1.0533730849281222,
+        "maxDrawdown": 117569,
+        "profitableMonthPct": 52.083333333333336
+      },
+      "validation": {
+        "pnl": -62012,
+        "trades": 289,
+        "winRate": 42.21453287197232,
+        "profitFactor": 0.9150285421445387,
+        "maxDrawdown": 149097,
+        "profitableMonthPct": 47.368421052631575
+      },
+      "recent": {
+        "pnl": 69599,
+        "trades": 90,
+        "winRate": 48.888888888888886,
+        "profitFactor": 1.2946650465501255,
+        "maxDrawdown": 58107,
+        "profitableMonthPct": 71.42857142857143
+      }
+    },
+    "options": {
+      "all": {
+        "pnl": 143636,
+        "trades": 1009,
+        "winRate": 41.62537165510407,
+        "profitFactor": 1.118360475531644,
+        "maxDrawdown": 103500,
+        "profitableMonthPct": 55.223880597014926
+      },
+      "train": {
+        "pnl": 150698,
+        "trades": 720,
+        "winRate": 41.66666666666667,
+        "profitFactor": 1.1768187226173743,
+        "maxDrawdown": 57856,
+        "profitableMonthPct": 58.333333333333336
+      },
+      "validation": {
+        "pnl": -7062,
+        "trades": 289,
+        "winRate": 41.522491349480966,
+        "profitFactor": 0.9804524556222026,
+        "maxDrawdown": 67307,
+        "profitableMonthPct": 47.368421052631575
+      },
+      "recent": {
+        "pnl": 50133,
+        "trades": 90,
+        "winRate": 47.77777777777778,
+        "profitFactor": 1.4377357502095558,
+        "maxDrawdown": 26772,
+        "profitableMonthPct": 71.42857142857143
+      }
+    }
+  },
+  "supertrend": {
+    "futures": {
+      "all": {
+        "pnl": -11953,
+        "trades": 607,
+        "winRate": 45.634266886326195,
+        "profitFactor": 0.9930360258796729,
+        "maxDrawdown": 139976,
+        "profitableMonthPct": 46.26865671641791
+      },
+      "train": {
+        "pnl": 21176,
+        "trades": 423,
+        "winRate": 45.8628841607565,
+        "profitFactor": 1.017699189010054,
+        "maxDrawdown": 127369,
+        "profitableMonthPct": 43.75
+      },
+      "validation": {
+        "pnl": -33129,
+        "trades": 184,
+        "winRate": 45.108695652173914,
+        "profitFactor": 0.9362862187143005,
+        "maxDrawdown": 110110,
+        "profitableMonthPct": 52.63157894736842
+      },
+      "recent": {
+        "pnl": 34704,
+        "trades": 64,
+        "winRate": 50,
+        "profitFactor": 1.1802842656470784,
+        "maxDrawdown": 40593,
+        "profitableMonthPct": 57.14285714285714
+      }
+    },
+    "options": {
+      "all": {
+        "pnl": 87899,
+        "trades": 607,
+        "winRate": 45.14003294892916,
+        "profitFactor": 1.106430458588515,
+        "maxDrawdown": 56955,
+        "profitableMonthPct": 53.73134328358209
+      },
+      "train": {
+        "pnl": 88039,
+        "trades": 423,
+        "winRate": 45.8628841607565,
+        "profitFactor": 1.1543506731441855,
+        "maxDrawdown": 56955,
+        "profitableMonthPct": 52.083333333333336
+      },
+      "validation": {
+        "pnl": -140,
+        "trades": 184,
+        "winRate": 43.47826086956522,
+        "profitFactor": 0.9994520526499125,
+        "maxDrawdown": 52377,
+        "profitableMonthPct": 57.89473684210527
+      },
+      "recent": {
+        "pnl": 29721,
+        "trades": 64,
+        "winRate": 46.875,
+        "profitFactor": 1.3163659588056842,
+        "maxDrawdown": 18648,
+        "profitableMonthPct": 57.14285714285714
+      }
+    }
+  },
+  "macd": {
+    "futures": {
+      "all": {
+        "pnl": 188026,
+        "trades": 1997,
+        "winRate": 41.56234351527291,
+        "profitFactor": 1.0431816725577767,
+        "maxDrawdown": 276278,
+        "profitableMonthPct": 55.223880597014926
+      },
+      "train": {
+        "pnl": 224733,
+        "trades": 1418,
+        "winRate": 42.2425952045134,
+        "profitFactor": 1.073338955052139,
+        "maxDrawdown": 168620,
+        "profitableMonthPct": 56.25
+      },
+      "validation": {
+        "pnl": -36707,
+        "trades": 579,
+        "winRate": 39.89637305699482,
+        "profitFactor": 0.9715448509490346,
+        "maxDrawdown": 136053,
+        "profitableMonthPct": 52.63157894736842
+      },
+      "recent": {
+        "pnl": 73938,
+        "trades": 187,
+        "winRate": 42.780748663101605,
+        "profitFactor": 1.1482900257518993,
+        "maxDrawdown": 81733,
+        "profitableMonthPct": 71.42857142857143
+      }
+    },
+    "options": {
+      "all": {
+        "pnl": 270539,
+        "trades": 1997,
+        "winRate": 40.26039058587882,
+        "profitFactor": 1.1248946857931885,
+        "maxDrawdown": 117156,
+        "profitableMonthPct": 58.2089552238806
+      },
+      "train": {
+        "pnl": 258024,
+        "trades": 1418,
+        "winRate": 41.04372355430183,
+        "profitFactor": 1.170145196845617,
+        "maxDrawdown": 72336,
+        "profitableMonthPct": 60.416666666666664
+      },
+      "validation": {
+        "pnl": 12515,
+        "trades": 579,
+        "winRate": 38.34196891191709,
+        "profitFactor": 1.019264397115959,
+        "maxDrawdown": 65371,
+        "profitableMonthPct": 52.63157894736842
+      },
+      "recent": {
+        "pnl": 63422,
+        "trades": 187,
+        "winRate": 41.17647058823529,
+        "profitFactor": 1.256561488673139,
+        "maxDrawdown": 36742,
+        "profitableMonthPct": 71.42857142857143
+      }
+    }
+  }
+}

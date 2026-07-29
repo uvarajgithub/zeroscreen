@@ -17,7 +17,7 @@ const HEARTBEAT_HEALTHY_SEC = 60;
 const HEARTBEAT_CRITICAL_SEC = 120;
 const runtimeHealthCache = new Map();
 const STRATEGIES = [
-    { id: "drishti", name: "DRISHTI (BANKNIFTY)", version: "Current", prefix: "drishti", backtestFile: "shadow-strategy-5yr-results.json", instruments: ["FUTURES"] },
+    { id: "drishti", name: "DRISHTI (BANKNIFTY)", version: "Current", prefix: "drishti", backtestFile: "shadow-strategy-5yr-results.json", instruments: ["FUTURES", "OPTIONS"] },
     {
         id: "drishti-v2",
         name: "DRISHTI V2 Challenger (BANKNIFTY)",
@@ -29,11 +29,15 @@ const STRATEGIES = [
         heartbeatFile: "drishti-v2-heartbeat.json",
         stateFile: "drishti-v2-state.json",
     },
-    { id: "tt1030", name: "10:30 Breakout (BANKNIFTY)", version: "Current", prefix: "tt1030", backtestFile: "shadow-strategy-5yr-results.json" },
-    { id: "tt1000", name: "10:00 Breakout (BANKNIFTY)", version: "V1", prefix: "tt1000", backtestFile: "shadow-strategy-5yr-results.json" },
-    { id: "tt0945", name: "09:45 Breakout (BANKNIFTY)", version: "V2 Shadow", prefix: "tt0945", backtestFile: "shadow-strategy-5yr-results.json" },
-    { id: "normal-breakout", name: "Normal Breakout (BANKNIFTY)", version: "V1", prefix: "normalBreakoutShadow", backtestFile: "shadow-strategy-5yr-results.json" },
-    { id: "hybrid-body", name: "Hybrid Body Breakout (BANKNIFTY)", version: "Current", prefix: "hybridShadow", backtestFile: "shadow-strategy-5yr-results.json" },
+    { id: "tt1030", name: "10:30 Breakout (BANKNIFTY)", version: "Current", prefix: "tt1030Shadow", backtestFile: "shadow-strategy-5yr-results.json", stateFile: "tt1030-shadow-state.json" },
+    { id: "tt1000", name: "10:00 Breakout (BANKNIFTY)", version: "V1", prefix: "tt1000", backtestFile: "shadow-strategy-5yr-results.json", stateFile: "tt1000-state.json" },
+    { id: "tt0945", name: "09:45 Breakout (BANKNIFTY)", version: "V2 Shadow", prefix: "tt0945", backtestFile: "shadow-strategy-5yr-results.json", stateFile: "tt0945-state.json" },
+    { id: "normal-breakout", name: "Normal Breakout (BANKNIFTY)", version: "V1", prefix: "normalBreakoutShadow", backtestFile: "shadow-strategy-5yr-results.json", stateFile: "normal-breakout-v1-state.json" },
+    { id: "hybrid-body", name: "Hybrid Body Breakout (BANKNIFTY)", version: "Current", prefix: "hybridShadow", backtestFile: "shadow-strategy-5yr-results.json", stateFile: "hybrid-state.json" },
+    { id: "vwap-trend", name: "VWAP Trend (BANKNIFTY)", version: "Validated Shadow", prefix: "vwapTrend", backtestFile: "indicator-strategy-sweep-result.json", instruments: ["OPTIONS"], processName: "indicator-shadow", heartbeatFile: "indicator-shadow-heartbeat.json", stateFile: "vwap-trend-state.json" },
+    { id: "pivot-trend", name: "Pivot Trend (BANKNIFTY)", version: "Validated Shadow", prefix: "pivotTrend", backtestFile: "indicator-strategy-sweep-result.json", instruments: ["OPTIONS"], processName: "indicator-shadow", heartbeatFile: "indicator-shadow-heartbeat.json", stateFile: "pivot-trend-state.json" },
+    { id: "ema-trend", name: "EMA Trend (BANKNIFTY)", version: "Validated Shadow", prefix: "emaTrend", backtestFile: "indicator-strategy-sweep-result.json", instruments: ["OPTIONS"], processName: "indicator-shadow", heartbeatFile: "indicator-shadow-heartbeat.json", stateFile: "ema-trend-state.json" },
+    { id: "smma-trend", name: "SMMA Trend (BANKNIFTY)", version: "Validated Shadow", prefix: "smmaTrend", backtestFile: "indicator-strategy-sweep-result.json", instruments: ["OPTIONS"], processName: "indicator-shadow", heartbeatFile: "indicator-shadow-heartbeat.json", stateFile: "smma-trend-state.json" },
 ];
 function readJson(file, fallback) {
     try {
@@ -115,17 +119,19 @@ function recentServerLogs(strategy) {
         ];
     const rows = [];
     const seen = new Set();
-    const strategyPattern = strategy.id === "drishti"
-        ? /drishti/i
-        : strategy.id === "drishti-v2"
-            ? /drishti[_ -]?v2|challenger/i
-            : strategy.id === "tt1030"
-                ? /\b10[:.]?30\b|\btt1030\b/i
-                : strategy.id === "tt1000"
-                    ? /\b10[:.]?00\b|\btt1000\b/i
-                    : strategy.id === "normal-breakout"
-                        ? /\bnormal\b|\bbreakout\b/i
-                        : /\bhybrid\b|\bbody\b/i;
+    const strategyPattern = strategy.processName === "indicator-shadow"
+        ? new RegExp(strategy.id.replace("-", "[_ -]?"), "i")
+        : strategy.id === "drishti"
+            ? /drishti/i
+            : strategy.id === "drishti-v2"
+                ? /drishti[_ -]?v2|challenger/i
+                : strategy.id === "tt1030"
+                    ? /\b10[:.]?30\b|\btt1030\b/i
+                    : strategy.id === "tt1000"
+                        ? /\b10[:.]?00\b|\btt1000\b/i
+                        : strategy.id === "normal-breakout"
+                            ? /\bnormal\b|\bbreakout\b/i
+                            : /\bhybrid\b|\bbody\b/i;
     const operationalPattern = /\bheartbeat\b|\btoken\b|\bfeed\b|\bcandle\b|\bmarket\b|\bserver\b|\bconnected\b|\bsleep(?:ing)?\b|\bwake\b|\bstarted\b|\bstopped\b/i;
     for (const file of candidates) {
         try {
@@ -213,7 +219,16 @@ function strategyFields(strategy, hb, state, instrument) {
         const scopedSymbol = !isOptions && rawSymbol && /\d+(CE|PE)$/i.test(rawSymbol) ? null : rawSymbol;
         const realized = isOptions ? num(hb.optDailyRs) : num(hb.dailyRealRs);
         const unrealized = isOptions ? num(hb.unrealisedPnL) : num(hb.unrealisedPnL);
-        const tradeCount = num(isOptions ? hb.optRecentTrades?.length : hb.tradeCount) ?? 0;
+        const allDrishtiTrades = readJson("trades.json", []);
+        const scopedDrishtiTrades = (Array.isArray(allDrishtiTrades) ? allDrishtiTrades : []).filter((row) => {
+            const type = String(row?.type || "").toUpperCase();
+            if (isOptions)
+                return type === "DRISHTI_V1_OPT";
+            return type === "DRISHTI_V1";
+        });
+        const completedDrishtiTrades = scopedDrishtiTrades.filter((row) => (num(row?.exitPrice ?? row?.exit) ?? 0) > 0
+            || !!text(row?.reasonExit));
+        const tradeCount = completedDrishtiTrades.filter((row) => dateKey(row?.date || row?.exitTime || row?.entryTime) === todayIST()).length;
         return {
             inTrade,
             realized,
@@ -236,52 +251,77 @@ function strategyFields(strategy, hb, state, instrument) {
             dayLow: null,
             volume: null,
             openInterest: null,
-            rawTrades: isOptions && Array.isArray(hb.optRecentTrades)
-                ? hb.optRecentTrades
-                : tradeCount > 0 ? readJson("trades.json", []) : [],
+            rawTrades: completedDrishtiTrades,
             candleLog: candleRows,
         };
     }
     const prefix = strategy.prefix;
-    const inTrade = !!hb[`${prefix}InTrade`];
-    const total = num(hb[isOptions ? `${prefix}OptPnL` : `${prefix}PnL`]) ?? 0;
-    const closed = num(hb[isOptions ? `${prefix}OptClosedPnL` : `${prefix}ClosedPnL`]);
+    const stateIsCurrent = dateKey(state?.date || state?.day) === todayIST();
+    const persisted = stateIsCurrent ? state : {};
+    const heartbeatTrades = Array.isArray(hb[`${prefix}TradeLog`]) ? hb[`${prefix}TradeLog`] : [];
+    const persistedTrades = Array.isArray(persisted.log) ? persisted.log : [];
+    const heartbeatCandles = Array.isArray(hb[`${prefix}CandleLog`]) ? hb[`${prefix}CandleLog`] : [];
+    const persistedCandles = Array.isArray(persisted.candleLog) ? persisted.candleLog : [];
+    const rawTrades = persistedTrades.length ? persistedTrades : heartbeatTrades;
+    const candleLog = persistedCandles.length ? persistedCandles : heartbeatCandles;
+    const inTrade = persisted.inTrade !== undefined ? !!persisted.inTrade : !!hb[`${prefix}InTrade`];
+    const persistedTotal = num(isOptions ? persisted.optDayRs : persisted.dayRs);
+    const total = persistedTotal ?? num(hb[isOptions ? `${prefix}OptPnL` : `${prefix}PnL`]) ?? 0;
+    const closed = num(hb[isOptions ? `${prefix}OptClosedPnL` : `${prefix}ClosedPnL`])
+        ?? (!inTrade ? total : null);
     const realized = closed ?? (inTrade ? null : total);
     const unrealized = inTrade && realized !== null ? total - realized : (inTrade ? total : 0);
-    const optionSymbol = text(hb[`${prefix}OptionSymbol`]);
-    const futuresSymbol = text(hb[`${prefix}FuturesSymbol`]);
-    const direction = text(hb[`${prefix}Dir`]);
-    const persisted = prefix === "normalBreakoutShadow"
-        ? readJson("normal-breakout-v1-state.json", {})
-        : prefix === "hybridShadow" ? readJson("hybrid-state.json", {}) : {};
+    const optionSymbol = text(hb[`${prefix}OptionSymbol`] ?? persisted.optSym);
+    const futuresSymbol = text(hb[`${prefix}FuturesSymbol`] ?? persisted.futSym);
+    const direction = text(hb[`${prefix}Dir`] ?? persisted.dir);
+    const optionWins = num(persisted.optWins);
+    const optionLosses = num(persisted.optLosses);
+    const inferredOptionWins = persistedTrades.filter((row) => {
+        const entry = num(row?.premIn ?? row?.premiumEntry);
+        const exit = num(row?.premOut ?? row?.premiumExit);
+        return entry !== null && exit !== null && exit > entry;
+    }).length;
+    const inferredOptionLosses = persistedTrades.filter((row) => {
+        const entry = num(row?.premIn ?? row?.premiumEntry);
+        const exit = num(row?.premOut ?? row?.premiumExit);
+        return entry !== null && exit !== null && exit < entry;
+    }).length;
+    const storedQuantity = num(hb[`${prefix}LiveQty`] ?? persisted.liveQty ?? hb.qty);
+    const quantity = storedQuantity !== null && storedQuantity > 0 ? storedQuantity : 30;
     return {
         inTrade,
         realized,
         unrealized,
         total,
-        trades: num(hb[`${prefix}Trades`]) ?? 0,
-        wins: num(hb[isOptions ? `${prefix}OptWins` : `${prefix}Wins`]) ?? num(hb[`${prefix}Wins`]) ?? 0,
-        losses: num(hb[isOptions ? `${prefix}OptLosses` : `${prefix}Losses`]) ?? num(hb[`${prefix}Losses`]) ?? 0,
+        trades: isOptions
+            ? num(persisted.optTrades) ?? num(hb[`${prefix}OptTrades`]) ?? num(persisted.trades) ?? num(hb[`${prefix}Trades`]) ?? 0
+            : num(persisted.trades) ?? num(hb[`${prefix}Trades`]) ?? 0,
+        wins: isOptions
+            ? optionWins ?? inferredOptionWins
+            : num(persisted.wins) ?? num(hb[`${prefix}Wins`]) ?? 0,
+        losses: isOptions
+            ? optionLosses ?? inferredOptionLosses
+            : num(persisted.losses) ?? num(hb[`${prefix}Losses`]) ?? 0,
         direction,
         symbol: isOptions ? optionSymbol : futuresSymbol,
         entry: isOptions
-            ? num(hb[`${prefix}OptionEntry`])
-            : num(hb[`${prefix}FuturesEntry`] ?? hb[`${prefix}Entry`]),
+            ? num(hb[`${prefix}OptionEntry`] ?? persisted.optEntryPrem)
+            : num(hb[`${prefix}FuturesEntry`] ?? hb[`${prefix}Entry`] ?? persisted.entry),
         live: isOptions
-            ? num(hb[`${prefix}OptionLive`])
-            : num(hb[`${prefix}FuturesLive`] ?? hb[`${prefix}Live`]),
-        sl: num(hb[`${prefix}SL`]),
+            ? num(hb[`${prefix}OptionLive`] ?? persisted.optLivePrem)
+            : num(hb[`${prefix}FuturesLive`] ?? hb[`${prefix}Live`] ?? persisted.live),
+        sl: num(hb[`${prefix}SL`] ?? persisted.sl),
         target: null,
-        quantity: num(hb[`${prefix}LiveQty`] ?? hb.qty),
+        quantity,
         entryTime: timeValue(hb[`${prefix}EntryTime`] ?? persisted.entryTime),
         entryAt: hb[`${prefix}EntryAt`] ?? (persisted.date && persisted.entryTime ? `${persisted.date}T${persisted.entryTime}:00+05:30` : null),
-        phase: text(hb[`${prefix}Phase`] || hb.status),
+        phase: text(hb[`${prefix}Phase`] || persisted.phase || (candleLog.length ? "DONE" : hb.status)),
         dayHigh: num(hb[isOptions ? `${prefix}OptionHigh` : `${prefix}High`]),
         dayLow: num(hb[isOptions ? `${prefix}OptionLow` : `${prefix}Low`]),
         volume: num(hb[isOptions ? `${prefix}OptionVolume` : `${prefix}Volume`]),
         openInterest: num(hb[isOptions ? `${prefix}OptionOpenInterest` : `${prefix}OpenInterest`]),
-        rawTrades: Array.isArray(hb[`${prefix}TradeLog`]) ? hb[`${prefix}TradeLog`] : [],
-        candleLog: Array.isArray(hb[`${prefix}CandleLog`]) ? hb[`${prefix}CandleLog`] : [],
+        rawTrades,
+        candleLog,
     };
 }
 function normalizedTrades(rawTrades, strategy, instrument, tradeDate, defaultQuantity = 30) {
@@ -296,6 +336,14 @@ function normalizedTrades(rawTrades, strategy, instrument, tradeDate, defaultQua
         const hasIndexTrade = num(row.entry ?? row.entryPrice) !== null;
         const looksOption = /\d+(CE|PE)$/.test(symbol) || hasPremium;
         return instrument === "OPTIONS" ? looksOption : hasIndexTrade || !looksOption;
+    })
+        .filter((row) => {
+        const underlyingExit = num(row.exit ?? row.exitPrice);
+        const premiumExit = num(row.premiumExit ?? row.exitPremium ?? row.premOut);
+        const storedPnl = num(row.pnlRs ?? row.pnl ?? row.optionPnlRs ?? row.optPnlRs ?? row.optionPnl);
+        const explicitStatus = String(row.status || "").toUpperCase();
+        return underlyingExit !== null || premiumExit !== null || storedPnl !== null
+            || explicitStatus === "CLOSED" || explicitStatus === "REJECTED";
     })
         .map((row, index) => {
         const direction = (text(row.direction || row.dir || row.side) || "").toUpperCase();
@@ -353,7 +401,10 @@ function normalizedTrades(rawTrades, strategy, instrument, tradeDate, defaultQua
             capitalDeployed,
             returnPct: pnl !== null && capitalDeployed ? pnl / capitalDeployed * 100 : null,
             result: pnl === null ? null : pnl > 0 ? "WIN" : pnl < 0 ? "LOSS" : "FLAT",
-            status: text(row.status) || (exit !== null && exit > 0 ? "CLOSED" : "OPEN"),
+            status: text(row.status)
+                || (isOptions && num(row.exit ?? row.exitPrice) !== null && exit === null
+                    ? "DATA UNAVAILABLE"
+                    : exit !== null || pnl !== null ? "CLOSED" : "OPEN"),
             reason: text(row.reasonExit || row.reason || row.note),
         };
     });
@@ -361,7 +412,7 @@ function normalizedTrades(rawTrades, strategy, instrument, tradeDate, defaultQua
     for (const row of normalized) {
         const tradeKey = text(row.id) && !String(row.id).includes("|")
             ? `id:${row.id}`
-            : [row.instrument, row.contract, row.side, row.entry].join("|");
+            : [row.instrument, row.contract, row.side, row.entry, row.time, row.exit, row.reason].join("|");
         const existing = consolidated.get(tradeKey);
         if (!existing || (existing.exit == null && row.exit != null)) {
             consolidated.set(tradeKey, row);
@@ -371,9 +422,14 @@ function normalizedTrades(rawTrades, strategy, instrument, tradeDate, defaultQua
         .slice(-25)
         .reverse();
 }
-function normalizedCandles(raw, hb) {
+function normalizedCandles(raw, hb, instrument) {
     const rows = Array.isArray(raw) ? raw : [];
-    return rows.slice().reverse().map((row) => ({
+    const deduped = new Map();
+    rows.forEach((row, index) => {
+        const key = text(row.time) || String(row.idx ?? row.num ?? index);
+        deduped.set(key, row);
+    });
+    return [...deduped.values()].reverse().map((row) => ({
         number: num(row.idx ?? row.num),
         time: text(row.time) || timeValue(row.at || row.date),
         timeframe: text(row.timeframe || row.tf) || "15m",
@@ -387,7 +443,9 @@ function normalizedCandles(raw, hb) {
         entry: num(row.entry ?? row.entryPrice),
         stopLoss: num(row.sl ?? row.stopLoss),
         exit: num(row.exit ?? row.exitPrice),
-        pnl: num(row.pnlRs ?? row.pnl ?? row.pnlPts),
+        pnl: instrument === "OPTIONS"
+            ? num(row.optionPnlRs ?? row.optPnlRs ?? row.optionPnl)
+            : num(row.pnlRs ?? row.pnl ?? row.pnlPts),
         note: text(row.note || row.reason) || "No evaluation note recorded",
     })).map((row) => ({ ...row, receivedAt: hb?.at || null }));
 }
@@ -429,7 +487,7 @@ function backtestSummary(strategy, instrument) {
             generatedAt: data.generatedAt || null,
         };
     }
-    if (strategy.prefix === "tt1030" && data.summary) {
+    if (strategy.prefix === "tt1030Shadow" && data.summary) {
         const stats = instrument === "OPTIONS" ? data.summary.optStats : data.summary.futStats;
         const months = data.months && typeof data.months === "object" ? Object.keys(data.months).length : 0;
         if (!stats)
@@ -534,14 +592,40 @@ function shadowHistory(strategy, instrument) {
         });
     };
     const monthlyHistoryKey = {
-        tt1030: "TEN_THIRTY",
+        tt1030Shadow: "TEN_THIRTY",
         tt1000: "TEN_O_CLOCK",
         tt0945: "NINE_FORTY_FIVE",
         normalBreakoutShadow: "NORMAL_BREAKOUT_V1",
         hybridShadow: "HYBRID_BODY",
     };
     const historyKey = monthlyHistoryKey[strategy.prefix];
-    if (historyKey) {
+    if (strategy.processName === "indicator-shadow") {
+        const source = readJson("indicator-shadow-history.json", {});
+        const indicatorDays = source?.strategies?.[strategy.id] || {};
+        for (const [date, record] of Object.entries(indicatorDays)) {
+            const pnl = num(instrument === "OPTIONS" ? record.optionsRs : record.futuresRs);
+            if (pnl === null)
+                continue;
+            const rows = Array.isArray(record.rows) ? record.rows : [];
+            rows.forEach((row) => appendTradeDetail(date, row));
+            const capitalDeployed = rows.reduce((sum, row) => {
+                const entry = num(instrument === "OPTIONS" ? row.premIn : row.entry);
+                const quantity = num(row.qty) ?? 30;
+                return sum + (entry && quantity
+                    ? instrument === "OPTIONS" ? entry * quantity : entry * quantity * FUTURES_MARGIN_RATE
+                    : 0);
+            }, 0);
+            byDate.set(date, {
+                date,
+                pnl,
+                capitalDeployed: Math.round(capitalDeployed),
+                trades: num(instrument === "OPTIONS" ? record.optionTrades : record.trades) ?? 0,
+                wins: num(instrument === "OPTIONS" ? record.optionWins : record.wins) ?? 0,
+                losses: num(instrument === "OPTIONS" ? record.optionLosses : record.losses) ?? 0,
+            });
+        }
+    }
+    else if (historyKey) {
         const source = readJson("strategy-monthly-history.json", {});
         const months = source?.months && typeof source.months === "object" ? source.months : {};
         for (const month of Object.values(months)) {
@@ -552,9 +636,9 @@ function shadowHistory(strategy, instrument) {
                 if (pnl === null)
                     continue;
                 const tradeRows = Array.isArray(record?.trades) ? record.trades : [];
-                tradeRows.forEach((row) => appendTradeDetail(date, row));
                 const completedRows = tradeRows.filter((row) => num(instrument === "OPTIONS" ? row.premOut ?? row.premiumExit : row.exit ?? row.exitPrice) !== null
                     || num(row.pnlRs ?? row.pnl ?? row.pts) !== null);
+                completedRows.forEach((row) => appendTradeDetail(date, row));
                 const capitalRows = completedRows.length ? completedRows : tradeRows.filter((row) => num(instrument === "OPTIONS" ? row.premIn ?? row.premiumEntry : row.entry ?? row.entryPrice) !== null);
                 const capitalDeployed = capitalRows.reduce((sum, row) => {
                     const entry = num(instrument === "OPTIONS" ? row.premIn ?? row.premiumEntry : row.entry ?? row.entryPrice);
@@ -576,12 +660,20 @@ function shadowHistory(strategy, instrument) {
         const historyFile = strategy.prefix === "drishtiV2" ? "drishti-v2-trades.json" : "trades.json";
         const rows = readJson(historyFile, []);
         for (const row of Array.isArray(rows) ? rows : []) {
+            if (strategy.prefix === "drishti") {
+                const type = String(row?.type || "").toUpperCase();
+                const expectedType = instrument === "OPTIONS" ? "DRISHTI_V1_OPT" : "DRISHTI_V1";
+                if (type !== expectedType)
+                    continue;
+                if ((num(row?.exitPrice ?? row?.exit) ?? 0) <= 0 && !text(row?.reasonExit))
+                    continue;
+            }
             const date = dateKey(row.date || row.exitTime || row.entryTime);
             if (!date)
                 continue;
             const symbol = String(row.symbol || row.tradeSymbol || "").toUpperCase();
             const looksOption = /\d+(CE|PE)$/.test(symbol) || num(row.premiumEntry) !== null;
-            if (instrument === "OPTIONS" ? !looksOption : looksOption)
+            if (strategy.prefix !== "drishti" && (instrument === "OPTIONS" ? !looksOption : looksOption))
                 continue;
             const pnl = num(row.netPnlRs ?? row.pnlRs ?? row.pnl);
             if (pnl === null)
@@ -737,7 +829,7 @@ function systemHealth(strategy, hb, fields, candles, heartbeatAgeSec, externalHe
     const sortedTimes = [...uniqueTimes].sort((a, b) => a - b);
     const gapCount = sortedTimes.slice(1).filter((value, index) => value - sortedTimes[index] > 20).length;
     const latestCandleMinute = sortedTimes.length ? sortedTimes[sortedTimes.length - 1] : null;
-    const triggerDue = tradingDay && clock.minutes >= trigger.minutes + 20;
+    const triggerDue = marketOpen && clock.minutes >= trigger.minutes + 20;
     const triggerCompleted = candleTimes.some(value => value >= trigger.minutes);
     const missedTriggers = triggerDue && !triggerCompleted ? 1 : 0;
     const freshHeartbeat = heartbeatAgeSec !== null && heartbeatAgeSec <= HEARTBEAT_HEALTHY_SEC;
@@ -806,8 +898,8 @@ function systemHealth(strategy, hb, fields, candles, heartbeatAgeSec, externalHe
         {
             id: "scheduler",
             label: "Scheduler",
-            level: !processOnline ? "FAIL" : missedTriggers ? "FAIL" : triggerCompleted ? "PASS" : "INFO",
-            value: !processOnline ? "Stopped" : missedTriggers ? "Missed trigger" : triggerCompleted ? "Active" : "Waiting",
+            level: !processOnline ? "FAIL" : !marketOpen ? "PASS" : missedTriggers ? "FAIL" : triggerCompleted ? "PASS" : "INFO",
+            value: !processOnline ? "Stopped" : !marketOpen ? "Awaiting next session" : missedTriggers ? "Missed trigger" : triggerCompleted ? "Active" : "Waiting",
             detail: `Expected ${trigger.time}; last evaluation ${latestCandleMinute === null ? "--" : `${String(Math.floor(latestCandleMinute / 60)).padStart(2, "0")}:${String(latestCandleMinute % 60).padStart(2, "0")}`}; missed ${missedTriggers}`,
             source: "PM2 + strategy candle evaluation log",
             critical: true,
@@ -815,8 +907,8 @@ function systemHealth(strategy, hb, fields, candles, heartbeatAgeSec, externalHe
         {
             id: "trigger",
             label: "Latest Automatic Trigger",
-            level: missedTriggers ? "FAIL" : triggerCompleted ? "PASS" : triggerDue ? "WARN" : "INFO",
-            value: missedTriggers ? "Missed" : triggerCompleted ? "Completed" : "Pending",
+            level: !marketOpen ? "INFO" : missedTriggers ? "FAIL" : triggerCompleted ? "PASS" : triggerDue ? "WARN" : "INFO",
+            value: !marketOpen ? "Next session" : missedTriggers ? "Missed" : triggerCompleted ? "Completed" : "Pending",
             detail: `Scheduled ${trigger.time}; latest strategy evaluation ${latestCandleMinute === null ? "--" : `${String(Math.floor(latestCandleMinute / 60)).padStart(2, "0")}:${String(latestCandleMinute % 60).padStart(2, "0")}`}`,
             source: "Scheduled trigger + selected strategy candle log",
             critical: true,
@@ -824,9 +916,13 @@ function systemHealth(strategy, hb, fields, candles, heartbeatAgeSec, externalHe
         {
             id: "heartbeat",
             label: "Strategy Heartbeat",
-            level: freshHeartbeat ? "PASS" : delayedHeartbeat ? "WARN" : "FAIL",
-            value: heartbeatAgeSec === null ? "Missing" : `${heartbeatAgeSec}s ago`,
-            detail: `Expected within ${HEARTBEAT_HEALTHY_SEC}s; critical after ${HEARTBEAT_CRITICAL_SEC}s`,
+            level: !marketOpen && processOnline ? "INFO" : freshHeartbeat ? "PASS" : delayedHeartbeat ? "WARN" : "FAIL",
+            value: !marketOpen && processOnline
+                ? "Idle after market close"
+                : heartbeatAgeSec === null ? "Missing" : `${heartbeatAgeSec}s ago`,
+            detail: !marketOpen && processOnline
+                ? "The PM2 process is online; an active strategy heartbeat is not required outside market hours."
+                : `Expected within ${HEARTBEAT_HEALTHY_SEC}s; critical after ${HEARTBEAT_CRITICAL_SEC}s`,
             source: "bot-heartbeat.json",
             critical: true,
         },
@@ -853,8 +949,8 @@ function systemHealth(strategy, hb, fields, candles, heartbeatAgeSec, externalHe
         {
             id: "candles",
             label: "Candle Generation",
-            level: duplicateCandles > 0 ? "FAIL" : missedTriggers ? "FAIL" : gapCount > 0 ? "WARN" : triggerCompleted ? "PASS" : "INFO",
-            value: duplicateCandles ? `${duplicateCandles} duplicate` : gapCount ? `${gapCount} gap` : triggerCompleted ? "Updating" : "Waiting",
+            level: duplicateCandles > 0 ? "FAIL" : !marketOpen ? "INFO" : missedTriggers ? "FAIL" : gapCount > 0 ? "WARN" : triggerCompleted ? "PASS" : "INFO",
+            value: duplicateCandles ? `${duplicateCandles} duplicate` : !marketOpen ? "Next session" : gapCount ? `${gapCount} gap` : triggerCompleted ? "Updating" : "Waiting",
             detail: `${candles.length} candles; latest ${candles[0]?.time || "--"}; duplicate ${duplicateCandles}; gaps ${gapCount}`,
             source: "Selected strategy candle log",
             critical: true,
@@ -968,6 +1064,74 @@ function capitalForTrade(row, instrument) {
         ? entry * quantity
         : entry * quantity * FUTURES_MARGIN_RATE;
 }
+function consolidatedShadowSummary(externalHealth = {}) {
+    const tradeDate = todayIST();
+    const market = marketStatus();
+    const tiles = [];
+    for (const strategy of STRATEGIES) {
+        const heartbeat = readJson(strategy.heartbeatFile || "bot-heartbeat.json", {});
+        const strategyState = readJson(strategy.stateFile || "trade-state.json", {});
+        const heartbeatAt = heartbeat?.at ? new Date(heartbeat.at).getTime() : 0;
+        const heartbeatAgeSec = heartbeatAt ? Math.max(0, Math.round((Date.now() - heartbeatAt) / 1000)) : null;
+        const stateIsCurrent = dateKey(strategyState?.date || strategyState?.day) === tradeDate;
+        const heartbeatAvailable = !!heartbeatAt;
+        const stale = market === "OPEN" && (!heartbeatAvailable || (heartbeatAgeSec ?? Infinity) > HEARTBEAT_CRITICAL_SEC);
+        for (const instrument of strategy.instruments || ["FUTURES", "OPTIONS"]) {
+            const fields = strategyFields(strategy, heartbeat, strategyState, instrument);
+            const trades = normalizedTrades(fields.rawTrades, strategy, instrument, tradeDate, fields.quantity ?? num(heartbeat.qty) ?? 30);
+            const closedTrades = trades.filter((row) => String(row.status).toUpperCase() === "CLOSED");
+            const deployedByClosedTrades = closedTrades.reduce((sum, row) => sum + (num(row.capitalDeployed) ?? capitalForTrade(row, instrument)), 0);
+            const openCapital = fields.inTrade && fields.entry && fields.quantity
+                ? (instrument === "OPTIONS"
+                    ? Math.abs(fields.entry * fields.quantity)
+                    : Math.abs(fields.entry * fields.quantity * FUTURES_MARGIN_RATE))
+                : 0;
+            const capitalDeployed = Math.round(deployedByClosedTrades + openCapital);
+            const tradeCount = Math.max(num(fields.trades) ?? 0, closedTrades.length, fields.inTrade ? 1 : 0);
+            const hasEvidence = stateIsCurrent || heartbeatAvailable || trades.length > 0;
+            const pnl = hasEvidence ? num(fields.total) : null;
+            const returnPct = pnl !== null && capitalDeployed > 0 ? pnl / capitalDeployed * 100 : tradeCount === 0 ? 0 : null;
+            const positionState = !hasEvidence
+                ? "ERROR"
+                : stale
+                    ? "STALE"
+                    : fields.inTrade
+                        ? "OPEN"
+                        : tradeCount > 0 ? "CLOSED" : "NO TRADE";
+            tiles.push({
+                strategyId: strategy.id,
+                strategyName: strategy.name.replace(/\s*\(BANKNIFTY\)\s*$/i, ""),
+                strategyVersion: strategy.version,
+                instrumentType: instrument,
+                executionMode: "SHADOW",
+                tradeDate,
+                pnl,
+                returnPct,
+                capitalDeployed,
+                trades: tradeCount,
+                openPositions: fields.inTrade ? 1 : 0,
+                positionState,
+                stale,
+                lastUpdatedAt: heartbeat?.at || strategyState?.savedAt || null,
+            });
+        }
+    }
+    const validTiles = tiles.filter(tile => tile.pnl !== null);
+    return {
+        tradeDate,
+        marketStatus: market,
+        lastRefreshedAt: new Date().toISOString(),
+        tiles,
+        summary: {
+            totalPnl: validTiles.reduce((sum, tile) => sum + Number(tile.pnl || 0), 0),
+            profitableTiles: validTiles.filter(tile => Number(tile.pnl) > 0).length,
+            lossMakingTiles: validTiles.filter(tile => Number(tile.pnl) < 0).length,
+            openPositions: tiles.reduce((sum, tile) => sum + Number(tile.openPositions || 0), 0),
+        },
+        source: "CURRENT_DAY_PERSISTED_SHADOW_STATE",
+        tokenCheckedAt: externalHealth?.checkedAt || null,
+    };
+}
 function performanceOverview(hb, state, tradeDate) {
     const coverageMonth = tradeDate.slice(0, 7);
     const coverageYear = tradeDate.slice(0, 4);
@@ -1074,6 +1238,13 @@ function buildShadowMonitorPayload(strategyId = "", instrumentValue = "", extern
     const trades = normalizedTrades(fields.rawTrades, strategy, instrument, tradeDate, fields.quantity ?? num(hb.qty) ?? 30);
     const history = shadowHistory(strategy, instrument);
     const persistedTodayTrades = (history.trades || []).filter((row) => String(row.date || row.tradeDate || "") === tradeDate);
+    const persistedTodayClosed = persistedTodayTrades.filter((row) => String(row.status || "").toUpperCase() === "CLOSED" && num(row.pnl) !== null);
+    const persistedRealized = persistedTodayClosed.length
+        ? persistedTodayClosed.reduce((sum, row) => sum + Number(row.pnl || 0), 0)
+        : null;
+    const realizedPnl = persistedRealized ?? fields.realized ?? (fields.inTrade ? 0 : fields.total);
+    const unrealizedPnl = fields.inTrade ? fields.total - realizedPnl : 0;
+    const totalPnl = realizedPnl + unrealizedPnl;
     if (fields.inTrade && !trades.some((row) => row.status === "OPEN")) {
         const openContract = /\b(CE|PE)\b/i.test(String(fields.direction || ""))
             ? String(fields.direction).match(/\b(CE|PE)\b/i)?.[1]?.toUpperCase()
@@ -1114,7 +1285,7 @@ function buildShadowMonitorPayload(strategyId = "", instrumentValue = "", extern
             reason: "Live shadow position",
         });
     }
-    const candles = normalizedCandles(fields.candleLog, hb);
+    const candles = normalizedCandles(fields.candleLog, hb, instrument);
     const aggregateHealth = systemHealth(strategy, hb, fields, candles, heartbeatAgeSec, externalHealth);
     const closedTrades = trades.filter((row) => String(row.status).toUpperCase() === "CLOSED");
     const wins = fields.wins || closedTrades.filter((row) => (row.pnl ?? 0) > 0).length;
@@ -1125,9 +1296,14 @@ function buildShadowMonitorPayload(strategyId = "", instrumentValue = "", extern
     const tradeCount = Math.max(fields.trades, recordedTrades, fields.inTrade ? 1 : 0);
     const winRate = wins + losses > 0 ? wins / (wins + losses) * 100 : 0;
     const nowIso = new Date().toISOString();
-    const runtimeStatus = connected
-        ? fields.inTrade ? "RUNNING" : (fields.phase || "WAITING")
-        : marketStatus() === "CLOSED" ? "SLEEPING" : "OFFLINE";
+    const currentMarketStatus = marketStatus();
+    const runtimeStatus = fields.inTrade
+        ? "RUNNING"
+        : currentMarketStatus === "CLOSED"
+            ? "SLEEPING"
+            : connected
+                ? (fields.phase || "WAITING")
+                : "OFFLINE";
     const observationTime = timeValue(nowIso) || "";
     const logs = [
         ...recentServerLogs(strategy),
@@ -1149,7 +1325,7 @@ function buildShadowMonitorPayload(strategyId = "", instrumentValue = "", extern
         {
             time: observationTime,
             level: "INFO",
-            message: `[P&L] Shadow total ${fields.total.toFixed(2)}; realized ${fields.realized === null ? "unavailable" : fields.realized.toFixed(2)}; unrealized ${fields.unrealized === null ? "unavailable" : fields.unrealized.toFixed(2)}`,
+            message: `[P&L] Shadow total ${totalPnl.toFixed(2)}; realized ${realizedPnl.toFixed(2)}; unrealized ${unrealizedPnl.toFixed(2)}`,
         },
     ].slice(-120);
     return {
@@ -1168,7 +1344,7 @@ function buildShadowMonitorPayload(strategyId = "", instrumentValue = "", extern
             version: item.version,
             instruments: item.instruments || ["FUTURES", "OPTIONS"],
         })),
-        market: { status: marketStatus(), checkedAt: nowIso },
+        market: { status: currentMarketStatus, checkedAt: nowIso },
         health: {
             overall: aggregateHealth.state,
             label: aggregateHealth.label,
@@ -1198,10 +1374,11 @@ function buildShadowMonitorPayload(strategyId = "", instrumentValue = "", extern
         performance: performanceOverview(hb, state, tradeDate),
         backtest: backtestSummary(strategy, instrument),
         history,
+        consolidated: consolidatedShadowSummary(externalHealth),
         summary: {
-            realizedPnl: fields.realized,
-            unrealizedPnl: fields.unrealized,
-            totalPnl: fields.total,
+            realizedPnl,
+            unrealizedPnl,
+            totalPnl,
             trades: tradeCount,
             wins,
             losses,
@@ -1219,7 +1396,7 @@ function buildShadowMonitorPayload(strategyId = "", instrumentValue = "", extern
             quantity: fields.quantity,
             entryTime: fields.entryTime,
             entryAt: fields.entryAt,
-            currentPnl: fields.unrealized,
+            currentPnl: unrealizedPnl,
             status: "OPEN",
         } : null,
         instrumentSummary: {
@@ -1691,6 +1868,47 @@ function renderShadowStrategyMonitorPage(navHtml) {
     .sm-feed-card.market-closed-step .sm-health-value{color:#dc2626}
     .sm-pnl .sm-live-chip.is-live{color:#2ce4a2;border-color:rgba(32,229,170,.66);background:rgba(4,105,99,.22)}
     .sm-pnl .sm-live-chip.is-closed{color:#ff6575;border-color:rgba(255,101,117,.7);background:rgba(151,24,54,.2)}
+    .sm-consolidated-toggle{height:42px;border-radius:11px;border:1px solid rgba(99,102,241,.45);background:linear-gradient(135deg,#111827,#172554);color:#fff;padding:0 15px;display:inline-flex;align-items:center;gap:8px;font-size:13px;font-weight:800;cursor:pointer;box-shadow:0 4px 12px rgba(15,23,42,.16);white-space:nowrap}
+    .sm-consolidated-toggle:hover{border-color:rgba(129,140,248,.8);background:linear-gradient(135deg,#172033,#1e3069)}
+    .sm-consolidated-view[hidden]{display:none!important}
+    .sm-consolidated-mode>.sm-control,.sm-consolidated-mode>.sm-health,.sm-consolidated-mode>.sm-main-grid,.sm-consolidated-mode>.sm-bottom-grid,.sm-consolidated-mode>.sm-console-card,.sm-consolidated-mode>.sm-footer-note{display:none!important}
+    .sm-page.sm-consolidated-page{min-height:calc(100vh - 104px);background:radial-gradient(circle at 20% 10%,rgba(49,46,129,.2),transparent 30%),radial-gradient(circle at 82% 14%,rgba(8,145,178,.14),transparent 30%),linear-gradient(135deg,#050b18 0%,#081225 50%,#06101f 100%)}
+    .sm-consolidated-mode .sm-head{margin:0 0 16px;padding:18px 20px;border:1px solid rgba(99,102,241,.3);border-radius:14px;background:linear-gradient(135deg,rgba(12,22,43,.98),rgba(20,28,67,.96));box-shadow:inset 0 1px 0 rgba(255,255,255,.05),0 12px 28px rgba(0,0,0,.2)}
+    .sm-consolidated-mode .sm-title{color:#f8fafc}
+    .sm-consolidated-mode .sm-sub,.sm-consolidated-mode .sm-refresh-meta{color:#9fb0ce}
+    .sm-consolidated-mode .sm-shadow-badge{display:none}
+    .sm-consolidated-mode .sm-market,.sm-consolidated-mode .sm-refresh{color:#e5e7eb;border-color:rgba(148,163,184,.28);background:rgba(15,23,42,.66)}
+    .sm-consolidated{color:#e5e7eb}
+    .sm-consolidated-summary{display:grid;grid-template-columns:1.5fr repeat(3,1fr);align-items:center;margin-bottom:16px;border:1px solid rgba(148,163,184,.2);border-radius:14px;background:rgba(8,18,37,.82);box-shadow:inset 0 1px 0 rgba(255,255,255,.05),0 12px 28px rgba(0,0,0,.22);overflow:hidden}
+    .sm-consolidated-metric{min-height:86px;padding:17px 20px;display:flex;flex-direction:column;justify-content:center;border-left:1px solid rgba(148,163,184,.16)}
+    .sm-consolidated-metric:first-child{border-left:0}
+    .sm-consolidated-metric span{font-size:11px;color:#93a4c0;text-transform:uppercase;font-weight:800;letter-spacing:.04em}
+    .sm-consolidated-metric b{margin-top:6px;font-size:24px;color:#f8fafc;white-space:nowrap}
+    .sm-consolidated-metric:first-child b{font-size:30px}
+    .sm-consolidated-grid{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:12px}
+    .sm-key-tile{position:relative;min-height:136px;padding:12px 13px;border:1px solid rgba(148,163,184,.18);border-radius:10px;background:linear-gradient(180deg,rgba(17,30,55,.96),rgba(5,13,29,.98));color:#e5e7eb;box-shadow:inset 0 1px 0 rgba(255,255,255,.05),inset 0 -8px 20px rgba(0,0,0,.2),0 5px 14px rgba(0,0,0,.2);cursor:pointer;text-align:left;display:flex;flex-direction:column;transition:border-color .16s ease,transform .16s ease,box-shadow .16s ease;min-width:0}
+    .sm-key-tile:hover{transform:translateY(-2px);border-color:rgba(129,140,248,.75)}
+    .sm-key-tile.selected{outline:2px solid #818cf8;outline-offset:2px}
+    .sm-key-tile.profit{border-color:rgba(34,197,94,.65);background:linear-gradient(180deg,rgba(13,47,50,.96),rgba(5,20,28,.98));box-shadow:inset 0 1px 0 rgba(255,255,255,.05),0 0 0 1px rgba(34,197,94,.08),0 8px 22px rgba(15,120,65,.18)}
+    .sm-key-tile.loss{border-color:rgba(248,113,113,.65);background:linear-gradient(180deg,rgba(58,25,43,.96),rgba(25,10,24,.98));box-shadow:inset 0 1px 0 rgba(255,255,255,.05),0 0 0 1px rgba(248,113,113,.08),0 8px 22px rgba(127,29,29,.2)}
+    .sm-key-tile.open{box-shadow:inset 0 1px 0 rgba(255,255,255,.06),0 0 0 1px rgba(45,212,191,.24),0 10px 28px rgba(13,148,136,.22)}
+    .sm-key-tile.stale,.sm-key-tile.error{border-color:rgba(245,158,11,.72)}
+    .sm-key-head{display:flex;align-items:flex-start;justify-content:space-between;gap:10px}
+    .sm-key-name{font-size:14px;line-height:1.25;font-weight:800;color:#f8fafc;min-width:0}
+    .sm-key-instrument{flex:0 0 auto;padding:5px 8px;border-radius:6px;background:rgba(99,102,241,.18);border:1px solid rgba(129,140,248,.32);color:#c7d2fe;font-size:10px;font-weight:900}
+    .sm-key-pnl{margin-top:10px;font-size:25px;line-height:1;font-weight:850;color:#94a3b8;white-space:nowrap}
+    .sm-key-tile.profit .sm-key-pnl{color:#4ade80}.sm-key-tile.loss .sm-key-pnl{color:#fb7185}
+    .sm-key-return{margin-top:8px;font-size:14px;font-weight:800;color:#94a3b8}
+    .sm-key-bottom{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-top:auto;padding-top:8px;color:#9fb0ce;font-size:10px}
+    .sm-key-state{display:inline-flex;align-items:center;gap:6px;padding:5px 8px;border-radius:6px;background:rgba(148,163,184,.12);font-size:10px;font-weight:900}
+    .sm-key-state.open,.sm-key-state.closed{color:#4ade80}.sm-key-state.stale,.sm-key-state.error{color:#fbbf24}
+    .sm-key-state.open:before{content:"";width:7px;height:7px;border-radius:50%;background:#34d399;box-shadow:0 0 0 4px rgba(52,211,153,.12)}
+    .sm-consolidated-empty{padding:50px 20px;text-align:center;border:1px dashed rgba(148,163,184,.3);border-radius:14px;color:#94a3b8}
+    .sm-consolidated-empty b{display:block;color:#f8fafc;font-size:18px;margin-bottom:7px}
+    @media(max-width:1366px){.sm-consolidated-grid{grid-template-columns:repeat(4,minmax(0,1fr))}}
+    @media(max-width:1100px){.sm-consolidated-grid{grid-template-columns:repeat(3,minmax(0,1fr))}}
+    @media(max-width:1023px){.sm-consolidated-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.sm-consolidated-summary{grid-template-columns:repeat(2,1fr)}.sm-consolidated-metric:nth-child(3){border-left:0;border-top:1px solid rgba(148,163,184,.16)}.sm-consolidated-metric:nth-child(4){border-top:1px solid rgba(148,163,184,.16)}}
+    @media(max-width:700px){.sm-consolidated-mode .sm-head{padding:14px;align-items:stretch}.sm-consolidated-mode .sm-head-actions{display:grid;grid-template-columns:1fr auto;gap:8px}.sm-consolidated-mode .sm-refresh-meta{grid-column:1/-1;text-align:left}.sm-consolidated-toggle{height:40px;padding:0 11px}.sm-consolidated-summary{grid-template-columns:1fr 1fr}.sm-consolidated-metric{min-height:76px;padding:13px}.sm-consolidated-metric b,.sm-consolidated-metric:first-child b{font-size:20px}.sm-consolidated-grid{grid-template-columns:1fr;gap:9px}.sm-key-tile{min-height:132px}.sm-key-pnl{font-size:25px}}
     @media(max-width:1100px){.sm-pnl{min-height:292px}.sm-pnl .sm-metrics{grid-template-columns:repeat(3,minmax(0,1fr));row-gap:2px}.sm-pnl .sm-metric:nth-child(4){border-left:0}.sm-pnl-value{font-size:clamp(46px,6vw,56px)}}
     @media(max-width:700px){.sm-pnl{min-height:0;padding:16px 14px;border-radius:18px}.sm-pnl-heading{gap:9px}.sm-pnl-heading-icon{width:40px;height:40px;flex-basis:40px}.sm-pnl-heading-copy h2,.sm-pnl .sm-card-head h2{font-size:16px}.sm-pnl-heading-copy p{font-size:10px}.sm-pnl .sm-live-chip{height:30px;min-width:76px;font-size:10px}.sm-pnl-value{margin-top:12px;font-size:clamp(40px,11vw,50px)}.sm-pnl .sm-metrics{grid-template-columns:repeat(2,minmax(0,1fr));row-gap:2px}.sm-pnl .sm-metric,.sm-pnl .sm-metric:nth-child(4){justify-content:flex-start;min-height:56px;padding:7px 6px;border-left:0;border-top:1px solid rgba(151,178,220,.18)}.sm-pnl .sm-metric:nth-child(1),.sm-pnl .sm-metric:nth-child(2){border-top:0}.sm-pnl .sm-metric:nth-child(even){border-left:1px solid rgba(151,178,220,.18)}.sm-pnl-metric-icon{width:32px;height:32px;flex-basis:32px}.sm-pnl .sm-metric b{font-size:14px}.sm-pnl .sm-metric span:not(.sm-pnl-metric-icon){font-size:9px}.sm-pnl .sm-card-foot{align-items:flex-start;line-height:1.4}.sm-backtest-card .sm-backtest{grid-template-columns:repeat(2,minmax(0,1fr))}.sm-backtest-card .sm-bt-cell b{font-size:12px}}
     @media(prefers-reduced-motion:reduce){.sm-loader-mark img,.sm-loader-ring,.sm-market .sm-dot,.sm-status-dot,.sm-pnl .sm-live-chip .sm-dot{animation:none}}
@@ -1698,20 +1916,25 @@ function renderShadowStrategyMonitorPage(navHtml) {
 </head>
 <body>
   ${navHtml}
-  <main class="sm-page">
+  <main class="sm-page" id="shadowPage">
     <div class="sm-data-loader" id="monitorLoader" role="status" aria-live="polite"><div class="sm-loader-mark"><span class="sm-loader-ring"></span><img src="/public/images/logo.svg" alt=""></div><b>Loading strategy data</b><span>Checking live shadow runtime...</span></div>
     <div class="sm-shell" id="shadowMonitor">
       <header class="sm-head">
         <div>
-          <div class="sm-title-row"><h1 class="sm-title">Shadow Strategy Monitor</h1><span class="sm-shadow-badge">SHADOW MODE ONLY</span></div>
-          <p class="sm-sub">Simulated trades only. No real broker orders are placed.</p>
+          <div class="sm-title-row"><h1 class="sm-title" id="monitorTitle">Shadow Strategy Monitor</h1><span class="sm-shadow-badge">SHADOW MODE ONLY</span></div>
+          <p class="sm-sub" id="monitorSubtitle">Simulated trades only. No real broker orders are placed.</p>
         </div>
         <div class="sm-head-actions">
           <div class="sm-market closed" id="marketStatus"><span class="sm-dot"></span><span>Checking market</span></div>
           <div class="sm-refresh-meta" id="refreshMeta">Last refreshed: connecting...</div>
+          <button class="sm-consolidated-toggle" id="consolidatedToggle" type="button"><svg class="sm-icon" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg><span>Consolidated P&amp;L</span></button>
           <button class="sm-refresh" id="refreshAll" type="button"><svg class="sm-icon" viewBox="0 0 24 24"><path d="M20 12a8 8 0 1 1-2.3-5.7"/><path d="M20 4v6h-6"/></svg>Refresh</button>
         </div>
       </header>
+      <section class="sm-consolidated sm-consolidated-view" id="consolidatedView" hidden>
+        <div class="sm-consolidated-summary" id="consolidatedSummary"></div>
+        <div class="sm-consolidated-grid" id="consolidatedGrid"></div>
+      </section>
       <section class="sm-control" aria-label="Monitor controls">
         <div class="sm-card sm-control-box sm-field strategy"><label for="strategySelect">Strategy</label><div class="sm-control-inner"><span class="sm-control-icon"><svg class="sm-icon" viewBox="0 0 24 24"><path d="M4 20V10m5 10V4m5 16v-7m5 7V7M2 20h20"/></svg></span><select class="sm-select" id="strategySelect"><option>Loading strategies...</option></select></div></div>
         <div class="sm-card sm-control-box sm-field sm-instrument-control"><label>Instrument</label><div class="sm-segment"><button type="button" class="active" data-instrument="FUTURES"><svg class="sm-icon" viewBox="0 0 24 24"><path d="M7 3v18m10-18v18M4 8h6v8H4m10-6h6v7h-6"/></svg><span>Futures</span></button><button type="button" data-instrument="OPTIONS"><svg class="sm-icon" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="3"/></svg><span>Options</span></button></div></div>
@@ -1749,7 +1972,7 @@ function renderShadowStrategyMonitorPage(navHtml) {
   <div class="sm-modal" id="healthModal" role="dialog" aria-modal="true" aria-labelledby="healthModalTitle"><div class="sm-modal-panel sm-health-panel"><div class="sm-modal-head"><div><h2 id="healthModalTitle">System Health Evidence</h2><div class="sm-health-note">Live process, scheduler, feed, execution, storage and token checks</div></div><button class="sm-close" id="closeHealth" type="button" aria-label="Close">&times;</button></div><div class="sm-health-summary"><strong class="sm-health-state" id="healthModalState">CHECKING</strong><div><b id="healthModalSummary">Running checks</b><span>Critical services must pass before the monitor reports healthy.</span></div><div class="sm-health-checked" id="healthModalChecked">Checked: --</div></div><div class="sm-health-list" id="healthDetails"></div></div></div>
   <script>
     (function(){
-      var state={strategy:localStorage.getItem("zsShadowStrategy")||"drishti",instrument:localStorage.getItem("zsShadowInstrument")||"FUTURES",performancePeriod:localStorage.getItem("zsShadowPerformancePeriod")||"TODAY",request:0,data:null,logStick:true};
+      var state={strategy:localStorage.getItem("zsShadowStrategy")||"drishti",instrument:localStorage.getItem("zsShadowInstrument")||"FUTURES",performancePeriod:localStorage.getItem("zsShadowPerformancePeriod")||"TODAY",viewMode:"dashboard",request:0,data:null,logStick:true};
       var activeController=null;
       function el(id){return document.getElementById(id)}
       function esc(v){return String(v==null?"":v).replace(/[&<>"']/g,function(c){return({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"})[c]})}
@@ -1762,7 +1985,7 @@ function renderShadowStrategyMonitorPage(navHtml) {
       function clsPnl(v){return Number(v)>0?"sm-positive":Number(v)<0?"sm-negative":"sm-muted"}
       function metricIcon(label){var icons={"Realized P&L":'<svg class="sm-icon" viewBox="0 0 24 24"><ellipse cx="9" cy="6" rx="5" ry="3"/><path d="M4 6v5c0 1.7 2.2 3 5 3s5-1.3 5-3V6M4 11v5c0 1.7 2.2 3 5 3 1 0 1.9-.2 2.7-.5"/><ellipse cx="17" cy="16" rx="4" ry="2.5"/><path d="M13 16v3c0 1.4 1.8 2.5 4 2.5s4-1.1 4-2.5v-3"/></svg>',"Unrealized P&L":'<svg class="sm-icon" viewBox="0 0 24 24"><path d="M4 7h14a2 2 0 0 1 2 2v10H4a2 2 0 0 1-2-2V6a3 3 0 0 1 3-3h12"/><path d="M16 12h5v4h-5a2 2 0 0 1 0-4Z"/></svg>',"Today Trades":'<svg class="sm-icon" viewBox="0 0 24 24"><path d="M4 20V13h4v7H4Zm6 0V8h4v12h-4Zm6 0V4h4v16h-4Z"/><path d="M2 20h20"/></svg>',"Win Rate":'<svg class="sm-icon" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="4"/><path d="m12 12 7-7M16 5h3v3"/></svg>',"Open Position":'<svg class="sm-icon" viewBox="0 0 24 24"><path d="M4 8h16v12H4zM9 8V5h6v3M4 12h16"/><path d="M10 12v2h4v-2"/></svg>',"Last Update":'<svg class="sm-icon" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>'};return icons[label]||icons["Today Trades"]}
       function metric(label,val,cls){return'<div class="sm-metric"><span class="sm-pnl-metric-icon" aria-hidden="true">'+metricIcon(label)+'</span><div class="sm-pnl-metric-copy"><span>'+esc(label)+'</span><b class="'+(cls||"")+'">'+val+'</b></div></div>'}
-      function renderStrategies(list){var select=el("strategySelect");var html=(list||[]).map(function(s){return'<option value="'+esc(s.id)+'" '+(s.id===state.strategy?"selected":"")+'>'+esc(s.name)+'</option>'}).join("");select.innerHTML=html;if(!list.some(function(s){return s.id===state.strategy})){state.strategy=list[0]?list[0].id:"";select.value=state.strategy}var selected=(list||[]).find(function(s){return s.id===state.strategy});var allowed=selected&&selected.instruments||["FUTURES","OPTIONS"];if(allowed.indexOf(state.instrument)<0){state.instrument=allowed[0]||"FUTURES";localStorage.setItem("zsShadowInstrument",state.instrument)}document.querySelectorAll("[data-instrument]").forEach(function(button){var enabled=allowed.indexOf(button.dataset.instrument)>=0;button.disabled=!enabled;button.title=enabled?"":"Not available for this strategy";button.classList.toggle("active",button.dataset.instrument===state.instrument)})}
+      function renderStrategies(list){var select=el("strategySelect");var html=(list||[]).map(function(s){return'<option value="'+esc(s.id)+'" '+(s.id===state.strategy?"selected":"")+'>'+esc(s.name)+'</option>'}).join("");select.innerHTML=html;if(!list.some(function(s){return s.id===state.strategy})){state.strategy=list[0]?list[0].id:"";select.value=state.strategy}var selected=(list||[]).find(function(s){return s.id===state.strategy});var allowed=selected&&selected.instruments||["FUTURES","OPTIONS"];if(allowed.indexOf(state.instrument)<0){state.instrument=allowed[0]||"FUTURES";localStorage.setItem("zsShadowInstrument",state.instrument)}document.querySelectorAll(".sm-segment [data-instrument]").forEach(function(button){var enabled=allowed.indexOf(button.dataset.instrument)>=0;button.disabled=!enabled;button.title=enabled?"":"Not available for this strategy";button.classList.toggle("active",button.dataset.instrument===state.instrument)})}
       function renderHealth(d){var good=d.health.connected;var runtimeGood=good&&!/OFFLINE|ERROR|BLOCKED/i.test(d.runtime.status||"");var candles=d.candles||[];var count=function(tf){return candles.filter(function(c){return String(c.timeframe).toLowerCase()===tf}).length};el("healthStep").classList.toggle("good-step",good);el("feedStep").classList.toggle("good-step",good);el("runtimeStep").classList.toggle("good-step",runtimeGood);el("healthIcon").className="sm-health-icon health "+(good?"good":"warn");el("healthValue").textContent=d.health.overall;el("healthNote").textContent=good?"All systems operational":"Heartbeat needs attention";el("feedIcon").className="sm-health-icon feed "+(good?"good":"warn");el("feedValue").textContent=d.health.feed;el("feedNote").textContent=good?"Market data active":"Market data unavailable";el("runtimeValue").textContent=d.runtime.status;el("runtimeNote").textContent=d.runtime.status+" | "+d.runtime.version;el("candleLatest").textContent="Latest: "+(candles[0]?.time||"--");el("count1m").textContent=count("1m");el("count5m").textContent=count("5m");el("count15m").textContent=count("15m");var b=d.backtest;el("backtestStep").classList.toggle("good-step",!!b);el("backtestSummary").innerHTML='<div class="sm-health-icon backtest '+(b?"good":"warn")+'"><svg class="sm-icon" viewBox="0 0 24 24"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10Z"/><path d="'+(b?"m8.5 12 2.2 2.2 4.8-5":"M12 8v5m0 3h.01")+'"/></svg></div>'+(b?'<div class="sm-bt-cell"><span>5Y Backtest</span><b title="'+esc((b.coverage||"5Y")+(b.modelled?" · Modelled":" · Historical")+" · "+(b.methodology||b.source))+'">'+esc(b.coverage||"5Y")+'</b></div><div class="sm-bt-cell"><span>5Y P&amp;L</span><b class="'+clsPnl(b.pnl)+'">'+compactMoney(b.pnl,false)+'</b></div><div class="sm-bt-cell"><span>Win Rate</span><b>'+pct(b.winRate)+'</b></div><div class="sm-bt-cell"><span>Max Drawdown</span><b class="sm-negative">'+compactMoney(b.maxDrawdown,true)+'</b></div><div class="sm-bt-cell"><span>Avg Monthly</span><b>'+compactMoney(b.avgMonthlyPnl,false)+'</b></div>':'<div class="sm-bt-cell" style="grid-column:2/-1"><span>5Y Backtest Summary</span><b>No strategy-specific result available</b></div>')}
       function renderPerformance(d){var p=d.performance&&d.performance.periods&&d.performance.periods[state.performancePeriod];if(!p)return;var leader=function(row,label){if(!row)return'<div class="sm-performance-metric"><span>'+label+'</span><b>--</b><small>No qualifying trades</small></div>';return'<div class="sm-performance-metric"><span>'+label+'</span><b class="'+clsPnl(row.returnPct)+'">'+pct(row.returnPct)+'</b><small>'+esc(row.strategyName)+' · '+compactMoney(row.pnl,false)+'</small></div>'};el("performanceGrid").innerHTML='<div class="sm-performance-metric"><span>Average Return</span><b class="'+clsPnl(p.averageReturnPct)+'">'+pct(p.averageReturnPct)+'</b><small>'+value(p.strategiesCompared,0)+' strategy/instrument results</small></div>'+leader(p.bestFutures,"Best Futures")+leader(p.bestOptions,"Best Options")+'<div class="sm-performance-metric"><span>Capital Deployed</span><b>'+compactMoney(p.capitalUsed,false).replace(/^\\+/,"")+'</b><small>Combined net P&amp;L '+compactMoney(p.pnl,false)+'</small></div>';el("performanceScope").textContent=(p.source==="LIVE"?"Live":"Backtest")+" · "+p.label;el("performanceFormula").textContent=d.performance.definition;document.querySelectorAll("[data-performance-period]").forEach(function(b){b.classList.toggle("active",b.dataset.performancePeriod===state.performancePeriod)})}
       function renderSummary(d){var s=d.summary;var total=Number(s.totalPnl);var hasOpen=Number(s.openPositions)>0;var marketOpen=d.market&&d.market.status==="OPEN";var card=el("pnlCard");card.classList.toggle("profit",total>0);card.classList.toggle("loss",total<0);el("totalPnl").innerHTML=money(s.totalPnl);var stateText=total>0?"PROFIT":total<0?"LOSS":hasOpen?"LIVE POSITION":"NO TRADE";el("pnlState").textContent=stateText;var liveChip=el("pnlLiveChip");var liveState=marketOpen||hasOpen;liveChip.className="sm-live-chip "+(liveState?"is-live":"is-closed");liveChip.querySelector("span:last-child").textContent=hasOpen?"POSITION ACTIVE":marketOpen?"LIVE":"MARKET CLOSED";el("pnlMetrics").innerHTML=metric("Realized P&L",money(s.realizedPnl),clsPnl(s.realizedPnl))+metric("Unrealized P&L",money(s.unrealizedPnl),clsPnl(s.unrealizedPnl))+metric("Today Trades",value(s.trades,0))+metric("Win Rate",pct(s.winRate))+metric("Open Position",value(s.openPositions,0))+metric("Last Update",dt(s.lastUpdatedAt));var strategy=d.identity.strategyName;var instrument=d.identity.instrumentType==="OPTIONS"?"options":"futures";el("pnlFoot").textContent=hasOpen?"Live shadow P&L is updated continuously. Trades are appended to today's history in real time.":Number(s.trades)>0?"Today's completed shadow P&L. No live broker orders were placed.":strategy+" has no "+instrument+" shadow entry today. Current P&L is \u20b90.00."}
@@ -1773,10 +1996,16 @@ function renderShadowStrategyMonitorPage(navHtml) {
       function renderCandles(d){var rows=d.candles||[];el("candleTable").innerHTML=candleTable(rows.slice(0,5),true);el("candleFullTable").innerHTML=candleTable(rows,false);el("candleModalTitle").textContent="Today's Candle Log - "+d.identity.strategyName;el("candleModalSub").textContent=d.identity.instrumentType+" | "+d.identity.tradeDate+" | "+rows.length+" candles"}
       function renderLogs(d){var box=el("logConsole");var nearBottom=box.scrollHeight-box.scrollTop-box.clientHeight<28;var rows=(d.logs||[]).map(function(l){return'<div class="sm-log-line"><span>'+esc(l.time||"--:--:--")+'</span><b class="'+esc(l.level)+'">'+esc(l.level)+'</b><span>'+esc(l.message)+'</span></div>'}).join("");box.innerHTML=rows||'<div class="sm-muted">No server log entries available.</div>';if(state.logStick&&nearBottom)box.scrollTop=box.scrollHeight;el("resumeLogs").hidden=state.logStick}
       function renderSection(name,fn){try{fn()}catch(error){console.error("Shadow monitor "+name+" render failed",error)}}
-      function render(d){state.data=d;state.instrument=d.identity.instrumentType||state.instrument;localStorage.setItem("zsShadowInstrument",state.instrument);renderSection("strategies",function(){renderStrategies(d.strategies)});renderSection("trades",function(){renderTrades(d)});renderSection("candles",function(){renderCandles(d)});renderSection("health",function(){renderHealth(d);el("healthAction").textContent="View Checks"});renderSection("summary",function(){renderSummary(d)});renderSection("logs",function(){renderLogs(d)});var m=el("marketStatus");m.className="sm-market "+(d.market.status==="OPEN"?"open":"closed");m.querySelector("span:last-child").textContent="Market "+(d.market.status==="OPEN"?"Open":"Closed");el("refreshMeta").textContent="Last refreshed: "+dt(d.refreshedAt);document.querySelectorAll("[data-instrument]").forEach(function(b){b.classList.toggle("active",b.dataset.instrument===state.instrument)});el("shadowMonitor").classList.remove("sm-loading");el("monitorLoader").classList.remove("active")}
+      function consolidatedKey(t){return [t.strategyId,t.strategyVersion,t.instrumentType,t.executionMode,t.tradeDate].join("|")}
+      function tileClass(t){if(t.positionState==="ERROR")return"error";if(t.positionState==="STALE")return"stale";if(t.positionState==="OPEN")return"open";return Number(t.pnl)>0?"profit":Number(t.pnl)<0?"loss":"no-trade"}
+      function renderConsolidated(d){var c=d.consolidated||{};var s=c.summary||{};var summary=el("consolidatedSummary");if(!summary.children.length)summary.innerHTML='<div class="sm-consolidated-metric"><span>Total Today P&amp;L</span><b id="consolidatedTotal">--</b></div><div class="sm-consolidated-metric"><span>Profitable Tiles</span><b id="consolidatedProfit">0</b></div><div class="sm-consolidated-metric"><span>Loss-Making Tiles</span><b id="consolidatedLoss">0</b></div><div class="sm-consolidated-metric"><span>Open Positions</span><b id="consolidatedOpen">0</b></div>';el("consolidatedTotal").innerHTML=money(s.totalPnl);el("consolidatedProfit").textContent=value(s.profitableTiles,0);el("consolidatedLoss").textContent=value(s.lossMakingTiles,0);el("consolidatedOpen").textContent=value(s.openPositions,0);var tiles=c.tiles||[];var grid=el("consolidatedGrid");if(!tiles.length){grid.innerHTML='<div class="sm-consolidated-empty"><b>No active shadow strategies</b>Configure at least one Futures or Options shadow strategy to view consolidated P&amp;L.</div>';return}var expected=tiles.map(consolidatedKey).join(",");if(grid.dataset.keys!==expected){grid.dataset.keys=expected;grid.innerHTML=tiles.map(function(t){var key=consolidatedKey(t);return'<button class="sm-key-tile" type="button" data-tile-key="'+esc(key)+'" data-strategy="'+esc(t.strategyId)+'" data-instrument="'+esc(t.instrumentType)+'"><div class="sm-key-head"><span class="sm-key-name"></span><span class="sm-key-instrument"></span></div><div class="sm-key-pnl"></div><div class="sm-key-return"></div><div class="sm-key-bottom"><span class="sm-key-trades"></span><span class="sm-key-state"></span></div></button>'}).join("")}tiles.forEach(function(t){var key=consolidatedKey(t);var tile=grid.querySelector('[data-tile-key="'+CSS.escape(key)+'"]');if(!tile)return;var cls=tileClass(t);tile.className="sm-key-tile "+cls+(t.strategyId===state.strategy&&t.instrumentType===state.instrument?" selected":"");tile.querySelector(".sm-key-name").textContent=t.strategyName;tile.querySelector(".sm-key-instrument").textContent=t.instrumentType;tile.querySelector(".sm-key-pnl").innerHTML=t.pnl==null?"Not available":money(t.pnl);tile.querySelector(".sm-key-return").textContent=t.returnPct==null?"Return unavailable":pct(t.returnPct)+" return";tile.querySelector(".sm-key-trades").textContent=value(t.trades,0)+" "+(Number(t.trades)===1?"trade":"trades");var stateNode=tile.querySelector(".sm-key-state");stateNode.className="sm-key-state "+String(t.positionState||"").toLowerCase().replace(/\\s+/g,"-");stateNode.textContent=t.positionState||"--";tile.title=t.pnl==null?"No valid current-day shadow data":t.strategyName+" "+t.instrumentType+" | Capital deployed "+value(t.capitalDeployed,0)})}
+      function setViewMode(mode){state.viewMode=mode;var consolidated=mode==="consolidated";el("shadowMonitor").classList.toggle("sm-consolidated-mode",consolidated);el("shadowPage").classList.toggle("sm-consolidated-page",consolidated);el("consolidatedView").hidden=!consolidated;el("monitorTitle").textContent=consolidated?"Consolidated Shadow P&L":"Shadow Strategy Monitor";el("monitorSubtitle").textContent=consolidated?"Today's P&L across all shadow strategies and instruments":"Simulated trades only. No real broker orders are placed.";el("consolidatedToggle").querySelector("span").textContent=consolidated?"Back to Dashboard":"Consolidated P&L";if(consolidated&&state.data)renderConsolidated(state.data);window.scrollTo({top:0,behavior:"auto"})}
+      function render(d){state.data=d;state.instrument=d.identity.instrumentType||state.instrument;localStorage.setItem("zsShadowInstrument",state.instrument);renderSection("strategies",function(){renderStrategies(d.strategies)});renderSection("trades",function(){renderTrades(d)});renderSection("candles",function(){renderCandles(d)});renderSection("health",function(){renderHealth(d);el("healthAction").textContent="View Checks"});renderSection("summary",function(){renderSummary(d)});renderSection("logs",function(){renderLogs(d)});renderSection("consolidated",function(){renderConsolidated(d)});var m=el("marketStatus");m.className="sm-market "+(d.market.status==="OPEN"?"open":"closed");m.querySelector("span:last-child").textContent="Market "+(d.market.status==="OPEN"?"Open":"Closed");el("refreshMeta").textContent="Last refreshed: "+dt(d.refreshedAt);document.querySelectorAll(".sm-segment [data-instrument]").forEach(function(b){b.classList.toggle("active",b.dataset.instrument===state.instrument)});el("shadowMonitor").classList.remove("sm-loading");el("monitorLoader").classList.remove("active")}
       async function load(trigger){var interactive=trigger===true||!!(trigger&&trigger.type)||state.userRequestedLoad===true;state.userRequestedLoad=false;var seq=++state.request;if(activeController)activeController.abort();activeController=new AbortController();if(interactive){el("monitorLoader").classList.add("active");el("shadowMonitor").classList.add("sm-loading")}try{var url="/api/shadow-monitor?strategy="+encodeURIComponent(state.strategy)+"&instrument="+encodeURIComponent(state.instrument);var r=await fetch(url,{cache:"no-store",credentials:"same-origin",signal:activeController.signal});if(!r.ok)throw new Error("HTTP "+r.status);var d=await r.json();if(seq!==state.request)return;if(!d.ok)throw new Error(d.error||"Monitor unavailable");render(d)}catch(e){if(e.name==="AbortError")return;el("refreshMeta").textContent="Refresh failed: "+e.message;el("shadowMonitor").classList.remove("sm-loading");el("monitorLoader").classList.remove("active")}}
       el("strategySelect").addEventListener("change",function(){state.userRequestedLoad=true},{capture:true});document.querySelectorAll("[data-instrument]").forEach(function(button){button.addEventListener("click",function(){state.userRequestedLoad=true},{capture:true})});
       el("strategySelect").addEventListener("change",function(){state.strategy=this.value;var selected=state.data&&state.data.strategies&&state.data.strategies.find(function(s){return s.id===state.strategy});var allowed=selected&&selected.instruments||["FUTURES","OPTIONS"];if(allowed.indexOf(state.instrument)<0)state.instrument=allowed[0]||"FUTURES";localStorage.setItem("zsShadowStrategy",state.strategy);localStorage.setItem("zsShadowInstrument",state.instrument);load()});document.querySelectorAll("[data-instrument]").forEach(function(b){b.addEventListener("click",function(){if(this.disabled)return;state.instrument=this.dataset.instrument;localStorage.setItem("zsShadowInstrument",state.instrument);load()})});document.querySelectorAll("[data-performance-period]").forEach(function(b){b.addEventListener("click",function(){state.performancePeriod=this.dataset.performancePeriod;localStorage.setItem("zsShadowPerformancePeriod",state.performancePeriod);if(state.data)renderPerformance(state.data)})});el("refreshAll").addEventListener("click",load);el("logConsole").addEventListener("scroll",function(){if(this.scrollHeight-this.scrollTop-this.clientHeight>=28){state.logStick=false;el("resumeLogs").hidden=false;el("pauseLogs").hidden=true}});el("pauseLogs").addEventListener("click",function(){state.logStick=false;this.hidden=true;el("resumeLogs").hidden=false});el("resumeLogs").addEventListener("click",function(){state.logStick=true;el("logConsole").scrollTop=el("logConsole").scrollHeight;this.hidden=true;el("pauseLogs").hidden=false});el("openHistory").addEventListener("click",function(){var period=state.data&&state.data.history&&state.data.history.trades&&state.data.history.trades.length?"TRADES":"DAILY";document.querySelectorAll("[data-period]").forEach(function(x){x.classList.toggle("active",x.dataset.period===period)});el("historyModal").classList.add("open");renderHistory(period)});el("closeHistory").addEventListener("click",function(){el("historyModal").classList.remove("open")});el("historyModal").addEventListener("click",function(e){if(e.target===this)this.classList.remove("open")});el("openCandles").addEventListener("click",function(){el("candleModal").classList.add("open")});el("closeCandles").addEventListener("click",function(){el("candleModal").classList.remove("open")});el("candleModal").addEventListener("click",function(e){if(e.target===this)this.classList.remove("open")});document.querySelectorAll("[data-period]").forEach(function(b){b.addEventListener("click",function(){document.querySelectorAll("[data-period]").forEach(function(x){x.classList.toggle("active",x===b)});renderHistory(b.dataset.period)})});
+      el("consolidatedToggle").addEventListener("click",function(){setViewMode(state.viewMode==="consolidated"?"dashboard":"consolidated")});
+      el("consolidatedGrid").addEventListener("click",function(event){var tile=event.target.closest("[data-strategy][data-instrument]");if(!tile)return;state.strategy=tile.dataset.strategy;state.instrument=tile.dataset.instrument;localStorage.setItem("zsShadowStrategy",state.strategy);localStorage.setItem("zsShadowInstrument",state.instrument);setViewMode("dashboard");state.userRequestedLoad=true;load(true)});
       function historyRows(rows,withAction){return'<div class="sm-table-wrap" style="max-height:58vh"><table class="sm-table"><thead><tr><th>Period</th><th>Net P&amp;L</th><th>Capital Used</th><th>Return</th><th>Points</th><th>Trading Days</th><th>Trades</th><th>Wins</th><th>Losses</th><th>Win Rate</th>'+(withAction?'<th>Details</th>':'')+'</tr></thead><tbody>'+rows.map(function(r){return"<tr><td>"+esc(r.period)+"</td><td class='"+clsPnl(r.pnl)+"'>"+money(r.pnl)+"</td><td>"+money(r.capitalUsed).replace(/^\\+/,"")+"</td><td class='"+clsPnl(r.returnPct)+"'>"+pct(r.returnPct)+"</td><td>"+value(r.points)+"</td><td>"+value(r.tradingDays,0)+"</td><td>"+value(r.trades,0)+"</td><td class='sm-positive'>"+value(r.wins,0)+"</td><td class='sm-negative'>"+value(r.losses,0)+"</td><td>"+pct(r.winRate)+"</td>"+(withAction?'<td><button class="sm-month-open" data-month-open="'+esc(r.period)+'">View days</button></td>':'')+"</tr>"}).join("")+"</tbody></table></div>"}
       function renderMonthDays(month){var d=state.data;var b=d&&d.backtest;var rows=(b&&b.days||[]).filter(function(r){return String(r.date||"").slice(0,7)===month}).sort(function(a,z){return String(a.date).localeCompare(String(z.date))});var body=el("historyBody");body.innerHTML='<div class="sm-history-toolbar"><div><h3>'+esc(month)+' daily results</h3><div class="sm-health-note">'+esc(d.identity.strategyName)+' · '+esc(d.identity.instrumentType)+(b.modelled?' · Modelled options':' · Historical candles')+'</div></div><button class="sm-history-btn" id="backToMonths" type="button">Back to months</button></div><div class="sm-table-wrap" style="max-height:58vh"><table class="sm-table"><thead><tr><th>Date</th><th>Net P&amp;L</th><th>Capital Used</th><th>Return</th><th>Gross P&amp;L</th><th>Points</th><th>Trades</th><th>Wins</th><th>Losses</th><th>Exit reasons</th></tr></thead><tbody>'+rows.map(function(r){return"<tr><td>"+esc(r.date)+"</td><td class='"+clsPnl(r.pnl)+"'>"+money(r.pnl)+"</td><td>"+money(r.capitalUsed).replace(/^\\+/,"")+"</td><td class='"+clsPnl(r.returnPct)+"'>"+pct(r.returnPct)+"</td><td class='"+clsPnl(r.grossPnl)+"'>"+money(r.grossPnl)+"</td><td>"+value(r.points)+"</td><td>"+value(r.trades,0)+"</td><td class='sm-positive'>"+value(r.wins,0)+"</td><td class='sm-negative'>"+value(r.losses,0)+"</td><td title='"+esc((r.reasons||[]).join(", "))+"'>"+esc((r.reasons||[]).join(", ")||"--")+"</td></tr>"}).join("")+"</tbody></table></div>";el("backToMonths").addEventListener("click",function(){renderHistory("MONTHLY")})}
       function renderHistory(period){var d=state.data;if(!d)return;var body=el("historyBody");var b=d.backtest;if(!b){body.innerHTML='<div class="sm-history-state"><b>No strategy-specific five-year result</b><p>This view will not substitute another strategy&apos;s data.</p></div>';return}if(period==="BACKTEST"){body.innerHTML='<div class="sm-history-method"><b>'+(b.modelled?'Modelled options backtest':'Historical-candle backtest')+' · '+esc(b.coverage||"5Y")+'</b><div>'+esc(b.methodology||"Methodology not recorded")+'</div><div style="margin-top:8px">Source: '+esc(b.source)+' · Generated: '+esc(b.generatedAt||"--")+'</div><div style="margin-top:8px">Net P&amp;L: '+btValue(b.pnl,b.pnlUnit)+' · Return on deployed capital: '+pct(b.returnPct)+' · Win rate: '+pct(b.winRate)+' · Max drawdown: '+btValue(b.maxDrawdown,b.pnlUnit)+' · Trades: '+value(b.totalTrades,0)+'</div></div>';return}var rows=(b.months||[]).slice().sort(function(a,z){return String(z.period).localeCompare(String(a.period))});if(period==="YEARLY"){var years={};rows.forEach(function(r){var y=String(r.period).slice(0,4);var x=years[y]||(years[y]={period:y,pnl:0,capitalUsed:0,points:0,tradingDays:0,trades:0,wins:0,losses:0});x.pnl+=Number(r.pnl||0);x.capitalUsed+=Number(r.capitalUsed||0);x.points+=Number(r.points||0);x.tradingDays+=Number(r.tradingDays||0);x.trades+=Number(r.trades||0);x.wins+=Number(r.wins||0);x.losses+=Number(r.losses||0)});rows=Object.values(years).map(function(r){r.winRate=r.wins+r.losses?r.wins/(r.wins+r.losses)*100:0;r.returnPct=r.capitalUsed?r.pnl/r.capitalUsed*100:null;return r}).sort(function(a,z){return z.period.localeCompare(a.period)});body.innerHTML=historyRows(rows,false);return}body.innerHTML='<div class="sm-history-toolbar"><div><h3>Monthly backtest history</h3><div class="sm-health-note">Open any month to see every traded day.</div></div><div class="sm-source">'+esc(b.coverage||"5Y")+' · '+(b.modelled?"MODELLED OPTIONS":"HISTORICAL CANDLES")+'</div></div>'+historyRows(rows,true);body.querySelectorAll("[data-month-open]").forEach(function(button){button.addEventListener("click",function(){renderMonthDays(button.dataset.monthOpen)})})}
@@ -1791,9 +2020,13 @@ function renderShadowStrategyMonitorPage(navHtml) {
       renderMonthDays=function(month){var d=state.data;var rows=((d&&d.history&&d.history.days)||[]).filter(function(r){return String(r.date||"").slice(0,7)===month});el("historyBody").innerHTML='<div class="sm-history-toolbar"><div><h3>'+esc(month)+' daily shadow results</h3><div class="sm-health-note">'+esc(d.identity.strategyName)+' · '+esc(d.identity.instrumentType)+' · SHADOW</div></div><button class="sm-history-btn" id="backToMonths" type="button">Back to months</button></div>'+liveHistoryTable(rows,false);el("backToMonths").addEventListener("click",function(){renderHistory("MONTHLY")})};
       renderHistory=function(period){var d=state.data;if(!d)return;var h=d.history||{};var body=el("historyBody");if(period==="TRADES"&&!(h.trades||[]).length&&(h.days||[]).length){period="DAILY";document.querySelectorAll("[data-period]").forEach(function(x){x.classList.toggle("active",x.dataset.period===period)})}var rows=period==="TRADES"?(h.trades||[]):period==="DAILY"?(h.days||[]):period==="YEARLY"?(h.yearly||[]):(h.monthly||[]);if(!rows.length){body.innerHTML='<div class="sm-history-state"><b>No stored shadow '+esc(period.toLowerCase())+' for this selection</b><p>'+esc(d.identity.strategyName)+' · '+esc(d.identity.instrumentType)+' · SHADOW</p></div>';return}body.innerHTML='<div class="sm-history-toolbar"><div><h3>'+esc(period==="TRADES"?"All stored trades":period.charAt(0)+period.slice(1).toLowerCase()+" shadow history")+'</h3><div class="sm-health-note">Selected strategy and instrument only. Values come from persisted shadow records.</div></div><div class="sm-source">LIVE SHADOW</div></div>'+(period==="TRADES"?tradeHistoryTable(rows):liveHistoryTable(rows,period==="MONTHLY"));if(period==="MONTHLY")body.querySelectorAll("[data-month-open]").forEach(function(button){button.addEventListener("click",function(){renderMonthDays(button.dataset.monthOpen)})})};
       renderHistory=function(period){var d=state.data;if(!d)return;var h=d.history||{};var body=el("historyBody");if(/^BT_/.test(period)){var b=d.backtest||{};var key=period==="BT_WEEKLY"?"weeks":period==="BT_YEARLY"?"years":"months";var backtestRows=(b[key]||[]).slice().sort(function(a,z){return String(z.period).localeCompare(String(a.period))});if(!backtestRows.length){body.innerHTML='<div class="sm-history-state"><b>No '+esc(key)+' backtest records for this selection</b><p>Backtest data is kept separate from live shadow history.</p></div>';return}body.innerHTML='<div class="sm-history-toolbar"><div><h3>5Y '+esc(key.charAt(0).toUpperCase()+key.slice(1))+' Backtest</h3><div class="sm-health-note">'+esc(d.identity.strategyName)+' · '+esc(d.identity.instrumentType)+' · historical candles</div></div><div class="sm-source">BACKTEST ONLY</div></div>'+historyRows(backtestRows,false);return}if(period==="TRADES"&&!(h.trades||[]).length&&(h.days||[]).length){period="DAILY";document.querySelectorAll("[data-period]").forEach(function(x){x.classList.toggle("active",x.dataset.period===period)})}var rows=period==="TRADES"?(h.trades||[]):period==="DAILY"?(h.days||[]):period==="WEEKLY"?(h.weekly||[]):period==="YEARLY"?(h.yearly||[]):(h.monthly||[]);if(!rows.length){body.innerHTML='<div class="sm-history-state"><b>No stored shadow '+esc(period.toLowerCase())+' for this selection</b><p>'+esc(d.identity.strategyName)+' · '+esc(d.identity.instrumentType)+' · SHADOW</p></div>';return}body.innerHTML='<div class="sm-history-toolbar"><div><h3>'+esc(period==="TRADES"?"All stored trades":period.charAt(0)+period.slice(1).toLowerCase()+" shadow history")+'</h3><div class="sm-health-note">Selected strategy and instrument only. Values come from persisted shadow records.</div></div><div class="sm-source">LIVE SHADOW</div></div>'+(period==="TRADES"?tradeHistoryTable(rows):liveHistoryTable(rows,period==="MONTHLY"));if(period==="MONTHLY")body.querySelectorAll("[data-month-open]").forEach(function(button){button.addEventListener("click",function(){renderMonthDays(button.dataset.monthOpen)})})};
+      var renderStoredHistory=renderHistory;
+      renderHistory=function(period){var d=state.data;if(!d||!d.history)return renderStoredHistory(period);if(period!=="TRADES"&&period!=="DAILY")return renderStoredHistory(period);var key=period==="TRADES"?"trades":"days";var original=d.history[key];d.history[key]=(original||[]).filter(function(row){return String(row.date||row.tradeDate||"")===String(d.identity.tradeDate||"")});try{renderStoredHistory(period);var heading=el("historyBody").querySelector("h3");if(heading)heading.textContent=period==="TRADES"?"Today's stored trades":"Today's shadow result"}finally{d.history[key]=original}};
       function openHealth(){if(state.data)renderHealthDetails(state.data.health);el("healthModal").classList.add("open")}
       el("healthStep").addEventListener("click",openHealth);el("healthStep").addEventListener("keydown",function(e){if(e.key==="Enter"||e.key===" "){e.preventDefault();openHealth()}});el("closeHealth").addEventListener("click",function(){el("healthModal").classList.remove("open")});el("healthModal").addEventListener("click",function(e){if(e.target===this)this.classList.remove("open")});
-      load();setInterval(load,10000);
+      var refreshTimer=null;
+      function scheduleRefresh(){if(refreshTimer)clearTimeout(refreshTimer);var marketOpen=state.data&&state.data.market&&state.data.market.status==="OPEN";refreshTimer=setTimeout(async function(){await load();scheduleRefresh()},marketOpen?10000:45000)}
+      load().finally(scheduleRefresh);
     })();
   </script>
   <script src="/public/js/app.js"></script>
