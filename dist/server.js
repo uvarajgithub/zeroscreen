@@ -6610,6 +6610,19 @@ function tradeOpsDateKey(value) {
         return getTodayIST();
     return d.toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" });
 }
+function tradeOpsLogDateKey(value) {
+    const text = String(value || "");
+    const iso = text.match(/\b(20\d{2})-(\d{2})-(\d{2})\b/);
+    if (iso)
+        return `${iso[1]}-${iso[2]}-${iso[3]}`;
+    const local = text.match(/\b(\d{1,2})\/(\d{1,2})\/(20\d{2})\b/);
+    if (local)
+        return `${local[3]}-${local[2].padStart(2, "0")}-${local[1].padStart(2, "0")}`;
+    const d = value ? new Date(value) : null;
+    if (d && Number.isFinite(d.getTime()))
+        return d.toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" });
+    return "";
+}
 function tradeOpsTime(value) {
     if (!value)
         return "Not available";
@@ -6630,6 +6643,13 @@ function tradeOpsSide(value) {
 }
 function tradeOpsSanitizeLog(value) {
     return String(value || "")
+        .replace(/([?&](?:request_token|access_token|token|checksum|session_id)=)[^&\s]+/gi, "$1[REDACTED]")
+        .replace(/(["']?(?:password|passwd|totp|otp|api_secret|totp_secret|cookie|set-cookie)["']?\s*(?:=|:)\s*)[^\s,;}]+/gi, "$1[REDACTED]")
+        .replace(/(submitting\s+totp\s*:\s*)\d{6,8}/gi, "$1[REDACTED]")
+        .replace(/((?:request|access)[_-]?token\s*(?:=|:|received|is)?\s*)[A-Za-z0-9._~-]+/gi, "$1[REDACTED]")
+        .replace(/\b(?:Bearer|token)\s+[A-Za-z0-9._~:+\/-]{8,}/gi, "[REDACTED_AUTH]")
+        .replace(/((?:api[_ -]?(?:key|secret)|authorization)\s*(?:=|:)?\s*)[^\s,;]+/gi, "$1[REDACTED]")
+        .replace(/\bGot\s+[A-Za-z0-9._~-]{6,}/gi, "Got [REDACTED]")
         .replace(/10:30|1030|DRISHTI|DRISHTI_V1|TEN_THIRTY|BANKNIFTY_INDEX_SHADOW|strategy/gi, "trade")
         .replace(/\s+/g, " ")
         .trim()
@@ -6743,15 +6763,34 @@ function tradeOpsReadRecentLogFiles() {
         "/root/.pm2/logs/zeroscreen-out.log",
         "/root/.pm2/logs/zeroscreen-error.log",
         "/home/ubuntu/trading-bot/logs/server.log",
+        TRADEOPS_AUTO_TOKEN_LOG,
     ];
     const rows = [];
     for (const file of files) {
         try {
-            const lines = fs_1.default.readFileSync(file, "utf8").split(/\r?\n/).filter(Boolean).slice(-12);
+            const rawLines = fs_1.default.readFileSync(file, "utf8").split(/\r?\n/).filter(Boolean);
+            if (file === TRADEOPS_AUTO_TOKEN_LOG) {
+                let start = -1;
+                for (let i = rawLines.length - 1; i >= 0; i--) {
+                    if (tradeOpsLogDateKey(rawLines[i]) === getTodayIST()) {
+                        start = i;
+                        break;
+                    }
+                }
+                const tokenLines = (start >= 0 ? rawLines.slice(start) : rawLines.slice(-18)).slice(-18);
+                for (const line of tokenLines) {
+                    const level = /error|failed|reject/i.test(line) ? "ERROR" : /warn/i.test(line) ? "WARN" : "INFO";
+                    rows.push({ time: tradeOpsTime(line), level, message: tradeOpsSanitizeLog(`Token refresh: ${line}`) });
+                }
+                continue;
+            }
+            const lines = rawLines.slice(-12);
             for (const line of lines) {
                 if (/requireStack|at Module|node:internal|ProcessContainerFork|^\s*at\s/i.test(line))
                     continue;
                 if (/Cannot find module '.\/command-center\/migrate-production-session'|MODULE_NOT_FOUND/i.test(line))
+                    continue;
+                if (tradeOpsLogDateKey(line) !== getTodayIST())
                     continue;
                 const level = /error|failed|reject/i.test(line) ? "ERROR" : /warn|token|margin/i.test(line) ? "WARN" : "INFO";
                 rows.push({ time: "", level, message: tradeOpsSanitizeLog(line) });
@@ -6852,6 +6891,7 @@ function buildTradeOpsLogPreview() {
     const todayCandles = heartbeatCandles.length ? heartbeatCandles : stateCandles.length ? stateCandles : fileCandles;
     const liveNet = tradeOpsMaybeNum(hb?.tt1030PnL);
     const botAuditTail = tradeOpsTodayAuditRows(today).slice(-40);
+    const recentFileRows = tradeOpsReadRecentLogFiles();
     const auditTail = (() => {
         try {
             return fs_1.default.readFileSync(path_1.default.join(__dirname, "..", "tradeops-audit.jsonl"), "utf8")
@@ -6869,8 +6909,8 @@ function buildTradeOpsLogPreview() {
         }
     })();
     const heartbeatLogRows = (hb?.logs || hb?.serverLogs || []).slice(-20).filter((x) => {
-        const raw = x?.time || x?.at;
-        return raw ? tradeOpsDateKey(raw) === today : false;
+        const raw = x?.time || x?.at || x?.message || x;
+        return tradeOpsLogDateKey(raw) === today;
     }).map((x) => {
         const message = tradeOpsSanitizeLog(x?.message || x);
         const rawLevel = String(x?.level || "INFO").toUpperCase();
@@ -6895,6 +6935,7 @@ function buildTradeOpsLogPreview() {
         ...heartbeatLogRows,
         ...botAuditTail.map((x) => ({ time: tradeOpsTime(x.ts || x.at), level: tradeOpsAuditLevel(x), message: tradeOpsAuditMessage(x) })),
         ...auditTail.map((x) => ({ time: tradeOpsTime(x.at), level: x.ok === false ? "WARN" : "INFO", message: tradeOpsSanitizeLog(x.message || x.action || "Audit event") })),
+        ...recentFileRows,
         ...candleLines,
         ...operationalLogs,
     ].slice(-30).reverse();
@@ -6969,11 +7010,15 @@ async function buildTradeOpsStatus(strategyId = "") {
             strategyTrades[duplicateIndex] = candidate;
         }
     }
-    // TradeOps is the live 10:30 futures workspace. Current-session shadow/simulated
-    // results belong in ZeroScreen and must never appear as live TradeOps P&L/history.
+    const tt1030DisplayMode = String(hb?.tt1030FuturesMode || tradeOpsReadBotEnv().map.TT1030_FUTURES_MODE || "SHADOW").toUpperCase();
+    const currentSessionTrades = tt1030DisplayMode === "LIVE"
+        ? verifiedLiveTrades
+        : strategyTrades;
+    // In LIVE mode, current-session TradeOps P&L must be verified broker orders only.
+    // In SHADOW mode, the TradeOps screen should show the recorded TT1030 shadow result.
     const reportingTrades = [
         ...strategyTrades.filter(t => tradeOpsDateKey(t?.date || t?.exitTime || t?.entryTime) !== today),
-        ...verifiedLiveTrades.filter(t => tradeOpsDateKey(t?.date || t?.exitTime || t?.entryTime) === today),
+        ...currentSessionTrades.filter(t => tradeOpsDateKey(t?.date || t?.exitTime || t?.entryTime) === today),
     ];
     const todayHasTrades = reportingTrades.some(t => tradeOpsDateKey(t?.date || t?.exitTime || t?.entryTime) === today);
     const latestTradeSession = reportingTrades.map(t => tradeOpsDateKey(t?.date || t?.exitTime || t?.entryTime)).filter(Boolean).sort().pop() || today;
@@ -7692,13 +7737,63 @@ app.post("/api/tradeops/emergency-stop", requireAdmin, async (req, res) => {
     }
     try {
         const posJson = await tradeOpsKiteJSON("/portfolio/positions");
-        const positions = (posJson?.data?.net || []).filter((p) => tradeOpsNum(p.quantity) !== 0);
+        let positions = (posJson?.data?.net || []).filter((p) => tradeOpsNum(p.quantity) !== 0);
+        const disarmLiveTrading = () => {
+            tradeOpsWriteBotEnvValue("TT1030_FUTURES_MODE", "SHADOW");
+            tradeOpsWriteStrategyOverride("tt1030-futures", { enabled: true, mode: "SHADOW" });
+            for (const processName of ["trading-bot", "amina-100-variant-b"]) {
+                try {
+                    (0, child_process_1.execSync)(`pm2 describe ${processName}`, { cwd: TRADEOPS_BOT_DIR, stdio: "ignore", timeout: 5000 });
+                    (0, child_process_1.execSync)(`pm2 reload ${processName} --update-env`, { cwd: TRADEOPS_BOT_DIR, stdio: "ignore", timeout: 15000 });
+                    const pid = (0, child_process_1.execSync)(`pm2 pid ${processName}`, { cwd: TRADEOPS_BOT_DIR, encoding: "utf8", timeout: 5000 }).trim();
+                    if (!/^\d+$/.test(pid) || pid === "0")
+                        throw new Error(`${processName} is not online after reload`);
+                    const runningEnv = (0, child_process_1.execSync)(`pm2 env ${pid}`, { cwd: TRADEOPS_BOT_DIR, encoding: "utf8", timeout: 5000 });
+                    if (!/^TT1030_FUTURES_MODE\s*:\s*SHADOW\s*$/mi.test(runningEnv))
+                        throw new Error(`${processName} did not load TT1030_FUTURES_MODE=SHADOW`);
+                    return true;
+                }
+                catch { }
+            }
+            return false;
+        };
+        // Disarm first so a concurrent bot cycle cannot open another live position while exits are in flight.
+        const disarmed = disarmLiveTrading();
         if (!positions.length) {
-            audit({ action: "emergency_stop", ok: true, message: "No open broker positions" });
-            res.json({ ok: true, message: "No open broker positions found.", closed: [] });
+            audit({ action: "emergency_stop", ok: disarmed, message: disarmed ? "No open broker positions; LIVE mode disarmed" : "Account flat but running bot disarm was not verified", disarmed });
+            if (!disarmed) {
+                res.status(409).json({ ok: false, message: "No open positions, but the running bot could not be verified in SHADOW mode. Check PM2 immediately.", closed: [], disarmed });
+                return;
+            }
+            res.json({ ok: true, message: "No open broker positions found. LIVE mode was disarmed.", closed: [], disarmed });
             return;
         }
-        const closed = [];
+        const symbols = new Set(positions.map((p) => String(p.tradingsymbol || "")));
+        const orderBook = await tradeOpsKiteJSON("/orders").catch(() => ({ data: [] }));
+        const cancellable = new Set(["OPEN", "TRIGGER PENDING", "VALIDATION PENDING", "PUT ORDER REQ RECEIVED", "MODIFY VALIDATION PENDING", "MODIFY PENDING"]);
+        const cancelledProtection = [];
+        for (const order of orderBook?.data || []) {
+            if (!symbols.has(String(order?.tradingsymbol || "")) || !cancellable.has(String(order?.status || "").toUpperCase()))
+                continue;
+            const orderId = String(order?.order_id || "");
+            if (!orderId)
+                continue;
+            await tradeOpsKiteJSON(`/orders/${encodeURIComponent(String(order?.variety || "regular"))}/${encodeURIComponent(orderId)}`, { method: "DELETE" });
+            let cancelStatus = String(order?.status || "").toUpperCase();
+            for (let attempt = 0; attempt < 10 && cancellable.has(cancelStatus); attempt++) {
+                await new Promise(resolve => setTimeout(resolve, 500));
+                const latest = await tradeOpsKiteJSON("/orders");
+                cancelStatus = String((latest?.data || []).find((o) => String(o.order_id) === orderId)?.status || cancelStatus).toUpperCase();
+            }
+            if (cancellable.has(cancelStatus))
+                throw new Error(`Open order ${orderId} cancellation was not confirmed; emergency market exits were not submitted`);
+            cancelledProtection.push(orderId);
+        }
+        // A stop may have filled while it was being cancelled. Refresh quantities to avoid reversing exposure.
+        const refreshedPositions = await tradeOpsKiteJSON("/portfolio/positions");
+        positions = (refreshedPositions?.data?.net || []).filter((p) => tradeOpsNum(p.quantity) !== 0);
+        const submitted = [];
+        const failures = [];
         for (const p of positions) {
             const qty = Math.abs(tradeOpsNum(p.quantity));
             const transaction = tradeOpsNum(p.quantity) > 0 ? "SELL" : "BUY";
@@ -7711,15 +7806,58 @@ app.post("/api/tradeops/emergency-stop", requireAdmin, async (req, res) => {
                 order_type: "MARKET",
                 validity: "DAY",
             });
-            const order = await tradeOpsKiteJSON("/orders/regular", {
-                method: "POST",
-                headers: { "Content-Type": "application/x-www-form-urlencoded" },
-                body,
-            });
-            closed.push({ symbol: p.tradingsymbol, qty, transaction, orderId: order?.data?.order_id || "submitted" });
+            try {
+                const order = await tradeOpsKiteJSON("/orders/regular", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+                    body,
+                });
+                const orderId = String(order?.data?.order_id || "");
+                if (!orderId)
+                    throw new Error("Broker did not return an emergency exit order ID");
+                submitted.push({ symbol: p.tradingsymbol, qty, transaction, orderId });
+            }
+            catch (e) {
+                failures.push({ symbol: p.tradingsymbol, error: e?.message || "Exit submission failed" });
+            }
         }
-        audit({ action: "emergency_stop", ok: true, message: `Submitted ${closed.length} close order(s)`, closed });
-        res.json({ ok: true, message: `Submitted ${closed.length} market close order(s).`, closed });
+        let finalOrders = [];
+        for (let attempt = 0; attempt < 12 && submitted.length; attempt++) {
+            await new Promise(resolve => setTimeout(resolve, 1000));
+            const latest = await tradeOpsKiteJSON("/orders");
+            finalOrders = latest?.data || [];
+            const terminal = submitted.every(row => {
+                const brokerOrder = finalOrders.find((o) => String(o.order_id) === String(row.orderId));
+                return ["COMPLETE", "REJECTED", "CANCELLED"].includes(String(brokerOrder?.status || "").toUpperCase());
+            });
+            if (terminal)
+                break;
+        }
+        const verified = submitted.map(row => {
+            const brokerOrder = finalOrders.find((o) => String(o.order_id) === String(row.orderId));
+            return { ...row, status: String(brokerOrder?.status || "UNKNOWN"), filledQty: tradeOpsNum(brokerOrder?.filled_quantity) };
+        });
+        for (const row of verified) {
+            if (row.status !== "COMPLETE" || row.filledQty < row.qty)
+                failures.push({ symbol: row.symbol, error: `Exit ${row.status}; filled ${row.filledQty}/${row.qty}` });
+        }
+        let remaining = [];
+        for (let attempt = 0; attempt < 15; attempt++) {
+            const verifyPositions = await tradeOpsKiteJSON("/portfolio/positions");
+            remaining = (verifyPositions?.data?.net || []).filter((p) => tradeOpsNum(p.quantity) !== 0)
+                .map((p) => ({ symbol: p.tradingsymbol, quantity: tradeOpsNum(p.quantity), product: p.product }));
+            if (!remaining.length)
+                break;
+            await new Promise(resolve => setTimeout(resolve, 1000));
+        }
+        const flat = remaining.length === 0;
+        const ok = flat && failures.length === 0 && disarmed;
+        audit({ action: "emergency_stop", ok, message: ok ? "All broker positions verified flat and LIVE mode disarmed" : "Emergency close requires attention", cancelledProtection, verified, failures, remaining, disarmed });
+        if (!ok) {
+            res.status(409).json({ ok: false, message: flat ? "Positions are flat, but the running bot was not verified in SHADOW mode." : "Emergency exits were not fully verified. Check Zerodha positions immediately.", closed: verified, failures, remaining, disarmed });
+            return;
+        }
+        res.json({ ok: true, message: `Verified ${verified.length} position(s) closed. LIVE mode disarmed.`, closed: verified, cancelledProtection, remaining, disarmed });
     }
     catch (e) {
         audit({ action: "emergency_stop", ok: false, message: e?.message || "Close failed" });

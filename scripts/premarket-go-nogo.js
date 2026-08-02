@@ -78,6 +78,15 @@ function checkRemote() {
   const bStatus = runRemote("pm2 show amina-100-variant-b | grep -E 'status' | head -1");
   addResult('VPS Bot PM2', bStatus.ok && /online/i.test(bStatus.stdout), bStatus.stdout || bStatus.stderr || 'no output');
 
+  const indicatorStatus = runRemote("pm2 show indicator-shadow | grep -E 'status' | head -1");
+  addResult('VPS Indicator Shadow PM2', indicatorStatus.ok && /online/i.test(indicatorStatus.stdout), indicatorStatus.stdout || indicatorStatus.stderr || 'indicator-shadow process is not online');
+
+  const indicatorHeartbeat = runRemote("bash -lc 'cd /home/ubuntu/trading-bot && test -f indicator-shadow-heartbeat.json || { echo missing; exit 0; }; A=$(node -e \"const fs=require(\\\"fs\\\");const h=JSON.parse(fs.readFileSync(\\\"indicator-shadow-heartbeat.json\\\",\\\"utf8\\\"));console.log(Math.round((Date.now()-new Date(h.at).getTime())/1000))\" 2>/dev/null); [ -n \"$A\" ] || { echo unreadable; exit 0; }; [ \"$A\" -le 120 ] && echo fresh:${A}s || echo stale:${A}s'");
+  addResult('VPS Indicator Shadow Heartbeat', indicatorHeartbeat.ok && /^fresh:/i.test(indicatorHeartbeat.stdout), indicatorHeartbeat.stdout || indicatorHeartbeat.stderr || 'no heartbeat output');
+
+  const indicatorStates = runRemote("bash -lc 'cd /home/ubuntu/trading-bot && for f in vwap-trend-state.json pivot-trend-state.json ema-trend-state.json smma-trend-state.json indicator-shadow-history.json; do test -f \"$f\" || echo \"$f\"; done'");
+  addResult('VPS Indicator Shadow State Files', indicatorStates.ok && !indicatorStates.stdout, indicatorStates.ok ? (indicatorStates.stdout ? `missing: ${indicatorStates.stdout.replace(/\s+/g, ',')}` : 'all indicator shadow state files present') : (indicatorStates.stderr || 'state file check failed'));
+
   const http = runRemote("curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:4000/api/stats");
   addResult('VPS API /api/stats', http.ok && http.stdout === '200', http.stdout || http.stderr || 'no output');
 

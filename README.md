@@ -45,7 +45,7 @@ It adds tooling so future organization can happen in controlled batches.
 
 ### ✅ One-command restore (if dashboard breaks)
 ```powershell
-.\plink.exe -batch -pw "Uvi@janya123Jas" root@139.59.18.52 "cp '/root/zeroscreen/dist/server.js.template-live-dashboard' /root/zeroscreen/dist/server.js && pm2 restart zeroscreen --update-env && echo restored"
+.\plink.exe -batch -pw "<VPS_PASSWORD>" root@139.59.18.52 "cp '/root/zeroscreen/dist/server.js.template-live-dashboard' /root/zeroscreen/dist/server.js && pm2 restart zeroscreen --update-env && echo restored"
 ```
 
 ---
@@ -64,17 +64,17 @@ It adds tooling so future organization can happen in controlled batches.
 ## Deploy Commands
 ```powershell
 # Upload file to VPS
-.\pscp.exe -pw "Uvi@janya123Jas" <localfile> root@139.59.18.52:/path/on/vps
+.\pscp.exe -pw "<VPS_PASSWORD>" <localfile> root@139.59.18.52:/path/on/vps
 
 # Run command on VPS
-.\plink.exe -batch -pw "Uvi@janya123Jas" root@139.59.18.52 "<command>"
+.\plink.exe -batch -pw "<VPS_PASSWORD>" root@139.59.18.52 "<command>"
 
 # Restart ZeroScreen (NO npx tsc!)
-.\plink.exe -batch -pw "Uvi@janya123Jas" root@139.59.18.52 "pm2 restart zeroscreen --update-env"
+.\plink.exe -batch -pw "<VPS_PASSWORD>" root@139.59.18.52 "pm2 restart zeroscreen --update-env"
 
 # Restart trading bot (tsc required here)
-.\plink.exe -batch -pw "Uvi@janya123Jas" root@139.59.18.52 "cd /home/ubuntu/trading-bot && npx tsc && pm2 restart amina-100-variant-b --update-env"
+.\plink.exe -batch -pw "<VPS_PASSWORD>" root@139.59.18.52 "cd /home/ubuntu/trading-bot && npx tsc && pm2 restart amina-100-variant-b --update-env"
 
 # Check bot logs
-.\plink.exe -batch -pw "Uvi@janya123Jas" root@139.59.18.52 "pm2 logs amina-100-variant-b --nostream --lines 20 2>&1"
+.\plink.exe -batch -pw "<VPS_PASSWORD>" root@139.59.18.52 "pm2 logs amina-100-variant-b --nostream --lines 20 2>&1"
 ```

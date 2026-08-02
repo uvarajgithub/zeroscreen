@@ -7,6 +7,26 @@ function log(event: string, details: Record<string, any> = {}) {
   console.log(JSON.stringify({ time: ist, event, ...details }));
 }
 
+function wholeOrderPrice(value: any, side: "BUY" | "SELL") {
+  const n = Number(value);
+  if (!Number.isFinite(n) || n <= 0) return value;
+  return side === "BUY" ? Math.ceil(n) : Math.floor(n);
+}
+
+function kiteOrder(payload: Record<string, any>) {
+  const side = String(payload.transaction_type || "BUY").toUpperCase() === "SELL" ? "SELL" : "BUY";
+  const next = { ...payload };
+  for (const key of ["price", "trigger_price"]) {
+    if (next[key] == null) continue;
+    const before = next[key];
+    next[key] = wholeOrderPrice(before, side);
+    if (Number(before) !== Number(next[key])) {
+      log("ORDER_PRICE_ROUNDED", { side, field: key, before, after: next[key], symbol: next.tradingsymbol });
+    }
+  }
+  return next;
+}
+
 // process.env.MODE takes precedence (allows test-paper-trade.ts to force PAPER)
 const RAW_MODE = (process.env.MODE ?? config.mode ?? "LIVE").toUpperCase();
 const IS_SHADOW_MODE = RAW_MODE === "PAPER" || RAW_MODE === "LIVE_SHADOW";
@@ -158,14 +178,14 @@ export async function placeTrade(symbol: string, price: number, qty: number = co
   let order = null;
   try {
     // MARKET order (direction = BUY for long options/futures, SELL for futures short)
-    const buyResp: any = await kite.placeOrder("regular", {
+    const buyResp: any = await kite.placeOrder("regular", kiteOrder({
       exchange: "NFO",
       tradingsymbol: symbol,
       transaction_type: direction,
       quantity: qty,
       order_type: "MARKET",
       product: "MIS"
-    });
+    }));
     buyOrderId = buyResp.order_id;
     console.log(`${direction} order placed: ${buyOrderId}`);
     // Check for rejection — retry once after 2s
@@ -174,14 +194,14 @@ export async function placeTrade(symbol: string, price: number, qty: number = co
     if (order?.status === "REJECTED") {
       console.warn(`${direction} order rejected (${order.status_message}), retrying in 2s...`);
       await new Promise(r => setTimeout(r, 2000));
-      const retryResp: any = await kite.placeOrder("regular", {
+      const retryResp: any = await kite.placeOrder("regular", kiteOrder({
         exchange: "NFO",
         tradingsymbol: symbol,
         transaction_type: direction,
         quantity: qty,
         order_type: "MARKET",
         product: "MIS"
-      });
+      }));
       buyOrderId = retryResp.order_id;
       const retryOrders: any[] = await kite.getOrders();
       order = retryOrders.find(o => o.order_id === buyOrderId);
@@ -229,28 +249,28 @@ export async function exitTrade(symbol: string, qty: number = config.quantity, d
   }
 
   console.log(`Exiting trade: ${symbol} direction=${direction}`);
-  const resp: any = await kite.placeOrder("regular", {
+  const resp: any = await kite.placeOrder("regular", kiteOrder({
     exchange: "NFO",
     tradingsymbol: symbol,
     transaction_type: direction,
     quantity: qty,
     order_type: "MARKET",
     product: "MIS"
-  });
+  }));
   // Check for rejection — retry once after 2s
   let exitOrders: any[] = await kite.getOrders();
   let exitOrder = exitOrders.find(o => o.order_id === resp.order_id);
   if (exitOrder?.status === "REJECTED") {
     console.warn(`EXIT(${direction}) order rejected (${exitOrder.status_message}), retrying in 2s...`);
     await new Promise(r => setTimeout(r, 2000));
-    const retryResp: any = await kite.placeOrder("regular", {
+    const retryResp: any = await kite.placeOrder("regular", kiteOrder({
       exchange: "NFO",
       tradingsymbol: symbol,
       transaction_type: direction,
       quantity: qty,
       order_type: "MARKET",
       product: "MIS"
-    });
+    }));
     const retryOrders: any[] = await kite.getOrders();
     exitOrder = retryOrders.find(o => o.order_id === retryResp.order_id);
     if (exitOrder?.status === "REJECTED") {
@@ -304,14 +324,14 @@ export async function squareOffAll() {
     const positions = await kite.getPositions();
     for (const pos of positions.net) {
       if (pos.quantity !== 0) {
-        await kite.placeOrder("regular", {
+        await kite.placeOrder("regular", kiteOrder({
           exchange: pos.exchange as any,
           tradingsymbol: pos.tradingsymbol,
           transaction_type: pos.quantity > 0 ? "SELL" : "BUY",
           quantity: Math.abs(pos.quantity),
           order_type: "MARKET",
           product: pos.product as any
-        });
+        }));
         console.log(`Square-off: ${pos.tradingsymbol} qty=${pos.quantity}`);
       }
     }

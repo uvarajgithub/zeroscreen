@@ -4,7 +4,7 @@
 // Retries up to 3 times on failure. Sends Telegram on success AND failure.
 //
 // SETUP (one time):
-//   1. Fill in your credentials in the CONFIG section below
+//   1. Put ZERODHA_USER_ID, ZERODHA_PASSWORD and ZERODHA_TOTP_SECRET in the protected .env file
 //   2. node /home/ubuntu/trading-bot/auto_token.js   ← test manually first
 //   3. crontab -e  → confirm:  0 2 * * 1-5 node /home/ubuntu/trading-bot/auto_token.js >> /home/ubuntu/trading-bot/logs/auto_token.log 2>&1
 
@@ -16,13 +16,33 @@ const crypto = require('crypto');
 require('dotenv').config({ path: '/home/ubuntu/trading-bot/.env' });
 
 // ── CONFIG ────────────────────────────────────────────────────────────────────
-const ZERODHA_USER_ID  = 'TR4758';
-const ZERODHA_PASSWORD = 'Uvi@janya123456';
-const TOTP_SECRET      = '5WPWF3RZSEHY3B5KM2VVEHTU3JQWBXNS';
-const BOT_PM2_NAME     = 'amina-100-variant-b';   // correct PM2 process name
+const ZERODHA_USER_ID  = process.env.ZERODHA_USER_ID;
+const ZERODHA_PASSWORD = process.env.ZERODHA_PASSWORD;
+const TOTP_SECRET      = process.env.ZERODHA_TOTP_SECRET;
+const BOT_PM2_NAMES = String(process.env.TRADING_BOT_PM2_NAMES || 'trading-bot,amina-100-variant-b')
+  .split(',').map((name) => name.trim()).filter(Boolean);
 // ─────────────────────────────────────────────────────────────────────────────
 
 const API_KEY = process.env.API_KEY;
+
+function sanitizeAuthError(value) {
+  return String(value || 'unknown error')
+    .replace(/([?&](?:request_token|access_token|token|checksum)=)[^&\s]+/gi, '$1[REDACTED]')
+    .replace(/((?:request|access)[_-]?token\s*(?:=|:)?\s*)[A-Za-z0-9._~-]+/gi, '$1[REDACTED]')
+    .replace(/(submitting\s+totp\s*:\s*)\d{6,8}/gi, '$1[REDACTED]')
+    .replace(/\b\d{6}\b/g, '[REDACTED]')
+    .replace(/\s+/g, ' ')
+    .slice(0, 300);
+}
+
+function requireAuthConfig() {
+  const missing = [
+    ['API_KEY', API_KEY], ['API_SECRET', process.env.API_SECRET],
+    ['ZERODHA_USER_ID', ZERODHA_USER_ID], ['ZERODHA_PASSWORD', ZERODHA_PASSWORD],
+    ['ZERODHA_TOTP_SECRET', TOTP_SECRET],
+  ].filter(([, value]) => !String(value || '').trim()).map(([name]) => name);
+  if (missing.length) throw new Error(`Missing required authentication configuration: ${missing.join(', ')}`);
+}
 
 // -- Telegram notification helper --
 function sendTelegram(msg) {
@@ -153,9 +173,9 @@ function exchangeToken(requestToken, apiKey, apiSecret) {
           if (j.status === 'success' && j.data && j.data.access_token) {
             resolve(j.data.access_token);
           } else {
-            reject(new Error('Token exchange failed: ' + d.slice(0, 200)));
+            reject(new Error(`Token exchange failed with HTTP ${res.statusCode || 'unknown'} and broker status ${j.status || 'unknown'}`));
           }
-        } catch(e) { reject(new Error('Token exchange parse error: ' + d.slice(0, 200))); }
+        } catch(e) { reject(new Error(`Token exchange returned an unreadable response (HTTP ${res.statusCode || 'unknown'})`)); }
       });
     });
     req.on('error', reject);
@@ -172,9 +192,16 @@ function updateEnvFile(envPath, accessToken) {
   } else {
     content += `\nACCESS_TOKEN=${accessToken}\n`;
   }
-  fs.writeFileSync(envPath, content, 'utf-8');
+  const tmp = `${envPath}.tmp`;
+  fs.writeFileSync(tmp, content, { encoding: 'utf-8', mode: 0o600 });
+  fs.renameSync(tmp, envPath);
+  try { fs.chmodSync(envPath, 0o600); } catch(_) {}
   // Also write access_token.txt — used by the 9:10 AM health check to confirm token is fresh today
-  try { fs.writeFileSync('/home/ubuntu/trading-bot/access_token.txt', accessToken); } catch(_) {}
+  try {
+    const tokenPath = '/home/ubuntu/trading-bot/access_token.txt';
+    fs.writeFileSync(tokenPath, accessToken, { encoding: 'utf8', mode: 0o600 });
+    fs.chmodSync(tokenPath, 0o600);
+  } catch(_) {}
   console.log('[auto_token] .env updated with new ACCESS_TOKEN');
 }
 
@@ -218,15 +245,15 @@ async function getRequestToken() {
   cookies = mergeCookies(cookies, r1.headers);
 
   let j1;
-  try { j1 = JSON.parse(r1.body); } catch(e) { throw new Error('Login parse error: ' + r1.body.slice(0, 200)); }
-  if (j1.status !== 'success') throw new Error('Login failed: ' + r1.body.slice(0, 200));
+  try { j1 = JSON.parse(r1.body); } catch(e) { throw new Error(`Login returned an unreadable response (HTTP ${r1.status || 'unknown'})`); }
+  if (j1.status !== 'success') throw new Error(`Login failed (HTTP ${r1.status || 'unknown'}, status ${j1.status || 'unknown'})`);
 
   const requestId = j1.data.request_id;
-  console.log('[auto_token] Login OK — request_id:', requestId);
+  console.log('[auto_token] Login accepted');
 
   // Step 3: POST TOTP
   const otp = generateTOTP(TOTP_SECRET);
-  console.log('[auto_token] Step 3: Submitting TOTP:', otp);
+  console.log('[auto_token] Step 3: Submitting TOTP');
   const r2 = await httpsPost('/api/twofa', {
     user_id:     ZERODHA_USER_ID,
     request_id:  requestId,
@@ -270,22 +297,23 @@ async function getRequestToken() {
         const m6 = r4.body.match(/request_token=([A-Za-z0-9]+)/);
         if (m6) requestToken = m6[1];
       }
-      if (!requestToken) throw new Error(`No request_token found.\nLoc: ${loc4}\nBody: ${r4.body.slice(0,300)}`);
+      if (!requestToken) throw new Error(`No request_token found after connect/finish (HTTP ${r4.status || 'unknown'})`);
     } else if (!requestToken) {
-      throw new Error(`No request_token found.\nTOTP status: ${r2.status}\nLoc: ${loc3}\nBody: ${r3.body.slice(0,200)}`);
+      throw new Error(`No request_token found after TOTP/OAuth redirect (TOTP HTTP ${r2.status || 'unknown'}, OAuth HTTP ${r3.status || 'unknown'})`);
     }
   }
-  console.log('[auto_token] Got request_token:', requestToken.slice(0, 12) + '...');
+  console.log('[auto_token] Request token received');
   return requestToken;
 }
 
 // ── Main flow with retry ───────────────────────────────────────────────────────
 const ENV_PATH   = '/home/ubuntu/trading-bot/.env';
 const API_SECRET = process.env.API_SECRET;
-const MAX_RETRIES = 3;
-const RETRY_DELAY_MS = 3 * 60 * 1000;  // 3 minutes between retries
+const MAX_RETRIES = Math.max(1, Math.floor(Number(process.env.AUTO_TOKEN_MAX_RETRIES || 3)));
+const RETRY_DELAY_MS = Math.max(1000, Math.floor(Number(process.env.AUTO_TOKEN_RETRY_DELAY_MS || 3 * 60 * 1000)));
 
 async function main() {
+  requireAuthConfig();
   const now = new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' });
   console.log(`\n[auto_token] Starting at ${now} IST`);
 
@@ -293,7 +321,7 @@ async function main() {
 
   for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
     if (attempt > 1) {
-      console.log(`\n[auto_token] Retry ${attempt}/${MAX_RETRIES} in 3 minutes...`);
+      console.log(`\n[auto_token] Retry ${attempt}/${MAX_RETRIES} in ${Math.round(RETRY_DELAY_MS / 1000)} seconds...`);
       await new Promise(r => setTimeout(r, RETRY_DELAY_MS));
     }
     console.log(`\n[auto_token] === Attempt ${attempt}/${MAX_RETRIES} ===`);
@@ -305,7 +333,7 @@ async function main() {
       // Step B: Exchange request_token → access_token directly (no token-server dependency)
       console.log('[auto_token] Step 4: Exchanging for access_token...');
       const accessToken = await exchangeToken(requestToken, API_KEY, API_SECRET);
-      console.log('[auto_token] Got access_token:', accessToken.slice(0, 8) + '...');
+      console.log('[auto_token] Access token received');
 
       // Step C: Write directly to .env
       console.log('[auto_token] Step 5: Updating .env...');
@@ -329,8 +357,17 @@ async function main() {
 
       // Step E: Restart bot with new token
       console.log('[auto_token] Step 6: Restarting bot...');
-      execSync(`pm2 restart ${BOT_PM2_NAME} --update-env`, { stdio: 'pipe' });
-      console.log(`[auto_token] ✔ ${BOT_PM2_NAME} restarted`);
+      let restarted = '';
+      for (const processName of BOT_PM2_NAMES) {
+        try {
+          execSync(`pm2 describe ${processName}`, { stdio: 'pipe' });
+          execSync(`pm2 restart ${processName} --update-env`, { stdio: 'pipe' });
+          restarted = processName;
+          break;
+        } catch (_) {}
+      }
+      if (!restarted) throw new Error(`No configured trading bot PM2 process found: ${BOT_PM2_NAMES.join(', ')}`);
+      console.log(`[auto_token] ✔ ${restarted} restarted`);
 
       // Step F: Wait 10 seconds then verify token actually works
       console.log('[auto_token] Step 7: Verifying token...');
@@ -346,22 +383,24 @@ async function main() {
 
     } catch (err) {
       lastError = err;
-      console.error(`[auto_token] Attempt ${attempt} FAILED: ${err.message}`);
+      const safeError = sanitizeAuthError(err.message);
+      console.error(`[auto_token] Attempt ${attempt} FAILED: ${safeError}`);
       if (attempt < MAX_RETRIES) {
-        sendTelegram(`⚠️ Token refresh attempt ${attempt}/${MAX_RETRIES} failed: ${err.message.slice(0, 150)}\nRetrying in 3 min...`);
+        sendTelegram(`⚠️ Token refresh attempt ${attempt}/${MAX_RETRIES} failed: ${safeError.slice(0, 150)}\nRetrying in 3 min...`);
       }
     }
   }
 
   // All retries exhausted
-  const failMsg = `🚨 TOKEN REFRESH FAILED after ${MAX_RETRIES} attempts!\n${lastError ? lastError.message.slice(0, 200) : 'unknown'}\n\nBot will miss today's trade! Login manually NOW:\nhttp://139.59.18.52:3001/login`;
+  const failMsg = `🚨 TOKEN REFRESH FAILED after ${MAX_RETRIES} attempts!\n${lastError ? sanitizeAuthError(lastError.message).slice(0, 200) : 'unknown'}\n\nBot will miss today's trade! Login manually NOW:\nhttp://139.59.18.52:3001/login`;
   console.error('[auto_token] ' + failMsg);
   sendTelegram(failMsg);
   setTimeout(() => process.exit(1), 2000);
 }
 
 main().catch(e => {
-  console.error('[auto_token] FATAL:', e.message);
-  sendTelegram(`🚨 TOKEN REFRESH FATAL ERROR: ${e.message.slice(0, 200)}\n\nLogin manually: http://139.59.18.52:3001/login`);
+  const safeError = sanitizeAuthError(e.message);
+  console.error('[auto_token] FATAL:', safeError);
+  sendTelegram(`🚨 TOKEN REFRESH FATAL ERROR: ${safeError.slice(0, 200)}\n\nLogin manually: http://139.59.18.52:3001/login`);
   setTimeout(() => process.exit(1), 2000);
 });

@@ -248,12 +248,12 @@ let bhPrevCandle = null;
 let bhCandleNum = 0;
 const TT1030_INDEX_TOKEN = 260105;
 const TT1030_BOTH_SIDE_CLOSE_BUFFER = 25;
-const TT1030_EMPTY = () => ({ day: '', inTrade: false, dir: null, entry: 0, entryTime: '', sl: 0, optSym: '', optEntryPrem: 0, optLivePrem: 0, refHigh: 0, refLow: 0, tenHigh: 0, tenLow: 0, tenTime: '', trades: 0, wins: 0, losses: 0, dayPts: 0, dayRs: 0, log: [], candleLog: [], seen: new Set(), trendMode: false, trendBreakPts: 0, trendBodyPct: 0, liveMode: 'SHADOW', futSym: '', futEntryPrice: 0, futLivePrice: 0, liveQty: 0, entryOrderId: '', exitOrderId: '' });
+const TT1030_EMPTY = () => ({ day: '', inTrade: false, dir: null, entry: 0, entryTime: '', sl: 0, optSym: '', optEntryPrem: 0, optLivePrem: 0, refHigh: 0, refLow: 0, tenHigh: 0, tenLow: 0, tenTime: '', trades: 0, wins: 0, losses: 0, dayPts: 0, dayRs: 0, log: [], candleLog: [], seen: new Set(), trendMode: false, trendBreakPts: 0, trendBodyPct: 0, liveMode: 'SHADOW', futSym: '', futEntryPrice: 0, futLivePrice: 0, liveQty: 0, entryOrderId: '', exitOrderId: '', stopOrderId: '', stopTriggerPrice: 0 });
 let tt1030 = TT1030_EMPTY();
+let tt1030Shadow = TT1030_EMPTY();
+let tt1030ExecutionContext = "LIVE";
 const TT1000_EMPTY = () => ({ day: '', inTrade: false, dir: null, entry: 0, entryTime: '', sl: 0, optSym: '', optEntryPrem: 0, optLivePrem: 0, refHigh: 0, refLow: 0, rangeHigh: 0, rangeLow: 0, rangeTime: '', trades: 0, wins: 0, losses: 0, dayPts: 0, dayRs: 0, optDayPts: 0, optDayRs: 0, log: [], candleLog: [], seen: new Set() });
 let tt1000 = TT1000_EMPTY();
-const TT0945_EMPTY = () => ({ day: '', inTrade: false, dir: null, entry: 0, entryTime: '', sl: 0, optSym: '', optEntryPrem: 0, optLivePrem: 0, refHigh: 0, refLow: 0, rangeHigh: 0, rangeLow: 0, rangeTime: '', trades: 0, wins: 0, losses: 0, optWins: 0, optLosses: 0, dayPts: 0, dayRs: 0, optDayPts: 0, optDayRs: 0, log: [], candleLog: [], seen: new Set() });
-let tt0945 = TT0945_EMPTY();
 const HYBRID_EMPTY = () => ({ day: '', phase: 'SCANNING', dir: null, entry: 0, entryIdx: -1, entryTime: '', sl: 0, peak: 0, optSym: '', optEntryPrem: 0, optLivePrem: 0, optDayPts: 0, optDayRs: 0, t1Pts: 0, rePts: 0, dayPts: 0, dayRs: 0, trades: 0, wins: 0, losses: 0, log: [], candleLog: [], seen: new Set() });
 let hybridShadow = HYBRID_EMPTY();
 const NORMAL_BREAKOUT_EMPTY = () => ({ day: '', phase: 'WAIT_REF', dir: null, entry: 0, entryTime: '', sl: 0, peak: 0, refBodyHigh: 0, refBodyLow: 0, refTime: '', optSym: '', optEntryPrem: 0, optLivePrem: 0, optDayPts: 0, optDayRs: 0, dayPts: 0, dayRs: 0, trades: 0, wins: 0, losses: 0, log: [], candleLog: [], seen: new Set() });
@@ -1464,26 +1464,28 @@ const HR_SL_PTS_LOCAL = 100;
 const DRISHTI_TRAIL_ACTIVATE_PTS = 300; // Trail starts only after +300 pts to avoid chop exits
 const DRISHTI_TRAIL_GAP = 10; // Once +300 is reached, lock peak - 10
 const DRISHTI_SL_PTS = 100; // Hard SL ? matches SL_PTS in drishti_strategy.ts
-const REAL_DAILY_LOSS_CAP_RS = Number.POSITIVE_INFINITY; // disabled: no real daily loss stop
+const REAL_DAILY_LOSS_CAP_RS = Number(config_1.config.risk?.maxDailyLossRs ?? 6000);
 const REAL_FUTURES_SL_PTS = Number(config_1.config.risk?.maxFuturesLossPts ?? 150);
 const REAL_OPTIONS_SL_PTS = Number(config_1.config.risk?.maxOptionsLossPts ?? 150);
 const REAL_EXIT_TOLERANCE_PTS = Number(config_1.config.risk?.maxAllowedSlippagePts ?? 50);
 // Stop new entries before the hard daily cap so slippage/fast moves do not push the day far past maxDailyLossRs.
 const REAL_ENTRY_BLOCK_RS = Number(config_1.config.risk?.realEntryBlockRs ?? Math.round(REAL_DAILY_LOSS_CAP_RS * 0.75));
-const REAL_INTRADAY_EXIT_RS = Number.POSITIVE_INFINITY; // disabled: no real intraday daily-loss exit
+const REAL_INTRADAY_EXIT_RS = Number(config_1.config.risk?.realIntradayExitRs ?? REAL_DAILY_LOSS_CAP_RS);
 const DRISHTI_FUTURES_ONLY_REAL_TRACKING = true;
 const DRISHTI_TRACK_OPTIONS_PREMIUM = true; // tracking only; DRISHTI still executes futures, not options
 const DRISHTI_REAL_FUTURES_LOCK10 = true; // live risk/trail uses real futures LTP basis
 const DRISHTI_MAX_CONSECUTIVE_LOSSES = 2;
 const DRISHTI_MAX_TRADES_PER_DAY = 2; // Entry + one re-entry only
 const DRISHTI_MAX_REENTRIES = 1;
+const HYBRID_C2_MIN_BODY_PTS = 70;
+const HYBRID_C2_MIN_BREAK_PTS = 25;
 function combinedRealRs() {
     return DRISHTI_FUTURES_ONLY_REAL_TRACKING
         ? Math.round(dailyRealRs || 0)
         : Math.round((dailyRealRs || 0) + (optDailyRs || 0));
 }
-function realLossLimitHit() { return false; } // disabled: no daily real-loss stop; per-trade SL/trail remains active
-function realEntryBlocked() { return false; } // disabled: do not block entries from daily real P&L
+function realLossLimitHit() { return Number.isFinite(REAL_DAILY_LOSS_CAP_RS) && combinedRealRs() <= -Math.abs(REAL_DAILY_LOSS_CAP_RS); }
+function realEntryBlocked() { return Number.isFinite(REAL_ENTRY_BLOCK_RS) && combinedRealRs() <= -Math.abs(REAL_ENTRY_BLOCK_RS); }
 function appendRealPremiumAudit(row) {
     try {
         const rec = { at: new Date().toISOString(), strategy: "DRISHTI_V1", qty: config_1.config.quantity, ...row };
@@ -1801,18 +1803,31 @@ const TT1030_CANDLE_LOG_FILE = 'tt1030-candle-log.json';
 const TT1030_STATE_FILE = 'tt1030-state.json';
 const TT1030_LIVE_AUDIT_FILE = 'tt1030-live-audit.jsonl';
 const TT1030_LIVE_AUDIT_STATE_FILE = 'tt1030-live-audit-state.json';
+const TT1030_SHADOW_CANDLE_LOG_FILE = 'tt1030-shadow-candle-log.json';
+const TT1030_SHADOW_STATE_FILE = 'tt1030-shadow-state.json';
 const TT1030_MAX_SIGNAL_DELAY_MS = 2 * 60 * 1000;
 const TT1030_MAX_ENTRY_SLIPPAGE_PTS = Number(config_1.config.risk?.maxAllowedSlippagePts ?? 50);
 const TT1030_WARN_RISK_PTS = Number(config_1.config.risk?.maxFuturesLossPts ?? 150);
+const TT1030_DAILY_LOSS_CAP_RS = Number(config_1.config.risk?.maxDailyLossRs ?? 6000);
 const TT1030_TREND_BREAK_PTS = Number(config_1.config.risk?.tt1030TrendBreakPts ?? 25);
 const TT1030_TREND_BODY_PCT = Number(config_1.config.risk?.tt1030TrendBodyPct ?? 30);
 let tt1030AuditIssues = [];
 let tt1030LastSignalKey = "";
+let tt1030ShadowAuditIssues = [];
+let tt1030ShadowLastSignalKey = "";
 let tt1030RunInFlight = false;
 let tt1030ReconciliationBlockedReason = "";
 const STRATEGY_MONTHLY_HISTORY_FILE = 'strategy-monthly-history.json';
 function tt1030FuturesMode() {
+    if (tt1030ExecutionContext === "SHADOW")
+        return "SHADOW";
     return String(process.env.TT1030_FUTURES_MODE || "SHADOW").toUpperCase() === "LIVE" ? "LIVE" : "SHADOW";
+}
+function tt1030StateFile() {
+    return tt1030ExecutionContext === "SHADOW" ? TT1030_SHADOW_STATE_FILE : TT1030_STATE_FILE;
+}
+function tt1030CandleLogFile() {
+    return tt1030ExecutionContext === "SHADOW" ? TT1030_SHADOW_CANDLE_LOG_FILE : TT1030_CANDLE_LOG_FILE;
 }
 function tt1030IsLiveFutures() {
     return tt1030FuturesMode() === "LIVE";
@@ -1821,16 +1836,51 @@ async function tt1030BrokerPosition(symbol) {
     const positions = await kite.getPositions();
     return (positions?.net || []).find(p => String(p.tradingsymbol || "") === String(symbol || "") && String(p.exchange || "") === "NFO") || null;
 }
-async function tt1030WaitForBrokerOrder(orderId) {
+function tt1030ExpectedSignedQty(transaction, qty) {
+    return String(transaction).toUpperCase() === "BUY" ? Math.abs(Number(qty || 0)) : -Math.abs(Number(qty || 0));
+}
+async function tt1030WaitForBrokerOrder(orderId, context = {}) {
     let latest = null;
-    for (let i = 0; i < 10; i++) {
+    for (let i = 0; i < 14; i++) {
         await new Promise(r => setTimeout(r, i === 0 ? 500 : 1500));
         const orders = await kite.getOrders();
         latest = orders.find(o => o.order_id === orderId) || latest;
         if (latest?.status === "COMPLETE")
             return latest;
-        if (latest?.status === "REJECTED" || latest?.status === "CANCELLED")
+        if ((latest?.status === "REJECTED" || latest?.status === "CANCELLED") && Number(latest?.filled_quantity || 0) <= 0)
             throw new Error(`Order ${orderId} ${latest.status}: ${latest.status_message || "No broker reason"}`);
+    }
+    const openStatuses = new Set(["OPEN", "TRIGGER PENDING", "VALIDATION PENDING", "PUT ORDER REQ RECEIVED", "MODIFY VALIDATION PENDING", "MODIFY PENDING"]);
+    if (openStatuses.has(String(latest?.status || "").toUpperCase())) {
+        try {
+            await kite.cancelOrder("regular", orderId);
+            appendTT1030Audit("ambiguous_order_cancel_requested", { orderId, status: latest?.status || "UNKNOWN", symbol: context.symbol || null }, "warn");
+        }
+        catch (e) {
+            appendTT1030Audit("ambiguous_order_cancel_failed", { orderId, status: latest?.status || "UNKNOWN", error: e instanceof Error ? e.message : String(e) }, "warn");
+        }
+        await new Promise(r => setTimeout(r, 1500));
+    }
+    const reconciledOrders = await kite.getOrders();
+    latest = reconciledOrders.find(o => o.order_id === orderId) || latest;
+    const brokerPosition = context.symbol ? await tt1030BrokerPosition(context.symbol) : null;
+    const beforeQty = Number(context.beforeQty || 0);
+    const afterQty = Number(brokerPosition?.quantity || 0);
+    const expectedDelta = tt1030ExpectedSignedQty(context.transaction, context.requestedQty);
+    const actualDelta = afterQty - beforeQty;
+    const reconciledFill = expectedDelta > 0 ? Math.max(0, actualDelta) : Math.max(0, -actualDelta);
+    const filledQty = Math.max(Number(latest?.filled_quantity || 0), reconciledFill);
+    if (filledQty > 0) {
+        const reconciled = {
+            ...(latest || {}),
+            order_id: orderId,
+            status: "COMPLETE",
+            filled_quantity: filledQty,
+            average_price: Number(latest?.average_price || brokerPosition?.average_price || brokerPosition?.last_price || 0),
+            reconciled: true,
+        };
+        appendTT1030Audit("ambiguous_order_reconciled", { orderId, symbol: context.symbol, beforeQty, afterQty, filledQty, brokerStatus: latest?.status || "UNKNOWN" }, "warn");
+        return reconciled;
     }
     const lastStatus = latest?.status || "UNKNOWN";
     const err = new Error(`Order ${orderId} not confirmed COMPLETE after ~15s (last broker status: ${lastStatus}). The order may still fill on the exchange after this check gave up — verify the Zerodha position manually before assuming no trade happened.`);
@@ -1966,6 +2016,8 @@ CHECK ZERODHA POSITION MANUALLY — remaining quantity may not be tracked correc
     return order;
 }
 function appendTT1030Audit(event, details = {}, severity = 'info') {
+    if (tt1030ExecutionContext === "SHADOW")
+        return;
     try {
         const rec = {
             ts: new Date().toISOString(),
@@ -2080,7 +2132,7 @@ function updateTT1030MonthlyHistory() {
     try {
         const qty = Number(config_1.config.quantity || 30);
         const optPts = tt1030.log.reduce((s, t) => s + ((t.premIn && t.premOut) ? Number(t.premOut - t.premIn) : 0), 0);
-        persistStrategyMonthlyHistory('TEN_THIRTY', tt1030.day || tt1030ISTParts().ymd, {
+        persistStrategyMonthlyHistory(tt1030ExecutionContext === "SHADOW" ? 'TEN_THIRTY' : 'TEN_THIRTY_LIVE', tt1030.day || tt1030ISTParts().ymd, {
             summary: {
                 futuresPts: parseFloat((tt1030.dayPts || 0).toFixed(1)),
                 futuresRs: Math.round(tt1030.dayRs || 0),
@@ -2105,7 +2157,7 @@ function rebuildTT1030SeenFromLog() {
 }
 function persistTT1030State() {
     try {
-        fs_1.default.writeFileSync(TT1030_STATE_FILE, JSON.stringify({
+        fs_1.default.writeFileSync(tt1030StateFile(), JSON.stringify({
             date: tt1030.day || tt1030ISTParts().ymd,
             savedAt: new Date().toISOString(),
             inTrade: tt1030.inTrade,
@@ -2147,7 +2199,7 @@ function persistTT1030State() {
 }
 function loadTT1030State(day) {
     try {
-        const saved = JSON.parse(fs_1.default.readFileSync(TT1030_STATE_FILE, 'utf-8'));
+        const saved = JSON.parse(fs_1.default.readFileSync(tt1030StateFile(), 'utf-8'));
         if (saved.date !== day)
             return null;
         return saved;
@@ -2275,7 +2327,7 @@ async function reconcileTT1030LiveStateOnStartup() {
 }
 function loadTT1030CandleLog(day) {
     try {
-        const saved = JSON.parse(fs_1.default.readFileSync(TT1030_CANDLE_LOG_FILE, 'utf-8'));
+        const saved = JSON.parse(fs_1.default.readFileSync(tt1030CandleLogFile(), 'utf-8'));
         if (saved.date === day && Array.isArray(saved.log))
             return saved.log;
     }
@@ -2284,7 +2336,7 @@ function loadTT1030CandleLog(day) {
 }
 function persistTT1030CandleLog() {
     try {
-        fs_1.default.writeFileSync(TT1030_CANDLE_LOG_FILE, JSON.stringify({ date: tt1030.day || tt1030ISTParts().ymd, log: tt1030.candleLog }, null, 2));
+        fs_1.default.writeFileSync(tt1030CandleLogFile(), JSON.stringify({ date: tt1030.day || tt1030ISTParts().ymd, log: tt1030.candleLog }, null, 2));
         persistTT1030State();
         updateTT1030MonthlyHistory();
     }
@@ -2306,14 +2358,17 @@ function tt1030ResetIfNewDay() {
     const today = tt1030ISTParts().ymd;
     if (tt1030.day !== today) {
         const savedCandleLog = loadTT1030CandleLog(today);
-        hybridShadow = HYBRID_EMPTY();
-        hybridShadow.day = tt1030ISTParts().ymd;
+        if (tt1030ExecutionContext !== "SHADOW") {
+            hybridShadow = HYBRID_EMPTY();
+            hybridShadow.day = tt1030ISTParts().ymd;
+        }
         tt1030AuditIssues = [];
         restoreTT1030State(today, savedCandleLog);
         appendTT1030Audit("day_reset", { savedCandleRows: savedCandleLog.length, restoredTrades: tt1030.trades, restoredInTrade: tt1030.inTrade });
         if (!savedCandleLog.length)
             persistTT1030CandleLog();
-        persistHybridCandleLog();
+        if (tt1030ExecutionContext !== "SHADOW")
+            persistHybridCandleLog();
     }
 }
 let todayIndex15mCache = { day: "", fetchedAt: 0, candles: [] };
@@ -2456,7 +2511,7 @@ CHECK ZERODHA POSITION MANUALLY`).catch(() => { });
     if (row.premIn && !row.premOut) {
         tt1030AuditIssue("EXIT_PREMIUM_MISSING", "option LTP was not available at TT1030 exit", { symbol: row.symbol, reason }, "warn");
     }
-    if (tt1030IsFreshAlertTime(row.time))
+    if (tt1030ExecutionContext !== "SHADOW" && tt1030IsFreshAlertTime(row.time))
         notifyTT1030Telegram(`EXIT ${row.dir} | Mode: ${tt1030RuntimeMode()}
 Reason: ${tt1030AlertText(reason)}
 Entry: ${row.entry} | Exit: ${row.exit}
@@ -2567,7 +2622,7 @@ Error: ${msg}`).catch(() => { });
         liveQty: tt1030.liveQty || null,
     });
     log("TT1030_ENTRY", { dir, entry: entry.toFixed(1), sl: sl.toFixed(1), optSym, optPrem, trendMode: !!tt1030.trendMode, trendBreakPts: (tt1030.trendBreakPts || 0).toFixed(1), trendBodyPct: (tt1030.trendBodyPct || 0).toFixed(1), trailAfterPts: 0 });
-    if (tt1030IsFreshAlertTime(tt1030.entryTime))
+    if (tt1030ExecutionContext !== "SHADOW" && tt1030IsFreshAlertTime(tt1030.entryTime))
         notifyTT1030Telegram(`ENTRY ${dir} | Mode: ${tt1030RuntimeMode()}
 Reason: ${tt1030AlertText(reason)}
 Entry: ${entry} | SL: ${sl} | Risk: ${Math.abs(entry - sl).toFixed(1)} pts
@@ -2578,17 +2633,13 @@ Time: ${tt1030.entryTime}`).catch(() => { });
     persistTT1030State();
     return true;
 }
-async function runTenThirtyTradeOps(isEOD) {
-    if (tt1030RunInFlight) {
-        log("TT1030_SKIP_OVERLAP", {});
-        return;
-    }
-    tt1030RunInFlight = true;
-    try {
+async function runTenThirtyEngine(isEOD) {
+    {
         tt1030ResetIfNewDay();
         const candles = await getTodayIndex15mCandles();
         if (!candles.length)
             return;
+        const allowShadowReplay = tt1030ExecutionContext === "SHADOW" && tt1030.seen.size === 0;
         if (tt1030.inTrade && tt1030.optSym) {
             tt1030.optLivePrem = await (0, market_1.getOptionLTP)(tt1030.optSym).catch(() => tt1030.optLivePrem || 0);
         }
@@ -2711,7 +2762,7 @@ async function runTenThirtyTradeOps(isEOD) {
                 continue;
             }
             if (!tt1030.inTrade && tt1030.trades < 2 && !eodCandle && num > 6) {
-                if (isCandleSignalStale(c)) {
+                if (!allowShadowReplay && isCandleSignalStale(c)) {
                     clog.status = "stale_signal_skip";
                     clog.note = "restart replay guard: skipped stale TT1030 entry signal";
                     upsertTT1030CandleLog(clog);
@@ -2781,7 +2832,78 @@ async function runTenThirtyTradeOps(isEOD) {
             upsertTT1030CandleLog(clog);
         }
     }
+}
+async function runTenThirtyTradeOps(isEOD) {
+    if (tt1030RunInFlight) {
+        log("TT1030_SKIP_OVERLAP", {});
+        return;
+    }
+    tt1030RunInFlight = true;
+    let liveState = tt1030;
+    let liveAuditIssues = tt1030AuditIssues;
+    let liveLastSignalKey = tt1030LastSignalKey;
+    try {
+        tt1030ExecutionContext = "SHADOW";
+        tt1030 = tt1030Shadow;
+        tt1030AuditIssues = tt1030ShadowAuditIssues;
+        tt1030LastSignalKey = tt1030ShadowLastSignalKey;
+        await runTenThirtyEngine(isEOD);
+        tt1030Shadow = tt1030;
+        tt1030ShadowAuditIssues = tt1030AuditIssues;
+        tt1030ShadowLastSignalKey = tt1030LastSignalKey;
+
+        if (String(process.env.TT1030_FUTURES_MODE || "SHADOW").toUpperCase() === "LIVE") {
+            tt1030ExecutionContext = "LIVE";
+            tt1030 = liveState;
+            tt1030AuditIssues = liveAuditIssues;
+            tt1030LastSignalKey = liveLastSignalKey;
+            await runTenThirtyEngine(isEOD);
+            liveState = tt1030;
+            liveAuditIssues = tt1030AuditIssues;
+            liveLastSignalKey = tt1030LastSignalKey;
+        }
+    }
     finally {
+        if (tt1030ExecutionContext === "SHADOW") {
+            tt1030Shadow = tt1030;
+            tt1030ShadowAuditIssues = tt1030AuditIssues;
+            tt1030ShadowLastSignalKey = tt1030LastSignalKey;
+        }
+        tt1030ExecutionContext = "LIVE";
+        tt1030 = liveState;
+        tt1030AuditIssues = liveAuditIssues;
+        tt1030LastSignalKey = liveLastSignalKey;
+        tt1030RunInFlight = false;
+    }
+}
+async function bootstrapTenThirtyShadowAfterHours() {
+    if (tt1030RunInFlight || fs_1.default.existsSync(TT1030_SHADOW_STATE_FILE))
+        return;
+    tt1030RunInFlight = true;
+    const liveState = tt1030;
+    const liveAuditIssues = tt1030AuditIssues;
+    const liveLastSignalKey = tt1030LastSignalKey;
+    try {
+        tt1030ExecutionContext = "SHADOW";
+        tt1030 = tt1030Shadow;
+        tt1030AuditIssues = tt1030ShadowAuditIssues;
+        tt1030LastSignalKey = tt1030ShadowLastSignalKey;
+        await runTenThirtyEngine(false);
+        tt1030Shadow = tt1030;
+        tt1030ShadowAuditIssues = tt1030AuditIssues;
+        tt1030ShadowLastSignalKey = tt1030LastSignalKey;
+        log("TT1030_SHADOW_BOOTSTRAP_DONE", {
+            day: tt1030Shadow.day,
+            trades: tt1030Shadow.trades,
+            pnlRs: tt1030Shadow.dayRs,
+            candles: tt1030Shadow.candleLog.length,
+        });
+    }
+    finally {
+        tt1030ExecutionContext = "LIVE";
+        tt1030 = liveState;
+        tt1030AuditIssues = liveAuditIssues;
+        tt1030LastSignalKey = liveLastSignalKey;
         tt1030RunInFlight = false;
     }
 }
@@ -2796,6 +2918,14 @@ function tt1030HeartbeatFields() {
         : 0;
     const closedOptPts = tt1030.log.reduce((s, t) => s + ((t.premIn && t.premOut) ? Number(t.premOut - t.premIn) : 0), 0);
     const totalOptPts = closedOptPts + unrealOptPts;
+    const shadowUnrealPts = tt1030Shadow.inTrade && tt1030Shadow.dir && liveIdx
+        ? (tt1030Shadow.dir === "CE" ? liveIdx - tt1030Shadow.entry : tt1030Shadow.entry - liveIdx)
+        : 0;
+    const shadowUnrealOptPts = tt1030Shadow.inTrade && tt1030Shadow.optEntryPrem > 0 && tt1030Shadow.optLivePrem > 0
+        ? tt1030Shadow.optLivePrem - tt1030Shadow.optEntryPrem
+        : 0;
+    const shadowClosedOptPts = tt1030Shadow.log.reduce((s, t) => s + ((t.premIn && t.premOut) ? Number(t.premOut - t.premIn) : 0), 0);
+    const shadowTotalOptPts = shadowClosedOptPts + shadowUnrealOptPts;
     return {
         tt1030Strategy: tt1030FuturesMode() === "LIVE" ? "TEN_THIRTY_FUTURES_LIVE" : "TEN_THIRTY_INDEX_SHADOW",
         tt1030FuturesMode: tt1030FuturesMode(),
@@ -2829,6 +2959,29 @@ function tt1030HeartbeatFields() {
         tt1030AuditIssues: tt1030AuditIssues.slice(-10),
         tt1030TradeLog: tt1030.log.slice(-20),
         tt1030CandleLog: tt1030.candleLog,
+        tt1030ShadowStrategy: "TEN_THIRTY_INDEX_SHADOW",
+        tt1030ShadowMode: "SHADOW",
+        tt1030ShadowPnL: Math.round(tt1030Shadow.dayRs + shadowUnrealPts * qty),
+        tt1030ShadowClosedPnL: tt1030Shadow.dayRs,
+        tt1030ShadowPts: parseFloat((tt1030Shadow.dayPts + shadowUnrealPts).toFixed(1)),
+        tt1030ShadowOptPts: parseFloat(shadowTotalOptPts.toFixed(1)),
+        tt1030ShadowOptPnL: Math.round(shadowTotalOptPts * qty),
+        tt1030ShadowOptClosedPnL: Math.round(shadowClosedOptPts * qty),
+        tt1030ShadowTrades: tt1030Shadow.trades,
+        tt1030ShadowWins: tt1030Shadow.wins,
+        tt1030ShadowLosses: tt1030Shadow.losses,
+        tt1030ShadowInTrade: tt1030Shadow.inTrade,
+        tt1030ShadowDir: tt1030Shadow.dir,
+        tt1030ShadowEntry: tt1030Shadow.entry || null,
+        tt1030ShadowSL: tt1030Shadow.sl || null,
+        tt1030ShadowLive: liveIdx,
+        tt1030ShadowOptionSymbol: tt1030Shadow.optSym || null,
+        tt1030ShadowOptionEntry: tt1030Shadow.optEntryPrem || null,
+        tt1030ShadowOptionLive: tt1030Shadow.optLivePrem || null,
+        tt1030ShadowHigh: tt1030Shadow.tenHigh || null,
+        tt1030ShadowLow: tt1030Shadow.tenLow || null,
+        tt1030ShadowTradeLog: tt1030Shadow.log.slice(-20),
+        tt1030ShadowCandleLog: tt1030Shadow.candleLog,
     };
 }
 const TT1000_STATE_FILE = 'tt1000-state.json';
@@ -3100,300 +3253,6 @@ function tt1000HeartbeatFields() {
         tt1000CandleLog: tt1000.candleLog,
     };
 }
-const TT0945_STATE_FILE = 'tt0945-state.json';
-const TT0945_CANDLE_LOG_FILE = 'tt0945-candle-log.json';
-let tt0945RunInFlight = false;
-function loadTT0945State(day) {
-    try {
-        const saved = JSON.parse(fs_1.default.readFileSync(TT0945_STATE_FILE, 'utf-8'));
-        return saved.date === day ? saved : null;
-    }
-    catch (_e) {
-        return null;
-    }
-}
-function persistTT0945State() {
-    try {
-        const clean = { ...tt0945, seen: undefined, date: tt0945.day || tt1030ISTParts().ymd, savedAt: new Date().toISOString() };
-        fs_1.default.writeFileSync(TT0945_STATE_FILE, JSON.stringify(clean, null, 2));
-        fs_1.default.writeFileSync(TT0945_CANDLE_LOG_FILE, JSON.stringify({ date: clean.date, log: tt0945.candleLog }, null, 2));
-        persistStrategyMonthlyHistory('NINE_FORTY_FIVE', clean.date, {
-            summary: {
-                futuresPts: parseFloat(Number(tt0945.dayPts || 0).toFixed(1)),
-                futuresRs: Math.round(tt0945.dayRs || 0),
-                optionsPts: parseFloat(Number(tt0945.optDayPts || 0).toFixed(1)),
-                optionsRs: Math.round(tt0945.optDayRs || 0),
-                trades: tt0945.trades || 0,
-                wins: tt0945.wins || 0,
-                losses: tt0945.losses || 0,
-                optionsWins: tt0945.optWins || 0,
-                optionsLosses: tt0945.optLosses || 0,
-            },
-            trades: tt0945.log,
-            candles: tt0945.candleLog,
-        });
-    }
-    catch (error) {
-        log("TT0945_STATE_SAVE_FAIL", { error: error instanceof Error ? error.message : String(error) });
-    }
-}
-function resetTT0945IfNewDay() {
-    const day = tt1030ISTParts().ymd;
-    if (tt0945.day === day)
-        return;
-    const saved = loadTT0945State(day);
-    tt0945 = TT0945_EMPTY();
-    tt0945.day = day;
-    if (saved) {
-        Object.assign(tt0945, saved);
-        tt0945.seen = new Set((tt0945.candleLog || []).filter(r => r && r.time).map(r => `${day}|${r.time}`));
-    }
-    persistTT0945State();
-}
-function upsertTT0945Candle(row) {
-    const idx = tt0945.candleLog.findIndex(item => item.idx === row.idx);
-    if (idx >= 0)
-        tt0945.candleLog[idx] = { ...tt0945.candleLog[idx], ...row };
-    else
-        tt0945.candleLog.push(row);
-    tt0945.candleLog.sort((a, b) => Number(a.idx || 0) - Number(b.idx || 0));
-    persistTT0945State();
-}
-async function closeTT0945Trade(c, exit, reason) {
-    if (!tt0945.inTrade || !tt0945.dir)
-        return null;
-    const dir = tt0945.dir;
-    const entry = tt0945.entry;
-    const qty = Number(config_1.config.quantity || 30);
-    const pts = dir === "CE" ? exit - entry : entry - exit;
-    const pnlRs = Math.round(pts * qty);
-    const premOut = tt0945.optSym ? await (0, market_1.getOptionLTP)(tt0945.optSym).catch(() => 0) : 0;
-    const optPts = tt0945.optEntryPrem > 0 && premOut > 0 ? premOut - tt0945.optEntryPrem : 0;
-    const optRs = Math.round(optPts * qty);
-    tt0945.dayPts = parseFloat((tt0945.dayPts + pts).toFixed(1));
-    tt0945.dayRs += pnlRs;
-    tt0945.optDayPts = parseFloat((tt0945.optDayPts + optPts).toFixed(1));
-    tt0945.optDayRs += optRs;
-    tt0945.trades += 1;
-    if (pts > 0)
-        tt0945.wins += 1;
-    else
-        tt0945.losses += 1;
-    if (tt0945.optEntryPrem > 0 && premOut > 0) {
-        if (optPts > 0)
-            tt0945.optWins += 1;
-        else
-            tt0945.optLosses += 1;
-    }
-    tt0945.log.push({
-        time: tt1030CandleTime(c), dir, entry, exit,
-        pts: parseFloat(pts.toFixed(1)), pnlRs, reason,
-        premIn: tt0945.optEntryPrem || undefined,
-        premOut: premOut || undefined,
-        symbol: tt0945.optSym || undefined,
-        mode: "SHADOW",
-    });
-    tt0945.log = tt0945.log.slice(-30);
-    log("TT0945_EXIT", { dir, entry, exit, pts: pts.toFixed(1), pnlRs, optPts: optPts.toFixed(1), optRs, reason });
-    tt0945.inTrade = false;
-    tt0945.dir = null;
-    tt0945.entry = 0;
-    tt0945.entryTime = "";
-    tt0945.sl = 0;
-    tt0945.optSym = "";
-    tt0945.optEntryPrem = 0;
-    tt0945.optLivePrem = 0;
-    persistTT0945State();
-    return { dir, entry, exit, pts, pnlRs, optPts, optRs };
-}
-async function enterTT0945Trade(dir, candle) {
-    const entry = Number(candle.close || 0);
-    const sl = dir === "CE" ? Number(candle.low || 0) : Number(candle.high || 0);
-    const validRisk = dir === "CE" ? sl < entry : sl > entry;
-    if (!(entry > 0) || !(sl > 0) || !validRisk) {
-        log("TT0945_ENTRY_BLOCKED", { dir, entry, sl, reason: "invalid signal-candle stop" });
-        return false;
-    }
-    const optSym = await getDrishtiATMOptionSymbol(dir, candle.close).catch(() => "");
-    const optPrem = optSym ? await (0, market_1.getOptionLTP)(optSym).catch(() => 0) : 0;
-    tt0945.inTrade = true;
-    tt0945.dir = dir;
-    tt0945.entry = entry;
-    tt0945.entryTime = tt1030CandleTime(candle);
-    tt0945.sl = sl;
-    tt0945.refHigh = candle.high;
-    tt0945.refLow = candle.low;
-    tt0945.optSym = optSym;
-    tt0945.optEntryPrem = optPrem;
-    tt0945.optLivePrem = optPrem;
-    log("TT0945_ENTRY", { dir, entry, sl, time: tt0945.entryTime, optSym, optPrem, mode: "SHADOW" });
-    persistTT0945State();
-    return true;
-}
-async function runNineFortyFiveShadow(isEOD) {
-    if (tt0945RunInFlight)
-        return;
-    tt0945RunInFlight = true;
-    try {
-        resetTT0945IfNewDay();
-        const candles = await getTodayIndex15mCandles();
-        if (!candles.length)
-            return;
-        if (tt0945.inTrade && tt0945.optSym) {
-            tt0945.optLivePrem = await (0, market_1.getOptionLTP)(tt0945.optSym).catch(() => tt0945.optLivePrem || 0);
-        }
-        for (let i = 0; i < candles.length; i++) {
-            const c = candles[i];
-            const candleStartMs = new Date(c.date).getTime();
-            if (Number.isFinite(candleStartMs) && Date.now() < candleStartMs + 15 * 60 * 1000)
-                continue;
-            const num = i + 1;
-            const time = tt1030CandleTime(c);
-            const key = `${tt0945.day}|${time}`;
-            if (tt0945.seen.has(key))
-                continue;
-            tt0945.seen.add(key);
-            const row = { idx: num, time, open: c.open, high: c.high, low: c.low, close: c.close, status: "watching", dir: tt0945.dir, entry: tt0945.entry || null, sl: tt0945.sl || null, note: "" };
-            if (num === 3 && !tt0945.rangeHigh) {
-                tt0945.rangeHigh = c.high;
-                tt0945.rangeLow = c.low;
-                tt0945.rangeTime = time;
-                row.status = "marked_0945";
-                row.note = `09:45 range ${c.high.toFixed(1)} / ${c.low.toFixed(1)}`;
-                upsertTT0945Candle(row);
-                log("TT0945_MARKED", { high: c.high, low: c.low, time });
-                continue;
-            }
-            if (!tt0945.rangeHigh) {
-                row.status = "pre_0945";
-                row.note = "waiting for 09:45 candle";
-                upsertTT0945Candle(row);
-                continue;
-            }
-            const eodCandle = time >= "15:15" || isEOD;
-            if (tt0945.inTrade && tt0945.dir) {
-                const openPts = tt0945.dir === "CE" ? c.close - tt0945.entry : tt0945.entry - c.close;
-                row.pnlPts = parseFloat(openPts.toFixed(1));
-                row.pnlRs = Math.round(openPts * Number(config_1.config.quantity || 30));
-                const slHit = tt0945.dir === "CE" ? c.close <= tt0945.sl : c.close >= tt0945.sl;
-                if (slHit || eodCandle) {
-                    const exit = slHit ? tt0945.sl : c.close;
-                    const closed = await closeTT0945Trade(c, exit, slHit ? "sl_hit" : "exit_eod");
-                    row.status = slHit ? "sl_hit" : "exit_eod";
-                    row.dir = closed.dir;
-                    row.entry = closed.entry;
-                    row.exit = exit;
-                    row.sl = slHit ? exit : row.sl;
-                    row.pnlPts = parseFloat(closed.pts.toFixed(1));
-                    row.pnlRs = closed.pnlRs;
-                    row.note = slHit ? `SL hit at ${exit.toFixed(1)}` : `EOD exit ${exit.toFixed(1)}`;
-                    upsertTT0945Candle(row);
-                    continue;
-                }
-                if (tt0945.dir === "CE" && c.close > tt0945.refHigh) {
-                    tt0945.sl = Math.max(tt0945.sl, c.low);
-                    tt0945.refHigh = c.high;
-                    tt0945.refLow = c.low;
-                    row.status = "trail";
-                    row.sl = tt0945.sl;
-                    row.note = `V2 trail active; SL -> ${tt0945.sl.toFixed(1)}`;
-                }
-                else if (tt0945.dir === "PE" && c.close < tt0945.refLow) {
-                    tt0945.sl = Math.min(tt0945.sl, c.high);
-                    tt0945.refHigh = c.high;
-                    tt0945.refLow = c.low;
-                    row.status = "trail";
-                    row.sl = tt0945.sl;
-                    row.note = `V2 trail active; SL -> ${tt0945.sl.toFixed(1)}`;
-                }
-                else {
-                    row.status = "hold";
-                    row.note = "V2 trail waiting";
-                }
-                upsertTT0945Candle(row);
-                continue;
-            }
-            if (tt0945.trades < 2 && !eodCandle && num > 3) {
-                const dir = c.close > tt0945.rangeHigh ? "CE" : c.close < tt0945.rangeLow ? "PE" : null;
-                if (dir && isCandleSignalStale(c)) {
-                    row.status = "stale_signal_skip";
-                    row.dir = dir;
-                    row.note = "restart replay guard: skipped stale 09:45 signal";
-                }
-                else if (dir) {
-                    const entered = await enterTT0945Trade(dir, c);
-                    if (entered) {
-                        row.status = "entry";
-                        row.dir = dir;
-                        row.entry = tt0945.entry;
-                        row.sl = tt0945.sl;
-                        row.pnlPts = 0;
-                        row.pnlRs = 0;
-                        row.note = `close confirmed 09:45 ${dir === "CE" ? "high" : "low"} breakout; shadow entry ${tt0945.entry.toFixed(1)}`;
-                    }
-                    else {
-                        row.status = "entry_blocked";
-                        row.dir = dir;
-                        row.note = "signal blocked: invalid entry/stop geometry";
-                    }
-                }
-                else {
-                    row.note = c.high > tt0945.rangeHigh || c.low < tt0945.rangeLow
-                        ? "wick crossed 09:45 range; waiting for close"
-                        : "inside 09:45 range";
-                }
-            }
-            else {
-                row.status = eodCandle ? "eod_no_trade" : "done";
-                row.note = eodCandle ? "EOD/no new entry" : "max trades reached";
-            }
-            upsertTT0945Candle(row);
-        }
-    }
-    finally {
-        tt0945RunInFlight = false;
-    }
-}
-function tt0945HeartbeatFields() {
-    const live = lastKnownPrice || null;
-    const qty = Number(config_1.config.quantity || 30);
-    const unrealPts = tt0945.inTrade && tt0945.dir && live
-        ? (tt0945.dir === "CE" ? live - tt0945.entry : tt0945.entry - live)
-        : 0;
-    const unrealOptPts = tt0945.inTrade && tt0945.optEntryPrem > 0 && tt0945.optLivePrem > 0
-        ? tt0945.optLivePrem - tt0945.optEntryPrem
-        : 0;
-    return {
-        tt0945Strategy: "NINE_FORTY_FIVE_INDEX_SHADOW",
-        tt0945Mode: "SHADOW",
-        tt0945PnL: Math.round(tt0945.dayRs + unrealPts * qty),
-        tt0945ClosedPnL: Math.round(tt0945.dayRs),
-        tt0945Pts: parseFloat((tt0945.dayPts + unrealPts).toFixed(1)),
-        tt0945OptPnL: Math.round(tt0945.optDayRs + unrealOptPts * qty),
-        tt0945OptClosedPnL: Math.round(tt0945.optDayRs),
-        tt0945OptPts: parseFloat((tt0945.optDayPts + unrealOptPts).toFixed(1)),
-        tt0945Trades: tt0945.trades,
-        tt0945Wins: tt0945.wins,
-        tt0945Losses: tt0945.losses,
-        tt0945OptWins: tt0945.optWins,
-        tt0945OptLosses: tt0945.optLosses,
-        tt0945InTrade: tt0945.inTrade,
-        tt0945Phase: tt0945.inTrade ? "IN_TRADE" : (tt0945.rangeHigh ? "WATCHING" : "WAIT_0945"),
-        tt0945Dir: tt0945.dir,
-        tt0945Entry: tt0945.entry || null,
-        tt0945EntryTime: tt0945.entryTime || null,
-        tt0945SL: tt0945.sl || null,
-        tt0945Live: live,
-        tt0945FuturesSymbol: "BANKNIFTY_INDEX_SHADOW",
-        tt0945OptionSymbol: tt0945.optSym || null,
-        tt0945OptionEntry: tt0945.optEntryPrem || null,
-        tt0945OptionLive: tt0945.optLivePrem || null,
-        tt0945High: tt0945.rangeHigh || null,
-        tt0945Low: tt0945.rangeLow || null,
-        tt0945TradeLog: tt0945.log.slice(-20),
-        tt0945CandleLog: tt0945.candleLog,
-    };
-}
 function hybridResetIfNewDay() {
     const ymd = tt1030ISTParts().ymd;
     if (hybridShadow.day !== ymd) {
@@ -3554,7 +3413,7 @@ async function runHybridBodyShadow(isEOD) {
                 const c2Body = hybridBody(c);
                 const upBreak = c.close - bodyHigh;
                 const downBreak = bodyLow - c.close;
-                if (c.close > bodyHigh) {
+                if (c.close > bodyHigh && c2Body >= HYBRID_C2_MIN_BODY_PTS && upBreak >= HYBRID_C2_MIN_BREAK_PTS) {
                     if (isCandleSignalStale(c)) {
                         hybridShadow.phase = "DONE";
                         clog.status = "stale_signal_skip";
@@ -3569,7 +3428,7 @@ async function runHybridBodyShadow(isEOD) {
                         clog.note = `C2 strong close broke C1 body high ${bodyHigh.toFixed(1)} (body ${c2Body.toFixed(1)}, break ${upBreak.toFixed(1)})`;
                     }
                 }
-                else if (c.close < bodyLow) {
+                else if (c.close < bodyLow && c2Body >= HYBRID_C2_MIN_BODY_PTS && downBreak >= HYBRID_C2_MIN_BREAK_PTS) {
                     if (isCandleSignalStale(c)) {
                         hybridShadow.phase = "DONE";
                         clog.status = "stale_signal_skip";
@@ -3587,7 +3446,7 @@ async function runHybridBodyShadow(isEOD) {
                 else {
                     hybridShadow.phase = "DONE";
                     clog.status = "no_trade";
-                    clog.note = `C2 closed inside C1 body; no confirmed breakout (body ${c2Body.toFixed(1)}, distance ${Math.max(upBreak, downBreak).toFixed(1)})`;
+                    clog.note = `C2 failed strength filter (body ${c2Body.toFixed(1)}/${HYBRID_C2_MIN_BODY_PTS}, break ${Math.max(upBreak, downBreak).toFixed(1)}/${HYBRID_C2_MIN_BREAK_PTS})`;
                     setHybridBlockReason(clog.note);
                 }
             }
@@ -4228,7 +4087,6 @@ async function runDrishtiBot() {
     const shadowIsEOD = h > 15 || (h === 15 && m >= 30);
     runTenThirtyTradeOps(shadowIsEOD).catch(e => log('TT1030_RUN_ERR', { error: String(e) }));
     runTenOCLockShadow(shadowIsEOD).catch(e => log('TT1000_RUN_ERR', { error: e instanceof Error ? e.message : JSON.stringify(e) }));
-    runNineFortyFiveShadow(shadowIsEOD).catch(e => log('TT0945_RUN_ERR', { error: e instanceof Error ? e.message : JSON.stringify(e) }));
     runHybridBodyShadow(shadowIsEOD).catch(e => log('HYBRID_SHADOW_ERR', { error: String(e) }));
     runNormalBreakoutShadow(shadowIsEOD).catch(e => log('NORMAL_BREAKOUT_SHADOW_ERR', { error: String(e) }));
     if (stopForDay && !activeTrade) {
@@ -4261,7 +4119,6 @@ async function runDrishtiBot() {
     upsertDrishtiCandleLog(drishtiTodayCandles.length - 1, candle);
     runTenThirtyTradeOps(h > 15 || (h === 15 && m >= 30)).catch(e => log('TT1030_RUN_ERR', { error: String(e) }));
     runTenOCLockShadow(h > 15 || (h === 15 && m >= 30)).catch(e => log('TT1000_RUN_ERR', { error: e instanceof Error ? e.message : JSON.stringify(e) }));
-    runNineFortyFiveShadow(h > 15 || (h === 15 && m >= 30)).catch(e => log('TT0945_RUN_ERR', { error: e instanceof Error ? e.message : JSON.stringify(e) }));
     runHybridBodyShadow(h > 15 || (h === 15 && m >= 30)).catch(e => log('HYBRID_SHADOW_ERR', { error: String(e) }));
     runNormalBreakoutShadow(h > 15 || (h === 15 && m >= 30)).catch(e => log('NORMAL_BREAKOUT_SHADOW_ERR', { error: String(e) }));
     // Run BODY_HOLD shadow strategies on every candle (fire-and-forget)
@@ -4732,7 +4589,6 @@ async function runBot() {
         await Promise.all([
             runTenThirtyTradeOps(shadowIsEOD),
             runTenOCLockShadow(shadowIsEOD),
-            runNineFortyFiveShadow(shadowIsEOD),
             runHybridBodyShadow(shadowIsEOD),
             runNormalBreakoutShadow(shadowIsEOD),
         ]);
@@ -5007,7 +4863,6 @@ async function runBot() {
                 sl: _inTrade ? (tradeDirection === "CE" ? entryPrice - 100 : entryPrice + 100) : null,
                 ...tt1030HeartbeatFields(),
                 ...tt1000HeartbeatFields(),
-                ...tt0945HeartbeatFields(),
                 ...hybridShadowHeartbeatFields(),
                 ...normalBreakoutShadowHeartbeatFields(),
             }));
@@ -5676,6 +5531,12 @@ async function preStartPrompt() {
             });
         }
         log("BOT_START", { message: "Waiting for market hours (9:25 IST)..." });
+        const tt1030StartupIST = tt1030ISTParts();
+        if (tt1030StartupIST.hhmm >= "15:30" && !fs_1.default.existsSync(TT1030_SHADOW_STATE_FILE)) {
+            setTimeout(() => {
+                bootstrapTenThirtyShadowAfterHours().catch(e => log("TT1030_SHADOW_BOOTSTRAP_ERR", { error: e instanceof Error ? e.message : String(e) }));
+            }, 2000);
+        }
         // Register trading intervals FIRST — Telegram must never block the bot from starting
         setInterval(() => {
             // Skip entirely on weekends (IST) — markets are closed, historical-candle API
@@ -5711,7 +5572,6 @@ async function preStartPrompt() {
                         sl: null,
                         ...tt1030HeartbeatFields(),
                         ...tt1000HeartbeatFields(),
-                        ...tt0945HeartbeatFields(),
                         ...hybridShadowHeartbeatFields(),
                         ...normalBreakoutShadowHeartbeatFields(),
                     }));
@@ -5757,7 +5617,6 @@ async function preStartPrompt() {
                     DrishtiCandleLog: !TRADEOPS_ONLY && ACTIVE_STRATEGY === "DRISHTI_V1" ? DrishtiCandleLog : undefined,
                     ...tt1030HeartbeatFields(),
                     ...tt1000HeartbeatFields(),
-                    ...tt0945HeartbeatFields(),
                     ...hybridShadowHeartbeatFields(),
                     ...normalBreakoutShadowHeartbeatFields(),
                 }));
@@ -5816,7 +5675,6 @@ async function preStartPrompt() {
                         sl: _inTrade2 ? (tradeDirection === "CE" ? entryPrice - 100 : entryPrice + 100) : null,
                         ...tt1030HeartbeatFields(),
                         ...tt1000HeartbeatFields(),
-                        ...tt0945HeartbeatFields(),
                         ...hybridShadowHeartbeatFields(),
                         ...normalBreakoutShadowHeartbeatFields(),
                     }));

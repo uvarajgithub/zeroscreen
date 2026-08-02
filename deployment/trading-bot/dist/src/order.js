@@ -1,12 +1,6 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.getPaperPositions = getPaperPositions;
-exports.stopTradingForDay = stopTradingForDay;
-exports.isTradingStopped = isTradingStopped;
-exports.handlePartialFill = handlePartialFill;
-exports.placeTrade = placeTrade;
-exports.exitTrade = exitTrade;
-exports.squareOffAll = squareOffAll;
+exports.squareOffAll = exports.exitTrade = exports.placeTrade = exports.handlePartialFill = exports.isTradingStopped = exports.stopTradingForDay = exports.getPaperPositions = void 0;
 const kiteconnect_1 = require("kiteconnect");
 const config_1 = require("./config");
 const notifier_1 = require("./notifier");
@@ -35,32 +29,40 @@ function kiteOrder(payload) {
     return next;
 }
 // process.env.MODE takes precedence (allows test-paper-trade.ts to force PAPER)
-const IS_PAPER = (process.env.MODE ?? config_1.config.mode ?? "LIVE").toUpperCase() === "PAPER";
+const RAW_MODE = (process.env.MODE ?? config_1.config.mode ?? "LIVE").toUpperCase();
+const IS_SHADOW_MODE = RAW_MODE === "PAPER" || RAW_MODE === "LIVE_SHADOW";
+const IS_PAPER = IS_SHADOW_MODE;
 // ── Paper trade simulator ─────────────────────────────────
 let paperOrderIdCounter = 1000;
 const paperPositions = {};
 function simulatePaperOrder(symbol, type, qty, price) {
-    const orderId = `PAPER-${paperOrderIdCounter++}`;
-    if (type === "BUY") {
-        paperPositions[symbol] = { qty, price };
-    }
-    else {
+    const orderId = `${RAW_MODE === "LIVE_SHADOW" ? "SHADOW" : "PAPER"}-${paperOrderIdCounter++}`;
+    const signedQty = type === "BUY" ? qty : -qty;
+    const existing = paperPositions[symbol];
+    const nextQty = (existing?.qty ?? 0) + signedQty;
+    if (nextQty === 0) {
         delete paperPositions[symbol];
     }
-    log("PAPER_ORDER", { orderId, symbol, type, qty, price });
-    return { order_id: orderId, status: "COMPLETE", filled_quantity: qty };
+    else {
+        paperPositions[symbol] = { qty: nextQty, price };
+    }
+    log(RAW_MODE === "LIVE_SHADOW" ? "SHADOW_ORDER" : "PAPER_ORDER", { orderId, symbol, type, qty, netQty: nextQty, price });
+    return { order_id: orderId, status: "COMPLETE", filled_quantity: qty, quantity: qty, average_price: price, transaction_type: type };
 }
 function getPaperPositions() {
     return paperPositions;
 }
+exports.getPaperPositions = getPaperPositions;
 let tradingStopped = false;
 function stopTradingForDay() {
     tradingStopped = true;
     console.error("Trading stopped for the day due to order rejection.");
 }
+exports.stopTradingForDay = stopTradingForDay;
 function isTradingStopped() {
     return tradingStopped;
 }
+exports.isTradingStopped = isTradingStopped;
 const kite = new kiteconnect_1.KiteConnect({ api_key: config_1.config.apiKey });
 kite.setAccessToken(config_1.config.accessToken);
 // Fetch a single order status from Kite
@@ -89,6 +91,7 @@ function handlePartialFill(symbol, requestedQty, filledQty) {
     // Adjust SL, targets, and state as needed here
     // For now, just log and continue
 }
+exports.handlePartialFill = handlePartialFill;
 // Example order state handling (add to order placement logic):
 async function handleOrderState(order) {
     if (order.status === "REJECTED") {
@@ -124,70 +127,76 @@ async function handleOrderState(order) {
     return order;
 }
 // Spread filter for options (call before placing order)
+function isFuturesSymbol(symbol) { return /FUT$/i.test(symbol); }
 function isOptionLiquid(bid, ask) {
     if (bid <= 0 || ask <= 0)
         return false;
     const mid = (bid + ask) / 2;
     return (ask - bid) / mid <= 0.01; // allow up to 1% spread (works for any premium level)
 }
-// Place BUY (MARKET) + SL-M order — verifies fill before placing SL
-async function placeTrade(symbol, price, qty = config_1.config.quantity) {
+// Place MARKET order — direction defaults to BUY (options); pass SELL for futures short
+async function placeTrade(symbol, price, qty = config_1.config.quantity, direction = "BUY") {
     if (tradingStopped)
         throw new Error("Trading stopped for the day.");
     // ── PAPER MODE: simulate order, no real API call ──
     if (IS_PAPER) {
-        // Fetch actual option LTP for accurate paper P&L tracking
-        let optionLTP = price;
+        // Fetch actual LTP for accurate paper P&L tracking
+        let ltp = price;
         try {
             const ltpResp = await kite.getLTP([`NFO:${symbol}`]);
-            optionLTP = ltpResp[`NFO:${symbol}`]?.last_price ?? price;
+            ltp = ltpResp[`NFO:${symbol}`]?.last_price ?? price;
         }
         catch (_) { }
-        const result = simulatePaperOrder(symbol, "BUY", qty, optionLTP);
-        log("PAPER_BUY", { symbol, optionLTP, indexPrice: price, qty });
+        const result = simulatePaperOrder(symbol, direction, qty, ltp);
+        log(`PAPER_${direction}`, { symbol, ltp, indexPrice: price, qty, direction });
         return result;
     }
-    // --- Spread Guard ---
-    try {
-        const quoteResp = await kite.getQuote([`NFO:${symbol}`]);
-        const quote = quoteResp[`NFO:${symbol}`];
-        if (quote && quote.depth) {
-            const bid = quote.depth.buy[0]?.price || 0;
-            const ask = quote.depth.sell[0]?.price || 0;
-            if (!isOptionLiquid(bid, ask)) {
-                throw new Error(`Bid-ask spread too wide: bid=${bid}, ask=${ask}`);
+    // --- Spread Guard (options only; futures spreads are not premium spreads) ---
+    if (!isFuturesSymbol(symbol)) {
+        try {
+            const quoteResp = await kite.getQuote([`NFO:${symbol}`]);
+            const quote = quoteResp[`NFO:${symbol}`];
+            if (quote && quote.depth) {
+                const bid = quote.depth.buy[0]?.price || 0;
+                const ask = quote.depth.sell[0]?.price || 0;
+                if (!isOptionLiquid(bid, ask)) {
+                    throw new Error(`Bid-ask spread too wide: bid=${bid}, ask=${ask}`);
+                }
             }
         }
+        catch (e) {
+            console.error("Spread check failed:", e);
+            throw new Error("Spread check failed: " + (e instanceof Error ? e.message : String(e)));
+        }
     }
-    catch (e) {
-        console.error("Spread check failed:", e);
-        throw new Error("Spread check failed: " + (e instanceof Error ? e.message : String(e)));
+    else {
+        log("SPREAD_GUARD_SKIP", { symbol, reason: "futures_symbol" });
     }
-    console.log(`Placing trade: ${symbol} qty=${qty}`);
+    console.log(`Placing trade: ${symbol} qty=${qty} direction=${direction}`);
     let buyOrderId = "";
     let order = null;
     try {
-        // BUY — MARKET order
+        // MARKET order (direction = BUY for long options/futures, SELL for futures short)
         const buyResp = await kite.placeOrder("regular", kiteOrder({
             exchange: "NFO",
             tradingsymbol: symbol,
-            transaction_type: "BUY",
+            transaction_type: direction,
             quantity: qty,
             order_type: "MARKET",
             product: "MIS"
         }));
         buyOrderId = buyResp.order_id;
-        console.log(`BUY order placed: ${buyOrderId}`);
+        console.log(`${direction} order placed: ${buyOrderId}`);
         // Check for rejection — retry once after 2s
         let orders = await kite.getOrders();
         order = orders.find(o => o.order_id === buyOrderId);
         if (order?.status === "REJECTED") {
-            console.warn(`BUY order rejected (${order.status_message}), retrying in 2s...`);
+            console.warn(`${direction} order rejected (${order.status_message}), retrying in 2s...`);
             await new Promise(r => setTimeout(r, 2000));
             const retryResp = await kite.placeOrder("regular", kiteOrder({
                 exchange: "NFO",
                 tradingsymbol: symbol,
-                transaction_type: "BUY",
+                transaction_type: direction,
                 quantity: qty,
                 order_type: "MARKET",
                 product: "MIS"
@@ -196,26 +205,28 @@ async function placeTrade(symbol, price, qty = config_1.config.quantity) {
             const retryOrders = await kite.getOrders();
             order = retryOrders.find(o => o.order_id === buyOrderId);
             if (order?.status === "REJECTED") {
-                const msg = `⛔ BUY order rejected after retry\nSymbol: ${symbol}\nReason: ${order.status_message}`;
+                const msg = `⛔ ${direction} order rejected after retry\nSymbol: ${symbol}\nReason: ${order.status_message}`;
                 console.error(msg);
                 await (0, notifier_1.sendTelegram)(msg);
                 stopTradingForDay();
                 throw new Error(`Order ${buyOrderId} REJECTED after retry: ${order.status_message}`);
             }
-            console.log(`Retry BUY order placed: ${buyOrderId}`);
-        }
-        // Partial fill handling
-        const filledQty = order?.filled_quantity ?? 0;
-        if (filledQty < qty) {
-            handlePartialFill(symbol, qty, filledQty);
-            // Optionally, adjust SL/targets here
+            console.log(`Retry ${direction} order placed: ${buyOrderId}`);
         }
         // Verify fill before returning
         await verifyOrderFilled(buyOrderId);
-        console.log(`BUY order filled: ${buyOrderId}`);
+        console.log(`${direction} order filled: ${buyOrderId}`);
         // Re-fetch order to get final COMPLETE status after verification
         const finalOrders = await kite.getOrders();
         order = finalOrders.find(o => o.order_id === buyOrderId) ?? order;
+        const filledQty = Number(order?.filled_quantity ?? 0);
+        if (filledQty <= 0) {
+            stopTradingForDay();
+            throw new Error(`Order ${buyOrderId} completed with zero filled quantity`);
+        }
+        if (filledQty < qty) {
+            handlePartialFill(symbol, qty, filledQty);
+        }
         // Note: SL is monitored in real-time via index price in index.ts (candle-low SL).
         // No Kite SL-M order is placed because trigger price is index-based, not option-price-based.
         return order;
@@ -225,21 +236,22 @@ async function placeTrade(symbol, price, qty = config_1.config.quantity) {
         throw e;
     }
 }
-// Exit all open positions for a symbol (MARKET order)
-async function exitTrade(symbol, qty = config_1.config.quantity) {
+exports.placeTrade = placeTrade;
+// Exit open position for a symbol — direction defaults to SELL (close long); pass BUY to close short
+async function exitTrade(symbol, qty = config_1.config.quantity, direction = "SELL") {
     if (tradingStopped)
         throw new Error("Trading stopped for the day.");
     // ── PAPER MODE ──
     if (IS_PAPER) {
-        const result = simulatePaperOrder(symbol, "SELL", qty, 0);
-        log("PAPER_EXIT", { symbol, qty });
+        const result = simulatePaperOrder(symbol, direction, qty, 0);
+        log("PAPER_EXIT", { symbol, qty, direction });
         return result;
     }
-    console.log(`Exiting trade: ${symbol}`);
+    console.log(`Exiting trade: ${symbol} direction=${direction}`);
     const resp = await kite.placeOrder("regular", kiteOrder({
         exchange: "NFO",
         tradingsymbol: symbol,
-        transaction_type: "SELL",
+        transaction_type: direction,
         quantity: qty,
         order_type: "MARKET",
         product: "MIS"
@@ -248,12 +260,12 @@ async function exitTrade(symbol, qty = config_1.config.quantity) {
     let exitOrders = await kite.getOrders();
     let exitOrder = exitOrders.find(o => o.order_id === resp.order_id);
     if (exitOrder?.status === "REJECTED") {
-        console.warn(`EXIT order rejected (${exitOrder.status_message}), retrying in 2s...`);
+        console.warn(`EXIT(${direction}) order rejected (${exitOrder.status_message}), retrying in 2s...`);
         await new Promise(r => setTimeout(r, 2000));
         const retryResp = await kite.placeOrder("regular", kiteOrder({
             exchange: "NFO",
             tradingsymbol: symbol,
-            transaction_type: "SELL",
+            transaction_type: direction,
             quantity: qty,
             order_type: "MARKET",
             product: "MIS"
@@ -261,31 +273,50 @@ async function exitTrade(symbol, qty = config_1.config.quantity) {
         const retryOrders = await kite.getOrders();
         exitOrder = retryOrders.find(o => o.order_id === retryResp.order_id);
         if (exitOrder?.status === "REJECTED") {
-            const msg = `⛔ EXIT order rejected after retry\nSymbol: ${symbol}\nReason: ${exitOrder.status_message}\n⚠️ CHECK POSITION MANUALLY`;
+            const msg = `⛔ EXIT(${direction}) order rejected after retry\nSymbol: ${symbol}\nReason: ${exitOrder.status_message}\n⚠️ CHECK POSITION MANUALLY`;
             console.error(msg);
             await (0, notifier_1.sendTelegram)(msg);
             stopTradingForDay();
             throw new Error(`Exit order REJECTED after retry: ${exitOrder.status_message}`);
         }
-        console.log(`Retry EXIT order placed: ${retryResp.order_id}`);
-        return;
+        await verifyOrderFilled(retryResp.order_id);
+        const finalRetryOrders = await kite.getOrders();
+        const finalRetryOrder = finalRetryOrders.find(o => o.order_id === retryResp.order_id) ?? exitOrder;
+        const retryFilledQty = Number(finalRetryOrder?.filled_quantity ?? 0);
+        if (retryFilledQty <= 0) {
+            stopTradingForDay();
+            throw new Error(`Exit order ${retryResp.order_id} completed with zero filled quantity`);
+        }
+        if (retryFilledQty < qty) {
+            handlePartialFill(symbol, qty, retryFilledQty);
+        }
+        console.log(`Retry EXIT(${direction}) order filled: ${retryResp.order_id}`);
+        return finalRetryOrder;
     }
-    const order = exitOrder;
-    // Partial fill handling for exit
-    const filledQty = order?.filled_quantity ?? 0;
+    await verifyOrderFilled(resp.order_id);
+    const finalOrders = await kite.getOrders();
+    const order = finalOrders.find(o => o.order_id === resp.order_id) ?? exitOrder;
+    const filledQty = Number(order?.filled_quantity ?? 0);
+    if (filledQty <= 0) {
+        stopTradingForDay();
+        throw new Error(`Exit order ${resp.order_id} completed with zero filled quantity`);
+    }
     if (filledQty < qty) {
         handlePartialFill(symbol, qty, filledQty);
     }
-    console.log(`Exit order placed: ${resp.order_id}`);
+    console.log(`Exit order filled: ${resp.order_id}`);
+    return order;
 }
+exports.exitTrade = exitTrade;
 // Exit all open positions (forced square-off)
 async function squareOffAll() {
     // ── PAPER MODE ──
     if (IS_PAPER) {
         for (const symbol of Object.keys(paperPositions)) {
-            simulatePaperOrder(symbol, "SELL", paperPositions[symbol].qty, 0);
+            const qty = paperPositions[symbol].qty;
+            simulatePaperOrder(symbol, qty > 0 ? "SELL" : "BUY", Math.abs(qty), 0);
         }
-        log("PAPER_SQUAREOFF", { message: "All paper positions squared off" });
+        log(RAW_MODE === "LIVE_SHADOW" ? "SHADOW_SQUAREOFF" : "PAPER_SQUAREOFF", { message: "All shadow/paper positions squared off" });
         return;
     }
     try {
@@ -308,3 +339,4 @@ async function squareOffAll() {
         console.error("Error in squareOffAll:", e);
     }
 }
+exports.squareOffAll = squareOffAll;

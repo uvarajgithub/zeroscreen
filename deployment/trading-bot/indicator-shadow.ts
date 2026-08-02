@@ -24,7 +24,7 @@ const kite = new KiteConnect({ api_key: config.apiKey });
 kite.setAccessToken(config.accessToken);
 
 const QTY = Number(config.quantity || 30);
-const INDEX_TOKEN = Number(config.instrument.token);
+const HISTORICAL_INDEX_TOKEN = Number(process.env.BANKNIFTY_INDEX_TOKEN || process.env.INDEX_HISTORICAL_TOKEN || 260105);
 const HEARTBEAT_FILE = "indicator-shadow-heartbeat.json";
 const HISTORY_FILE = "indicator-shadow-history.json";
 const POLL_MS = 15_000;
@@ -60,7 +60,32 @@ function emptyState(date = dayIST()): StrategyState {
 function readState(spec: StrategySpec): StrategyState {
   try {
     const parsed = JSON.parse(fs.readFileSync(spec.stateFile, "utf8"));
-    return { ...emptyState(parsed.date || parsed.day), ...parsed };
+    const state = { ...emptyState(parsed.date || parsed.day), ...parsed };
+    if (state.inTrade && state.entryTime && state.trades < 1) {
+      state.trades = 1;
+      if (state.optSym && state.optEntryPrem > 0) state.optTrades = Math.max(1, state.optTrades || 0);
+      if (!state.log.length) {
+        state.log.push({
+          tradeId: `${spec.id}-${state.date}-${state.entryTime}-1`,
+          date: state.date,
+          time: state.entryTime,
+          entryTime: `${state.date}T${state.entryTime}:00+05:30`,
+          exitTime: null,
+          dir: state.dir,
+          entry: state.entry,
+          exit: null,
+          pnlRs: null,
+          qty: QTY,
+          symbol: state.optSym || null,
+          premIn: state.optEntryPrem || null,
+          premOut: null,
+          optionPnlRs: null,
+          reason: "Reconstructed open shadow trade",
+          status: "OPEN",
+        });
+      }
+    }
+    return state;
   } catch { return emptyState(); }
 }
 function atomicWrite(file: string, value: any): void {
@@ -200,7 +225,15 @@ async function recentCandles(): Promise<Candle[]> {
   const midnight = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
   const from = kiteDate(midnight - 12 * 24 * 60 * 60_000 + 555 * 60_000);
   const to = kiteDate(now.getTime() - 60_000);
-  const rows = await kite.getHistoricalData(INDEX_TOKEN, "15minute", from, to, false) as any[];
+  let rows: any;
+  try {
+    rows = await kite.getHistoricalData(HISTORICAL_INDEX_TOKEN, "15minute", from, to, false);
+  } catch (error: any) {
+    throw new Error(`historical candles unavailable: ${error?.message || error}`);
+  }
+  if (!Array.isArray(rows)) {
+    throw new Error(`historical candles response malformed: ${JSON.stringify(rows || {}).slice(0, 240)}`);
+  }
   return (rows || []).map(row => ({
     date: typeof row.date === "string" ? row.date : new Date(row.date).toISOString(),
     open: Number(row.open), high: Number(row.high), low: Number(row.low), close: Number(row.close),
@@ -226,6 +259,27 @@ async function enter(spec: StrategySpec, state: StrategyState, direction: Direct
     state.optSym = ""; state.optEntryPrem = 0; state.optLivePrem = 0;
     console.warn(`[${spec.id}] option shadow entry unavailable: ${error?.message || error}`);
   }
+  state.trades += 1;
+  if (state.optSym && state.optEntryPrem > 0) state.optTrades += 1;
+  state.log.push({
+    tradeId: `${spec.id}-${state.date}-${state.entryTime}-${state.trades}`,
+    date: state.date,
+    time: state.entryTime,
+    entryTime: `${state.date}T${state.entryTime}:00+05:30`,
+    exitTime: null,
+    dir: state.dir,
+    entry: state.entry,
+    exit: null,
+    pnlRs: null,
+    qty: QTY,
+    symbol: state.optSym || null,
+    premIn: state.optEntryPrem || null,
+    premOut: null,
+    optionPnlRs: null,
+    reason: note,
+    status: "OPEN",
+  });
+  state.log = state.log.slice(-100);
   console.log(`[${spec.id}] ENTRY ${direction} index=${state.entry} option=${state.optSym || "unavailable"} ${note}`);
 }
 async function close(
@@ -244,17 +298,22 @@ async function close(
     try { premiumExit = await getOptionLTP(state.optSym); } catch {}
   }
   const optionPnl = premiumExit > 0 ? Math.round((premiumExit - state.optEntryPrem) * QTY) : 0;
-  state.log.push({
-    tradeId: `${spec.id}-${state.date}-${state.entryTime}-${state.trades + 1}`,
+  const closedTrade = {
+    tradeId: `${spec.id}-${state.date}-${state.entryTime}-${Math.max(1, state.trades)}`,
     date: state.date, time: state.entryTime, entryTime: `${state.date}T${state.entryTime}:00+05:30`,
     exitTime: candle.date, dir: state.dir, entry: state.entry, exit, pnlRs, qty: QTY,
     symbol: state.optSym, premIn: state.optEntryPrem || null, premOut: premiumExit || null,
     optionPnlRs: premiumExit > 0 ? optionPnl : null, reason, status: "CLOSED",
-  });
-  state.dayRs += pnlRs; state.trades += 1;
+  };
+  const openTrade = [...state.log].reverse().find(row =>
+    row?.status === "OPEN" && row?.date === state.date && row?.time === state.entryTime && row?.dir === state.dir
+  );
+  if (openTrade) Object.assign(openTrade, closedTrade);
+  else state.log.push(closedTrade);
+  state.dayRs += pnlRs;
   if (pnlRs > 0) state.wins += 1; else if (pnlRs < 0) state.losses += 1;
   if (premiumExit > 0) {
-    state.optDayRs += optionPnl; state.optTrades += 1;
+    state.optDayRs += optionPnl;
     if (optionPnl > 0) state.optWins += 1; else if (optionPnl < 0) state.optLosses += 1;
   }
   state.log = state.log.slice(-100);
@@ -378,14 +437,12 @@ async function tick(): Promise<void> {
     }
     if (!state.initialized) {
       state.initialized = true; state.phase = "SCANNING";
-      state.lastCandleKey = todayCandles.length ? candleKey(todayCandles[todayCandles.length - 1]) : "";
-    } else {
-      const lastIndex = state.lastCandleKey ? todayCandles.findIndex(candle => candleKey(candle) === state.lastCandleKey) : -1;
-      for (let todayIndex = lastIndex + 1; todayIndex < todayCandles.length; todayIndex += 1) {
-        const candle = todayCandles[todayIndex];
-        const fullIndex = candles.findIndex(row => row.date === candle.date);
-        if (fullIndex >= 0) await evaluate(spec, state, candles, fullIndex);
-      }
+    }
+    const lastIndex = state.lastCandleKey ? todayCandles.findIndex(candle => candleKey(candle) === state.lastCandleKey) : -1;
+    for (let todayIndex = lastIndex + 1; todayIndex < todayCandles.length; todayIndex += 1) {
+      const candle = todayCandles[todayIndex];
+      const fullIndex = candles.findIndex(row => row.date === candle.date);
+      if (fullIndex >= 0) await evaluate(spec, state, candles, fullIndex);
     }
     if (indexLtp > 0) state.live = indexLtp;
     if (state.inTrade && state.optSym) {
@@ -402,7 +459,10 @@ async function tick(): Promise<void> {
 async function run(): Promise<void> {
   for (const spec of STRATEGIES) states.set(spec.id, readState(spec));
   console.log(`[indicator-shadow] starting ${STRATEGIES.length} isolated 15m BANKNIFTY shadow strategies`);
-  await tick();
+  await tick().catch(error => {
+    console.error(`[indicator-shadow] tick failed: ${error?.message || error}`);
+    try { atomicWrite(HEARTBEAT_FILE, { ...heartbeat(), status: "DEGRADED", error: String(error?.message || error) }); } catch {}
+  });
   setInterval(() => tick().catch(error => {
     console.error(`[indicator-shadow] tick failed: ${error?.message || error}`);
     try { atomicWrite(HEARTBEAT_FILE, { ...heartbeat(), status: "DEGRADED", error: String(error?.message || error) }); } catch {}
