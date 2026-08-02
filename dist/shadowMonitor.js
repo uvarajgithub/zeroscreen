@@ -16,6 +16,7 @@ const OPTIONS_CAPITAL_FALLBACK = 50000;
 const HEARTBEAT_HEALTHY_SEC = 60;
 const HEARTBEAT_CRITICAL_SEC = 120;
 const runtimeHealthCache = new Map();
+const jsonFileCache = new Map();
 const STRATEGIES = [
     { id: "drishti", name: "DRISHTI (BANKNIFTY)", version: "Current", prefix: "drishti", backtestFile: "shadow-strategy-5yr-results.json", instruments: ["FUTURES", "OPTIONS"] },
     {
@@ -34,6 +35,9 @@ const STRATEGIES = [
     { id: "tt0945", name: "09:45 Breakout (BANKNIFTY)", version: "V2 Shadow", prefix: "tt0945", backtestFile: "shadow-strategy-5yr-results.json", stateFile: "tt0945-state.json" },
     { id: "normal-breakout", name: "Normal Breakout (BANKNIFTY)", version: "V1", prefix: "normalBreakoutShadow", backtestFile: "shadow-strategy-5yr-results.json", stateFile: "normal-breakout-v1-state.json" },
     { id: "hybrid-body", name: "Hybrid Body Breakout (BANKNIFTY)", version: "Current", prefix: "hybridShadow", backtestFile: "shadow-strategy-5yr-results.json", stateFile: "hybrid-state.json" },
+    { id: "body-hold-s1", name: "Body Hold S1 (BANKNIFTY)", version: "S1 Shadow", prefix: "bodyHoldS1", instruments: ["FUTURES", "OPTIONS"], stateFile: "body-hold-shadow-state.json" },
+    { id: "body-hold-s2", name: "Body Hold S2 (BANKNIFTY)", version: "S2 Shadow", prefix: "bodyHoldS2", instruments: ["FUTURES", "OPTIONS"], stateFile: "body-hold-shadow-state.json" },
+    { id: "low-iv-gamma", name: "Low-IV Gamma Breakout (BANKNIFTY)", version: "V1 Shadow", prefix: "lowIvGamma", instruments: ["OPTIONS"], heartbeatFile: "low-iv-gamma-heartbeat.json", stateFile: "low-iv-gamma-shadow-state.json", backtestFile: "low-iv-gamma-backtest.json" },
     { id: "vwap-trend", name: "VWAP Trend (BANKNIFTY)", version: "Validated Shadow", prefix: "vwapTrend", backtestFile: "indicator-strategy-sweep-result.json", instruments: ["FUTURES", "OPTIONS"], processName: "indicator-shadow", heartbeatFile: "indicator-shadow-heartbeat.json", stateFile: "vwap-trend-state.json" },
     { id: "pivot-trend", name: "Pivot Trend (BANKNIFTY)", version: "Validated Shadow", prefix: "pivotTrend", backtestFile: "indicator-strategy-sweep-result.json", instruments: ["FUTURES", "OPTIONS"], processName: "indicator-shadow", heartbeatFile: "indicator-shadow-heartbeat.json", stateFile: "pivot-trend-state.json" },
     { id: "ema-trend", name: "EMA Trend (BANKNIFTY)", version: "Validated Shadow", prefix: "emaTrend", backtestFile: "indicator-strategy-sweep-result.json", instruments: ["FUTURES", "OPTIONS"], processName: "indicator-shadow", heartbeatFile: "indicator-shadow-heartbeat.json", stateFile: "ema-trend-state.json" },
@@ -44,15 +48,23 @@ function readJson(file, fallback) {
         const filePath = path_1.default.join(BOT_DIR, file);
         if (!fs_1.default.existsSync(filePath))
             return fallback;
+        const mtimeMs = fs_1.default.statSync(filePath).mtimeMs;
+        const cached = jsonFileCache.get(filePath);
+        if (cached && cached.mtimeMs === mtimeMs)
+            return cached.value;
         const raw = fs_1.default.readFileSync(filePath, "utf8").replace(/^\uFEFF/, "");
         try {
-            return JSON.parse(raw);
+            const value = JSON.parse(raw);
+            jsonFileCache.set(filePath, { mtimeMs, value });
+            return value;
         }
         catch {
             const objectAt = raw.indexOf("{");
             const arrayAt = raw.indexOf("[");
             const start = objectAt < 0 ? arrayAt : arrayAt < 0 ? objectAt : Math.min(objectAt, arrayAt);
-            return start >= 0 ? JSON.parse(raw.slice(start)) : fallback;
+            const value = start >= 0 ? JSON.parse(raw.slice(start)) : fallback;
+            jsonFileCache.set(filePath, { mtimeMs, value });
+            return value;
         }
     }
     catch {
@@ -105,6 +117,19 @@ function sanitizeLog(value) {
         .trim()
         .slice(0, 360);
 }
+function logDateKey(value) {
+    const raw = String(value ?? "");
+    const iso = raw.match(/\b(20\d{2})-(\d{2})-(\d{2})\b/);
+    if (iso)
+        return `${iso[1]}-${iso[2]}-${iso[3]}`;
+    const slash = raw.match(/\b(\d{1,2})\/(\d{1,2})\/(20\d{2})\b/);
+    if (slash) {
+        const dd = slash[1].padStart(2, "0");
+        const mm = slash[2].padStart(2, "0");
+        return `${slash[3]}-${mm}-${dd}`;
+    }
+    return null;
+}
 function recentServerLogs(strategy) {
     const candidates = strategy.processName
         ? [
@@ -140,6 +165,9 @@ function recentServerLogs(strategy) {
             const lines = fs_1.default.readFileSync(file, "utf8").split(/\r?\n/).filter(Boolean).slice(-120);
             for (const line of lines) {
                 if (/access[_ -]?token|authorization:|api[_ -]?key/i.test(line))
+                    continue;
+                const lineDate = logDateKey(line);
+                if (lineDate && lineDate !== todayIST())
                     continue;
                 const message = sanitizeLog(line);
                 if (!message || /^\s*at\s|node:internal|requireStack/i.test(message))
@@ -261,25 +289,69 @@ function strategyFields(strategy, hb, state, instrument) {
             candleLog: candleRows,
         };
     }
+    if (strategy.prefix === "bodyHoldS1" || strategy.prefix === "bodyHoldS2") {
+        const isS1 = strategy.prefix === "bodyHoldS1";
+        const stateIsCurrent = dateKey(state?.date) === todayIST();
+        const leg = stateIsCurrent ? (isS1 ? state?.s1 : state?.s2) || {} : {};
+        const hbPrefix = isS1 ? "bodyHoldS1" : "bodyHoldS2";
+        const expectedType = isS1
+            ? (isOptions ? "BH_S1_OPT" : "BH_S1_FUT")
+            : (isOptions ? "BH_S2_OPT" : "BH_S2_FUT");
+        const ledger = readJson("trades.json", []);
+        const rawTrades = (Array.isArray(ledger) ? ledger : []).filter((row) => String(row?.type || "").toUpperCase() === expectedType);
+        const todayRows = rawTrades.filter((row) => dateKey(row?.date) === todayIST());
+        const realized = num(isOptions ? leg.dayOptRs : leg.dayFutRs)
+            ?? num(hb[isOptions ? `${hbPrefix}OptionsPnL` : `${hbPrefix}FuturesPnL`])
+            ?? todayRows.reduce((sum, row) => sum + (num(row?.pnlRs) ?? 0), 0);
+        return {
+            inTrade: !!(leg.inTrade ?? hb[`${hbPrefix}InTrade`]),
+            realized,
+            unrealized: 0,
+            total: realized,
+            trades: todayRows.length,
+            wins: todayRows.filter((row) => (num(row?.pnlRs) ?? 0) > 0).length,
+            losses: todayRows.filter((row) => (num(row?.pnlRs) ?? 0) < 0).length,
+            direction: text(leg.dir ?? hb[`${hbPrefix}Dir`]),
+            symbol: isOptions ? text(leg.optSym) : "BANKNIFTY FUTURES",
+            entry: num(isOptions ? leg.entryPrem : leg.entryIdx ?? hb[`${hbPrefix}Entry`]),
+            live: null,
+            sl: num(isOptions ? leg.slPrem : leg.sl ?? hb[`${hbPrefix}SL`]),
+            target: null,
+            quantity: num(hb.qty) ?? 30,
+            entryTime: null,
+            entryAt: null,
+            phase: text(leg.inTrade ? "IN TRADE" : todayRows.length ? "DONE" : hb.status),
+            dayHigh: null,
+            dayLow: null,
+            volume: null,
+            openInterest: null,
+            rawTrades,
+            candleLog: [],
+        };
+    }
     const prefix = strategy.prefix;
+    const fieldPrefix = prefix === "tt1030Shadow" ? "tt1030" : prefix;
     const stateIsCurrent = dateKey(state?.date || state?.day) === todayIST();
     const persisted = stateIsCurrent ? state : {};
-    const heartbeatTrades = Array.isArray(hb[`${prefix}TradeLog`]) ? hb[`${prefix}TradeLog`] : [];
+    const heartbeatTrades = Array.isArray(hb[`${fieldPrefix}TradeLog`]) ? hb[`${fieldPrefix}TradeLog`] : [];
     const persistedTrades = Array.isArray(persisted.log) ? persisted.log : [];
-    const heartbeatCandles = Array.isArray(hb[`${prefix}CandleLog`]) ? hb[`${prefix}CandleLog`] : [];
+    const heartbeatCandles = Array.isArray(hb[`${fieldPrefix}CandleLog`]) ? hb[`${fieldPrefix}CandleLog`] : [];
     const persistedCandles = Array.isArray(persisted.candleLog) ? persisted.candleLog : [];
     const rawTrades = persistedTrades.length ? persistedTrades : heartbeatTrades;
     const candleLog = persistedCandles.length ? persistedCandles : heartbeatCandles;
-    const inTrade = persisted.inTrade !== undefined ? !!persisted.inTrade : !!hb[`${prefix}InTrade`];
+    const inTrade = persisted.inTrade !== undefined ? !!persisted.inTrade : !!hb[`${fieldPrefix}InTrade`];
     const persistedTotal = num(isOptions ? persisted.optDayRs : persisted.dayRs);
-    const total = persistedTotal ?? num(hb[isOptions ? `${prefix}OptPnL` : `${prefix}PnL`]) ?? 0;
-    const closed = num(hb[isOptions ? `${prefix}OptClosedPnL` : `${prefix}ClosedPnL`])
+    const heartbeatTotal = num(hb[isOptions ? `${fieldPrefix}OptPnL` : `${fieldPrefix}PnL`]);
+    const total = inTrade
+        ? heartbeatTotal ?? persistedTotal ?? 0
+        : persistedTotal ?? heartbeatTotal ?? 0;
+    const closed = num(hb[isOptions ? `${fieldPrefix}OptClosedPnL` : `${fieldPrefix}ClosedPnL`])
         ?? (!inTrade ? total : null);
     const realized = closed ?? (inTrade ? null : total);
     const unrealized = inTrade && realized !== null ? total - realized : (inTrade ? total : 0);
-    const optionSymbol = text(hb[`${prefix}OptionSymbol`] ?? persisted.optSym);
-    const futuresSymbol = text(hb[`${prefix}FuturesSymbol`] ?? persisted.futSym);
-    const direction = text(hb[`${prefix}Dir`] ?? persisted.dir);
+    const optionSymbol = text(hb[`${fieldPrefix}OptionSymbol`] ?? persisted.optSym);
+    const futuresSymbol = text(hb[`${fieldPrefix}FuturesSymbol`] ?? persisted.futSym);
+    const direction = text(hb[`${fieldPrefix}Dir`] ?? persisted.dir);
     const optionWins = num(persisted.optWins);
     const optionLosses = num(persisted.optLosses);
     const inferredOptionWins = persistedTrades.filter((row) => {
@@ -292,7 +364,7 @@ function strategyFields(strategy, hb, state, instrument) {
         const exit = num(row?.premOut ?? row?.premiumExit);
         return entry !== null && exit !== null && exit < entry;
     }).length;
-    const storedQuantity = num(hb[`${prefix}LiveQty`] ?? persisted.liveQty ?? hb.qty);
+    const storedQuantity = num(hb[`${fieldPrefix}LiveQty`] ?? persisted.liveQty ?? hb.qty);
     const quantity = storedQuantity !== null && storedQuantity > 0 ? storedQuantity : 30;
     return {
         inTrade,
@@ -300,8 +372,8 @@ function strategyFields(strategy, hb, state, instrument) {
         unrealized,
         total,
         trades: isOptions
-            ? num(persisted.optTrades) ?? num(hb[`${prefix}OptTrades`]) ?? num(persisted.trades) ?? num(hb[`${prefix}Trades`]) ?? 0
-            : num(persisted.trades) ?? num(hb[`${prefix}Trades`]) ?? 0,
+            ? num(persisted.optTrades) ?? num(hb[`${fieldPrefix}OptTrades`]) ?? num(persisted.trades) ?? num(hb[`${fieldPrefix}Trades`]) ?? 0
+            : num(persisted.trades) ?? num(hb[`${fieldPrefix}Trades`]) ?? 0,
         wins: isOptions
             ? optionWins ?? inferredOptionWins
             : num(persisted.wins) ?? num(hb[`${prefix}Wins`]) ?? 0,
@@ -311,21 +383,21 @@ function strategyFields(strategy, hb, state, instrument) {
         direction,
         symbol: isOptions ? optionSymbol : futuresSymbol,
         entry: isOptions
-            ? num(hb[`${prefix}OptionEntry`] ?? persisted.optEntryPrem)
-            : num(hb[`${prefix}FuturesEntry`] ?? hb[`${prefix}Entry`] ?? persisted.entry),
+            ? num(hb[`${fieldPrefix}OptionEntry`] ?? persisted.optEntryPrem)
+            : num(hb[`${fieldPrefix}FuturesEntry`] ?? hb[`${fieldPrefix}Entry`] ?? persisted.entry),
         live: isOptions
-            ? num(hb[`${prefix}OptionLive`] ?? persisted.optLivePrem)
-            : num(hb[`${prefix}FuturesLive`] ?? hb[`${prefix}Live`] ?? persisted.live),
-        sl: num(hb[`${prefix}SL`] ?? persisted.sl),
+            ? num(hb[`${fieldPrefix}OptionLive`] ?? persisted.optLivePrem)
+            : num(hb[`${fieldPrefix}FuturesLive`] ?? hb[`${fieldPrefix}Live`] ?? persisted.live),
+        sl: num(hb[`${fieldPrefix}SL`] ?? persisted.sl),
         target: null,
         quantity,
-        entryTime: timeValue(hb[`${prefix}EntryTime`] ?? persisted.entryTime),
-        entryAt: hb[`${prefix}EntryAt`] ?? (persisted.date && persisted.entryTime ? `${persisted.date}T${persisted.entryTime}:00+05:30` : null),
-        phase: text(hb[`${prefix}Phase`] || persisted.phase || (candleLog.length ? "DONE" : hb.status)),
-        dayHigh: num(hb[isOptions ? `${prefix}OptionHigh` : `${prefix}High`]),
-        dayLow: num(hb[isOptions ? `${prefix}OptionLow` : `${prefix}Low`]),
-        volume: num(hb[isOptions ? `${prefix}OptionVolume` : `${prefix}Volume`]),
-        openInterest: num(hb[isOptions ? `${prefix}OptionOpenInterest` : `${prefix}OpenInterest`]),
+        entryTime: timeValue(hb[`${fieldPrefix}EntryTime`] ?? persisted.entryTime),
+        entryAt: hb[`${fieldPrefix}EntryAt`] ?? (persisted.date && persisted.entryTime ? `${persisted.date}T${persisted.entryTime}:00+05:30` : null),
+        phase: text(hb[`${fieldPrefix}Phase`] || persisted.phase || (candleLog.length ? "DONE" : hb.status)),
+        dayHigh: num(hb[isOptions ? `${fieldPrefix}OptionHigh` : `${fieldPrefix}High`]),
+        dayLow: num(hb[isOptions ? `${fieldPrefix}OptionLow` : `${fieldPrefix}Low`]),
+        volume: num(hb[isOptions ? `${fieldPrefix}OptionVolume` : `${fieldPrefix}Volume`]),
+        openInterest: num(hb[isOptions ? `${fieldPrefix}OptionOpenInterest` : `${fieldPrefix}OpenInterest`]),
         rawTrades,
         candleLog,
     };
@@ -549,7 +621,47 @@ function backtestSummary(strategy, instrument) {
         monthlyRecords: monthly.length,
     };
 }
-function shadowHistory(strategy, instrument) {
+function recentLiveMonthKeys(tradeDate = todayIST()) {
+    const [year, month] = tradeDate.split("-").map(Number);
+    const current = `${year}-${String(month).padStart(2, "0")}`;
+    const previousDate = new Date(Date.UTC(year, month - 2, 1));
+    const previous = `${previousDate.getUTCFullYear()}-${String(previousDate.getUTCMonth() + 1).padStart(2, "0")}`;
+    return new Set([current, previous]);
+}
+function normalizedBacktestDays(strategy, instrument) {
+    if (!strategy.backtestFile)
+        return [];
+    const data = readJson(strategy.backtestFile, null);
+    if (!data)
+        return [];
+    const selected = data?.strategies?.[strategy.id];
+    const normalized = selected?.[instrument] || selected?.OPTIONS || selected?.FUTURES;
+    const rows = Array.isArray(normalized?.days)
+        ? normalized.days
+        : Array.isArray(data?.days)
+            ? data.days
+            : Array.isArray(data?.daily) ? data.daily : [];
+    return rows.map((row) => {
+        const date = dateKey(row?.date || row?.period);
+        if (!date)
+            return null;
+        const pnl = num(row?.pnl ?? row?.total ?? row?.netPnl ?? row?.bbPnL);
+        if (pnl === null)
+            return null;
+        const trades = num(row?.trades ?? row?.totalTrades) ?? 0;
+        const wins = num(row?.wins ?? row?.totalWins) ?? (pnl > 0 && trades > 0 ? 1 : 0);
+        const losses = num(row?.losses ?? row?.totalLosses) ?? (pnl < 0 && trades > 0 ? 1 : 0);
+        return {
+            date,
+            pnl,
+            capitalDeployed: num(row?.capitalDeployed ?? row?.capitalUsed) ?? 0,
+            trades,
+            wins,
+            losses,
+        };
+    }).filter(Boolean);
+}
+function shadowHistory(strategy, instrument, includeBacktest = true) {
     const byDate = new Map();
     const tradeDetails = [];
     const appendTradeDetail = (date, row) => {
@@ -570,19 +682,17 @@ function shadowHistory(strategy, instrument) {
         const calculatedPnl = entry !== null && exit !== null
             ? (exit - entry) * quantity * (action === "SELL" ? -1 : 1)
             : null;
-        const storedPnl = instrument === "OPTIONS"
-            ? num(row?.optionsPnl ?? row?.optionPnl ?? row?.premiumPnl)
-            : num(row?.pnlRs ?? row?.pnl);
-        const pnl = strategy.prefix === "drishtiV2"
-            ? storedPnl ?? calculatedPnl
-            : calculatedPnl ?? storedPnl;
+        const storedPnl = num(row?.pnlRs ?? row?.netPnlRs ?? (instrument === "OPTIONS"
+            ? row?.optionsPnl ?? row?.optionPnl ?? row?.premiumPnl
+            : null));
+        const pnl = storedPnl ?? calculatedPnl ?? num(row?.pnl);
         const capitalDeployed = entry && quantity
             ? (instrument === "OPTIONS" ? entry * quantity : entry * quantity * FUTURES_MARGIN_RATE)
             : 0;
         tradeDetails.push({
             tradeId: text(row?.tradeId ?? row?.id) || `${strategy.id}-${instrument}-${date}-${text(row?.time)}-${tradeDetails.length + 1}`,
             date,
-            time: text(row?.time ?? row?.entryTime ?? row?.timestamp) || "--",
+            time: timeValue(row?.time ?? row?.entryTime ?? row?.timestamp ?? row?.date) || "--",
             instrument: instrument === "OPTIONS"
                 ? text(row?.symbol ?? row?.tradeSymbol) || `BANKNIFTY ${direction}`
                 : "BANKNIFTY FUTURES",
@@ -596,7 +706,7 @@ function shadowHistory(strategy, instrument) {
             capitalDeployed: Math.round(capitalDeployed),
             returnPct: capitalDeployed > 0 && pnl !== null ? pnl / capitalDeployed * 100 : null,
             status: exit !== null || pnl !== null ? "CLOSED" : "OPEN",
-            reason: text(row?.reason ?? row?.exitReason ?? row?.note) || "--",
+            reason: text(row?.reasonExit ?? row?.reason ?? row?.exitReason ?? row?.note) || "--",
         });
     };
     const monthlyHistoryKey = {
@@ -607,7 +717,62 @@ function shadowHistory(strategy, instrument) {
         hybridShadow: "HYBRID_BODY",
     };
     const historyKey = monthlyHistoryKey[strategy.prefix];
-    if (strategy.processName === "indicator-shadow") {
+    const ledgerTypeMap = {
+        drishti: { FUTURES: "DRISHTI_V1", OPTIONS: "DRISHTI_V1_OPT" },
+        tt1030Shadow: { FUTURES: "TEN_THIRTY_INDEX", OPTIONS: "TEN_THIRTY_OPT" },
+        tt1000: { FUTURES: "TEN_O_CLOCK_INDEX", OPTIONS: "TEN_O_CLOCK_OPT" },
+        normalBreakoutShadow: { FUTURES: "NORMAL_BREAKOUT_V1_INDEX", OPTIONS: "NORMAL_BREAKOUT_V1_OPT" },
+        hybridShadow: { FUTURES: "HYBRID_BODY_INDEX", OPTIONS: "HYBRID_BODY_OPT" },
+        bodyHoldS1: { FUTURES: "BH_S1_FUT", OPTIONS: "BH_S1_OPT" },
+        bodyHoldS2: { FUTURES: "BH_S2_FUT", OPTIONS: "BH_S2_OPT" },
+        lowIvGamma: { FUTURES: "", OPTIONS: "LOW_IV_GAMMA_OPT" },
+    };
+    const ledgerType = ledgerTypeMap[strategy.prefix]?.[instrument];
+    if (ledgerType) {
+        const ledger = readJson("trades.json", []);
+        const rows = (Array.isArray(ledger) ? ledger : []).filter((row) => {
+            if (String(row?.type || "").toUpperCase() !== ledgerType)
+                return false;
+            const closed = (num(row?.exitPrice ?? row?.exit ?? row?.premiumExit) ?? 0) > 0 || !!text(row?.reasonExit);
+            return closed && !!dateKey(row?.date || row?.exitTime || row?.entryTime);
+        });
+        const grouped = new Map();
+        for (const row of rows) {
+            const date = dateKey(row?.date || row?.exitTime || row?.entryTime);
+            const dayRows = grouped.get(date) || [];
+            dayRows.push(row);
+            grouped.set(date, dayRows);
+            appendTradeDetail(date, row);
+        }
+        for (const [date, dayRows] of grouped) {
+            const pnls = dayRows.map((row) => {
+                const stored = num(row?.pnlRs);
+                if (stored !== null)
+                    return stored;
+                const entry = num(instrument === "OPTIONS" ? row?.premiumEntry ?? row?.premIn : row?.entryPrice ?? row?.entry);
+                const exit = num(instrument === "OPTIONS" ? row?.premiumExit ?? row?.premOut : row?.exitPrice ?? row?.exit);
+                const quantity = num(row?.qty ?? row?.quantity) ?? 30;
+                if (entry === null || exit === null)
+                    return 0;
+                const direction = String(row?.direction || row?.dir || "").toUpperCase();
+                return (exit - entry) * quantity * (instrument === "FUTURES" && direction === "PE" ? -1 : 1);
+            });
+            const capitalDeployed = dayRows.reduce((sum, row) => {
+                const entry = num(instrument === "OPTIONS" ? row?.premiumEntry ?? row?.premIn : row?.entryPrice ?? row?.entry);
+                const quantity = num(row?.qty ?? row?.quantity) ?? 30;
+                return sum + (entry && quantity ? (instrument === "OPTIONS" ? entry * quantity : entry * quantity * FUTURES_MARGIN_RATE) : 0);
+            }, 0);
+            byDate.set(date, {
+                date,
+                pnl: pnls.reduce((sum, value) => sum + value, 0),
+                capitalDeployed: Math.round(capitalDeployed),
+                trades: dayRows.length,
+                wins: pnls.filter(value => value > 0).length,
+                losses: pnls.filter(value => value < 0).length,
+            });
+        }
+    }
+    else if (strategy.processName === "indicator-shadow") {
         const source = readJson("indicator-shadow-history.json", {});
         const indicatorDays = source?.strategies?.[strategy.id] || {};
         for (const [date, record] of Object.entries(indicatorDays)) {
@@ -702,6 +867,27 @@ function shadowHistory(strategy, instrument) {
             appendTradeDetail(date, row);
         }
     }
+    const liveMonthKeys = recentLiveMonthKeys();
+    for (const date of Array.from(byDate.keys())) {
+        if (!liveMonthKeys.has(date.slice(0, 7)))
+            byDate.delete(date);
+    }
+    let backtestRowsAdded = 0;
+    if (includeBacktest) {
+        for (const day of normalizedBacktestDays(strategy, instrument)) {
+            if (liveMonthKeys.has(day.date.slice(0, 7)))
+                continue;
+            byDate.set(day.date, {
+                date: day.date,
+                pnl: day.pnl,
+                capitalDeployed: Math.round(day.capitalDeployed),
+                trades: day.trades,
+                wins: day.wins,
+                losses: day.losses,
+            });
+            backtestRowsAdded += 1;
+        }
+    }
     const days = Array.from(byDate.values()).map(day => ({
         ...day,
         capitalDeployed: Math.round(day.capitalDeployed),
@@ -735,11 +921,13 @@ function shadowHistory(strategy, instrument) {
         return `${parsed.getUTCFullYear()}-W${String(week).padStart(2, "0")}`;
     };
     return {
-        source: historyKey
-            ? "strategy-monthly-history.json"
-            : strategy.prefix === "drishtiV2"
-                ? "drishti-v2-trades.json"
-                : strategy.prefix === "drishti" ? "trades.json" : null,
+        source: backtestRowsAdded > 0
+            ? "live-last-two-months + backtest"
+            : historyKey
+                ? "strategy-monthly-history.json"
+                : strategy.prefix === "drishtiV2"
+                    ? "drishti-v2-trades.json"
+                    : strategy.prefix === "drishti" ? "trades.json" : null,
         trades: tradeDetails.sort((a, b) => `${b.date} ${b.time}`.localeCompare(`${a.date} ${a.time}`)),
         days: [...days].reverse(),
         weekly: aggregate(weekKey),
@@ -1083,20 +1271,29 @@ function consolidatedShadowSummary(externalHealth = {}) {
         const heartbeatAgeSec = heartbeatAt ? Math.max(0, Math.round((Date.now() - heartbeatAt) / 1000)) : null;
         const stateIsCurrent = dateKey(strategyState?.date || strategyState?.day) === tradeDate;
         const heartbeatAvailable = !!heartbeatAt;
+        const hasStrategyHeartbeatEvidence = Object.keys(heartbeat || {}).some(key => key.startsWith(strategy.prefix));
         const stale = market === "OPEN" && (!heartbeatAvailable || (heartbeatAgeSec ?? Infinity) > HEARTBEAT_CRITICAL_SEC);
         for (const instrument of strategy.instruments || ["FUTURES", "OPTIONS"]) {
             const fields = strategyFields(strategy, heartbeat, strategyState, instrument);
             const trades = normalizedTrades(fields.rawTrades, strategy, instrument, tradeDate, fields.quantity ?? num(heartbeat.qty) ?? 30);
             const closedTrades = trades.filter((row) => String(row.status).toUpperCase() === "CLOSED");
-            const tradeCount = Math.max(num(fields.trades) ?? 0, closedTrades.length, fields.inTrade ? 1 : 0);
+            const todayHistory = (() => {
+                const history = shadowHistory(strategy, instrument, false);
+                return Array.isArray(history?.days)
+                    ? history.days.find((row) => row?.date === tradeDate || row?.period === tradeDate)
+                    : null;
+            })();
+            const historyTrades = num(todayHistory?.trades) ?? 0;
+            const historyPnl = num(todayHistory?.pnl);
+            const tradeCount = Math.max(num(fields.trades) ?? 0, closedTrades.length, historyTrades, fields.inTrade ? 1 : 0);
             const capitalDeployed = tradeCount > 0
                 ? (instrument === "OPTIONS" ? OPTIONS_CAPITAL_FALLBACK : FUTURES_CAPITAL_FALLBACK)
                 : 0;
-            const hasEvidence = stateIsCurrent || heartbeatAvailable || trades.length > 0;
-            const pnl = hasEvidence ? num(fields.total) : null;
+            const hasEvidence = stateIsCurrent || hasStrategyHeartbeatEvidence || trades.length > 0 || !!todayHistory;
+            const pnl = num(fields.total) ?? historyPnl ?? 0;
             const returnPct = pnl !== null && capitalDeployed > 0 ? pnl / capitalDeployed * 100 : tradeCount === 0 ? 0 : null;
             const positionState = !hasEvidence
-                ? "ERROR"
+                ? heartbeatAvailable ? "MISSED" : "ERROR"
                 : stale
                     ? "STALE"
                     : fields.inTrade
@@ -1172,7 +1369,7 @@ function performanceOverview(hb, state, tradeDate) {
                     trades: liveTradeCount,
                 });
             }
-            const liveHistory = shadowHistory(strategy, instrument);
+            const liveHistory = shadowHistory(strategy, instrument, false);
             const week = Array.isArray(liveHistory.weekly)
                 ? liveHistory.weekly.find((row) => row.period === coverageWeek)
                 : null;
@@ -1265,7 +1462,8 @@ function buildShadowMonitorPayload(strategyId = "", instrumentValue = "", extern
     const connected = heartbeatAgeSec !== null && heartbeatAgeSec < 180;
     const fields = strategyFields(strategy, hb, state, instrument);
     const trades = normalizedTrades(fields.rawTrades, strategy, instrument, tradeDate, fields.quantity ?? num(hb.qty) ?? 30);
-    const history = shadowHistory(strategy, instrument);
+    // Trade History is persisted SHADOW execution history only. Backtest results stay in the separate backtest payload.
+    const history = shadowHistory(strategy, instrument, false);
     const persistedTodayTrades = (history.trades || []).filter((row) => String(row.date || row.tradeDate || "") === tradeDate);
     const persistedTodayClosed = persistedTodayTrades.filter((row) => String(row.status || "").toUpperCase() === "CLOSED" && num(row.pnl) !== null);
     const persistedRealized = persistedTodayClosed.length
@@ -1680,7 +1878,9 @@ function renderShadowStrategyMonitorPage(navHtml) {
     .sm-history-toolbar h3{margin:0;font-size:16px}
     .sm-history-method{border:1px solid var(--sm-line);background:#f8fafc;border-radius:8px;padding:14px 16px;line-height:1.6}
     .sm-history-method b{display:block;font-size:15px;margin-bottom:5px}
-    .sm-month-open{height:30px;border:1px solid #b8d2ff;border-radius:7px;background:#fff;color:var(--sm-blue);font-size:12px;font-weight:750;padding:0 10px;cursor:pointer}
+    .sm-month-open{width:30px;height:30px;border:1px solid #b8d2ff;border-radius:50%;background:#fff;color:var(--sm-blue);font-size:18px;font-weight:850;line-height:1;cursor:pointer}
+    .sm-drill-row{cursor:pointer}
+    .sm-drill-row:hover td{background:#f8fbff}
     @media(max-width:1360px){
       .sm-control{grid-template-columns:1.15fr .78fr .64fr 1.25fr}
       .sm-health{grid-template-columns:1fr 1fr}
@@ -1923,18 +2123,32 @@ function renderShadowStrategyMonitorPage(navHtml) {
     .sm-key-tile:hover{transform:translateY(-2px);filter:brightness(1.06);border-color:#60a5fa;box-shadow:inset 0 1px 0 rgba(255,255,255,.1),0 0 20px rgba(59,130,246,.2),0 12px 28px rgba(0,0,0,.38)}
     .sm-key-tile.profit{color:#23e57b;border-color:rgba(55,218,116,.7);background:linear-gradient(145deg,rgba(9,31,29,.99),rgba(3,14,20,.99));box-shadow:inset 0 1px 0 rgba(255,255,255,.07),inset 0 -12px 22px rgba(0,0,0,.26),0 0 16px rgba(34,197,94,.13),0 9px 24px rgba(0,0,0,.34)}
     .sm-key-tile.loss{color:#ff475d;border-color:rgba(244,63,94,.78);background:linear-gradient(145deg,rgba(40,13,27,.99),rgba(14,5,16,.99));box-shadow:inset 0 1px 0 rgba(255,255,255,.06),inset 0 -12px 22px rgba(0,0,0,.28),0 0 17px rgba(244,63,94,.15),0 9px 24px rgba(0,0,0,.35)}
-    .sm-key-tile.stale,.sm-key-tile.error{color:#fbbf24;border-color:rgba(245,158,11,.78);background:linear-gradient(145deg,rgba(39,29,10,.99),rgba(15,10,3,.99));box-shadow:inset 0 1px 0 rgba(255,255,255,.06),inset 0 -12px 22px rgba(0,0,0,.28),0 0 17px rgba(245,158,11,.16),0 9px 24px rgba(0,0,0,.35)}
+    .sm-key-tile.stale,.sm-key-tile.error,.sm-key-tile.missed{color:#fbbf24;border-color:rgba(245,158,11,.78);background:linear-gradient(145deg,rgba(39,29,10,.99),rgba(15,10,3,.99));box-shadow:inset 0 1px 0 rgba(255,255,255,.06),inset 0 -12px 22px rgba(0,0,0,.28),0 0 17px rgba(245,158,11,.16),0 9px 24px rgba(0,0,0,.35)}
     .sm-key-tile.selected{border-color:#9b63ff;outline:1px solid rgba(139,92,246,.78);outline-offset:3px;box-shadow:inset 0 1px 0 rgba(255,255,255,.1),inset 0 -12px 22px rgba(0,0,0,.26),0 0 0 1px rgba(139,92,246,.25),0 0 24px rgba(124,58,237,.55),0 12px 28px rgba(0,0,0,.42)}
     .sm-key-tile.top-performer{border-color:#38bdf8;outline:1px solid rgba(56,189,248,.88);outline-offset:2px;box-shadow:inset 0 1px 0 rgba(255,255,255,.1),0 0 0 1px rgba(14,165,233,.25),0 0 22px rgba(14,165,233,.42),0 10px 25px rgba(0,0,0,.4)}
-    @keyframes smLiveTilePulse{0%,100%{border-color:#34d399;box-shadow:inset 0 0 16px rgba(16,185,129,.08),0 0 6px rgba(45,212,191,.3)}50%{border-color:#5eead4;box-shadow:inset 0 0 24px rgba(16,185,129,.18),0 0 22px rgba(45,212,191,.72)}}
-    @keyframes smSelectedLiveTilePulse{0%,100%{border-color:#8b5cf6;box-shadow:inset 0 2px 0 rgba(255,255,255,.14),inset 0 -12px 18px rgba(0,0,0,.34),0 0 0 1px rgba(139,92,246,.28),0 0 15px rgba(139,92,246,.42),0 10px 22px rgba(0,0,0,.38)}50%{border-color:#c4b5fd;box-shadow:inset 0 2px 0 rgba(255,255,255,.17),inset 0 -12px 18px rgba(0,0,0,.34),0 0 0 1px rgba(167,139,250,.42),0 0 28px rgba(139,92,246,.72),0 12px 24px rgba(0,0,0,.4)}}
-    .sm-key-tile.open{animation:smLiveTilePulse 1.15s ease-in-out infinite}
+    @keyframes smLiveTilePulse{0%,100%{border-color:#34d399;background:linear-gradient(145deg,rgba(7,62,43,.98),rgba(3,25,20,.99));box-shadow:inset 0 0 30px rgba(16,185,129,.22),0 0 10px rgba(45,212,191,.34),0 9px 24px rgba(0,0,0,.34)}50%{border-color:#5eead4;background:linear-gradient(145deg,rgba(11,92,63,.98),rgba(4,39,31,.99));box-shadow:inset 0 0 46px rgba(16,185,129,.38),0 0 26px rgba(45,212,191,.75),0 11px 26px rgba(0,0,0,.38)}}
+    @keyframes smLiveTileLossPulse{0%,100%{border-color:#fb7185;background:linear-gradient(145deg,rgba(80,15,27,.98),rgba(34,7,17,.99));box-shadow:inset 0 0 30px rgba(239,68,68,.24),0 0 10px rgba(248,113,113,.36),0 9px 24px rgba(0,0,0,.34)}50%{border-color:#fca5a5;background:linear-gradient(145deg,rgba(116,23,38,.98),rgba(55,9,24,.99));box-shadow:inset 0 0 48px rgba(239,68,68,.42),0 0 26px rgba(248,113,113,.78),0 11px 26px rgba(0,0,0,.38)}}
+    @keyframes smSelectedLiveTilePulse{0%,100%{border-color:#34d399;background:linear-gradient(145deg,rgba(7,62,43,.98),rgba(3,25,20,.99));box-shadow:inset 0 0 32px rgba(16,185,129,.26),0 0 0 1px rgba(139,92,246,.28),0 0 17px rgba(52,211,153,.48),0 10px 22px rgba(0,0,0,.38)}50%{border-color:#86efac;background:linear-gradient(145deg,rgba(12,105,72,.98),rgba(4,45,35,.99));box-shadow:inset 0 0 50px rgba(16,185,129,.44),0 0 0 1px rgba(167,139,250,.42),0 0 30px rgba(52,211,153,.78),0 12px 24px rgba(0,0,0,.4)}}
+    @keyframes smSelectedLiveTileLossPulse{0%,100%{border-color:#fb7185;background:linear-gradient(145deg,rgba(80,15,27,.98),rgba(34,7,17,.99));box-shadow:inset 0 0 32px rgba(239,68,68,.3),0 0 0 1px rgba(139,92,246,.28),0 0 17px rgba(248,113,113,.52),0 10px 22px rgba(0,0,0,.38)}50%{border-color:#fecdd3;background:linear-gradient(145deg,rgba(116,23,38,.98),rgba(55,9,24,.99));box-shadow:inset 0 0 50px rgba(239,68,68,.48),0 0 0 1px rgba(167,139,250,.42),0 0 30px rgba(248,113,113,.82),0 12px 24px rgba(0,0,0,.4)}}
+    @keyframes smTileFlashUp{0%{background:linear-gradient(145deg,rgba(18,140,87,1),rgba(4,82,55,1));box-shadow:inset 0 0 58px rgba(74,222,128,.72),0 0 30px rgba(74,222,128,.8)}100%{background:linear-gradient(145deg,rgba(7,62,43,.98),rgba(3,25,20,.99))}}
+    @keyframes smTileFlashDown{0%{background:linear-gradient(145deg,rgba(142,25,25,1),rgba(76,8,21,1));box-shadow:inset 0 0 62px rgba(248,113,113,.78),0 0 32px rgba(248,113,113,.78)}100%{background:linear-gradient(145deg,rgba(7,62,43,.98),rgba(3,25,20,.99))}}
+    .sm-key-tile.open{color:#86efac;border-color:#34d399;background:linear-gradient(145deg,rgba(7,62,43,.98),rgba(3,25,20,.99));animation:smLiveTilePulse 1.15s ease-in-out infinite}
+    .sm-key-tile.open.open-loss{color:#fca5a5;border-color:#fb7185;background:linear-gradient(145deg,rgba(80,15,27,.98),rgba(34,7,17,.99));animation:smLiveTileLossPulse 1.15s ease-in-out infinite}
     .sm-key-tile.open.selected{animation:smSelectedLiveTilePulse 1.15s ease-in-out infinite;outline-color:rgba(167,139,250,.88)}
+    .sm-key-tile.open.flash-up{animation:smTileFlashUp .62s ease-out,smLiveTilePulse 1.15s ease-in-out .62s infinite}
+    .sm-key-tile.open.flash-down{animation:smTileFlashDown .62s ease-out,smLiveTilePulse 1.15s ease-in-out .62s infinite}
+    .sm-key-tile.open.open-loss.flash-up{animation:smTileFlashUp .62s ease-out,smLiveTileLossPulse 1.15s ease-in-out .62s infinite}
+    .sm-key-tile.open.open-loss.flash-down{animation:smTileFlashDown .62s ease-out,smLiveTileLossPulse 1.15s ease-in-out .62s infinite}
+    .sm-key-tile.open.selected.flash-up{animation:smTileFlashUp .62s ease-out,smSelectedLiveTilePulse 1.15s ease-in-out .62s infinite}
+    .sm-key-tile.open.selected.flash-down{animation:smTileFlashDown .62s ease-out,smSelectedLiveTilePulse 1.15s ease-in-out .62s infinite}
+    .sm-key-tile.open.open-loss.selected{animation:smSelectedLiveTileLossPulse 1.15s ease-in-out infinite}
+    .sm-key-tile.open.open-loss.selected.flash-up{animation:smTileFlashUp .62s ease-out,smSelectedLiveTileLossPulse 1.15s ease-in-out .62s infinite}
+    .sm-key-tile.open.open-loss.selected.flash-down{animation:smTileFlashDown .62s ease-out,smSelectedLiveTileLossPulse 1.15s ease-in-out .62s infinite}
     .sm-key-head{position:relative;z-index:2;display:flex;align-items:center;justify-content:space-between;gap:12px}
     .sm-key-name{font-size:14px;line-height:1.2;font-weight:800;color:#f8fafc;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
     .sm-key-instrument{flex:0 0 auto;padding:3px 7px;border-radius:5px;background:rgba(5,12,23,.8);border:1px solid rgba(148,163,184,.3);color:#dbeafe;font-size:10px;font-weight:850}
     .sm-key-pnl{position:relative;z-index:2;margin-top:15px;font-size:23px;line-height:1;font-weight:800;color:#aeb8ca;white-space:nowrap;text-align:center}
-    .sm-key-tile.profit .sm-key-pnl{color:#23e57b}.sm-key-tile.loss .sm-key-pnl{color:#ff475d}
+    .sm-key-tile.profit .sm-key-pnl,.sm-key-tile.open.open-profit .sm-key-pnl{color:#23e57b}.sm-key-tile.loss .sm-key-pnl,.sm-key-tile.open.open-loss .sm-key-pnl{color:#ff475d}
     .sm-key-return{position:relative;z-index:2;margin-top:7px;font-size:13px;font-weight:700;color:#aeb8ca;text-align:center}
     .sm-key-spark{position:absolute;z-index:1;left:18px;right:0;bottom:36px;width:calc(100% - 18px);height:58px;color:inherit;opacity:.28;pointer-events:none}
     .sm-key-spark polyline{fill:none;stroke:currentColor;stroke-width:1.2;vector-effect:non-scaling-stroke}
@@ -1943,8 +2157,10 @@ function renderShadowStrategyMonitorPage(navHtml) {
     .sm-key-tile.top-performer .sm-key-instrument{margin-right:28px}
     .sm-key-bottom{position:relative;z-index:2;display:flex;align-items:center;justify-content:space-between;gap:7px;margin-top:auto;padding-top:9px;color:#e2e8f0;font-size:10px;font-weight:700;text-transform:uppercase}
     .sm-key-state{display:inline-flex;align-items:center;gap:7px;padding:0;background:transparent;font-size:12px;font-weight:800}
-    .sm-key-state.open,.sm-key-state.closed{color:#4ade80}.sm-key-state.stale,.sm-key-state.error{color:#fbbf24}
-    .sm-key-state.open:before{content:"";width:7px;height:7px;border-radius:50%;background:#34d399;box-shadow:0 0 0 4px rgba(52,211,153,.12)}
+    .sm-key-state.open,.sm-key-state.running,.sm-key-state.closed{color:#4ade80}.sm-key-state.waiting,.sm-key-state.no-trade{color:#bfdbfe}.sm-key-state.stale,.sm-key-state.error,.sm-key-state.blocked,.sm-key-state.missed{color:#fbbf24}
+    .sm-key-state.open:before,.sm-key-state.running:before{content:"";width:7px;height:7px;border-radius:50%;background:#34d399;box-shadow:0 0 0 4px rgba(52,211,153,.12)}
+    .sm-key-state.waiting:before,.sm-key-state.no-trade:before{content:"";width:7px;height:7px;border-radius:50%;background:#60a5fa;box-shadow:0 0 0 4px rgba(96,165,250,.1)}
+    .sm-key-state.blocked:before,.sm-key-state.stale:before,.sm-key-state.error:before,.sm-key-state.missed:before{content:"";width:7px;height:7px;border-radius:50%;background:#fbbf24;box-shadow:0 0 0 4px rgba(251,191,36,.12)}
     .sm-consolidated-empty{padding:50px 20px;text-align:center;border:1px dashed rgba(148,163,184,.3);border-radius:14px;color:#94a3b8}
     .sm-consolidated-empty b{display:block;color:#f8fafc;font-size:18px;margin-bottom:7px}
     @media(max-width:1350px){.sm-consolidated-grid{grid-template-columns:repeat(6,minmax(0,1fr));gap:9px}.sm-key-tile{min-height:136px;padding:12px}.sm-key-name{font-size:12px}.sm-key-pnl{font-size:20px}}
@@ -2008,7 +2224,7 @@ function renderShadowStrategyMonitorPage(navHtml) {
       <p class="sm-footer-note">Shadow mode trades are not executed in the market. All P&amp;L values are hypothetical.</p>
     </div>
   </main>
-  <div class="sm-modal" id="historyModal" role="dialog" aria-modal="true" aria-labelledby="historyTitle"><div class="sm-modal-panel"><div class="sm-modal-head"><h2 id="historyTitle">Shadow Trade History</h2><button class="sm-close" id="closeHistory" type="button" aria-label="Close">&times;</button></div><div class="sm-history-tabs"><button class="active" data-period="TRADES">Trades</button><button data-period="DAILY">Daily</button><button data-period="WEEKLY">Weekly</button><button data-period="MONTHLY">Monthly</button><button data-period="YEARLY">Yearly</button><button data-period="BT_WEEKLY">5Y Weekly</button><button data-period="BT_MONTHLY">5Y Monthly</button><button data-period="BT_YEARLY">5Y Yearly</button></div><div class="sm-history-body" id="historyBody"></div></div></div>
+  <div class="sm-modal" id="historyModal" role="dialog" aria-modal="true" aria-labelledby="historyTitle"><div class="sm-modal-panel"><div class="sm-modal-head"><h2 id="historyTitle">Shadow Trade History</h2><button class="sm-close" id="closeHistory" type="button" aria-label="Close">&times;</button></div><div class="sm-history-tabs"><button class="active" data-period="DAILY">Daily</button><button data-period="TRADES">Trades</button><button data-period="WEEKLY">Weekly</button><button data-period="YEARLY">Yearly</button></div><div class="sm-history-body" id="historyBody"></div></div></div>
   <div class="sm-modal" id="candleModal" role="dialog" aria-modal="true" aria-labelledby="candleModalTitle"><div class="sm-modal-panel"><div class="sm-modal-head"><div><h2 id="candleModalTitle">Today's Candle Log</h2><div class="sm-health-note" id="candleModalSub">Selected shadow strategy</div></div><button class="sm-close" id="closeCandles" type="button" aria-label="Close">&times;</button></div><div class="sm-history-body"><div class="sm-table-wrap" style="max-height:70vh"><table class="sm-table candles sm-candle-full" id="candleFullTable"></table></div></div></div></div>
   <div class="sm-modal" id="healthModal" role="dialog" aria-modal="true" aria-labelledby="healthModalTitle"><div class="sm-modal-panel sm-health-panel"><div class="sm-modal-head"><div><h2 id="healthModalTitle">System Health Evidence</h2><div class="sm-health-note">Live process, scheduler, feed, execution, storage and token checks</div></div><button class="sm-close" id="closeHealth" type="button" aria-label="Close">&times;</button></div><div class="sm-health-summary"><strong class="sm-health-state" id="healthModalState">CHECKING</strong><div><b id="healthModalSummary">Running checks</b><span>Critical services must pass before the monitor reports healthy.</span></div><div class="sm-health-checked" id="healthModalChecked">Checked: --</div></div><div class="sm-health-list" id="healthDetails"></div></div></div>
   <script>
@@ -2038,9 +2254,10 @@ function renderShadowStrategyMonitorPage(navHtml) {
       function renderLogs(d){var box=el("logConsole");var nearBottom=box.scrollHeight-box.scrollTop-box.clientHeight<28;var rows=(d.logs||[]).map(function(l){return'<div class="sm-log-line"><span>'+esc(l.time||"--:--:--")+'</span><b class="'+esc(l.level)+'">'+esc(l.level)+'</b><span>'+esc(l.message)+'</span></div>'}).join("");box.innerHTML=rows||'<div class="sm-muted">No server log entries available.</div>';if(state.logStick&&nearBottom)box.scrollTop=box.scrollHeight;el("resumeLogs").hidden=state.logStick}
       function renderSection(name,fn){try{fn()}catch(error){console.error("Shadow monitor "+name+" render failed",error)}}
       function consolidatedKey(t){return [t.strategyId,t.strategyVersion,t.instrumentType,t.executionMode,t.tradeDate].join("|")}
-      function tileClass(t){if(t.positionState==="ERROR")return"error";if(t.positionState==="STALE")return"stale";if(t.positionState==="OPEN")return"open";return Number(t.pnl)>0?"profit":Number(t.pnl)<0?"loss":"no-trade"}
+      function tileClass(t){if(t.positionState==="MISSED")return"missed";if(t.positionState==="ERROR")return"error";if(t.positionState==="STALE")return"stale";if(t.positionState==="OPEN"){var n=Number(t.pnl);return"open "+(n<0?"open-loss":n>0?"open-profit":"open-flat")}return Number(t.pnl)>0?"profit":Number(t.pnl)<0?"loss":"no-trade"}
+      function tileStateLabel(t){if(t.positionState==="MISSED")return"MISSED";if(t.positionState==="ERROR"||t.positionState==="STALE")return"BLOCKED";if(t.positionState==="OPEN")return"RUNNING";return"WAITING"}
       function winnerCard(period,label){var best=period&&period.bestOverall;if(!best)return'<article class="sm-winner-card"><div class="sm-winner-period"><span class="star">&#9733;</span>'+esc(label)+'</div><div class="sm-winner-empty">No completed trades</div></article>';var positive=Number(best.returnPct)>=0;return'<article class="sm-winner-card"><div class="sm-winner-period"><span class="star">&#9733;</span>'+esc(label)+'</div><div class="sm-winner-main"><div class="sm-winner-name">'+esc(best.strategyName)+'<span class="sm-winner-type">'+esc(best.instrument==="FUTURES"?"FUT":"OPT")+'</span></div><div class="sm-winner-values"><span class="sm-winner-return '+(positive?"sm-positive":"sm-negative")+'">'+pct(best.returnPct)+'</span><span class="sm-winner-pnl">'+money(best.pnl)+' · '+money(best.capitalUsed).replace(/^\\+/,"")+' capital</span></div></div></article>'}
-      function renderConsolidated(d){var c=d.consolidated||{};var tiles=c.tiles||[];var periods=d.performance&&d.performance.periods||{};el("consolidatedWinners").innerHTML=winnerCard(periods.TODAY,"Winner Today")+winnerCard(periods.WEEK,"Winner This Week")+winnerCard(periods.MONTH,"Winner This Month")+winnerCard(periods.YEAR,"Winner This Year");var grid=el("consolidatedGrid");if(!tiles.length){grid.innerHTML='<div class="sm-consolidated-empty"><b>No active shadow strategies</b>Configure at least one Futures or Options shadow strategy to view consolidated P&amp;L.</div>';return}var todayBest=periods.TODAY&&periods.TODAY.bestOverall;var top=todayBest?tiles.find(function(t){return t.strategyId===todayBest.strategyId&&t.instrumentType===todayBest.instrument}):null;var topKey=top?consolidatedKey(top):"";var expected=tiles.map(consolidatedKey).join(",");if(grid.dataset.keys!==expected){grid.dataset.keys=expected;grid.innerHTML=tiles.map(function(t){var key=consolidatedKey(t);return'<button class="sm-key-tile" type="button" data-tile-key="'+esc(key)+'" data-strategy="'+esc(t.strategyId)+'" data-instrument="'+esc(t.instrumentType)+'"><span class="sm-key-select-mark" aria-hidden="true" title="Top performer today">&#9733;</span><div class="sm-key-head"><span class="sm-key-name"></span><span class="sm-key-instrument"></span></div><div class="sm-key-pnl"></div><div class="sm-key-return"></div><svg class="sm-key-spark" viewBox="0 0 320 58" preserveAspectRatio="none" aria-hidden="true"><polyline points="0,43 18,38 34,42 50,34 68,36 86,30 103,33 120,28 138,31 156,24 175,27 193,20 211,23 230,17 248,19 266,12 284,15 302,8 320,4"/></svg><div class="sm-key-bottom"><span class="sm-key-trades"></span><span class="sm-key-state"></span></div></button>'}).join("")}tiles.forEach(function(t){var key=consolidatedKey(t);var tile=grid.querySelector('[data-tile-key="'+CSS.escape(key)+'"]');if(!tile)return;var cls=tileClass(t);tile.className="sm-key-tile "+cls+(t.strategyId===state.strategy&&t.instrumentType===state.instrument?" selected":"")+(key===topKey?" top-performer":"");tile.querySelector(".sm-key-name").textContent=t.strategyName;tile.querySelector(".sm-key-instrument").textContent=t.instrumentType==="FUTURES"?"FUT":"OPT";tile.querySelector(".sm-key-pnl").innerHTML=t.pnl==null?"Not available":money(t.pnl);tile.querySelector(".sm-key-return").textContent=t.returnPct==null?"Return unavailable":pct(t.returnPct)+" return";tile.querySelector(".sm-key-trades").textContent=value(t.trades,0)+" "+(Number(t.trades)===1?"trade":"trades");var stateNode=tile.querySelector(".sm-key-state");stateNode.className="sm-key-state "+String(t.positionState||"").toLowerCase().replace(/\\s+/g,"-");stateNode.textContent=t.positionState||"--";tile.title=(key===topKey?"Top performer today | ":"")+(t.pnl==null?"No valid current-day shadow data":t.strategyName+" "+t.instrumentType+" | Allocated capital "+value(t.capitalDeployed,0))})}
+      function renderConsolidated(d){var c=d.consolidated||{};var tiles=c.tiles||[];var periods=d.performance&&d.performance.periods||{};el("consolidatedWinners").innerHTML=winnerCard(periods.TODAY,"Winner Today")+winnerCard(periods.WEEK,"Winner This Week")+winnerCard(periods.MONTH,"Winner This Month")+winnerCard(periods.YEAR,"Winner This Year");var grid=el("consolidatedGrid");if(!tiles.length){grid.innerHTML='<div class="sm-consolidated-empty"><b>No active shadow strategies</b>Configure at least one Futures or Options shadow strategy to view consolidated P&amp;L.</div>';return}var todayBest=periods.TODAY&&periods.TODAY.bestOverall;var top=todayBest?tiles.find(function(t){return t.strategyId===todayBest.strategyId&&t.instrumentType===todayBest.instrument}):null;var topKey=top?consolidatedKey(top):"";var expected=tiles.map(consolidatedKey).join(",");if(grid.dataset.keys!==expected){grid.dataset.keys=expected;grid.innerHTML=tiles.map(function(t){var key=consolidatedKey(t);return'<button class="sm-key-tile" type="button" data-tile-key="'+esc(key)+'" data-strategy="'+esc(t.strategyId)+'" data-instrument="'+esc(t.instrumentType)+'"><span class="sm-key-select-mark" aria-hidden="true" title="Top performer today">&#9733;</span><div class="sm-key-head"><span class="sm-key-name"></span><span class="sm-key-instrument"></span></div><div class="sm-key-pnl"></div><div class="sm-key-return"></div><svg class="sm-key-spark" viewBox="0 0 320 58" preserveAspectRatio="none" aria-hidden="true"><polyline points="0,43 18,38 34,42 50,34 68,36 86,30 103,33 120,28 138,31 156,24 175,27 193,20 211,23 230,17 248,19 266,12 284,15 302,8 320,4"/></svg><div class="sm-key-bottom"><span class="sm-key-trades"></span><span class="sm-key-state"></span></div></button>'}).join("")}tiles.forEach(function(t){var key=consolidatedKey(t);var tile=grid.querySelector('[data-tile-key="'+CSS.escape(key)+'"]');if(!tile)return;var cls=tileClass(t);var selected=t.strategyId===state.strategy&&t.instrumentType===state.instrument;var topPerformer=key===topKey&&t.positionState!=="OPEN";var previousPnl=Number(tile.dataset.pnl);var nextPnl=Number(t.pnl);var displayPnl=Number.isFinite(nextPnl)?nextPnl:0;var shouldFlash=t.positionState==="OPEN"&&Number.isFinite(previousPnl)&&Number.isFinite(displayPnl)&&previousPnl!==displayPnl;var flashClass=shouldFlash?(displayPnl>previousPnl?"flash-up":"flash-down"):"";tile.className="sm-key-tile "+cls+(selected?" selected":"")+(topPerformer?" top-performer":"");if(flashClass){void tile.offsetWidth;tile.classList.add(flashClass)}tile.dataset.pnl=String(displayPnl);tile.querySelector(".sm-key-name").textContent=t.strategyName;tile.querySelector(".sm-key-instrument").textContent=t.instrumentType==="FUTURES"?"FUT":"OPT";tile.querySelector(".sm-key-pnl").innerHTML=money(displayPnl);tile.querySelector(".sm-key-return").textContent=t.positionState==="MISSED"?"Trigger missed":t.positionState==="ERROR"||t.positionState==="STALE"?"Needs attention":t.returnPct==null?"0.00% return":pct(t.returnPct)+" return";tile.querySelector(".sm-key-trades").textContent=value(t.trades,0)+" "+(Number(t.trades)===1?"trade":"trades");var stateNode=tile.querySelector(".sm-key-state");var stateLabel=tileStateLabel(t);stateNode.className="sm-key-state "+stateLabel.toLowerCase();stateNode.textContent=stateLabel;tile.title=(topPerformer?"Top performer today | ":"")+t.strategyName+" "+t.instrumentType+" | "+stateLabel+" | P&L "+money(displayPnl)+" | Allocated capital "+value(t.capitalDeployed,0)})}
       function setViewMode(mode){state.viewMode=mode;var consolidated=mode==="consolidated";el("shadowMonitor").classList.toggle("sm-consolidated-mode",consolidated);el("shadowPage").classList.toggle("sm-consolidated-page",consolidated);el("consolidatedView").hidden=!consolidated;el("monitorTitle").textContent=consolidated?"Consolidated Shadow P&L":"Shadow Strategy Monitor";el("monitorSubtitle").textContent=consolidated?"Today's P&L across all shadow strategies and instruments":"Simulated trades only. No real broker orders are placed.";el("consolidatedToggle").querySelector("span").textContent=consolidated?"Back to Dashboard":"Consolidated P&L";if(consolidated&&state.data)renderConsolidated(state.data);if(refreshTimer)scheduleRefresh();window.scrollTo({top:0,behavior:"auto"})}
       function render(d){state.data=d;state.instrument=d.identity.instrumentType||state.instrument;localStorage.setItem("zsShadowInstrument",state.instrument);renderSection("strategies",function(){renderStrategies(d.strategies)});renderSection("trades",function(){renderTrades(d)});renderSection("candles",function(){renderCandles(d)});renderSection("health",function(){renderHealth(d);el("healthAction").textContent="View Checks"});renderSection("summary",function(){renderSummary(d)});renderSection("logs",function(){renderLogs(d)});renderSection("consolidated",function(){renderConsolidated(d)});var m=el("marketStatus");m.className="sm-market "+(d.market.status==="OPEN"?"open":"closed");m.querySelector("span:last-child").textContent="Market "+(d.market.status==="OPEN"?"Open":"Closed");el("refreshMeta").textContent="Last refreshed: "+dt(d.refreshedAt);document.querySelectorAll(".sm-segment [data-instrument]").forEach(function(b){b.classList.toggle("active",b.dataset.instrument===state.instrument)});el("shadowMonitor").classList.remove("sm-loading");el("monitorLoader").classList.remove("active")}
       async function load(trigger){var interactive=trigger===true||!!(trigger&&trigger.type)||state.userRequestedLoad===true;state.userRequestedLoad=false;var seq=++state.request;if(activeController)activeController.abort();activeController=new AbortController();if(interactive){el("monitorLoader").classList.add("active");el("shadowMonitor").classList.add("sm-loading")}try{var url="/api/shadow-monitor?strategy="+encodeURIComponent(state.strategy)+"&instrument="+encodeURIComponent(state.instrument);var r=await fetch(url,{cache:"no-store",credentials:"same-origin",signal:activeController.signal});if(!r.ok)throw new Error("HTTP "+r.status);var d=await r.json();if(seq!==state.request)return;if(!d.ok)throw new Error(d.error||"Monitor unavailable");render(d)}catch(e){if(e.name==="AbortError")return;el("refreshMeta").textContent="Refresh failed: "+e.message;el("shadowMonitor").classList.remove("sm-loading");el("monitorLoader").classList.remove("active")}}
@@ -2064,6 +2281,13 @@ function renderShadowStrategyMonitorPage(navHtml) {
       renderHistory=function(period){var d=state.data;if(!d)return;var h=d.history||{};var body=el("historyBody");if(/^BT_/.test(period)){var b=d.backtest||{};var key=period==="BT_WEEKLY"?"weeks":period==="BT_YEARLY"?"years":"months";var backtestRows=(b[key]||[]).slice().sort(function(a,z){return String(z.period).localeCompare(String(a.period))});if(!backtestRows.length){body.innerHTML='<div class="sm-history-state"><b>No '+esc(key)+' backtest records for this selection</b><p>Backtest data is kept separate from live shadow history.</p></div>';return}body.innerHTML='<div class="sm-history-toolbar"><div><h3>5Y '+esc(key.charAt(0).toUpperCase()+key.slice(1))+' Backtest</h3><div class="sm-health-note">'+esc(d.identity.strategyName)+' · '+esc(d.identity.instrumentType)+' · historical candles</div></div><div class="sm-source">BACKTEST ONLY</div></div>'+historyRows(backtestRows,false);return}if(period==="TRADES"&&!(h.trades||[]).length&&(h.days||[]).length){period="DAILY";document.querySelectorAll("[data-period]").forEach(function(x){x.classList.toggle("active",x.dataset.period===period)})}var rows=period==="TRADES"?(h.trades||[]):period==="DAILY"?(h.days||[]):period==="WEEKLY"?(h.weekly||[]):period==="YEARLY"?(h.yearly||[]):(h.monthly||[]);if(!rows.length){body.innerHTML='<div class="sm-history-state"><b>No stored shadow '+esc(period.toLowerCase())+' for this selection</b><p>'+esc(d.identity.strategyName)+' · '+esc(d.identity.instrumentType)+' · SHADOW</p></div>';return}body.innerHTML='<div class="sm-history-toolbar"><div><h3>'+esc(period==="TRADES"?"All stored trades":period.charAt(0)+period.slice(1).toLowerCase()+" shadow history")+'</h3><div class="sm-health-note">Selected strategy and instrument only. Values come from persisted shadow records.</div></div><div class="sm-source">LIVE SHADOW</div></div>'+(period==="TRADES"?tradeHistoryTable(rows):liveHistoryTable(rows,period==="MONTHLY"));if(period==="MONTHLY")body.querySelectorAll("[data-month-open]").forEach(function(button){button.addEventListener("click",function(){renderMonthDays(button.dataset.monthOpen)})})};
       var renderStoredHistory=renderHistory;
       renderHistory=function(period){var d=state.data;if(!d||!d.history)return renderStoredHistory(period);if(period!=="TRADES"&&period!=="DAILY")return renderStoredHistory(period);var key=period==="TRADES"?"trades":"days";var original=d.history[key];d.history[key]=(original||[]).filter(function(row){return String(row.date||row.tradeDate||"")===String(d.identity.tradeDate||"")});try{renderStoredHistory(period);var heading=el("historyBody").querySelector("h3");if(heading)heading.textContent=period==="TRADES"?"Today's stored trades":"Today's shadow result"}finally{d.history[key]=original}};
+      function drillHistoryTable(rows,action){return'<div class="sm-table-wrap" style="max-height:58vh"><table class="sm-table"><thead><tr><th>Period</th><th>Net P&amp;L</th><th>Capital Deployed</th><th>Return %</th><th>Trading Days</th><th>Trades</th><th>Wins</th><th>Losses</th><th>Win Rate</th>'+(action?'<th></th>':'')+'</tr></thead><tbody>'+rows.map(function(r){var period=String(r.period||r.date||"--");var rowAttr=action?action==="year"?' class="sm-drill-row" data-year-open="'+esc(period)+'"':' class="sm-drill-row" data-month-open="'+esc(period)+'"':"";var details=action?action==="year"?'<td><button class="sm-month-open" data-year-open="'+esc(period)+'" aria-label="Open months for '+esc(period)+'">&gt;</button></td>':'<td><button class="sm-month-open" data-month-open="'+esc(period)+'" aria-label="Open days for '+esc(period)+'">&gt;</button></td>':"";return"<tr"+rowAttr+"><td>"+esc(period)+"</td><td class='"+clsPnl(r.pnl)+"'>"+money(r.pnl)+"</td><td>"+(r.capitalDeployed?money(r.capitalDeployed).replace(/^\\+/,""):"--")+"</td><td class='"+clsPnl(r.returnPct)+"'>"+pct(r.returnPct)+"</td><td>"+value(r.tradingDays==null?1:r.tradingDays,0)+"</td><td>"+value(r.trades,0)+"</td><td class='sm-positive'>"+value(r.wins,0)+"</td><td class='sm-negative'>"+value(r.losses,0)+"</td><td>"+pct(r.winRate==null?(r.wins+r.losses?r.wins/(r.wins+r.losses)*100:0):r.winRate)+"</td>"+details+"</tr>"}).join("")+"</tbody></table></div>"}
+      function meaningfulHistoryRows(rows){return(rows||[]).filter(function(r){return Number(r.trades||0)>0||Number(r.wins||0)>0||Number(r.losses||0)>0||Number(r.capitalDeployed||0)>0||Number(r.pnl||0)!==0})}
+      function showHistoryEmpty(label){var d=state.data;el("historyBody").innerHTML='<div class="sm-history-state"><b>No stored shadow '+esc(label)+' for this selection</b><p>'+esc(d.identity.strategyName)+' · '+esc(d.identity.instrumentType)+' · SHADOW</p></div>'}
+      function setHistoryTab(period){document.querySelectorAll("[data-period]").forEach(function(x){x.classList.toggle("active",x.dataset.period===period)})}
+      function renderYearMonths(year){var d=state.data;var rows=meaningfulHistoryRows(((d&&d.history&&d.history.monthly)||[]).filter(function(r){return String(r.period||"").slice(0,4)===year})).sort(function(a,z){return String(z.period).localeCompare(String(a.period))});if(!rows.length){showHistoryEmpty(year+" monthly history");return}el("historyBody").innerHTML='<div class="sm-history-toolbar"><div><h3>'+esc(year)+' monthly shadow history</h3><div class="sm-health-note">Click a month to view all daily records.</div></div><button class="sm-history-btn" id="backToYears" type="button">Back to years</button></div>'+drillHistoryTable(rows,"month");el("backToYears").addEventListener("click",function(){renderHistory("YEARLY")});el("historyBody").querySelectorAll("[data-month-open]").forEach(function(button){button.addEventListener("click",function(){renderMonthDays(button.dataset.monthOpen,year)})})}
+      renderMonthDays=function(month,year){var d=state.data;var rows=meaningfulHistoryRows(((d&&d.history&&d.history.days)||[]).filter(function(r){return String(r.date||"").slice(0,7)===month})).sort(function(a,z){return String(z.date).localeCompare(String(a.date))});if(!rows.length){showHistoryEmpty(month+" daily history");return}el("historyBody").innerHTML='<div class="sm-history-toolbar"><div><h3>'+esc(month)+' daily shadow history</h3><div class="sm-health-note">'+esc(d.identity.strategyName)+' · '+esc(d.identity.instrumentType)+' · SHADOW</div></div><button class="sm-history-btn" id="backToMonths" type="button">Back to months</button></div>'+drillHistoryTable(rows,null);el("backToMonths").addEventListener("click",function(){renderYearMonths(year||String(month).slice(0,4))})};
+      renderHistory=function(period){var d=state.data;if(!d||!d.history)return;period=period==="TRADES"||period==="WEEKLY"||period==="YEARLY"?period:"DAILY";setHistoryTab(period);var h=d.history||{};var rows=period==="TRADES"?(h.trades||[]):meaningfulHistoryRows((period==="DAILY"?h.days:period==="WEEKLY"?h.weekly:h.yearly)||[]);rows=rows.slice().sort(function(a,z){return(String(z.period||z.date)+" "+String(z.time||"")).localeCompare(String(a.period||a.date)+" "+String(a.time||""))});if(!rows.length){showHistoryEmpty(period.toLowerCase()+" history");return}var title=period==="TRADES"?"All stored trades":period==="DAILY"?"Daily shadow history":period==="WEEKLY"?"Weekly shadow history":"Yearly shadow history";var note=period==="YEARLY"?"Click a year to view its months, then click a month to view all days.":"Selected strategy and instrument only. Values come from persisted shadow records.";el("historyBody").innerHTML='<div class="sm-history-toolbar"><div><h3>'+esc(title)+'</h3><div class="sm-health-note">'+esc(note)+'</div></div><div class="sm-source">LIVE SHADOW</div></div>'+(period==="TRADES"?tradeHistoryTable(rows):drillHistoryTable(rows,period==="YEARLY"?"year":null));if(period==="YEARLY")el("historyBody").querySelectorAll("[data-year-open]").forEach(function(button){button.addEventListener("click",function(){renderYearMonths(button.dataset.yearOpen)})})};
       function openHealth(){if(state.data)renderHealthDetails(state.data.health);el("healthModal").classList.add("open")}
       el("healthStep").addEventListener("click",openHealth);el("healthStep").addEventListener("keydown",function(e){if(e.key==="Enter"||e.key===" "){e.preventDefault();openHealth()}});el("closeHealth").addEventListener("click",function(){el("healthModal").classList.remove("open")});el("healthModal").addEventListener("click",function(e){if(e.target===this)this.classList.remove("open")});
       var refreshTimer=null;

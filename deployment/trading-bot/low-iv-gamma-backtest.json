@@ -1,0 +1,137 @@
+{
+  "generatedAt": "2026-08-02T18:21:34.057Z",
+  "coverage": {
+    "from": "2026-07-29",
+    "to": "2026-07-31"
+  },
+  "dataProvenance": {
+    "underlying": "Kite historical 5-minute BANKNIFTY26AUGFUT with volume/OI",
+    "options": "Kite historical 5-minute listed 2026-08-25 BANKNIFTY option OHLC/volume/OI",
+    "exactFields": [
+      "underlying OHLC",
+      "futures volume",
+      "option OHLC",
+      "option volume",
+      "option OI",
+      "IV derived from actual option candle prices"
+    ],
+    "unavailableFields": [
+      "historical bid/ask spread",
+      "tick-level confirmation fill",
+      "historical quote age"
+    ]
+  },
+  "strategies": {
+    "low-iv-gamma": {
+      "OPTIONS": {
+        "modelled": true,
+        "methodology": "Signals use actual 5-minute BANKNIFTY futures and listed option candles. IV is Black-Scholes implied volatility derived from actual option OHLC. Entry is conservatively priced at the next confirmation candle close. Bid/ask and tick-level ordering are unavailable; results are a candle replay, not an execution-quality simulation.",
+        "summary": {
+          "total": 0,
+          "totalTrades": 0,
+          "wins": 0,
+          "losses": 0,
+          "winRate": 0,
+          "maxDrawdown": 0,
+          "capitalUsed": 0,
+          "returnPct": 0,
+          "avgMonthlyPnl": 0,
+          "avgMonthlyReturnPct": 0
+        },
+        "days": [
+          {
+            "date": "2026-07-29",
+            "pnl": 0,
+            "capitalDeployed": 0,
+            "trades": 0,
+            "wins": 0,
+            "losses": 0,
+            "trade": null
+          },
+          {
+            "date": "2026-07-30",
+            "pnl": 0,
+            "capitalDeployed": 0,
+            "trades": 0,
+            "wins": 0,
+            "losses": 0,
+            "trade": null
+          },
+          {
+            "date": "2026-07-31",
+            "pnl": 0,
+            "capitalDeployed": 0,
+            "trades": 0,
+            "wins": 0,
+            "losses": 0,
+            "trade": null
+          }
+        ],
+        "weeks": [],
+        "months": [
+          {
+            "period": "2026-07",
+            "pnl": 0,
+            "capitalUsed": 0,
+            "tradingDays": 3,
+            "trades": 0,
+            "wins": 0,
+            "losses": 0,
+            "winRate": 0,
+            "returnPct": 0
+          }
+        ],
+        "years": [
+          {
+            "period": "2026-07",
+            "pnl": 0,
+            "capitalUsed": 0,
+            "tradingDays": 3,
+            "trades": 0,
+            "wins": 0,
+            "losses": 0,
+            "winRate": 0,
+            "returnPct": 0
+          }
+        ],
+        "diagnostics": [
+          {
+            "date": "2026-07-29",
+            "tested": true,
+            "morningAtm": 57300,
+            "morningIvPct": 13.63,
+            "trade": null,
+            "rejectionCounts": {
+              "no_or_vwap_ema_breakout": 33,
+              "iv_contraction": 2,
+              "body_ratio": 4,
+              "volume_multiple": 1
+            }
+          },
+          {
+            "date": "2026-07-30",
+            "tested": true,
+            "morningAtm": 57000,
+            "morningIvPct": 13.62,
+            "trade": null,
+            "rejectionCounts": {
+              "no_or_vwap_ema_breakout": 28,
+              "iv_contraction": 2,
+              "body_ratio": 10
+            }
+          },
+          {
+            "date": "2026-07-31",
+            "tested": true,
+            "morningAtm": 57400,
+            "morningIvPct": 12.78,
+            "trade": null,
+            "rejectionCounts": {
+              "no_or_vwap_ema_breakout": 40
+            }
+          }
+        ]
+      }
+    }
+  }
+}

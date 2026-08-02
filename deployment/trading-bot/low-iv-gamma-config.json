@@ -1,0 +1,20 @@
+{
+  "enabled": true,
+  "executionMode": "SHADOW",
+  "paperEquityRs": 1000000,
+  "riskPerTradePct": 0.005,
+  "maxDailyLossPct": 0.01,
+  "ivContractionRatio": 0.9,
+  "nearAtmPct": 0.003,
+  "minBodyRatio": 0.6,
+  "minVolumeMultiple": 1.25,
+  "premiumLookback": 3,
+  "premiumStopPct": 0.18,
+  "maxSpreadPct": 0.025,
+  "minOpenInterest": 1000,
+  "allowExpiryDay": false,
+  "allowReentry": false,
+  "gammaFilterEnabled": false,
+  "minGamma": 0,
+  "eventDates": []
+}
