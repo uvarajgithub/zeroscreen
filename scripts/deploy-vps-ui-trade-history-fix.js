@@ -3,7 +3,7 @@ const path = require('path');
 const crypto = require('crypto');
 const { execFileSync } = require('child_process');
 
-const expected = '8ca9a93cd2dde7526aca759105ffff272ee910a21ec44e7d3c55d9a1a3af7ac6';
+const expected = 'f1f8d9132caa1bab4ecbc36495006bc3248d0f9d0223742874137f2054cfadcd';
 const staged = '/tmp/zeroscreen-shadowMonitor.ts';
 const root = '/root/zeroscreen';
 const source = path.join(root, 'src/shadowMonitor.ts');

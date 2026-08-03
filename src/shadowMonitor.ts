@@ -1098,6 +1098,8 @@ function systemHealth(
   const livePrice = strategyLivePrice !== null && strategyLivePrice > 0
     ? strategyLivePrice
     : num(hb?.price);
+  const completedWithoutLivePrice = !fields.inTrade
+    && /\b(DONE|CLOSED|EXITED|FLAT|NO[_ ]?TRADE)\b/i.test(String(fields.phase || ""));
   const strategyMarker = text(
     hb?.[`${strategy.prefix}Strategy`]
       ?? (strategy.id === "drishti" ? hb?.strategy : null)
@@ -1198,20 +1200,24 @@ function systemHealth(
     {
       id: "marketHeartbeat",
       label: "Market Data Heartbeat",
-      level: !marketOpen ? "INFO" : freshHeartbeat && livePrice !== null && livePrice > 0 ? "PASS" : delayedHeartbeat ? "WARN" : "FAIL",
+      level: !marketOpen ? "INFO" : freshHeartbeat && ((livePrice !== null && livePrice > 0) || completedWithoutLivePrice) ? "PASS" : delayedHeartbeat ? "WARN" : "FAIL",
       value: !marketOpen ? "Market closed" : freshHeartbeat ? "Receiving" : "Stale",
-      detail: `Latest price ${livePrice ?? "--"}; heartbeat ${heartbeatAgeSec === null ? "missing" : `${heartbeatAgeSec}s ago`}`,
+      detail: completedWithoutLivePrice && !(livePrice !== null && livePrice > 0)
+        ? `Strategy phase ${fields.phase}; heartbeat ${heartbeatAgeSec === null ? "missing" : `${heartbeatAgeSec}s ago`}; no open-position LTP required.`
+        : `Latest price ${livePrice ?? "--"}; heartbeat ${heartbeatAgeSec === null ? "missing" : `${heartbeatAgeSec}s ago`}`,
       source: "Bot heartbeat market fields",
       critical: true,
     },
     {
       id: "feed",
       label: "Feed Freshness",
-      level: !marketOpen ? "INFO" : freshHeartbeat && livePrice !== null && livePrice > 0 ? "PASS" : delayedHeartbeat ? "WARN" : "FAIL",
-      value: !marketOpen ? "Market closed" : livePrice ? "Fresh" : "No price",
+      level: !marketOpen ? "INFO" : freshHeartbeat && ((livePrice !== null && livePrice > 0) || completedWithoutLivePrice) ? "PASS" : delayedHeartbeat ? "WARN" : "FAIL",
+      value: !marketOpen ? "Market closed" : livePrice || completedWithoutLivePrice ? "Fresh" : "No price",
       detail: !marketOpen
         ? `Fresh ticks are not required outside market hours. Last event: ${latestFeedLog?.message || "not published"}`
-        : `Latest price evidence ${livePrice ?? "--"}; last feed event ${latestFeedLog?.message || "not published"}.`,
+        : completedWithoutLivePrice && !(livePrice !== null && livePrice > 0)
+          ? `Strategy phase ${fields.phase} is complete with no open position; fresh heartbeat confirms runtime connectivity.`
+          : `Latest price evidence ${livePrice ?? "--"}; last feed event ${latestFeedLog?.message || "not published"}.`,
       source: "Heartbeat price evidence",
       critical: true,
     },
