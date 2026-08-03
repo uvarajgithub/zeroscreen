@@ -68,6 +68,12 @@ try {
 
   const source = fs.readFileSync(path.join(__dirname, '..', '..', 'src', 'shadowMonitor.ts'), 'utf8');
   assert(source.includes('scheduledEvaluationMissed(strategy.id, fields)'), 'Consolidated missed-evaluation classification is absent');
+  for (const artifact of [source, fs.readFileSync(path.join(__dirname, '..', '..', 'dist', 'shadowMonitor.js'), 'utf8')]) {
+    assert(artifact.includes('sm-consolidated-groups'), 'Consolidated Futures/Options group layout is absent');
+    assert(artifact.includes('consolidatedGroupMarkup("FUTURES",futuresTiles)'), 'Consolidated Futures group rendering is absent');
+    assert(artifact.includes('consolidatedGroupMarkup("OPTIONS",optionsTiles)'), 'Consolidated Options group rendering is absent');
+    assert(artifact.includes('data-group-summary'), 'Consolidated instrument summaries are absent');
+  }
   const botSource = fs.readFileSync(path.join(__dirname, '..', '..', 'deployment', 'trading-bot', 'index.ts'), 'utf8');
   const botRuntime = fs.readFileSync(path.join(__dirname, '..', '..', 'deployment', 'trading-bot', 'dist', 'src', 'index.js'), 'utf8');
   for (const artifact of [botSource, botRuntime]) {
