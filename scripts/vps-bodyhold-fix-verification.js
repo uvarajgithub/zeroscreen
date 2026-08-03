@@ -2,7 +2,10 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 
-const source = fs.readFileSync('/home/ubuntu/trading-bot/dist/src/index.js', 'utf8');
+const runtimePath = fs.existsSync('/home/ubuntu/trading-bot/dist/src/index.js')
+  ? '/home/ubuntu/trading-bot/dist/src/index.js'
+  : path.join(__dirname, '..', 'deployment', 'trading-bot', 'dist', 'src', 'index.js');
+const source = fs.readFileSync(runtimePath, 'utf8');
 function extractFunction(name) {
   let start = source.indexOf(`function ${name}(`);
   if (start < 0) throw new Error(`Function missing: ${name}`);
@@ -26,7 +29,7 @@ function extractFunction(name) {
 }
 function assert(ok, message) { if (!ok) throw new Error(message); }
 
-const functions = ['persistBodyHoldState', 'startBodyHoldSession', 'bodyHoldHeartbeatFields', 'runBodyHoldShadow']
+const functions = ['persistBodyHoldState', 'startBodyHoldSession', 'bodyHoldHeartbeatFields', 'updateBodyHoldMarkToMarket', 'runBodyHoldShadow']
   .map(extractFunction).join('\n');
 const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'bodyhold-fix-test-'));
 const original = process.cwd();
@@ -57,12 +60,16 @@ const original = process.cwd();
       const tt1030ISTParts = () => ({ ymd: sessionDay });
       const log = (event, details) => events.push({ event, details });
       ${functions}
-      return { start: startBodyHoldSession, run: runBodyHoldShadow, heartbeat: bodyHoldHeartbeatFields, snapshot: () => ({ bhs1, bhs2, trades, events, bodyHoldDay }) };
+      return { start: startBodyHoldSession, mark: updateBodyHoldMarkToMarket, run: runBodyHoldShadow, heartbeat: bodyHoldHeartbeatFields, snapshot: () => ({ bhs1, bhs2, trades, events, bodyHoldDay }) };
     `);
     const test = factory(fs, day, empty);
     test.start(day);
     let state = test.snapshot();
     assert(state.bhs1.inTrade && state.bhs2.inTrade && state.bodyHoldDay === day, 'same-day S1/S2 state did not restore');
+    await test.mark(57200);
+    const openHeartbeat = test.heartbeat();
+    assert(openHeartbeat.bodyHoldS1Live === 57200 && openHeartbeat.bodyHoldS1OptionLive === 600, 'Body Hold live LTP fields were not published');
+    assert(openHeartbeat.bodyHoldS1FuturesUnrealizedPnL === 6300 && openHeartbeat.bodyHoldS1OptionsUnrealizedPnL === -4581, 'Body Hold live unrealized P&L is incorrect');
     await test.run({ open: 57250, high: 57300, low: 57180, close: 57200 }, true);
     state = test.snapshot();
     const types = state.trades.map((row) => row.type);
@@ -76,6 +83,7 @@ const original = process.cwd();
     assert(source.indexOf('if (toMs <= fromMs)') < source.indexOf('kite.getHistoricalData(TT1030_INDEX_TOKEN'), 'premarket inverted-range guard is missing or ordered after broker call');
     assert(/bodyHoldEODWindow[\s\S]*m >= 31[\s\S]*runBodyHoldShadow/.test(source), 'independent 15:31 EOD path is missing');
     console.log('PASS Body Hold same-day restart restoration');
+    console.log('PASS Body Hold Futures/Options live LTP and unrealized P&L');
     console.log('PASS Body Hold S1/S2 guaranteed EOD rows and persisted flat state');
     console.log('PASS Body Hold S1/S2 heartbeat visibility');
     console.log('PASS shared 09:15 inverted-range broker guard');

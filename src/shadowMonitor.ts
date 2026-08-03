@@ -268,8 +268,16 @@ function strategyFields(strategy: StrategyDefinition, hb: any, state: any, instr
     const inTrade = isOptions ? !!hb.optInTrade : !!hb.inTrade;
     const rawSymbol = text(isOptions ? hb.optSymbol : hb.symbol);
     const scopedSymbol = !isOptions && rawSymbol && /\d+(CE|PE)$/i.test(rawSymbol) ? null : rawSymbol;
-    const realized = isOptions ? num(hb.optDailyRs) : num(hb.dailyRealRs);
-    const unrealized = isOptions ? num(hb.unrealisedPnL) : num(hb.unrealisedPnL);
+    const quantity = num(hb.qty) ?? 30;
+    const realized = (isOptions ? num(hb.optDailyRs) : num(hb.dailyRealRs)) ?? 0;
+    const live = num(isOptions ? hb.livePremium : hb.livePrice);
+    const entry = num(isOptions ? hb.optEntryPrem : (hb.drishtiFuturesEntry || hb.entryPrice));
+    const direction = text(isOptions ? hb.optDir : hb.direction);
+    const unrealized = inTrade && live !== null && entry !== null
+      ? isOptions
+        ? (live - entry) * quantity
+        : (direction === "PE" ? entry - live : live - entry) * quantity
+      : 0;
     const allDrishtiTrades = readJson("trades.json", []);
     const scopedDrishtiTrades = (Array.isArray(allDrishtiTrades) ? allDrishtiTrades : []).filter((row: any) => {
       const type = String(row?.type || "").toUpperCase();
@@ -291,13 +299,13 @@ function strategyFields(strategy: StrategyDefinition, hb: any, state: any, instr
       trades: tradeCount,
       wins: num(isOptions ? hb.optWins : state.drishtiWins) ?? 0,
       losses: num(isOptions ? hb.optLosses : state.drishtiLosses) ?? 0,
-      direction: text(isOptions ? hb.optDir : hb.direction),
+      direction,
       symbol: scopedSymbol,
-      entry: num(isOptions ? hb.optEntryPrem : (hb.drishtiFuturesEntry || hb.entryPrice)),
-      live: num(isOptions ? hb.livePremium : hb.livePrice),
+      entry,
+      live,
       sl: num(hb.sl),
       target: null,
-      quantity: num(hb.qty),
+      quantity,
       entryTime: timeValue(isOptions ? hb.optEntryTime : hb.entryTime),
       entryAt: isOptions ? hb.optEntryTime : hb.entryTime,
       phase: text(hb.status),
@@ -323,24 +331,37 @@ function strategyFields(strategy: StrategyDefinition, hb: any, state: any, instr
       String(row?.type || "").toUpperCase() === expectedType
     );
     const todayRows = rawTrades.filter((row: any) => dateKey(row?.date) === todayIST());
-    const realized = num(isOptions ? leg.dayOptRs : leg.dayFutRs)
-      ?? num(hb[isOptions ? `${hbPrefix}OptionsPnL` : `${hbPrefix}FuturesPnL`])
+    const quantity = num(hb.qty) ?? 30;
+    const realized = num(hb[isOptions ? `${hbPrefix}OptionsRealizedPnL` : `${hbPrefix}FuturesRealizedPnL`])
+      ?? num(isOptions ? leg.dayOptRs : leg.dayFutRs)
       ?? todayRows.reduce((sum: number, row: any) => sum + (num(row?.pnlRs) ?? 0), 0);
+    const live = num(isOptions
+      ? hb[`${hbPrefix}OptionLive`] ?? leg.livePrem
+      : hb[`${hbPrefix}Live`] ?? leg.liveIdx);
+    const entry = num(isOptions ? leg.entryPrem : leg.entryIdx ?? hb[`${hbPrefix}Entry`]);
+    const direction = text(leg.dir ?? hb[`${hbPrefix}Dir`]);
+    const inTrade = !!(leg.inTrade ?? hb[`${hbPrefix}InTrade`]);
+    const publishedUnrealized = num(hb[isOptions ? `${hbPrefix}OptionsUnrealizedPnL` : `${hbPrefix}FuturesUnrealizedPnL`]);
+    const unrealized = publishedUnrealized ?? (inTrade && live !== null && entry !== null
+      ? isOptions
+        ? (live - entry) * quantity
+        : (direction === "PE" ? entry - live : live - entry) * quantity
+      : 0);
     return {
-      inTrade: !!(leg.inTrade ?? hb[`${hbPrefix}InTrade`]),
+      inTrade,
       realized,
-      unrealized: 0,
-      total: realized,
+      unrealized,
+      total: realized + unrealized,
       trades: todayRows.length,
       wins: todayRows.filter((row: any) => (num(row?.pnlRs) ?? 0) > 0).length,
       losses: todayRows.filter((row: any) => (num(row?.pnlRs) ?? 0) < 0).length,
-      direction: text(leg.dir ?? hb[`${hbPrefix}Dir`]),
-      symbol: isOptions ? text(leg.optSym) : "BANKNIFTY FUTURES",
-      entry: num(isOptions ? leg.entryPrem : leg.entryIdx ?? hb[`${hbPrefix}Entry`]),
-      live: null,
+      direction,
+      symbol: isOptions ? text(leg.optSym ?? hb[`${hbPrefix}OptionSymbol`]) : "BANKNIFTY FUTURES",
+      entry,
+      live,
       sl: num(isOptions ? leg.slPrem : leg.sl ?? hb[`${hbPrefix}SL`]),
       target: null,
-      quantity: num(hb.qty) ?? 30,
+      quantity,
       entryTime: null,
       entryAt: null,
       phase: text(leg.inTrade ? "IN TRADE" : todayRows.length ? "DONE" : hb.status),
@@ -1017,6 +1038,25 @@ function istClock(): { weekday: number; minutes: number; time: string } {
   return { weekday: weekdays[part("weekday")] ?? now.getDay(), minutes: hour * 60 + minute, time: `${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}` };
 }
 
+const STRATEGY_TRIGGER_MINUTES: Record<string, number> = {
+  drishti: 565,
+  "drishti-v2": 570,
+  tt0945: 585,
+  tt1000: 600,
+  tt1030: 630,
+  "normal-breakout": 585,
+  "hybrid-body": 570,
+};
+
+function scheduledEvaluationMissed(strategyId: string, fields: ReturnType<typeof strategyFields>): boolean {
+  const triggerMinutes = STRATEGY_TRIGGER_MINUTES[strategyId];
+  if (triggerMinutes === undefined || fields.inTrade)
+    return false;
+  const clock = istClock();
+  const evaluated = Array.isArray(fields.candleLog) && fields.candleLog.length > 0;
+  return clock.weekday >= 1 && clock.weekday <= 5 && clock.minutes >= triggerMinutes + 20 && !evaluated;
+}
+
 function systemHealth(
   strategy: StrategyDefinition,
   hb: any,
@@ -1325,15 +1365,18 @@ function consolidatedShadowSummary(externalHealth: any = {}): any {
         ? (instrument === "OPTIONS" ? OPTIONS_CAPITAL_FALLBACK : FUTURES_CAPITAL_FALLBACK)
         : 0;
       const hasEvidence = stateIsCurrent || hasStrategyHeartbeatEvidence || trades.length > 0 || !!todayHistory;
+      const missedEvaluation = scheduledEvaluationMissed(strategy.id, fields);
       const pnl = num(fields.total) ?? historyPnl ?? 0;
       const returnPct = pnl !== null && capitalDeployed > 0 ? pnl / capitalDeployed * 100 : tradeCount === 0 ? 0 : null;
-      const positionState = !hasEvidence
-        ? heartbeatAvailable ? "MISSED" : "ERROR"
+      const positionState = fields.inTrade
+        ? "OPEN"
         : stale
           ? "STALE"
-          : fields.inTrade
-            ? "OPEN"
-            : tradeCount > 0 ? "CLOSED" : "NO TRADE";
+          : missedEvaluation
+            ? "MISSED"
+            : !hasEvidence
+              ? heartbeatAvailable ? "MISSED" : "ERROR"
+              : tradeCount > 0 ? "CLOSED" : "NO TRADE";
 
       tiles.push({
         strategyId: strategy.id,
