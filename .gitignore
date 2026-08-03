@@ -46,6 +46,7 @@ cloudflared.exe
 ngrok.exe
 plink.exe
 pscp.exe
+putty.exe
 zeroscreen-deploy.zip
 deploy.ps1
 picks_seed.sql

@@ -3,7 +3,7 @@ const path = require('path');
 const crypto = require('crypto');
 const { execFileSync } = require('child_process');
 
-const expected = '063e511e23a849482cbf3423d06a451ee447d8d5d5a3f6f84116b49dda131405';
+const expected = 'eebd0e955e28f3969db656bd9b56538eaa5d5d93db960c556202e74dca49d224';
 const stagedSource = '/tmp/zeroscreen-shadow-index.ts';
 const stagedRuntime = '/tmp/zeroscreen-shadow-index.js';
 const source = '/home/ubuntu/trading-bot/src/index.ts';

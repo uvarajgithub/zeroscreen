@@ -1081,19 +1081,23 @@ function systemHealth(
     "normal-breakout": { time: "09:45", minutes: 585 },
     "hybrid-body": { time: "09:30", minutes: 570 },
   };
-  const trigger = triggerByStrategy[strategy.id] || { time: "--", minutes: 555 };
+  const scheduledTrigger = triggerByStrategy[strategy.id] || null;
+  const trigger = scheduledTrigger || { time: "--", minutes: 0 };
   const candleTimes = candles.map(row => minuteOfDay(row.time)).filter((value): value is number => value !== null);
   const uniqueTimes = new Set(candleTimes);
   const duplicateCandles = candleTimes.length - uniqueTimes.size;
   const sortedTimes = [...uniqueTimes].sort((a, b) => a - b);
   const gapCount = sortedTimes.slice(1).filter((value, index) => value - sortedTimes[index] > 20).length;
   const latestCandleMinute = sortedTimes.length ? sortedTimes[sortedTimes.length - 1] : null;
-  const triggerDue = marketOpen && clock.minutes >= trigger.minutes + 20;
-  const triggerCompleted = candleTimes.some(value => value >= trigger.minutes);
+  const triggerDue = !!scheduledTrigger && marketOpen && clock.minutes >= trigger.minutes + 20;
+  const triggerCompleted = !!scheduledTrigger && candleTimes.some(value => value >= trigger.minutes);
   const missedTriggers = triggerDue && !triggerCompleted ? 1 : 0;
   const freshHeartbeat = heartbeatAgeSec !== null && heartbeatAgeSec <= HEARTBEAT_HEALTHY_SEC;
   const delayedHeartbeat = heartbeatAgeSec !== null && heartbeatAgeSec <= HEARTBEAT_CRITICAL_SEC;
-  const livePrice = num(fields.live ?? hb?.price);
+  const strategyLivePrice = num(fields.live);
+  const livePrice = strategyLivePrice !== null && strategyLivePrice > 0
+    ? strategyLivePrice
+    : num(hb?.price);
   const strategyMarker = text(
     hb?.[`${strategy.prefix}Strategy`]
       ?? (strategy.id === "drishti" ? hb?.strategy : null)
@@ -1159,18 +1163,22 @@ function systemHealth(
     {
       id: "scheduler",
       label: "Scheduler",
-      level: !processOnline ? "FAIL" : !marketOpen ? "PASS" : missedTriggers ? "FAIL" : triggerCompleted ? "PASS" : "INFO",
-      value: !processOnline ? "Stopped" : !marketOpen ? "Awaiting next session" : missedTriggers ? "Missed trigger" : triggerCompleted ? "Active" : "Waiting",
-      detail: `Expected ${trigger.time}; last evaluation ${latestCandleMinute === null ? "--" : `${String(Math.floor(latestCandleMinute / 60)).padStart(2, "0")}:${String(latestCandleMinute % 60).padStart(2, "0")}`}; missed ${missedTriggers}`,
+      level: !processOnline ? "FAIL" : !scheduledTrigger ? "PASS" : !marketOpen ? "PASS" : missedTriggers ? "FAIL" : triggerCompleted ? "PASS" : "INFO",
+      value: !processOnline ? "Stopped" : !scheduledTrigger ? "Condition based" : !marketOpen ? "Awaiting next session" : missedTriggers ? "Missed trigger" : triggerCompleted ? "Active" : "Waiting",
+      detail: !scheduledTrigger
+        ? "No fixed intraday trigger; engine runs from live conditions and heartbeat state."
+        : `Expected ${trigger.time}; last evaluation ${latestCandleMinute === null ? "--" : `${String(Math.floor(latestCandleMinute / 60)).padStart(2, "0")}:${String(latestCandleMinute % 60).padStart(2, "0")}`}; missed ${missedTriggers}`,
       source: "PM2 + strategy candle evaluation log",
       critical: true,
     },
     {
       id: "trigger",
       label: "Latest Automatic Trigger",
-      level: !marketOpen ? "INFO" : missedTriggers ? "FAIL" : triggerCompleted ? "PASS" : triggerDue ? "WARN" : "INFO",
-      value: !marketOpen ? "Next session" : missedTriggers ? "Missed" : triggerCompleted ? "Completed" : "Pending",
-      detail: `Scheduled ${trigger.time}; latest strategy evaluation ${latestCandleMinute === null ? "--" : `${String(Math.floor(latestCandleMinute / 60)).padStart(2, "0")}:${String(latestCandleMinute % 60).padStart(2, "0")}`}`,
+      level: !scheduledTrigger ? "INFO" : !marketOpen ? "INFO" : missedTriggers ? "FAIL" : triggerCompleted ? "PASS" : triggerDue ? "WARN" : "INFO",
+      value: !scheduledTrigger ? "Condition based" : !marketOpen ? "Next session" : missedTriggers ? "Missed" : triggerCompleted ? "Completed" : "Pending",
+      detail: !scheduledTrigger
+        ? "Entry is driven by live strategy conditions rather than a fixed clock trigger."
+        : `Scheduled ${trigger.time}; latest strategy evaluation ${latestCandleMinute === null ? "--" : `${String(Math.floor(latestCandleMinute / 60)).padStart(2, "0")}:${String(latestCandleMinute % 60).padStart(2, "0")}`}`,
       source: "Scheduled trigger + selected strategy candle log",
       critical: true,
     },
@@ -1210,9 +1218,11 @@ function systemHealth(
     {
       id: "candles",
       label: "Candle Generation",
-      level: duplicateCandles > 0 ? "FAIL" : !marketOpen ? "INFO" : missedTriggers ? "FAIL" : gapCount > 0 ? "WARN" : triggerCompleted ? "PASS" : "INFO",
-      value: duplicateCandles ? `${duplicateCandles} duplicate` : !marketOpen ? "Next session" : gapCount ? `${gapCount} gap` : triggerCompleted ? "Updating" : "Waiting",
-      detail: `${candles.length} candles; latest ${candles[0]?.time || "--"}; duplicate ${duplicateCandles}; gaps ${gapCount}`,
+      level: duplicateCandles > 0 ? "FAIL" : !scheduledTrigger && !candles.length ? "INFO" : !marketOpen ? "INFO" : missedTriggers ? "FAIL" : gapCount > 0 ? "WARN" : triggerCompleted ? "PASS" : "INFO",
+      value: duplicateCandles ? `${duplicateCandles} duplicate` : !scheduledTrigger && !candles.length ? "Not required" : !marketOpen ? "Next session" : gapCount ? `${gapCount} gap` : triggerCompleted ? "Updating" : "Waiting",
+      detail: !scheduledTrigger && !candles.length
+        ? "This condition-based engine publishes live heartbeat and position state instead of a scheduled candle log."
+        : `${candles.length} candles; latest ${candles[0]?.time || "--"}; duplicate ${duplicateCandles}; gaps ${gapCount}`,
       source: "Selected strategy candle log",
       critical: true,
     },
