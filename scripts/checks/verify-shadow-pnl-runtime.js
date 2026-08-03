@@ -96,6 +96,11 @@ try {
     assert(artifact.includes('Stopped new trades at 15:25'), 'Updated new-entry cutoff is absent');
     assert(artifact.includes('15:39 exit all positions'), 'Updated pre-close square-off is absent');
     assert(artifact.includes('replayFinalForEOD'), 'Index-signal EOD replay handling is absent');
+    assert(artifact.includes('DRISHTI_TRAIL_ACTIVATE_PTS") || 10'), 'DRISHTI LOCK10 activation does not match the validated strategy');
+    assert(artifact.includes('entryTime = Date.now()'), 'DRISHTI actual entry timestamp is not captured');
+    assert(artifact.includes('tradeId: `DRISHTI_V1-${entryTime}`'), 'DRISHTI open/close rows do not share a stable trade id');
+    assert(artifact.includes('drishtiLtpCheckRunning'), 'DRISHTI LTP monitor overlap guard is absent');
+    assert(artifact.includes('Math.max(0, Number(DrishtiState.peakPts || 0))'), 'DRISHTI restart does not restore the protected peak');
   }
   assert(botSource === botRuntime, 'Trading-bot source and deployable runtime artifact differ');
   const indicatorSource = fs.readFileSync(path.join(__dirname, '..', '..', 'deployment', 'trading-bot', 'indicator-shadow.ts'), 'utf8');

@@ -539,8 +539,8 @@ function normalizedTrades(rawTrades: any[], strategy: StrategyDefinition, instru
 
   const consolidated = new Map<string, any>();
   for (const row of normalized) {
-    const tradeKey = text(row.id) && !String(row.id).includes("|")
-      ? `id:${row.id}`
+    const tradeKey = text(row.tradeId || row.id)
+      ? `id:${text(row.tradeId || row.id)}`
       : [row.instrument, row.contract, row.side, row.entry, row.time, row.exit, row.reason].join("|");
     const existing = consolidated.get(tradeKey);
     if (!existing || (existing.exit == null && row.exit != null)) {

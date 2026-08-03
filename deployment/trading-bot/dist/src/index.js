@@ -439,6 +439,7 @@ let drishtiPrevDayCandles = [];
 let drishtiLastCandleKey = "";
 let drishtiIntradayPeak = 0; // updated every 60s by LTP monitor
 let ltpMonitorInterval = null;
+let drishtiLtpCheckRunning = false; // prevent overlapping async polls and duplicate exit orders
 let DrishtiCandleLog = [];
 function persistDrishtiCandleLog() {
     try {
@@ -1581,8 +1582,13 @@ const HR_SL_PTS_LOCAL = 100;
 // Polls current price every 60s while in a DRISHTI trade.
 // Updates intraday peak and fires exit if trail or SL is hit between candle closes.
 // This eliminates the candle-close exit discrepancy and matches backtest V15 logic.
-const DRISHTI_TRAIL_ACTIVATE_PTS = 300; // Trail starts only after +300 pts to avoid chop exits
-const DRISHTI_TRAIL_GAP = 10; // Once +300 is reached, lock peak - 10
+// DRISHTI is the validated LOCK10 strategy: once the real futures position has
+// moved 10 points in our favour, protect peak minus 10.  The runtime used to
+// hard-code 300 here even though the strategy and backtest use 10, allowing a
+// meaningful intraday profit to turn into a loss.  Keep both values explicitly
+// configurable, but default to the validated live contract.
+const DRISHTI_TRAIL_ACTIVATE_PTS = Math.max(10, Number(readRuntimeEnvValue("DRISHTI_TRAIL_ACTIVATE_PTS") || 10));
+const DRISHTI_TRAIL_GAP = Math.max(1, Number(readRuntimeEnvValue("DRISHTI_TRAIL_GAP_PTS") || 10));
 const DRISHTI_SL_PTS = 100; // Hard SL ? matches SL_PTS in drishti_strategy.ts
 const REAL_DAILY_LOSS_CAP_RS = Number(config_1.config.risk?.maxDailyLossRs ?? 6000);
 const REAL_FUTURES_SL_PTS = Number(config_1.config.risk?.maxFuturesLossPts ?? 150);
@@ -1689,6 +1695,9 @@ async function executeDrishtiLTPExit(ltp, pts, reason) {
                 optLosses++;
             const _optDur = capturedOptEntryTime > 0 ? Math.round((Date.now() - capturedOptEntryTime) / 1000) : 0;
             (0, logger_1.logTrade)({ date: new Date().toISOString(), type: "DRISHTI_V1_OPT",
+                tradeId: `DRISHTI_V1_OPT-${capturedOptEntryTime}`,
+                entryTime: capturedOptEntryTime > 0 ? new Date(capturedOptEntryTime).toISOString() : undefined,
+                exitTime: new Date().toISOString(), status: "CLOSED",
                 direction: capturedOptDir ?? "CE", symbol: capturedOptSymbol,
                 entryPrice: capturedOptEntryPrem, exitPrice: optExitLTP,
                 premiumEntry: capturedOptEntryPrem, premiumExit: optExitLTP,
@@ -1727,6 +1736,9 @@ async function executeDrishtiLTPExit(ltp, pts, reason) {
     saveTradeState();
     await notifyExit(ltp, _futRealPts, reason, { dir: capturedDir, entry: capturedEntry, symbol: capturedSymbol, qty: capturedQty }).catch(() => { });
     (0, logger_1.logTrade)({ date: new Date().toISOString(), type: "DRISHTI_V1", direction: capturedDir ?? "CE", symbol: capturedSymbol,
+        tradeId: `DRISHTI_V1-${capturedTime}`,
+        entryTime: capturedTime > 0 ? new Date(capturedTime).toISOString() : undefined,
+        exitTime: new Date().toISOString(), status: "CLOSED",
         premiumEntry: _futEntryPrice, premiumExit: _futExitPrice, qty: capturedQty,
         entryPrice: _futEntryPrice, exitPrice: _futExitPrice,
         pnl: parseFloat(_futRealPts.toFixed(1)), pnlRs: _futRealRs,
@@ -1736,7 +1748,7 @@ async function executeDrishtiLTPExit(ltp, pts, reason) {
 function startDrishtiLTPMonitor() {
     if (ltpMonitorInterval)
         return; // already running
-    drishtiIntradayPeak = 0;
+    drishtiIntradayPeak = Math.max(0, Number(DrishtiState.peakPts || 0));
     ltpMonitorInterval = setInterval(async () => {
         if (!activeTrade || !DrishtiState.inTrade || !tradeDirection || entryPrice <= 0) {
             stopDrishtiLTPMonitor();
@@ -1746,6 +1758,9 @@ function startDrishtiLTPMonitor() {
             stopDrishtiLTPMonitor();
             return;
         }
+        if (drishtiLtpCheckRunning)
+            return;
+        drishtiLtpCheckRunning = true;
         try {
             const ltp = await (0, market_1.getCurrentPrice)();
             if (!ltp || ltp <= 0)
@@ -1805,6 +1820,9 @@ function startDrishtiLTPMonitor() {
         }
         catch (e) {
             log("LTP_MONITOR_ERR", { error: e instanceof Error ? e.message : String(e) });
+        }
+        finally {
+            drishtiLtpCheckRunning = false;
         }
     }, 5 * 1000); // hard real-risk guard only; strategy trail exits on 15-min candle close
     log("LTP_RISK_MONITOR_START", { entry: entryPrice, dir: tradeDirection, futuresEntry: drishtiFuturesEntry, hardFuturesSL: REAL_FUTURES_SL_PTS, trailActivatePts: DRISHTI_TRAIL_ACTIVATE_PTS, trailGapPts: DRISHTI_TRAIL_GAP, realFuturesLock10: DRISHTI_REAL_FUTURES_LOCK10, trackOptionsPremium: DRISHTI_TRACK_OPTIONS_PREMIUM, ...(DRISHTI_TRACK_OPTIONS_PREMIUM ? { hardOptionsSL: REAL_OPTIONS_SL_PTS } : {}) });
@@ -5469,6 +5487,7 @@ async function runDrishtiBot() {
     tradeDirection = entrySig.side;
     tradeSymbol = sym;
     entryPrice = bc.close; // index-level entry (trail uses this)
+    entryTime = Date.now(); // preserve the actual order-entry timestamp across exit/restart reporting
     mainQty = config_1.config.quantity;
     mainEntryDone = true;
     activeTrade = true;
@@ -5566,7 +5585,9 @@ async function runDrishtiBot() {
     const premiumAtEntry = await (0, market_1.getOptionLTP)(sym).catch(() => 0);
     entryPremium = premiumAtEntry;
     lastOptionLTP = premiumAtEntry;
-    (0, logger_1.logTrade)({ date: new Date().toISOString(), type: "DRISHTI_V1", direction: entrySig.side, symbol: sym, premiumEntry: premiumAtEntry, premiumExit: 0, entryPrice: actualFillPrice, exitPrice: 0, pnl: 0, reasonEntry: `drishti_${entrySig.ctx}_${entrySig.reason}`, reasonExit: "", aiScore: 1, slippage: Math.abs(freshPrice - actualFillPrice), duration: 0, qty: mainQty });
+    (0, logger_1.logTrade)({ date: new Date().toISOString(), type: "DRISHTI_V1", direction: entrySig.side, symbol: sym,
+        tradeId: `DRISHTI_V1-${entryTime}`, entryTime: new Date(entryTime).toISOString(), exitTime: null, status: "OPEN",
+        premiumEntry: premiumAtEntry, premiumExit: null, entryPrice: actualFillPrice, exitPrice: null, pnl: null, pnlRs: null, reasonEntry: `drishti_${entrySig.ctx}_${entrySig.reason}`, reasonExit: "", aiScore: 1, slippage: Math.abs(freshPrice - actualFillPrice), duration: 0, qty: mainQty });
 }
 async function runBot() {
     if (!isMarketHours())

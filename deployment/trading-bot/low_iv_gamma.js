@@ -65,7 +65,15 @@ function candleTime(c) { return istParts(new Date(c.date)).hhmm; }
 function finite(v) { const n = Number(v); return Number.isFinite(n) ? n : null; }
 function round(v, dp = 2) { const p = 10 ** dp; return Math.round(Number(v) * p) / p; }
 function mean(xs) { return xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : 0; }
-function safeMessage(e) { return e instanceof Error ? e.message : String(e); }
+function safeMessage(e) {
+  if (e instanceof Error) return e.message;
+  if (e && typeof e === "object") {
+    const nested = e.message || e.error?.message || e.error || e.data?.message;
+    if (nested) return typeof nested === "string" ? nested : JSON.stringify(nested);
+    try { return JSON.stringify(e); } catch (_) {}
+  }
+  return String(e);
+}
 
 function normalCdf(x) {
   const t = 1 / (1 + 0.2316419 * Math.abs(x));
