@@ -9,6 +9,10 @@ const fs_1 = __importDefault(require("fs"));
 const os_1 = __importDefault(require("os"));
 const path_1 = __importDefault(require("path"));
 const child_process_1 = require("child_process");
+const UNDERLYINGS = {
+    BANKNIFTY: { id: "BANKNIFTY", label: "BANKNIFTY", quantity: 30, heartbeatFile: "bot-heartbeat.json", stateFile: "trade-state.json", historyFile: "strategy-monthly-history.json" },
+    NIFTY: { id: "NIFTY", label: "NIFTY", quantity: 65, heartbeatFile: "nifty-shadow-heartbeat.json", stateFile: "nifty-shadow-state.json", historyFile: "nifty-shadow-history.json" },
+};
 const BOT_DIR = process.env.TRADING_BOT_DIR || "/home/ubuntu/trading-bot";
 const FUTURES_MARGIN_RATE = 0.12;
 const FUTURES_CAPITAL_FALLBACK = 200000;
@@ -45,6 +49,23 @@ const STRATEGIES = [
     { id: "ema-trend", name: "EMA Trend (BANKNIFTY)", version: "Validated Shadow", prefix: "emaTrend", backtestFile: "indicator-strategy-sweep-result.json", instruments: ["FUTURES", "OPTIONS"], processName: "indicator-shadow", heartbeatFile: "indicator-shadow-heartbeat.json", stateFile: "ema-trend-state.json" },
     { id: "smma-trend", name: "SMMA Trend (BANKNIFTY)", version: "Validated Shadow", prefix: "smmaTrend", backtestFile: "indicator-strategy-sweep-result.json", instruments: ["FUTURES", "OPTIONS"], processName: "indicator-shadow", heartbeatFile: "indicator-shadow-heartbeat.json", stateFile: "smma-trend-state.json" },
 ];
+function underlyingId(value) {
+    return String(value || "").toUpperCase() === "NIFTY" ? "NIFTY" : "BANKNIFTY";
+}
+function displayStrategyName(strategy, underlying) {
+    return `${strategy.name.replace(/\s*\(BANKNIFTY\)\s*$/i, "")} (${underlying})`;
+}
+function runtimeFiles(strategy, underlying) {
+    if (underlying === "BANKNIFTY") {
+        return {
+            heartbeat: readJson(strategy.heartbeatFile || "bot-heartbeat.json", {}),
+            state: readJson(strategy.stateFile || "trade-state.json", {}),
+        };
+    }
+    const heartbeat = readJson(UNDERLYINGS.NIFTY.heartbeatFile, {});
+    const stateRoot = readJson(UNDERLYINGS.NIFTY.stateFile, {});
+    return { heartbeat, state: stateRoot?.strategies?.[strategy.id] || heartbeat?.strategies?.[strategy.id] || {} };
+}
 function readJson(file, fallback) {
     try {
         const filePath = path_1.default.join(BOT_DIR, file);
@@ -196,7 +217,42 @@ function recentServerLogs(strategy) {
     }
     return rows.slice(-40);
 }
-function strategyFields(strategy, hb, state, instrument) {
+function genericShadowFields(state, hb, instrument, defaultQuantity) {
+    const isOptions = instrument === "OPTIONS";
+    const inTrade = !!state?.inTrade;
+    const realized = num(isOptions ? state?.optionRealizedPnl : state?.realizedPnl) ?? 0;
+    const unrealized = inTrade
+        ? num(isOptions ? state?.optionUnrealizedPnl : state?.unrealizedPnl) ?? 0
+        : 0;
+    return {
+        inTrade,
+        realized,
+        unrealized,
+        total: realized + unrealized,
+        trades: num(isOptions ? state?.optionTrades : state?.trades) ?? 0,
+        wins: num(isOptions ? state?.optionWins : state?.wins) ?? 0,
+        losses: num(isOptions ? state?.optionLosses : state?.losses) ?? 0,
+        direction: text(state?.direction),
+        symbol: text(isOptions ? state?.optionSymbol : state?.futuresSymbol) || text(hb?.market?.symbol),
+        entry: num(isOptions ? state?.optionEntry : state?.entry),
+        live: num(isOptions ? state?.optionLtp : state?.ltp),
+        sl: num(state?.stopLoss),
+        target: num(state?.target),
+        quantity: num(state?.quantity) ?? num(hb?.quantity) ?? defaultQuantity,
+        entryTime: timeValue(state?.entryAt || state?.entryTime),
+        entryAt: state?.entryAt || null,
+        phase: text(state?.phase || hb?.status),
+        dayHigh: num(hb?.market?.high),
+        dayLow: num(hb?.market?.low),
+        volume: null,
+        openInterest: null,
+        rawTrades: Array.isArray(state?.tradeLog) ? state.tradeLog : [],
+        candleLog: Array.isArray(state?.candleLog) ? state.candleLog : [],
+    };
+}
+function strategyFields(strategy, hb, state, instrument, underlying = "BANKNIFTY") {
+    if (underlying === "NIFTY")
+        return genericShadowFields(state, hb, instrument, UNDERLYINGS.NIFTY.quantity);
     const isOptions = instrument === "OPTIONS";
     if (strategy.prefix === "drishtiV2") {
         const candleFile = readJson("drishti-v2-candle-log.json", {});
@@ -684,7 +740,7 @@ function normalizedBacktestDays(strategy, instrument) {
         };
     }).filter(Boolean);
 }
-function shadowHistory(strategy, instrument, includeBacktest = true) {
+function shadowHistory(strategy, instrument, includeBacktest = true, underlying = "BANKNIFTY") {
     const byDate = new Map();
     const tradeDetails = [];
     const appendTradeDetail = (date, row) => {
@@ -717,8 +773,8 @@ function shadowHistory(strategy, instrument, includeBacktest = true) {
             date,
             time: timeValue(row?.time ?? row?.entryTime ?? row?.timestamp ?? row?.date) || "--",
             instrument: instrument === "OPTIONS"
-                ? text(row?.symbol ?? row?.tradeSymbol) || `BANKNIFTY ${direction}`
-                : "BANKNIFTY FUTURES",
+                ? text(row?.symbol ?? row?.tradeSymbol) || `${underlying} ${direction}`
+                : `${underlying} FUTURES`,
             contract: direction || "--",
             action,
             exitAction,
@@ -751,7 +807,29 @@ function shadowHistory(strategy, instrument, includeBacktest = true) {
         lowIvGamma: { FUTURES: "", OPTIONS: "LOW_IV_GAMMA_OPT" },
     };
     const ledgerType = ledgerTypeMap[strategy.prefix]?.[instrument];
-    if (ledgerType) {
+    if (underlying === "NIFTY") {
+        const source = readJson(UNDERLYINGS.NIFTY.historyFile, {});
+        const records = source?.strategies?.[strategy.id] || {};
+        for (const [date, record] of Object.entries(records)) {
+            const pnl = num(instrument === "OPTIONS" ? record.optionPnl : record.futuresPnl);
+            if (pnl === null)
+                continue;
+            const rows = Array.isArray(record.tradeLog) ? record.tradeLog : [];
+            rows.forEach((row) => appendTradeDetail(date, row));
+            const trades = num(instrument === "OPTIONS" ? record.optionTrades : record.trades) ?? 0;
+            const quantity = num(record.quantity) ?? UNDERLYINGS.NIFTY.quantity;
+            const entry = num(instrument === "OPTIONS" ? record.optionEntry : record.entry);
+            byDate.set(date, {
+                date,
+                pnl,
+                capitalDeployed: entry && trades ? Math.round(entry * quantity * trades * (instrument === "FUTURES" ? FUTURES_MARGIN_RATE : 1)) : 0,
+                trades,
+                wins: num(instrument === "OPTIONS" ? record.optionWins : record.wins) ?? 0,
+                losses: num(instrument === "OPTIONS" ? record.optionLosses : record.losses) ?? 0,
+            });
+        }
+    }
+    else if (ledgerType) {
         const ledger = readJson("trades.json", []);
         const rows = (Array.isArray(ledger) ? ledger : []).filter((row) => {
             if (String(row?.type || "").toUpperCase() !== ledgerType)
@@ -1361,6 +1439,34 @@ function bankNiftyMovement() {
         regime: futures?.regime || null,
     };
 }
+function underlyingMovement(underlying) {
+    if (underlying === "BANKNIFTY")
+        return bankNiftyMovement();
+    const heartbeat = readJson(UNDERLYINGS.NIFTY.heartbeatFile, {});
+    const market = heartbeat?.market || {};
+    const open = num(market.open);
+    const current = num(market.current ?? market.ltp);
+    const high = num(market.high);
+    const low = num(market.low);
+    const cash = {
+        symbol: "NIFTY CASH", open, current, high, low,
+        movementPoints: num(market.movementPoints) ?? (open !== null && current !== null ? current - open : null),
+        rangePoints: num(market.rangePoints) ?? (high !== null && low !== null ? high - low : null),
+    };
+    const futures = market.futures && typeof market.futures === "object" ? market.futures : null;
+    const benchmark = futures || cash;
+    return {
+        ...benchmark,
+        session: "09:15 - 15:40",
+        asOf: heartbeat?.at || null,
+        cash,
+        futures,
+        benchmarkSymbol: futures?.symbol || "NIFTY FUTURES",
+        benchmarkMovementPoints: num(futures?.movementPoints),
+        benchmarkRangePoints: num(futures?.rangePoints),
+        regime: futures?.regime || market?.regime || null,
+    };
+}
 function capturedPoints(pnl, quantity, traded) {
     if (!traded || pnl === null || quantity === null || quantity <= 0)
         return null;
@@ -1375,13 +1481,14 @@ function capitalForTrade(row, instrument) {
         ? entry * quantity
         : entry * quantity * FUTURES_MARGIN_RATE;
 }
-function consolidatedShadowSummary(externalHealth = {}) {
+function consolidatedShadowSummary(externalHealth = {}, underlying = "BANKNIFTY") {
     const tradeDate = todayIST();
     const market = marketStatus();
     const tiles = [];
     for (const strategy of STRATEGIES) {
-        const heartbeat = readJson(strategy.heartbeatFile || "bot-heartbeat.json", {});
-        const strategyState = readJson(strategy.stateFile || "trade-state.json", {});
+        const runtime = runtimeFiles(strategy, underlying);
+        const heartbeat = runtime.heartbeat;
+        const strategyState = runtime.state;
         const heartbeatAt = heartbeat?.at ? new Date(heartbeat.at).getTime() : 0;
         const heartbeatAgeSec = heartbeatAt ? Math.max(0, Math.round((Date.now() - heartbeatAt) / 1000)) : null;
         const stateIsCurrent = dateKey(strategyState?.date || strategyState?.day) === tradeDate;
@@ -1389,11 +1496,11 @@ function consolidatedShadowSummary(externalHealth = {}) {
         const hasStrategyHeartbeatEvidence = Object.keys(heartbeat || {}).some(key => key.startsWith(strategy.prefix));
         const stale = market === "OPEN" && (!heartbeatAvailable || (heartbeatAgeSec ?? Infinity) > HEARTBEAT_CRITICAL_SEC);
         for (const instrument of strategy.instruments || ["FUTURES", "OPTIONS"]) {
-            const fields = strategyFields(strategy, heartbeat, strategyState, instrument);
+            const fields = strategyFields(strategy, heartbeat, strategyState, instrument, underlying);
             const trades = normalizedTrades(fields.rawTrades, strategy, instrument, tradeDate, fields.quantity ?? num(heartbeat.qty) ?? 30);
             const closedTrades = trades.filter((row) => String(row.status).toUpperCase() === "CLOSED");
             const todayHistory = (() => {
-                const history = shadowHistory(strategy, instrument, false);
+                const history = shadowHistory(strategy, instrument, false, underlying);
                 return Array.isArray(history?.days)
                     ? history.days.find((row) => row?.date === tradeDate || row?.period === tradeDate)
                     : null;
@@ -1419,6 +1526,7 @@ function consolidatedShadowSummary(externalHealth = {}) {
                             ? heartbeatAvailable ? "MISSED" : "ERROR"
                             : tradeCount > 0 ? "CLOSED" : "NO TRADE";
             tiles.push({
+                underlying,
                 strategyId: strategy.id,
                 strategyName: strategy.name.replace(/\s*\(BANKNIFTY\)\s*$/i, ""),
                 strategyVersion: strategy.version,
@@ -1443,7 +1551,9 @@ function consolidatedShadowSummary(externalHealth = {}) {
     return {
         tradeDate,
         marketStatus: market,
-        bankNiftyMovement: bankNiftyMovement(),
+        underlying,
+        movement: underlyingMovement(underlying),
+        bankNiftyMovement: underlyingMovement(underlying),
         lastRefreshedAt: new Date().toISOString(),
         tiles,
         summary: {
@@ -1458,7 +1568,7 @@ function consolidatedShadowSummary(externalHealth = {}) {
         tokenCheckedAt: externalHealth?.checkedAt || null,
     };
 }
-function performanceOverview(hb, state, tradeDate) {
+function performanceOverview(hb, state, tradeDate, underlying = "BANKNIFTY") {
     const coverageMonth = tradeDate.slice(0, 7);
     const coverageYear = tradeDate.slice(0, 4);
     const coverageWeek = (() => {
@@ -1471,11 +1581,12 @@ function performanceOverview(hb, state, tradeDate) {
     })();
     const rows = { TODAY: [], WEEK: [], MONTH: [], YEAR: [] };
     for (const strategy of STRATEGIES) {
-        const strategyHeartbeat = strategy.heartbeatFile ? readJson(strategy.heartbeatFile, {}) : hb;
-        const strategyState = strategy.stateFile ? readJson(strategy.stateFile, {}) : state;
+        const runtime = runtimeFiles(strategy, underlying);
+        const strategyHeartbeat = underlying === "BANKNIFTY" && !strategy.heartbeatFile ? hb : runtime.heartbeat;
+        const strategyState = underlying === "BANKNIFTY" && !strategy.stateFile ? state : runtime.state;
         const supportedInstruments = strategy.instruments || ["FUTURES", "OPTIONS"];
         for (const instrument of supportedInstruments) {
-            const fields = strategyFields(strategy, strategyHeartbeat, strategyState, instrument);
+            const fields = strategyFields(strategy, strategyHeartbeat, strategyState, instrument, underlying);
             const trades = normalizedTrades(fields.rawTrades, strategy, instrument, tradeDate, fields.quantity ?? num(hb.qty) ?? 30);
             const fallbackPerTrade = instrument === "OPTIONS" ? OPTIONS_CAPITAL_FALLBACK : FUTURES_CAPITAL_FALLBACK;
             const liveTradeCount = Math.max(trades.length, fields.trades, fields.inTrade ? 1 : 0);
@@ -1491,7 +1602,7 @@ function performanceOverview(hb, state, tradeDate) {
                     trades: liveTradeCount,
                 });
             }
-            const liveHistory = shadowHistory(strategy, instrument, false);
+            const liveHistory = shadowHistory(strategy, instrument, false, underlying);
             const week = Array.isArray(liveHistory.weekly)
                 ? liveHistory.weekly.find((row) => row.period === coverageWeek)
                 : null;
@@ -1570,22 +1681,24 @@ function performanceOverview(hb, state, tradeDate) {
         },
     };
 }
-function buildShadowMonitorPayload(strategyId = "", instrumentValue = "", externalHealth = {}) {
+function buildShadowMonitorPayload(strategyId = "", instrumentValue = "", externalHealth = {}, underlyingValue = "BANKNIFTY") {
     const tradeDate = todayIST();
+    const underlying = underlyingId(underlyingValue);
     const strategy = STRATEGIES.find(item => item.id === strategyId) || STRATEGIES[0];
     const requestedInstrument = instrumentValue === "OPTIONS" ? "OPTIONS" : "FUTURES";
     const instrument = strategy.instruments?.includes(requestedInstrument)
         ? requestedInstrument
         : strategy.instruments?.[0] || requestedInstrument;
-    const hb = readJson(strategy.heartbeatFile || "bot-heartbeat.json", {});
-    const state = readJson(strategy.stateFile || "trade-state.json", {});
+    const runtime = runtimeFiles(strategy, underlying);
+    const hb = runtime.heartbeat;
+    const state = runtime.state;
     const heartbeatAt = hb?.at ? new Date(hb.at).getTime() : 0;
     const heartbeatAgeSec = heartbeatAt ? Math.max(0, Math.round((Date.now() - heartbeatAt) / 1000)) : null;
     const connected = heartbeatAgeSec !== null && heartbeatAgeSec < 180;
-    const fields = strategyFields(strategy, hb, state, instrument);
+    const fields = strategyFields(strategy, hb, state, instrument, underlying);
     const trades = normalizedTrades(fields.rawTrades, strategy, instrument, tradeDate, fields.quantity ?? num(hb.qty) ?? 30);
     // Trade History is persisted SHADOW execution history only. Backtest results stay in the separate backtest payload.
-    const history = shadowHistory(strategy, instrument, false);
+    const history = shadowHistory(strategy, instrument, false, underlying);
     const persistedTodayTrades = (history.trades || []).filter((row) => String(row.date || row.tradeDate || "") === tradeDate);
     const persistedTodayClosed = persistedTodayTrades.filter((row) => String(row.status || "").toUpperCase() === "CLOSED" && num(row.pnl) !== null);
     const persistedRealized = persistedTodayClosed.length
@@ -1616,7 +1729,7 @@ function buildShadowMonitorPayload(strategyId = "", instrumentValue = "", extern
             executionMode: "SHADOW",
             tradeDate,
             time: fields.entryTime,
-            instrument: fields.symbol || (instrument === "OPTIONS" ? "BANKNIFTY option" : "BANKNIFTY"),
+            instrument: fields.symbol || (instrument === "OPTIONS" ? `${underlying} option` : underlying),
             side: fields.direction,
             contract: openContract,
             action: openAction,
@@ -1681,20 +1794,22 @@ function buildShadowMonitorPayload(strategyId = "", instrumentValue = "", extern
     return {
         ok: true,
         identity: {
+            underlying,
             strategyId: strategy.id,
-            strategyName: strategy.name,
+            strategyName: displayStrategyName(strategy, underlying),
             strategyVersion: strategy.version,
             instrumentType: instrument,
             tradeDate,
             executionMode: "SHADOW",
         },
+        underlyings: Object.values(UNDERLYINGS).map(item => ({ id: item.id, label: item.label })),
         strategies: STRATEGIES.map(item => ({
             id: item.id,
-            name: item.name,
+            name: displayStrategyName(item, underlying),
             version: item.version,
             instruments: item.instruments || ["FUTURES", "OPTIONS"],
         })),
-        market: { status: currentMarketStatus, checkedAt: nowIso, bankNiftyMovement: bankNiftyMovement() },
+        market: { status: currentMarketStatus, checkedAt: nowIso, underlying, movement: underlyingMovement(underlying), bankNiftyMovement: underlyingMovement(underlying) },
         health: {
             overall: aggregateHealth.state,
             label: aggregateHealth.label,
@@ -1715,16 +1830,16 @@ function buildShadowMonitorPayload(strategyId = "", instrumentValue = "", extern
         },
         runtime: {
             status: runtimeStatus,
-            selectedStrategy: strategy.name,
+            selectedStrategy: displayStrategyName(strategy, underlying),
             lastEvaluatedAt: hb.at || null,
             nextEvaluationAt: null,
             version: strategy.version,
             phase: fields.phase,
         },
-        performance: performanceOverview(hb, state, tradeDate),
-        backtest: backtestSummary(strategy, instrument),
+        performance: performanceOverview(hb, state, tradeDate, underlying),
+        backtest: underlying === "BANKNIFTY" ? backtestSummary(strategy, instrument) : null,
         history,
-        consolidated: consolidatedShadowSummary(externalHealth),
+        consolidated: consolidatedShadowSummary(externalHealth, underlying),
         summary: {
             realizedPnl,
             unrealizedPnl,
@@ -2330,6 +2445,7 @@ function renderShadowStrategyMonitorPage(navHtml) {
         <div class="sm-consolidated-groups" id="consolidatedGrid"></div>
       </section>
       <section class="sm-control" aria-label="Monitor controls">
+        <div class="sm-card sm-control-box sm-field"><label for="underlyingSelect">Underlying</label><select class="sm-select" id="underlyingSelect"><option value="BANKNIFTY">BANKNIFTY</option><option value="NIFTY">NIFTY</option></select></div>
         <div class="sm-card sm-control-box sm-field strategy"><label for="strategySelect">Strategy</label><div class="sm-control-inner"><span class="sm-control-icon"><svg class="sm-icon" viewBox="0 0 24 24"><path d="M4 20V10m5 10V4m5 16v-7m5 7V7M2 20h20"/></svg></span><select class="sm-select" id="strategySelect"><option>Loading strategies...</option></select></div></div>
         <div class="sm-card sm-control-box sm-field sm-instrument-control"><label>Instrument</label><div class="sm-segment"><button type="button" class="active" data-instrument="FUTURES"><svg class="sm-icon" viewBox="0 0 24 24"><path d="M7 3v18m10-18v18M4 8h6v8H4m10-6h6v7h-6"/></svg><span>Futures</span></button><button type="button" data-instrument="OPTIONS"><svg class="sm-icon" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="3"/></svg><span>Options</span></button></div></div>
       </section>
@@ -2366,7 +2482,10 @@ function renderShadowStrategyMonitorPage(navHtml) {
   <div class="sm-modal" id="healthModal" role="dialog" aria-modal="true" aria-labelledby="healthModalTitle"><div class="sm-modal-panel sm-health-panel"><div class="sm-modal-head"><div><h2 id="healthModalTitle">System Health Evidence</h2><div class="sm-health-note">Live process, scheduler, feed, execution, storage and token checks</div></div><button class="sm-close" id="closeHealth" type="button" aria-label="Close">&times;</button></div><div class="sm-health-summary"><strong class="sm-health-state" id="healthModalState">CHECKING</strong><div><b id="healthModalSummary">Running checks</b><span>Critical services must pass before the monitor reports healthy.</span></div><div class="sm-health-checked" id="healthModalChecked">Checked: --</div></div><div class="sm-health-list" id="healthDetails"></div></div></div>
   <script>
     (function(){
-      var state={strategy:localStorage.getItem("zsShadowStrategy")||"drishti",instrument:localStorage.getItem("zsShadowInstrument")||"FUTURES",performancePeriod:localStorage.getItem("zsShadowPerformancePeriod")||"TODAY",viewMode:"dashboard",request:0,data:null,logStick:true};
+      var state={underlying:localStorage.getItem("zsShadowUnderlying")||"BANKNIFTY",strategy:localStorage.getItem("zsShadowStrategy")||"drishti",instrument:localStorage.getItem("zsShadowInstrument")||"FUTURES",performancePeriod:localStorage.getItem("zsShadowPerformancePeriod")||"TODAY",viewMode:"dashboard",request:0,data:null,logStick:true};
+      el("underlyingSelect").value=state.underlying;
+      var shadowFetch=window.fetch.bind(window);window.fetch=function(input,init){var url=String(input);if(url.indexOf("/api/shadow-monitor?")===0&&url.indexOf("underlying=")<0)input=url+"&underlying="+encodeURIComponent(state.underlying);return shadowFetch(input,init)};
+      el("underlyingSelect").addEventListener("change",function(){state.underlying=this.value;localStorage.setItem("zsShadowUnderlying",state.underlying);state.userRequestedLoad=true;load(true)});
       var activeController=null;
       function el(id){return document.getElementById(id)}
       function esc(v){return String(v==null?"":v).replace(/[&<>"']/g,function(c){return({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"})[c]})}
@@ -2391,7 +2510,7 @@ function renderShadowStrategyMonitorPage(navHtml) {
       function renderCandles(d){var rows=d.candles||[];el("candleTable").innerHTML=candleTable(rows.slice(0,5),true);el("candleFullTable").innerHTML=candleTable(rows,false);el("candleModalTitle").textContent="Today's Candle Log - "+d.identity.strategyName;el("candleModalSub").textContent=d.identity.instrumentType+" | "+d.identity.tradeDate+" | "+rows.length+" candles"}
       function renderLogs(d){var box=el("logConsole");var nearBottom=box.scrollHeight-box.scrollTop-box.clientHeight<28;var rows=(d.logs||[]).map(function(l){return'<div class="sm-log-line"><span>'+esc(l.time||"--:--:--")+'</span><b class="'+esc(l.level)+'">'+esc(l.level)+'</b><span>'+esc(l.message)+'</span></div>'}).join("");box.innerHTML=rows||'<div class="sm-muted">No server log entries available.</div>';if(state.logStick&&nearBottom)box.scrollTop=box.scrollHeight;el("resumeLogs").hidden=state.logStick}
       function renderSection(name,fn){try{fn()}catch(error){console.error("Shadow monitor "+name+" render failed",error)}}
-      function consolidatedKey(t){return [t.strategyId,t.strategyVersion,t.instrumentType,t.executionMode,t.tradeDate].join("|")}
+      function consolidatedKey(t){return [t.underlying||state.underlying,t.strategyId,t.strategyVersion,t.instrumentType,t.executionMode,t.tradeDate].join("|")}
       function tileClass(t){if(t.positionState==="MISSED")return"missed";if(t.positionState==="ERROR")return"error";if(t.positionState==="STALE")return"stale";if(t.positionState==="OPEN"){var n=Number(t.pnl);return"open "+(n<0?"open-loss":n>0?"open-profit":"open-flat")}return Number(t.pnl)>0?"profit":Number(t.pnl)<0?"loss":"no-trade"}
       function tileStateLabel(t){if(t.positionState==="MISSED")return"MISSED";if(t.positionState==="ERROR"||t.positionState==="STALE")return"BLOCKED";if(t.positionState==="OPEN")return"RUNNING";return"WAITING"}
       function winnerCard(period,label){var best=period&&period.bestOverall;if(!best)return'<article class="sm-winner-card"><div class="sm-winner-period"><span class="star">&#9733;</span>'+esc(label)+'</div><div class="sm-winner-empty">No completed trades</div></article>';var positive=Number(best.returnPct)>=0;return'<article class="sm-winner-card"><div class="sm-winner-period"><span class="star">&#9733;</span>'+esc(label)+'</div><div class="sm-winner-main"><div class="sm-winner-name">'+esc(best.strategyName)+'<span class="sm-winner-type">'+esc(best.instrument==="FUTURES"?"FUT":"OPT")+'</span></div><div class="sm-winner-values"><span class="sm-winner-return '+(positive?"sm-positive":"sm-negative")+'">'+pct(best.returnPct)+'</span><span class="sm-winner-pnl">'+money(best.pnl)+' · '+money(best.capitalUsed).replace(/^\\+/,"")+' capital</span></div></div></article>'}

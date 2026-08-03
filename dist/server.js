@@ -6386,7 +6386,7 @@ app.get("/api/shadow-monitor", featureGate("feature_signals", "Signals"), async 
     res.setHeader("Cache-Control", "no-store");
     try {
         const externalHealth = await shadowExternalHealth();
-        res.json((0, shadowMonitor_1.buildShadowMonitorPayload)(String(_req.query.strategy || ""), String(_req.query.instrument || ""), externalHealth));
+        res.json((0, shadowMonitor_1.buildShadowMonitorPayload)(String(_req.query.strategy || ""), String(_req.query.instrument || ""), externalHealth, String(_req.query.underlying || "BANKNIFTY")));
     }
     catch (error) {
         res.status(500).json({ ok: false, error: error?.message || "Shadow monitor unavailable" });

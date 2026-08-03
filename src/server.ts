@@ -6350,6 +6350,7 @@ app.get("/api/shadow-monitor", featureGate("feature_signals", "Signals"), async 
       String(_req.query.strategy || ""),
       String(_req.query.instrument || ""),
       externalHealth,
+      String(_req.query.underlying || "BANKNIFTY"),
     ));
   } catch (error: any) {
     res.status(500).json({ ok: false, error: error?.message || "Shadow monitor unavailable" });
