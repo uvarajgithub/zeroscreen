@@ -205,7 +205,7 @@ function createLowIvGammaShadow({ kite, log, logTrade }) {
   }
 
   function expiryYears(expiry) {
-    const end = new Date(`${new Date(expiry).toISOString().slice(0, 10)}T15:30:00+05:30`).getTime();
+    const end = new Date(`${new Date(expiry).toISOString().slice(0, 10)}T15:40:00+05:30`).getTime();
     return Math.max((end - Date.now()) / (365 * 86400000), 1 / (365 * 24 * 60));
   }
 
@@ -459,7 +459,7 @@ function createLowIvGammaShadow({ kite, log, logTrade }) {
       if (cfg.executionMode !== "SHADOW") throw new Error("Execution mode safety invariant violated");
       const weekday = new Date(now.getTime() + 19800000).getUTCDay();
       if (weekday === 0 || weekday === 6) { state.phase = "MARKET_CLOSED"; state.lastReason = "Weekend"; return heartbeat(); }
-      if (parts.hhmm < "09:10" || parts.hhmm > "15:30") { state.phase = parts.hhmm < "09:10" ? "PRE_OPEN" : "MARKET_CLOSED"; return heartbeat(); }
+      if (parts.hhmm < "09:10" || parts.hhmm > "15:40") { state.phase = parts.hhmm < "09:10" ? "PRE_OPEN" : "MARKET_CLOSED"; return heartbeat(); }
       const book = await loadInstruments(parts.day);
       const [futQuote] = await quotes([book.future.tradingsymbol]);
       const futLtp = quoteMetrics(futQuote)?.ltp;

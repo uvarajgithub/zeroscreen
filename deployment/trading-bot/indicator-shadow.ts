@@ -244,6 +244,12 @@ function candleDay(candle: Candle): string {
   return new Date(candle.date).toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" });
 }
 function candleKey(candle: Candle): string { return `${candleDay(candle)}|${timeIST(candle.date)}`; }
+function isCompletedSessionCandle(candle: Candle): boolean {
+  const startMs = new Date(candle.date).getTime();
+  if (!Number.isFinite(startMs)) return true;
+  const durationMs = timeIST(candle.date) === "15:30" ? 10 * 60_000 : 15 * 60_000;
+  return Date.now() >= startMs + durationMs;
+}
 
 async function enter(spec: StrategySpec, state: StrategyState, direction: Direction, candle: Candle, note: string, atr: number): Promise<void> {
   state.inTrade = true; state.dir = direction; state.entry = candle.close;
@@ -345,16 +351,16 @@ async function evaluate(spec: StrategySpec, state: StrategyState, candles: Candl
   const oppositeSignal = state.inTrade && signal.entry && signal.entry !== state.dir;
   let closedResult: { pnlRs: number; optionPnlRs: number | null } | null = null;
   let candleState = state.inTrade ? "hold" : signal.entry ? "entry" : "watching";
-  if (state.inTrade && (minutes >= 915 || slHit || signal.exit || oppositeSignal)) {
+  if (state.inTrade && (minutes >= 930 || slHit || signal.exit || oppositeSignal)) {
     const oldDirection = state.dir;
     closedResult = await close(
       spec,
       state,
       candle,
-      minutes >= 915 ? "EOD exit" : slHit ? "ATR stop loss" : oppositeSignal ? "Opposite indicator signal" : "Indicator exit",
+      minutes >= 930 ? "EOD exit" : slHit ? "ATR stop loss" : oppositeSignal ? "Opposite indicator signal" : "Indicator exit",
       slHit && testedIndicator ? state.sl : undefined,
     );
-    candleState = minutes >= 915 ? "exit_eod" : slHit ? "sl_hit" : oppositeSignal ? "re_exit" : "exit";
+    candleState = minutes >= 930 ? "exit_eod" : slHit ? "sl_hit" : oppositeSignal ? "re_exit" : "exit";
     if (minutes < 900 && signal.entry && signal.entry !== oldDirection && state.trades < (spec.maxTrades || 99)) {
       await enter(spec, state, signal.entry, candle, signal.note, atr);
       candleState = "reentry";
@@ -427,7 +433,7 @@ function heartbeat(): any {
 }
 async function tick(): Promise<void> {
   const candles = await recentCandles();
-  const todayCandles = candles.filter(candle => candleDay(candle) === dayIST());
+  const todayCandles = candles.filter(candle => candleDay(candle) === dayIST() && isCompletedSessionCandle(candle));
   let indexLtp = 0;
   try { indexLtp = await getCurrentPrice(); } catch {}
   for (const spec of STRATEGIES) {

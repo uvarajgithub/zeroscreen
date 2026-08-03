@@ -100,7 +100,7 @@ function isMarketHours() {
     const now = new Date();
     const ist = new Date(now.toLocaleString("en-US", { timeZone: "Asia/Kolkata" }));
     const h = ist.getHours(), m = ist.getMinutes();
-    return (h > 9 || (h === 9 && m >= 15)) && (h < 15 || (h === 15 && m <= 30));
+    return (h > 9 || (h === 9 && m >= 15)) && (h < 15 || (h === 15 && m <= 40));
 }
 async function getPositionsFromBroker() {
     // Retry up to 3 times with 2s backoff before counting as a failure
@@ -506,7 +506,7 @@ let lastCandleKey = ""; // key of the last candle we already notified on
 let anteCandle = null;
 async function monitorCandleBreakouts() {
     try {
-        if (!(0, strategy_1.isWithinTime)(9, 16, 15, 30))
+        if (!(0, strategy_1.isWithinTime)(9, 16, 15, 40))
             return;
         // getPreviousCandle() always returns the most recently COMPLETED 15-min candle
         const prev = await (0, market_1.getPreviousCandle)();
@@ -1053,7 +1053,7 @@ async function runITMHoldBot() {
     // Stop new entries at 14:55 — existing positions continue to be monitored until SL/time-exit
     if (h >= 15 || (h === 14 && m >= 55))
         stopForDay = true;
-    if (!(0, strategy_1.isWithinTime)(9, 15, 15, 30))
+    if (!(0, strategy_1.isWithinTime)(9, 15, 15, 40))
         return;
     const price = await (0, market_1.getCurrentPrice)();
     if (!price || price <= 0) {
@@ -1188,7 +1188,7 @@ async function runITMHoldBot() {
 //  C1-3    : if candle-1-after-entry closes 3+ pts against → early exit −3
 //  Re-entry: same-dir if refHigh broken (after EarlyExit or wick-only SL)
 //  Hybrid  : SL candle body closes PAST SL → enter opposite direction
-//  EOD     : 3:15 PM exit
+//  EOD     : 3:40 PM exit
 // ══════════════════════════════════════════════════════════════════════════════
 async function runHybridReverseBot() {
     const now = new Date();
@@ -1224,7 +1224,7 @@ async function runHybridReverseBot() {
             log("PDH_FETCHED", { pdhHigh, pdhLow });
         }).catch(e => log("PDH_FETCH_FAIL", { error: String(e) }));
     }
-    if (!(0, strategy_1.isWithinTime)(9, 15, 15, 30))
+    if (!(0, strategy_1.isWithinTime)(9, 15, 15, 40))
         return;
     const price = await (0, market_1.getCurrentPrice)();
     if (!price || price <= 0) {
@@ -1334,7 +1334,7 @@ async function runHybridReverseBot() {
         return;
     }
     const currentCandle = { open: candle.open, high: candle.high, low: candle.low, close: candle.close };
-    const isEOD = h > 15 || (h === 15 && m >= 15);
+    const isEOD = h > 15 || (h === 15 && m >= 40);
     // ── Process candle through strategy ───────────────────────────────────────
     const prevBodyHigh = Math.max(hybridPrevCandle.open, hybridPrevCandle.close);
     const prevBodyLow = Math.min(hybridPrevCandle.open, hybridPrevCandle.close);
@@ -1564,11 +1564,11 @@ async function runHybridReverseBot() {
                 hybridState = (0, strategy_1.createHybridState)();
                 stopForDay = true;
                 saveTradeState();
-                await notifyExit(price, sig.pts, "EOD exit 3:15 PM", { dir: capturedDir, entry: capturedEntry, symbol: capturedSymbol, qty: config_1.config.quantity }).catch(() => { });
+                await notifyExit(price, sig.pts, "EOD exit 3:40 PM", { dir: capturedDir, entry: capturedEntry, symbol: capturedSymbol, qty: config_1.config.quantity }).catch(() => { });
                 await sendEODSummary().catch(() => { });
                 (0, report_1.generateMonthlyReport)().catch(e => log("REPORT_FAIL", { error: e?.message }));
                 const premiumAtEod = capturedSymbol ? await (0, market_1.getOptionLTP)(capturedSymbol).catch(() => 0) : 0;
-                (0, logger_1.logTrade)({ date: new Date().toISOString(), type: "HYBRID_REVERSE", direction: capturedDir ?? "CE", symbol: capturedSymbol, premiumExit: premiumAtEod, entryPrice: capturedEntry, exitPrice: price, pnl: sig.pts, reasonEntry: "hybrid_breakout", reasonExit: "eod_3:15", aiScore: 1, slippage: 0, duration: capturedTime > 0 ? Math.round((Date.now() - capturedTime) / 1000) : 0 });
+                (0, logger_1.logTrade)({ date: new Date().toISOString(), type: "HYBRID_REVERSE", direction: capturedDir ?? "CE", symbol: capturedSymbol, premiumExit: premiumAtEod, entryPrice: capturedEntry, exitPrice: price, pnl: sig.pts, reasonEntry: "hybrid_breakout", reasonExit: "eod_3:40", aiScore: 1, slippage: 0, duration: capturedTime > 0 ? Math.round((Date.now() - capturedTime) / 1000) : 0 });
                 break;
             }
             case "NONE":
@@ -1742,7 +1742,7 @@ function startDrishtiLTPMonitor() {
             stopDrishtiLTPMonitor();
             return;
         }
-        if (!(0, strategy_1.isWithinTime)(9, 15, 15, 30)) {
+        if (!(0, strategy_1.isWithinTime)(9, 15, 15, 40)) {
             stopDrishtiLTPMonitor();
             return;
         }
@@ -1918,6 +1918,14 @@ function tt1030FmtIST(epochMs) {
 function tt1030CandleTime(c) {
     const d = c.date ? new Date(c.date) : new Date();
     return tt1030ISTParts(d).hhmm;
+}
+function isCompletedSessionCandle(c) {
+    const startMs = new Date(c?.date).getTime();
+    if (!Number.isFinite(startMs))
+        return true;
+    // From Aug 3, 2026 the final F&O candle is a 10-minute 15:30-15:40 candle.
+    const durationMs = tt1030CandleTime(c) === "15:30" ? 10 * 60 * 1000 : 15 * 60 * 1000;
+    return Date.now() >= startMs + durationMs;
 }
 const TT1030_CANDLE_LOG_FILE = 'tt1030-candle-log.json';
 const TT1030_STATE_FILE = 'tt1030-state.json';
@@ -3205,10 +3213,7 @@ async function runTenThirtyEngine(isEOD) {
         }
         for (let i = 0; i < candles.length; i++) {
             const c = candles[i];
-            const candleStartMs = new Date(c.date).getTime();
-            const candleIsClosed = Number.isFinite(candleStartMs)
-                ? Date.now() >= candleStartMs + (15 * 60 * 1000)
-                : true;
+            const candleIsClosed = isCompletedSessionCandle(c);
             // Do not lock a 15-minute candle until its full window has closed.
             if (!candleIsClosed)
                 continue;
@@ -3235,7 +3240,7 @@ async function runTenThirtyEngine(isEOD) {
                 upsertTT1030CandleLog(clog);
                 continue;
             }
-            const eodCandle = t >= "15:15" || isEOD;
+            const eodCandle = t >= "15:30" || isEOD;
             if (tt1030.inTrade && tt1030.dir) {
                 const premOut = tt1030.optSym ? await (0, market_1.getOptionLTP)(tt1030.optSym).catch(() => 0) : 0;
                 tt1030.optLivePrem = premOut || tt1030.optLivePrem;
@@ -3746,8 +3751,7 @@ async function runTenOCLockShadow(isEOD) {
         }
         for (let i = 0; i < candles.length; i++) {
             const c = candles[i];
-            const candleStartMs = new Date(c.date).getTime();
-            if (Number.isFinite(candleStartMs) && Date.now() < candleStartMs + 15 * 60 * 1000)
+            if (!isCompletedSessionCandle(c))
                 continue;
             const num = i + 1;
             const time = tt1030CandleTime(c);
@@ -3772,7 +3776,7 @@ async function runTenOCLockShadow(isEOD) {
                 upsertTT1000Candle(row);
                 continue;
             }
-            const eodCandle = time >= "15:15" || isEOD;
+            const eodCandle = time >= "15:30" || isEOD;
             if (tt1000.inTrade && tt1000.dir) {
                 const openPts = tt1000.dir === "CE" ? c.close - tt1000.entry : tt1000.entry - c.close;
                 row.pnlPts = parseFloat(openPts.toFixed(1));
@@ -4041,8 +4045,7 @@ async function runNineFortyFiveShadow(isEOD) {
             tt0945.optLivePrem = await (0, market_1.getOptionLTP)(tt0945.optSym).catch(() => tt0945.optLivePrem || 0);
         for (let i = 0; i < candles.length; i++) {
             const c = candles[i];
-            const candleStartMs = new Date(c.date).getTime();
-            if (Number.isFinite(candleStartMs) && Date.now() < candleStartMs + 15 * 60 * 1000)
+            if (!isCompletedSessionCandle(c))
                 continue;
             const num = i + 1;
             const time = tt1030CandleTime(c);
@@ -4067,7 +4070,7 @@ async function runNineFortyFiveShadow(isEOD) {
                 upsertTT0945Candle(row);
                 continue;
             }
-            const eodCandle = time >= "15:15" || isEOD;
+            const eodCandle = time >= "15:30" || isEOD;
             if (tt0945.inTrade && tt0945.dir) {
                 const openPts = tt0945.dir === "CE" ? c.close - tt0945.entry : tt0945.entry - c.close;
                 row.pnlPts = parseFloat(openPts.toFixed(1));
@@ -4331,12 +4334,14 @@ async function runHybridBodyShadow(isEOD) {
     }
     for (let i = 0; i < candles.length; i++) {
         const c = candles[i];
+        if (!isCompletedSessionCandle(c))
+            continue;
         const key = tt1030CandleTime(c);
         if (hybridShadow.seen.has(key))
             continue;
         hybridShadow.seen.add(key);
         const num = i + 1;
-        const eodCandle = isEOD || key.includes("15:15") || key.includes("15:30");
+        const eodCandle = isEOD || key.includes("15:30");
         const livePts = hybridShadow.dir && hybridShadow.entry ? (hybridShadow.dir === "CE" ? c.close - hybridShadow.entry : hybridShadow.entry - c.close) : 0;
         const clog = { time: key, num, open: c.open, high: c.high, low: c.low, close: c.close, phase: hybridShadow.phase, status: "watch", note: "" };
         if (hybridShadow.phase === "SCANNING") {
@@ -4644,8 +4649,7 @@ async function runNormalBreakoutShadow(isEOD) {
     }
     for (let i = 0; i < candles.length; i++) {
         const c = candles[i];
-        const candleStartMs = new Date(c.date).getTime();
-        const candleIsClosed = Number.isFinite(candleStartMs) ? Date.now() >= candleStartMs + 15 * 60 * 1000 : true;
+        const candleIsClosed = isCompletedSessionCandle(c);
         if (!candleIsClosed)
             continue;
         const t = tt1030CandleTime(c);
@@ -4654,7 +4658,7 @@ async function runNormalBreakoutShadow(isEOD) {
             continue;
         normalBreakoutShadow.seen.add(key);
         const idx = i + 1;
-        const eodCandle = isEOD || t >= '15:15';
+        const eodCandle = isEOD || t >= '15:30';
         const livePts = normalBreakoutShadow.dir && normalBreakoutShadow.entry ? (normalBreakoutShadow.dir === 'CE' ? c.close - normalBreakoutShadow.entry : normalBreakoutShadow.entry - c.close) : 0;
         const clog = { idx, time: t, open: c.open, high: c.high, low: c.low, close: c.close, status: 'watching', dir: normalBreakoutShadow.dir, entry: normalBreakoutShadow.entry || null, sl: normalBreakoutShadow.sl || null, pnlPts: normalBreakoutShadow.dir ? parseFloat(livePts.toFixed(1)) : null, pnlRs: normalBreakoutShadow.dir ? Math.round(livePts * Number(config_1.config.quantity || 30)) : null, note: '' };
         if (!normalBreakoutShadow.refBodyHigh && t === '09:45') {
@@ -5001,11 +5005,12 @@ async function runDrishtiBot() {
         }
         catch (_e) { }
     }
-    // Body Hold needs the fully closed 15:15-15:30 candle. The regular
-    // strategy window may already reject cycles after 15:30, so finalize it
-    // independently from 15:31 onward. Repeated cycles are harmless because
+    // Body Hold needs the fully closed 15:30-15:40 partial candle. The regular
+    // strategy window may already reject cycles after 15:40, so finalize it
+    // independently from 15:45 onward, when Kite exposes that partial candle.
+    // Repeated cycles are harmless because
     // the first successful call clears both in-trade flags and persists them.
-    const bodyHoldEODWindow = ist.getDay() >= 1 && ist.getDay() <= 5 && h === 15 && m >= 31 && m <= 45;
+    const bodyHoldEODWindow = ist.getDay() >= 1 && ist.getDay() <= 5 && h === 15 && m >= 45 && m <= 55;
     if (bodyHoldEODWindow) {
         startBodyHoldSession(tt1030ISTParts().ymd);
         if (bhs1.inTrade || bhs2.inTrade) {
@@ -5015,7 +5020,7 @@ async function runDrishtiBot() {
             }
         }
     }
-    if (!(0, strategy_1.isWithinTime)(9, 15, 15, 30))
+    if (!(0, strategy_1.isWithinTime)(9, 15, 15, 40))
         return;
     startBodyHoldSession(tt1030ISTParts().ymd);
     const price = await (0, market_1.getCurrentPrice)();
@@ -5026,6 +5031,23 @@ async function runDrishtiBot() {
     lastKnownPrice = price;
     await updateBodyHoldMarkToMarket(price);
     printStatus();
+    // Preserve the original 15-minute entry buffer, but keep managing open
+    // positions through the extended F&O session.
+    if (h === 15 && m >= 25)
+        stopForDay = true;
+    // Real broker positions must be sent for square-off before the 15:40 close.
+    // Shadow engines continue below and consume the final 15:30-15:40 candle.
+    if (h === 15 && m >= 39 && !capitalProtectionTriggered) {
+        capitalProtectionTriggered = true;
+        if (activeTrade && DrishtiState.inTrade && tradeDirection && entryPrice > 0) {
+            const directionSign = tradeDirection === "CE" ? 1 : -1;
+            await executeDrishtiLTPExit(price, directionSign * (price - entryPrice), "EOD 3:39 pre-close");
+        }
+        await (0, order_1.squareOffAll)();
+        await sendEODSummary().catch(() => { });
+        (0, report_1.generateMonthlyReport)().catch(e => log("REPORT_FAIL", { error: e?.message }));
+        log("TIME_BUFFER", { message: "DRISHTI positions exited at 15:39 before 15:40 close" });
+    }
     // ── Capital protection ───────────────────────────────────────────────
     const maxDrawdown = config_1.config.capital * (config_1.config.capitalDrawdownPercent / 100);
     if (false) {
@@ -5043,7 +5065,7 @@ async function runDrishtiBot() {
         }
         return;
     }
-    const shadowIsEOD = h > 15 || (h === 15 && m >= 30);
+    const shadowIsEOD = h > 15 || (h === 15 && m >= 40);
     const shadowRuns = await Promise.allSettled([
         runNineFortyFiveShadow(shadowIsEOD),
         runTenOCLockShadow(shadowIsEOD),
@@ -5085,10 +5107,10 @@ async function runDrishtiBot() {
     drishtiTodayCandles.push(bc);
     upsertDrishtiCandleLog(drishtiTodayCandles.length - 1, candle);
     // Run BODY_HOLD shadow strategies on every candle (fire-and-forget)
-    runBodyHoldShadow(bc, h > 15 || (h === 15 && m >= 30)).catch(e => log('BH_SHADOW_ERR', { error: String(e) }));
-    // EOD at 3:30 PM close (3:15-3:30 candle) — matches backtest last candle exactly
+    runBodyHoldShadow(bc, h > 15 || (h === 15 && m >= 40)).catch(e => log('BH_SHADOW_ERR', { error: String(e) }));
+    // EOD at the 3:40 PM F&O close (final 3:30-3:40 partial candle).
     // Previously m>=15 caused early exit at 3:15 PM (3:00-3:15 candle), one candle too early
-    const isEOD = h > 15 || (h === 15 && m >= 30);
+    const isEOD = h > 15 || (h === 15 && m >= 40);
     // ── Trail management when in trade ───────────────────────────────────
     if (activeTrade && DrishtiState.inTrade) {
         const trail = (0, drishti_strategy_1.updateDrishtiTrail)(DrishtiState, bc, isEOD);
@@ -5220,7 +5242,7 @@ async function runDrishtiBot() {
             const exitReason = trail.action === "EXIT_SL"
                 ? "SL -100 pts"
                 : trail.action === "EXIT_EOD"
-                    ? "EOD 3:15 PM"
+                    ? "EOD 3:40 PM"
                     : `Trail locked ${pts.toFixed(0)} pts (peak ${trail.peakPts.toFixed(0)})`;
             saveTradeState();
             await notifyExit(price, pts, exitReason, { dir: capturedDir, entry: capturedEntry, symbol: capturedSymbol, qty: capturedQty }).catch(() => { });
@@ -5543,12 +5565,12 @@ async function runBot() {
         const ist = new Date(new Date().toLocaleString("en-US", { timeZone: "Asia/Kolkata" }));
         const h = ist.getHours();
         const m = ist.getMinutes();
-        if (!(0, strategy_1.isWithinTime)(9, 15, 15, 30))
+        if (!(0, strategy_1.isWithinTime)(9, 15, 15, 40))
             return;
         const price = await (0, market_1.getCurrentPrice)().catch(() => 0);
         if (price && price > 0)
             lastKnownPrice = price;
-        const shadowIsEOD = h > 15 || (h === 15 && m >= 30);
+        const shadowIsEOD = h > 15 || (h === 15 && m >= 40);
         await Promise.all([
             runNineFortyFiveShadow(shadowIsEOD),
             runTenThirtyTradeOps(shadowIsEOD),
@@ -5672,13 +5694,13 @@ async function runBot() {
         _tokenAutoRefreshing = false; // allow fresh auto-refresh next day if needed
         _candleHealthAlerted = false; // allow fresh candle health check next day
     }
-    // 15:15:00 - stop new trades
-    if (ist.getHours() === 15 && ist.getMinutes() >= 15 && ist.getMinutes() < 20) {
+    // 15:25:00 - stop new trades (15-minute buffer before the 15:40 F&O close)
+    if (ist.getHours() === 15 && ist.getMinutes() >= 25 && ist.getMinutes() < 39) {
         stopForDay = true;
-        log("TIME_BUFFER", { message: "Stopped new trades at 15:15" });
+        log("TIME_BUFFER", { message: "Stopped new trades at 15:25" });
     }
-    // 15:20:00 - exit all positions
-    if (ist.getHours() === 15 && ist.getMinutes() >= 20 && !capitalProtectionTriggered) {
+    // 15:39:00 - square off before the 15:40 exchange close
+    if (ist.getHours() === 15 && ist.getMinutes() >= 39 && !capitalProtectionTriggered) {
         // Capture square-off price and day OHLC before exiting
         if (tradeSymbol) {
             try {
@@ -5698,12 +5720,12 @@ async function runBot() {
             saveDailyPnlLog().catch(() => { });
         }
         stopForDay = true;
-        await notifyBotStop("15:20 exit all positions");
-        log("TIME_BUFFER", { message: "Exited all positions at 15:20" });
+        await notifyBotStop("15:39 exit all positions");
+        log("TIME_BUFFER", { message: "Exited all positions at 15:39 before 15:40 close" });
         return;
     }
     // End-of-day forced exit
-    if (ist.getHours() > 15 || (ist.getHours() === 15 && ist.getMinutes() >= 30)) {
+    if (ist.getHours() > 15 || (ist.getHours() === 15 && ist.getMinutes() >= 40)) {
         if (!_dailyPnlLogSaved) {
             _dailyPnlLogSaved = true;
             saveDailyPnlLog().catch(() => { });
@@ -5714,7 +5736,7 @@ async function runBot() {
         return;
     }
     //── Time guards ──────────────────────────────────────
-    if (!(0, strategy_1.isWithinTime)(9, 25, 15, 30)) {
+    if (!(0, strategy_1.isWithinTime)(9, 25, 15, 40)) {
         console.log("Outside market hours. Waiting...");
         return;
     }
@@ -6448,8 +6470,8 @@ async function preStartPrompt() {
                                 _bfLastExitIdx = _i;
                                 _bfLastExitDir = _evalSig.side;
                             }
-                            // EOD candles (15:15+) are never traded — don't flag them as "bot offline"
-                            const _isEodCandle = _t >= '15:15';
+                            // The final 15:30-15:40 candle is EOD-only — don't flag it as "bot offline".
+                            const _isEodCandle = _t >= '15:30';
                             DrishtiCandleLog.push({
                                 idx: _i,
                                 time: _t,
@@ -6514,7 +6536,7 @@ async function preStartPrompt() {
         }
         log("BOT_START", { message: "Waiting for market hours (9:25 IST)..." });
         const tt1030StartupIST = tt1030ISTParts();
-        if (tt1030StartupIST.hhmm >= "15:30" && !fs_1.default.existsSync(TT1030_SHADOW_STATE_FILE)) {
+        if (tt1030StartupIST.hhmm >= "15:40" && !fs_1.default.existsSync(TT1030_SHADOW_STATE_FILE)) {
             setTimeout(() => {
                 bootstrapTenThirtyShadowAfterHours().catch(e => log("TT1030_SHADOW_BOOTSTRAP_ERR", { error: e instanceof Error ? e.message : String(e) }));
             }, 2000);

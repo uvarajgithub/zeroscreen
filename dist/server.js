@@ -360,7 +360,7 @@ function userIsPremium(req) {
     const role = req.session?.userRole;
     return role === "premium" || role === "admin";
 }
-/** Returns true if current IST time is within NSE market hours (Mon–Fri 9:15–15:30) */
+/** Returns true if current IST time is within NSE cash-market hours (Mon-Fri 9:15-15:30). */
 function isMarketHours() {
     const ist = new Date(Date.now() + 5.5 * 60 * 60 * 1000);
     const day = ist.getUTCDay(); // 0=Sun, 6=Sat
@@ -6579,7 +6579,7 @@ function tradeOpsMarketOpen() {
     const now = tradeOpsISTNow();
     const day = now.getDay();
     const mins = now.getHours() * 60 + now.getMinutes();
-    return day >= 1 && day <= 5 && mins >= 9 * 60 + 15 && mins <= 15 * 60 + 30;
+    return day >= 1 && day <= 5 && mins >= 9 * 60 + 15 && mins <= 15 * 60 + 40;
 }
 function tradeOpsMarketStartedToday() {
     const now = tradeOpsISTNow();
@@ -7381,7 +7381,7 @@ async function buildTradeOpsStatus(strategyId = "") {
                 candleCount: candleLog.length,
             },
         },
-        market: { open: tradeOpsMarketOpen(), label: tradeOpsMarketOpen() ? "Market Open" : "Market Closed", session: "09:15 - 15:30", latestSession: displaySession },
+        market: { open: tradeOpsMarketOpen(), label: tradeOpsMarketOpen() ? "Market Open" : "Market Closed", session: "09:15 - 15:40", latestSession: displaySession },
         strategy: {
             name: "TEN_THIRTY_INDEX_FUTURES",
             label: "10:30 Futures",
