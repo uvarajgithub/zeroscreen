@@ -39,6 +39,11 @@ try {
     bodyHoldS1OptionsRealizedPnL: 50,
     bodyHoldS1OptionsUnrealizedPnL: 300,
     bodyHoldS1OptionsPnL: 350,
+    bankNiftyFuturesSession: {
+      symbol: 'BANKNIFTY26AUGFUT', open: 57750, current: 57880, high: 58066, low: 57712,
+      movementPoints: 130, rangePoints: 354,
+      regime: { label: 'MIXED', directionality: 36.7, suggestedMode: 'CONFIRMATION_ONLY' },
+    },
     tt1030ShadowCandleLog: [
       { time: '09:15', open: 57500, high: 57600, low: 57450, close: 57580 },
       { time: '15:30', open: 57800, high: 58250, low: 57750, close: 58200 },
@@ -60,8 +65,11 @@ try {
   assert(bodyFutures.summary.unrealizedPnl === -6390, 'Body Hold Futures unrealized P&L mismatch');
   assert(bodyFutures.summary.totalPnl === -6290 && bodyFutures.position.ltp === 57800, 'Body Hold Futures total/LTP mismatch');
   assert(bodyFutures.summary.capturedPoints === -6290 / 30, 'Body Hold Futures captured-points mismatch');
-  assert(bodyFutures.market.bankNiftyMovement.movementPoints === 300, 'BANKNIFTY movement mismatch');
-  assert(bodyFutures.market.bankNiftyMovement.rangePoints === 800, 'BANKNIFTY range mismatch');
+  assert(bodyFutures.market.bankNiftyMovement.movementPoints === 130, 'Futures benchmark movement mismatch');
+  assert(bodyFutures.market.bankNiftyMovement.rangePoints === 354, 'Futures benchmark range mismatch');
+  assert(bodyFutures.market.bankNiftyMovement.cash.movementPoints === 300, 'Cash-index movement mismatch');
+  assert(bodyFutures.market.bankNiftyMovement.cash.rangePoints === 800, 'Cash-index range mismatch');
+  assert(bodyFutures.market.bankNiftyMovement.regime.label === 'MIXED', 'Futures regime mismatch');
 
   const bodyOptions = buildShadowMonitorPayload('body-hold-s1', 'OPTIONS');
   assert(bodyOptions.summary.realizedPnl === 50, 'Body Hold Options realized P&L mismatch');
@@ -82,6 +90,9 @@ try {
     assert(artifact.includes('data-group-summary'), 'Consolidated instrument summaries are absent');
     assert(artifact.includes('sm-key-captured'), 'Per-tile captured points are absent');
     assert(artifact.includes('bankNiftyMovement'), 'BANKNIFTY movement display is absent');
+    assert(artifact.includes('function renderMovementContext'), 'Cash/futures movement split is absent');
+    assert(artifact.includes('Futures benchmark'), 'Tradable futures benchmark label is absent');
+    assert(artifact.includes('Market Regime'), 'Market-regime display is absent');
     assert(artifact.includes('09:15 - 15:40'), 'Updated F&O session is absent');
   }
   const botSource = fs.readFileSync(path.join(__dirname, '..', '..', 'deployment', 'trading-bot', 'index.ts'), 'utf8');
@@ -101,6 +112,10 @@ try {
     assert(artifact.includes('tradeId: `DRISHTI_V1-${entryTime}`'), 'DRISHTI open/close rows do not share a stable trade id');
     assert(artifact.includes('drishtiLtpCheckRunning'), 'DRISHTI LTP monitor overlap guard is absent');
     assert(artifact.includes('Math.max(0, Number(DrishtiState.peakPts || 0))'), 'DRISHTI restart does not restore the protected peak');
+    assert(artifact.includes('PORTFOLIO_CORRELATION_BLOCK'), 'Live BANKNIFTY portfolio exposure guard is absent');
+    assert(artifact.includes('DRISHTI_REGIME_REENTRY_BLOCK'), 'Two-sided-session re-entry guard is absent');
+    assert(artifact.includes('maxConcurrentBankNiftyLiveStrategies: 1'), 'Portfolio-risk heartbeat contract is absent');
+    assert(artifact.includes('benchmark: "NFO_FRONT_MONTH_FUTURES"'), 'Runtime futures benchmark contract is absent');
   }
   assert(botSource === botRuntime, 'Trading-bot source and deployable runtime artifact differ');
   const indicatorSource = fs.readFileSync(path.join(__dirname, '..', '..', 'deployment', 'trading-bot', 'indicator-shadow.ts'), 'utf8');

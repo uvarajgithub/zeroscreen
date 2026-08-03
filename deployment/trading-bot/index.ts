@@ -235,6 +235,10 @@ let optATMCache = null; // last-picked strike pair, kept for OPT_ATM_CACHE loggi
 let optInstrumentsCache = null; // NFO BANKNIFTY option instrument list, cached for the day
 let drishtiFutSymbolCache = "";
 let drishtiFutSymbolCacheAt = 0;
+let drishtiFutTokenCache = 0;
+let bankNiftyFuturesSession = null;
+let bankNiftyFuturesSessionAt = 0;
+let bankNiftyFuturesSessionRefreshRunning = false;
 let optRecentTrades = [];
 let entryPrice = 0;
 function setDrishtiBlockReason(reason) {
@@ -1831,7 +1835,7 @@ function startDrishtiLTPMonitor() {
 // DRISHTI V1 — PDH/PDL Context + LOCK10 Trail (live bot)
 // Entry: findDrishtiEntry() detects pattern on each 15-min candle close
 // Trail: SL=100 pts; once peak>=10 pts, trail = peak-10 (LOCK10, candle-close only)
-// Re-entries: up to 5, gate=OFF (lastExitPts>=0), reverse always allowed (REV_UNLOCK=0)
+// Re-entries: one maximum; two-sided sessions are blocked and reverse requires a fresh strong candle
 // Instrument: BankNifty FUTURES (not options) — P&L = index pts × 30 exact
 // ═══════════════════════════════════════════════════════════════════════════
 // Returns the nearest-expiry BankNifty futures symbol (e.g. BANKNIFTY26JUNFUT)
@@ -1856,10 +1860,88 @@ function getDrishtiFuturesSymbol() {
         const daysToExpiry = (expiry.getTime() - today.getTime()) / 86400000;
         const chosen = daysToExpiry <= 1 && fut.length > 1 ? fut[1] : front;
         drishtiFutSymbolCache = chosen.tradingsymbol;
+        drishtiFutTokenCache = Number(chosen.instrument_token || 0);
         drishtiFutSymbolCacheAt = Date.now();
-        log("DRISHTI_FUT_SYMBOL_CACHE", { symbol: drishtiFutSymbolCache, expiry: chosen.expiry });
+        log("DRISHTI_FUT_SYMBOL_CACHE", { symbol: drishtiFutSymbolCache, token: drishtiFutTokenCache, expiry: chosen.expiry });
         return drishtiFutSymbolCache;
     });
+}
+function bankNiftyRegime(range, movement) {
+    const directionality = range > 0 ? Math.abs(movement) / range : 0;
+    const shape = directionality >= 0.60 ? "DIRECTIONAL" : directionality <= 0.30 ? "TWO_SIDED" : "MIXED";
+    return {
+        label: range >= 500 ? `BIG_${shape}` : shape,
+        directionality: parseFloat((directionality * 100).toFixed(1)),
+        suggestedMode: shape === "DIRECTIONAL" ? "BREAKOUT" : shape === "TWO_SIDED" ? "RISK_OFF" : "CONFIRMATION_ONLY",
+    };
+}
+async function refreshBankNiftyFuturesSession(force = false) {
+    if (bankNiftyFuturesSessionRefreshRunning)
+        return;
+    if (!force && Date.now() - bankNiftyFuturesSessionAt < 60 * 1000)
+        return;
+    bankNiftyFuturesSessionRefreshRunning = true;
+    try {
+        const symbol = await getDrishtiFuturesSymbol();
+        if (!drishtiFutTokenCache)
+            throw new Error("BANKNIFTY futures token unavailable");
+        const { KiteConnect } = require("kiteconnect");
+        const kite = new KiteConnect({ api_key: process.env.API_KEY || "" });
+        kite.setAccessToken(process.env.ACCESS_TOKEN || "");
+        const now = new Date();
+        const ist = new Date(now.getTime() + 5.5 * 3600000);
+        const day = ist.toISOString().slice(0, 10);
+        const rows = await kite.getHistoricalData(drishtiFutTokenCache, "15minute", `${day} 09:15:00`, `${day} 15:40:00`, false);
+        const valid = (rows || []).filter((row) => Number(row?.open) > 0 && Number(row?.close) > 0);
+        if (!valid.length)
+            return;
+        const live = await (0, market_1.getOptionLTP)(symbol).catch(() => 0);
+        const open = Number(valid[0].open);
+        const lastClose = Number(valid[valid.length - 1].close);
+        const current = live > 0 ? live : lastClose;
+        const high = Math.max(current, ...valid.map((row) => Number(row.high)));
+        const low = Math.min(current, ...valid.map((row) => Number(row.low)));
+        const movementPoints = current - open;
+        const rangePoints = high - low;
+        bankNiftyFuturesSession = {
+            symbol, token: drishtiFutTokenCache, open, current, high, low,
+            movementPoints, rangePoints, regime: bankNiftyRegime(rangePoints, movementPoints),
+            session: "09:15 - 15:40", asOf: new Date().toISOString(), source: "NFO front-month futures",
+        };
+        bankNiftyFuturesSessionAt = Date.now();
+    }
+    catch (error) {
+        log("BANKNIFTY_FUTURES_SESSION_ERR", { error: error instanceof Error ? error.message : String(error) });
+    }
+    finally {
+        bankNiftyFuturesSessionRefreshRunning = false;
+    }
+}
+function marketContextHeartbeatFields() {
+    const liveStrategies = [];
+    if (activeTrade)
+        liveStrategies.push({ strategy: "DRISHTI", direction: tradeDirection || null });
+    if (tt1030LiveState?.inTrade && tt1030LiveState?.liveMode === "LIVE")
+        liveStrategies.push({ strategy: "TT1030", direction: tt1030LiveState.dir || null });
+    return {
+        bankNiftyFuturesSession,
+        portfolioRisk: {
+            maxConcurrentBankNiftyLiveStrategies: 1,
+            liveStrategies,
+            exposureCount: liveStrategies.length,
+            status: liveStrategies.length > 1 ? "BREACH" : "OK",
+        },
+        strategyRuntimeContract: {
+            benchmark: "NFO_FRONT_MONTH_FUTURES",
+            drishti: {
+                maxTradesPerDay: DRISHTI_MAX_TRADES_PER_DAY,
+                maxReentries: DRISHTI_MAX_REENTRIES,
+                trailActivationPoints: DRISHTI_TRAIL_ACTIVATE_PTS,
+                trailGapPoints: DRISHTI_TRAIL_GAP,
+                riskMonitor: "REAL_FUTURES_5S",
+            },
+        },
+    };
 }
 // Returns ATM BankNifty option symbol for the nearest weekly expiry
 // BankNifty has ONLY monthly expiry (SEBI removed weekly in 2024)
@@ -3075,6 +3157,12 @@ async function tt1030Enter(dir, entry, sl, ref, reason) {
     const optPrem = optSym ? await (0, market_1.getOptionLTP)(optSym).catch(() => 0) : 0;
     const preflight = tt1030AuditSignal(dir, entry, sl, ref, reason, optSym, optPrem);
     const liveRequested = tt1030IsLiveFutures();
+    if (liveRequested && activeTrade) {
+        const detail = { requestedDirection: dir, drishtiDirection: tradeDirection || null, maxConcurrent: 1 };
+        tt1030AuditIssue("PORTFOLIO_CORRELATION_BLOCK", "DRISHTI already has live BANKNIFTY futures exposure", detail, "error");
+        log("TT1030_PORTFOLIO_CORRELATION_BLOCK", detail);
+        return false;
+    }
     if (liveRequested) {
         if (tt1030.dailyLossLocked) {
             appendTT1030Audit("live_entry_blocked_daily_loss", { brokerPnlRs: tt1030LastBrokerPnlRs, capRs: TT1030_DAILY_LOSS_CAP_RS, source: "persisted_lock" }, "error");
@@ -5326,6 +5414,12 @@ async function runDrishtiBot() {
     let entrySig = null;
     const maxDrishtiReEntries = DRISHTI_MAX_REENTRIES;
     if (DrishtiState.firstDone && DrishtiState.reCount < maxDrishtiReEntries && DrishtiState.lastExitIdx >= 0 && DrishtiState.lastExitDir) {
+        const currentRegime = String(bankNiftyFuturesSession?.regime?.label || "");
+        if (currentRegime.includes("TWO_SIDED")) {
+            setDrishtiBlockReason(`DRISHTI_REGIME_BLOCK (${currentRegime})`);
+            log("DRISHTI_REGIME_REENTRY_BLOCK", { regime: currentRegime, directionality: bankNiftyFuturesSession?.regime?.directionality, reCount: DrishtiState.reCount });
+            return;
+        }
         // Re-entry: look for strong candle after last exit — always allow reverse (REV_UNLOCK=0)
         // NOTE: prevDayCandles NOT required for re-entry (findDrishtiReEntry uses only today candles)
         const allowReverse = true;
@@ -5592,6 +5686,7 @@ async function runDrishtiBot() {
 async function runBot() {
     if (!isMarketHours())
         return; // Weekend + off-hours guard
+    refreshBankNiftyFuturesSession().catch(() => { });
     if (TRADEOPS_ONLY) {
         const ist = new Date(new Date().toLocaleString("en-US", { timeZone: "Asia/Kolkata" }));
         const h = ist.getHours();
@@ -5890,6 +5985,7 @@ async function runBot() {
                 ...hybridShadowHeartbeatFields(),
                 ...normalBreakoutShadowHeartbeatFields(),
                 ...bodyHoldHeartbeatFields(),
+                ...marketContextHeartbeatFields(),
             }));
         }
         catch (_) { }
@@ -6566,6 +6662,7 @@ async function preStartPrompt() {
             });
         }
         log("BOT_START", { message: "Waiting for market hours (9:25 IST)..." });
+        refreshBankNiftyFuturesSession(true).catch(() => { });
         const tt1030StartupIST = tt1030ISTParts();
         if (tt1030StartupIST.hhmm >= "15:40" && !fs_1.default.existsSync(TT1030_SHADOW_STATE_FILE)) {
             setTimeout(() => {
@@ -6611,6 +6708,7 @@ async function preStartPrompt() {
                         ...hybridShadowHeartbeatFields(),
                         ...normalBreakoutShadowHeartbeatFields(),
                         ...bodyHoldHeartbeatFields(),
+                        ...marketContextHeartbeatFields(),
                     }));
                 }
                 catch (_) { }
@@ -6658,6 +6756,7 @@ async function preStartPrompt() {
                     ...hybridShadowHeartbeatFields(),
                     ...normalBreakoutShadowHeartbeatFields(),
                     ...bodyHoldHeartbeatFields(),
+                    ...marketContextHeartbeatFields(),
                 }));
             }
             catch (_) { }
@@ -6718,6 +6817,7 @@ async function preStartPrompt() {
                         ...hybridShadowHeartbeatFields(),
                         ...normalBreakoutShadowHeartbeatFields(),
                         ...bodyHoldHeartbeatFields(),
+                        ...marketContextHeartbeatFields(),
                     }));
                 }
                 catch (_) { }
