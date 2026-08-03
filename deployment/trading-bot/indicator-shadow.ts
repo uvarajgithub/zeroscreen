@@ -436,6 +436,8 @@ async function tick(): Promise<void> {
   const todayCandles = candles.filter(candle => candleDay(candle) === dayIST() && isCompletedSessionCandle(candle));
   let indexLtp = 0;
   try { indexLtp = await getCurrentPrice(); } catch {}
+  const sessionNow = nowIST();
+  const sessionMinutes = sessionNow.getUTCHours() * 60 + sessionNow.getUTCMinutes();
   for (const spec of STRATEGIES) {
     let state = states.get(spec.id)!;
     if (state.date !== dayIST()) {
@@ -456,6 +458,23 @@ async function tick(): Promise<void> {
         const optionLtp = await getOptionLTP(state.optSym);
         if (optionLtp > 0) state.optLivePrem = optionLtp;
       } catch {}
+    }
+    // BANKNIFTY cash/index stops at 15:30, so no 15:30 index candle exists.
+    // Keep marking the F&O legs through 15:40, then close against the final
+    // index print and option premium explicitly.
+    if (sessionMinutes >= 15 * 60 + 40 && state.inTrade && state.dir) {
+      const exit = indexLtp > 0 ? indexLtp : state.live;
+      if (exit > 0) {
+        const eodCandle: Candle = { date: new Date().toISOString(), open: exit, high: exit, low: exit, close: exit };
+        const result = await close(spec, state, eodCandle, "EOD exit", exit);
+        state.candleLog.push({
+          time: "15:40", num: state.candleLog.length + 1, open: exit, high: exit, low: exit, close: exit,
+          status: "exit_eod", dir: null, entry: null, sl: null,
+          pnlRs: result?.pnlRs ?? null, optionPnlRs: result?.optionPnlRs ?? null,
+          note: "F&O session close; final BANKNIFTY index print",
+        });
+        state.candleLog = state.candleLog.slice(-50);
+      }
     }
     atomicWrite(spec.stateFile, state);
     persistHistory(spec, state);

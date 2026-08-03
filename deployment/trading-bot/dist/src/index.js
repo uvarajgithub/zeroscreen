@@ -3220,9 +3220,11 @@ async function runTenThirtyEngine(isEOD) {
             const num = i + 1;
             const t = tt1030CandleTime(c);
             const key = tt1030CandleKey(tt1030.day || tt1030ISTParts().ymd, t);
-            if (tt1030.seen.has(key))
+            const replayFinalForEOD = isEOD && i === candles.length - 1 && tt1030.inTrade;
+            if (tt1030.seen.has(key) && !replayFinalForEOD)
                 continue;
-            tt1030.seen.add(key);
+            if (!tt1030.seen.has(key))
+                tt1030.seen.add(key);
             const clog = { idx: num, time: t, open: c.open, high: c.high, low: c.low, close: c.close, status: "watching", dir: tt1030.dir, sl: tt1030.sl || null, note: "" };
             if (num === 6 && !tt1030.tenHigh) {
                 tt1030.tenHigh = c.high;
@@ -3756,9 +3758,11 @@ async function runTenOCLockShadow(isEOD) {
             const num = i + 1;
             const time = tt1030CandleTime(c);
             const key = `${tt1000.day}|${time}`;
-            if (tt1000.seen.has(key))
+            const replayFinalForEOD = isEOD && i === candles.length - 1 && tt1000.inTrade;
+            if (tt1000.seen.has(key) && !replayFinalForEOD)
                 continue;
-            tt1000.seen.add(key);
+            if (!tt1000.seen.has(key))
+                tt1000.seen.add(key);
             const row = { idx: num, time, open: c.open, high: c.high, low: c.low, close: c.close, status: "watching", dir: tt1000.dir, entry: tt1000.entry || null, sl: tt1000.sl || null, note: "" };
             if (num === 4 && !tt1000.rangeHigh) {
                 tt1000.rangeHigh = c.high;
@@ -4050,9 +4054,11 @@ async function runNineFortyFiveShadow(isEOD) {
             const num = i + 1;
             const time = tt1030CandleTime(c);
             const key = `${tt0945.day}|${time}`;
-            if (tt0945.seen.has(key))
+            const replayFinalForEOD = isEOD && i === candles.length - 1 && tt0945.inTrade;
+            if (tt0945.seen.has(key) && !replayFinalForEOD)
                 continue;
-            tt0945.seen.add(key);
+            if (!tt0945.seen.has(key))
+                tt0945.seen.add(key);
             const row = { idx: num, time, open: c.open, high: c.high, low: c.low, close: c.close, status: "watching", dir: tt0945.dir, entry: tt0945.entry || null, sl: tt0945.sl || null, note: "" };
             if (num === 3 && !tt0945.rangeHigh) {
                 tt0945.rangeHigh = c.high;
@@ -4337,9 +4343,11 @@ async function runHybridBodyShadow(isEOD) {
         if (!isCompletedSessionCandle(c))
             continue;
         const key = tt1030CandleTime(c);
-        if (hybridShadow.seen.has(key))
+        const replayFinalForEOD = isEOD && i === candles.length - 1 && !!hybridShadow.dir;
+        if (hybridShadow.seen.has(key) && !replayFinalForEOD)
             continue;
-        hybridShadow.seen.add(key);
+        if (!hybridShadow.seen.has(key))
+            hybridShadow.seen.add(key);
         const num = i + 1;
         const eodCandle = isEOD || key.includes("15:30");
         const livePts = hybridShadow.dir && hybridShadow.entry ? (hybridShadow.dir === "CE" ? c.close - hybridShadow.entry : hybridShadow.entry - c.close) : 0;
@@ -4654,9 +4662,11 @@ async function runNormalBreakoutShadow(isEOD) {
             continue;
         const t = tt1030CandleTime(c);
         const key = (normalBreakoutShadow.day || tt1030ISTParts().ymd) + '|' + t;
-        if (normalBreakoutShadow.seen.has(key))
+        const replayFinalForEOD = isEOD && i === candles.length - 1 && !!normalBreakoutShadow.dir;
+        if (normalBreakoutShadow.seen.has(key) && !replayFinalForEOD)
             continue;
-        normalBreakoutShadow.seen.add(key);
+        if (!normalBreakoutShadow.seen.has(key))
+            normalBreakoutShadow.seen.add(key);
         const idx = i + 1;
         const eodCandle = isEOD || t >= '15:30';
         const livePts = normalBreakoutShadow.dir && normalBreakoutShadow.entry ? (normalBreakoutShadow.dir === 'CE' ? c.close - normalBreakoutShadow.entry : normalBreakoutShadow.entry - c.close) : 0;

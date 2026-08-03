@@ -95,8 +95,12 @@ try {
     assert(artifact.includes('isCompletedSessionCandle'), 'Final 15:30-15:40 candle completion handling is absent');
     assert(artifact.includes('Stopped new trades at 15:25'), 'Updated new-entry cutoff is absent');
     assert(artifact.includes('15:39 exit all positions'), 'Updated pre-close square-off is absent');
+    assert(artifact.includes('replayFinalForEOD'), 'Index-signal EOD replay handling is absent');
   }
   assert(botSource === botRuntime, 'Trading-bot source and deployable runtime artifact differ');
+  const indicatorSource = fs.readFileSync(path.join(__dirname, '..', '..', 'deployment', 'trading-bot', 'indicator-shadow.ts'), 'utf8');
+  assert(indicatorSource.includes('sessionMinutes >= 15 * 60 + 40'), 'Indicator 15:40 explicit close is absent');
+  assert(indicatorSource.includes('F&O session close; final BANKNIFTY index print'), 'Indicator final index close evidence is absent');
   console.log('SHADOW_PNL_RUNTIME_VERIFICATION=OK');
 } finally {
   fs.rmSync(temp, { recursive: true, force: true });
