@@ -21,6 +21,8 @@ const ZERODHA_PASSWORD = process.env.ZERODHA_PASSWORD;
 const TOTP_SECRET      = process.env.ZERODHA_TOTP_SECRET;
 const BOT_PM2_NAMES = String(process.env.TRADING_BOT_PM2_NAMES || 'trading-bot,amina-100-variant-b')
   .split(',').map((name) => name.trim()).filter(Boolean);
+const TOKEN_CONSUMER_PM2_NAMES = String(process.env.TOKEN_CONSUMER_PM2_NAMES || 'nifty-shadow,drishti-v2-shadow,indicator-shadow')
+  .split(',').map((name) => name.trim()).filter(Boolean);
 // ─────────────────────────────────────────────────────────────────────────────
 
 const API_KEY = process.env.API_KEY;
@@ -367,6 +369,16 @@ async function main() {
         } catch (_) {}
       }
       if (!restarted) throw new Error(`No configured trading bot PM2 process found: ${BOT_PM2_NAMES.join(', ')}`);
+      const refreshedConsumers = [];
+      for (const processName of TOKEN_CONSUMER_PM2_NAMES) {
+        try {
+          execSync(`pm2 describe ${processName}`, { stdio: 'pipe' });
+          execSync(`pm2 restart ${processName} --update-env`, { stdio: 'pipe' });
+          refreshedConsumers.push(processName);
+        } catch (_) {}
+      }
+      console.log(`[auto_token] Token consumers restarted: ${refreshedConsumers.join(', ') || 'none found'}`);
+      execSync('pm2 save --force', { stdio: 'pipe' });
       console.log(`[auto_token] ✔ ${restarted} restarted`);
 
       // Step F: Wait 10 seconds then verify token actually works

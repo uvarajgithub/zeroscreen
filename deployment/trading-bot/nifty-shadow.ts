@@ -51,12 +51,18 @@ let instruments: any[] = [];
 let instrumentsLoadedAt = 0;
 let futuresInstrument: any = null;
 let running = false;
+let lastCoverageLogKey = "";
 
 function nowIST(): Date { return new Date(Date.now() + IST_OFFSET); }
 function dayIST(): string { return nowIST().toISOString().slice(0, 10); }
 function timeIST(value: string | Date): string { const d = value instanceof Date ? value : new Date(value); return new Date(d.getTime() + IST_OFFSET).toISOString().slice(11, 16); }
+function kiteDateTimeIST(value: Date): string { const shifted = new Date(value.getTime() + IST_OFFSET).toISOString(); return `${shifted.slice(0, 10)} ${shifted.slice(11, 19)}`; }
 function candleDay(c: Candle): string { return new Date(c.date).toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" }); }
 function candleKey(c: Candle): string { return `${candleDay(c)}|${timeIST(c.date)}`; }
+function isCompletedCandle(c: Candle, nowMs = Date.now()): boolean {
+  const startedAt = new Date(c.date).getTime();
+  return Number.isFinite(startedAt) && startedAt + 15 * 60_000 <= nowMs;
+}
 function minutes(value: string): number { const [h, m] = value.split(":").map(Number); return h * 60 + m; }
 function emptyState(): StrategyState {
   return { date: dayIST(), phase: "WAITING", lastCandleKey: "", inTrade: false, direction: null, entry: 0, ltp: 0,
@@ -150,15 +156,17 @@ async function close(spec: StrategySpec, state: StrategyState, candle: Candle, r
   if (open) Object.assign(open, { exitTime: candle.date, exit: price, premOut: optionExit || null, pnlRs: pnl, optionPnl, status: "CLOSED", reason });
   state.inTrade = false; state.direction = null; state.entry = 0; state.stopLoss = 0; state.entryAt = null; state.optionSymbol = null; state.optionEntry = 0; state.optionLtp = 0; state.unrealizedPnl = 0; state.optionUnrealizedPnl = 0; state.phase = "COMPLETED";
 }
-async function evaluate(spec: StrategySpec, state: StrategyState, candles: Candle[], index: number): Promise<void> {
+async function evaluate(spec: StrategySpec, state: StrategyState, candles: Candle[], index: number, allowEntry: boolean, refreshOptionLtp: boolean): Promise<void> {
   const candle = candles[index], clock = timeIST(candle.date), minute = minutes(clock); state.ltp = candle.close;
-  if (state.inTrade && state.optionSymbol) state.optionLtp = await ltp(state.optionSymbol).catch(() => state.optionLtp);
+  // During startup replay, one quote per historical candle is both inaccurate
+  // and slow. Refresh the current premium only for the latest completed candle.
+  if (refreshOptionLtp && state.inTrade && state.optionSymbol) state.optionLtp = await ltp(state.optionSymbol).catch(() => state.optionLtp);
   if (state.inTrade && state.direction) {
     const points = state.direction === "CE" ? candle.close - state.entry : state.entry - candle.close;
     state.unrealizedPnl = Math.round(points * QUANTITY); state.optionUnrealizedPnl = state.optionEntry > 0 && state.optionLtp > 0 ? Math.round((state.optionLtp - state.optionEntry) * QUANTITY) : 0;
     const stopped = state.direction === "CE" ? candle.low <= state.stopLoss : candle.high >= state.stopLoss;
-    if (stopped || minute >= 920) await close(spec, state, candle, stopped ? "Stop loss" : "EOD exit", stopped ? state.stopLoss : candle.close);
-  } else if (minute < 920 && state.trades < spec.maxTrades) {
+    if (stopped || minute >= 915) await close(spec, state, candle, stopped ? "Stop loss" : "EOD exit", stopped ? state.stopLoss : candle.close);
+  } else if (allowEntry && minute < 915 && state.trades < spec.maxTrades) {
     const next = signal(spec, candles, index);
     if (next.direction) await enter(spec, state, next.direction, candle, next.note);
     else state.phase = minute > minutes(spec.reference || "09:15") ? "SCANNING" : "WAITING";
@@ -167,8 +175,11 @@ async function evaluate(spec: StrategySpec, state: StrategyState, candles: Candl
   state.candleLog = state.candleLog.slice(-80); state.lastCandleKey = candleKey(candle);
 }
 async function candles(): Promise<Candle[]> {
-  const now = nowIST(), to = new Date(Date.now() - 60_000), from = new Date(Date.now() - 14 * 86400000);
-  const rows: any[] = await (kite as any).getHistoricalData(INDEX_TOKEN, "15minute", from, to, false);
+  // Kite caps a historical response at 250 rows. Fourteen calendar days can
+  // fill that cap before today's session, silently leaving `today` empty.
+  // Seven days still supplies well over the 50 periods required by indicators.
+  const now = nowIST(), to = new Date(Date.now() - 60_000), from = new Date(Date.now() - 7 * 86400000);
+  const rows: any[] = await (kite as any).getHistoricalData(INDEX_TOKEN, "15minute", kiteDateTimeIST(from), kiteDateTimeIST(to), false);
   return (rows || []).map(row => ({ date: typeof row.date === "string" ? row.date : new Date(row.date).toISOString(), open: Number(row.open), high: Number(row.high), low: Number(row.low), close: Number(row.close), volume: Number(row.volume || 0) }));
 }
 function persist(market: any): void {
@@ -184,15 +195,33 @@ function persist(market: any): void {
 async function tick(): Promise<void> {
   if (running) return; running = true;
   try {
-    await loadInstruments(); const rows = await candles(); const today = rows.filter(c => candleDay(c) === dayIST());
+    await loadInstruments(); const rows = await candles();
+    // Kite includes the currently-forming 15-minute candle. Never mark it as
+    // evaluated until it closes, otherwise a breakout later in that candle is
+    // permanently missed because lastCandleKey has already advanced.
+    const today = rows.filter(c => candleDay(c) === dayIST() && isCompletedCandle(c));
+    const wallClockMinute = minutes(nowIST().toISOString().slice(11, 16));
+    const weekday = nowIST().getUTCDay();
+    const allowEntry = weekday >= 1 && weekday <= 5 && wallClockMinute >= 570 && wallClockMinute < 930;
+    const marketClosed = weekday >= 1 && weekday <= 5 && wallClockMinute >= 930;
+    const coverageLogKey = `${dayIST()}|${today.length}|${today[today.length - 1]?.date || "none"}`;
+    const logCoverage = coverageLogKey !== lastCoverageLogKey;
+    if (logCoverage) console.log(`[nifty-shadow] replay start rows=${rows.length} todayCompleted=${today.length}`);
     const indexLtp = await (async () => { const result = await (kite as any).getLTP(["NSE:NIFTY 50"]); return Number(result?.["NSE:NIFTY 50"]?.last_price || today[today.length - 1]?.close || 0); })();
     const futureLtp = futuresInstrument ? await ltp(futuresInstrument.tradingsymbol).catch(() => 0) : 0;
     for (const spec of STRATEGIES) {
       let state = states.get(spec.id)!; if (state.date !== dayIST()) { state = emptyState(); states.set(spec.id, state); }
       const last = state.lastCandleKey ? today.findIndex(c => candleKey(c) === state.lastCandleKey) : -1;
-      for (let i = last + 1; i < today.length; i += 1) { const full = rows.findIndex(c => c.date === today[i].date); if (full >= 0) await evaluate(spec, state, rows, full); }
+      for (let i = last + 1; i < today.length; i += 1) { const full = rows.findIndex(c => c.date === today[i].date); if (full >= 0) await evaluate(spec, state, rows, full, allowEntry, i === today.length - 1); }
       if (indexLtp > 0) { state.ltp = indexLtp; if (state.inTrade && state.direction) state.unrealizedPnl = Math.round((state.direction === "CE" ? indexLtp - state.entry : state.entry - indexLtp) * QUANTITY); }
+      if (marketClosed && state.inTrade && today.length) {
+        const lastCandle = today[today.length - 1];
+        await close(spec, state, { ...lastCandle, date: new Date().toISOString(), close: indexLtp || lastCandle.close }, "EOD wall-clock recovery", indexLtp || lastCandle.close);
+      }
+      if (marketClosed && !state.inTrade) state.phase = state.trades > 0 ? "COMPLETED" : "NO TRADE";
+      if (logCoverage) console.log(`[nifty-shadow] replay strategy=${spec.id} candles=${state.candleLog.length} phase=${state.phase}`);
     }
+    if (logCoverage) lastCoverageLogKey = coverageLogKey;
     const open = today[0]?.open || indexLtp, high = Math.max(indexLtp, ...today.map(c => c.high)), low = Math.min(indexLtp, ...today.map(c => c.low));
     persist({ symbol: "NIFTY 50", open, current: indexLtp, high, low, movementPoints: indexLtp - open, rangePoints: high - low, futures: { symbol: futuresInstrument?.tradingsymbol || "NIFTY FUT", open: today[0]?.open || futureLtp, current: futureLtp, high: null, low: null, movementPoints: futureLtp && today[0]?.open ? futureLtp - today[0].open : null, rangePoints: null } });
   } finally { running = false; }

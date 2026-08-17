@@ -29,10 +29,43 @@ function append(file, row) {
 }
 function pm2State() {
   const list = JSON.parse(execFileSync('pm2', ['jlist'], { encoding: 'utf8', maxBuffer: 10 * 1024 * 1024 }));
-  return ['trading-bot', 'zeroscreen'].map((name) => {
+  return ['trading-bot', 'nifty-shadow', 'drishti-v2-shadow', 'indicator-shadow', 'zeroscreen'].map((name) => {
     const row = list.find((item) => item.name === name);
     return { name, status: row?.pm2_env?.status || 'missing', pid: Number(row?.pid || 0), restarts: Number(row?.pm2_env?.restart_time || 0) };
   });
+}
+
+function acquireObserverLock(lockFile) {
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      const descriptor = fs.openSync(lockFile, 'wx', 0o600);
+      fs.writeFileSync(descriptor, String(process.pid));
+      return descriptor;
+    } catch (error) {
+      if (error.code !== 'EEXIST') throw error;
+      let ownerPid = 0;
+      try { ownerPid = Number(fs.readFileSync(lockFile, 'utf8').trim()); } catch (_) {}
+      let ownerAlive = Number.isInteger(ownerPid) && ownerPid > 0;
+      if (ownerAlive) {
+        try { process.kill(ownerPid, 0); } catch (probeError) {
+          if (probeError.code === 'ESRCH') ownerAlive = false;
+          else if (probeError.code !== 'EPERM') throw probeError;
+        }
+      }
+      // Guard against PID reuse: only an actual observer process owns this lock.
+      if (ownerAlive && process.platform === 'linux') {
+        try {
+          const command = fs.readFileSync(`/proc/${ownerPid}/cmdline`, 'utf8').replace(/\0/g, ' ');
+          ownerAlive = command.includes(path.basename(__filename));
+        } catch (_) {}
+      }
+      if (ownerAlive) throw new Error(`A SHADOW observer is already running (PID ${ownerPid})`);
+      try { fs.unlinkSync(lockFile); } catch (unlinkError) {
+        if (unlinkError.code !== 'ENOENT') throw unlinkError;
+      }
+    }
+  }
+  throw new Error('Could not acquire SHADOW observer lock after removing a stale owner');
 }
 
 async function main() {
@@ -50,14 +83,7 @@ async function main() {
   const report = path.join(auditDir, `shadow-session-${day}.jsonl`);
   const summaryFile = path.join(auditDir, `shadow-session-${day}-summary.json`);
   const lockFile = path.join(auditDir, 'shadow-session-observer.lock');
-  let lock;
-  try {
-    lock = fs.openSync(lockFile, 'wx', 0o600);
-    fs.writeFileSync(lock, String(process.pid));
-  } catch (error) {
-    if (error.code === 'EEXIST') throw new Error('A SHADOW observer is already running');
-    throw error;
-  }
+  const lock = acquireObserverLock(lockFile);
 
   let samples = 0;
   const failures = [];
@@ -74,6 +100,11 @@ async function main() {
         const openOrders = (orders || []).filter((item) => openStatuses.has(String(item?.status || '').toUpperCase()));
         const heartbeat = JSON.parse(fs.readFileSync(path.join(botDir, 'bot-heartbeat.json'), 'utf8'));
         const heartbeatAgeSeconds = Math.round((Date.now() - new Date(heartbeat.at).getTime()) / 1000);
+        const niftyHeartbeat = JSON.parse(fs.readFileSync(path.join(botDir, 'nifty-shadow-heartbeat.json'), 'utf8'));
+        const niftyHeartbeatAgeSeconds = Math.round((Date.now() - new Date(niftyHeartbeat.at).getTime()) / 1000);
+        const niftyHeartbeatStatus = String(niftyHeartbeat.status || '').toUpperCase();
+        const niftyHeartbeatHealthy = niftyHeartbeatAgeSeconds >= 0 && niftyHeartbeatAgeSeconds < 120
+          && !['DEGRADED', 'ERROR', 'FAILED'].includes(niftyHeartbeatStatus);
         const processes = pm2State();
         if (!baselineProcesses) baselineProcesses = processes;
         const processStable = processes.every((item) => {
@@ -85,12 +116,15 @@ async function main() {
           nonFlatPositions: nonFlat.length,
           openOrders: openOrders.length,
           heartbeatAgeSeconds,
+          niftyHeartbeatAgeSeconds,
+          niftyHeartbeatStatus,
+          niftyHeartbeatHealthy,
           tt1030StateConsistent: heartbeat.tt1030StateConsistent === true,
           heartbeatSession: heartbeat.tt1030SessionDate || heartbeat.sessionDate || null,
           processStable,
           processes,
         });
-        row.ok = nonFlat.length === 0 && openOrders.length === 0 && heartbeatAgeSeconds >= 0 && heartbeatAgeSeconds < 120 && row.tt1030StateConsistent && processStable;
+        row.ok = nonFlat.length === 0 && openOrders.length === 0 && heartbeatAgeSeconds >= 0 && heartbeatAgeSeconds < 120 && niftyHeartbeatHealthy && row.tt1030StateConsistent && processStable;
         if (!row.ok) failures.push({ at: row.at, reason: 'safety sample failed', row });
       } catch (error) {
         row.error = error.message;

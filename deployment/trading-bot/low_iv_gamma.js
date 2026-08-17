@@ -60,6 +60,7 @@ function istParts(value = new Date()) {
     minutes: d.getUTCHours() * 60 + d.getUTCMinutes(),
   };
 }
+function kiteDateTimeIST(value) { const d = new Date(value.getTime() + 19800000).toISOString(); return `${d.slice(0, 10)} ${d.slice(11, 19)}`; }
 
 function candleTime(c) { return istParts(new Date(c.date)).hhmm; }
 function finite(v) { const n = Number(v); return Number.isFinite(n) ? n : null; }
@@ -262,8 +263,26 @@ function createLowIvGammaShadow({ kite, log, logTrade }) {
   }
 
   async function history(token, from, to, oi = false) {
-    const rows = await kite.getHistoricalData(Number(token), "5minute", from, to, false, oi);
+    const kiteFrom = from instanceof Date ? kiteDateTimeIST(from) : from;
+    const kiteTo = to instanceof Date ? kiteDateTimeIST(to) : to;
+    const rows = await kite.getHistoricalData(Number(token), "5minute", kiteFrom, kiteTo, false, oi);
     return (rows || []).map(c => ({ ...c, open: Number(c.open), high: Number(c.high), low: Number(c.low), close: Number(c.close), volume: Number(c.volume || 0), oi: Number(c.oi || 0) }));
+  }
+
+  async function historyIncludingToday(token, from, now, oi = false) {
+    const day = istParts(now).day;
+    const todayStart = new Date(`${day}T00:00:00+05:30`);
+    if (from.getTime() >= todayStart.getTime()) return history(token, from, now, oi);
+    // Kite limits a historical response to 250 rows. Keep the warm-up window,
+    // but fetch today's candles separately so the opening range cannot be
+    // pushed out of the response by older five-minute bars.
+    const [prior, todayRows] = await Promise.all([
+      history(token, from, new Date(todayStart.getTime() - 1000), oi),
+      history(token, todayStart, now, oi),
+    ]);
+    const byTime = new Map();
+    for (const candle of [...prior, ...todayRows]) byTime.set(new Date(candle.date).getTime(), candle);
+    return [...byTime.values()].sort((a, b) => new Date(a.date) - new Date(b.date));
   }
 
   function completedCandles(rows, now) {
@@ -398,6 +417,7 @@ function createLowIvGammaShadow({ kite, log, logTrade }) {
     const todayBars = allCandles.filter(c => istParts(new Date(c.date)).day === state.day);
     const opening = todayBars.filter(c => candleTime(c) >= cfg.openingRangeStart && candleTime(c) < cfg.openingRangeEnd);
     if (opening.length < 12) { state.dataQuality = "OPENING_RANGE_INCOMPLETE"; state.lastReason = `Opening range has ${opening.length}/12 completed candles`; return; }
+    state.dataQuality = "GOOD";
     const candidate = todayBars[todayBars.length - 1];
     const key = new Date(candidate.date).toISOString();
     if (state.signal) {
@@ -473,7 +493,7 @@ function createLowIvGammaShadow({ kite, log, logTrade }) {
       const futLtp = quoteMetrics(futQuote)?.ltp;
       if (!(futLtp > 0)) throw new Error("BANKNIFTY futures quote unavailable");
       // Seven calendar days guarantees Friday warm-up data on Monday for EMA20/ATR14.
-      const from = new Date(now.getTime() - 7 * 86400000), rows = completedCandles(await history(book.future.instrument_token, from, now, true), now);
+      const from = new Date(now.getTime() - 7 * 86400000), rows = completedCandles(await historyIncludingToday(book.future.instrument_token, from, now, true), now);
       if (!rows.length) throw new Error("No completed BANKNIFTY futures 5-minute candles");
       await takeMorningIv(book, futLtp, parts);
       if (state.inTrade) await monitorPosition(book, rows, futLtp, parts);

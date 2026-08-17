@@ -30,6 +30,7 @@ import {
 import { refreshPrices, refreshFundamentals, startScheduler } from "./scheduler";
 import { fetchFundamentals } from "./scraper";
 import { sendWelcomeEmail, sendContactNotification, sendAlertEmail, sendPasswordResetEmail } from "./mailer";
+import { fetchLatestBhavcopy, BhavRow } from "./nse";
 import crypto from "crypto";
 import https from "https";
 import fs from "fs";
@@ -123,6 +124,18 @@ let _newsCache: NewsItem[] = [];
 let _newsCacheAt = 0;
 const NEWS_TTL = 5 * 60 * 1000; // 5 min
 
+function cleanNewsText(value: string): string {
+  return String(value || "")
+    .replace(/^<!\[CDATA\[/, "")
+    .replace(/\]\]>$/, "")
+    .replace(/&amp;/g, "&")
+    .replace(/&quot;/g, "\"")
+    .replace(/&#39;/g, "'")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .trim();
+}
+
 async function fetchMarketNews(): Promise<NewsItem[]> {
   if (Date.now() - _newsCacheAt < NEWS_TTL && _newsCache.length) return _newsCache;
   const feeds = [
@@ -150,18 +163,203 @@ async function fetchMarketNews(): Promise<NewsItem[]> {
       const xml = await fetchXml(feed.url);
       const items = xml.match(/<item>([\s\S]*?)<\/item>/g) || [];
       for (const item of items.slice(0, 10)) {
-        const title   = (item.match(/<title><!\[CDATA\[(.*?)\]\]><\/title>/) ||
-                         item.match(/<title>(.*?)<\/title>/) || [])[1]?.trim() || "";
-        const link    = (item.match(/<link>(.*?)<\/link>/) ||
+        const title   = cleanNewsText((item.match(/<title><!\[CDATA\[(.*?)\]\]><\/title>/) ||
+                         item.match(/<title>(.*?)<\/title>/) || [])[1] || "");
+        const link    = cleanNewsText((item.match(/<link>(.*?)<\/link>/) ||
                          item.match(/<guid[^>]*>(.*?)<\/guid>/) ||
-                         item.match(/<link\s[^>]*href="([^"]+)"/) || [])[1]?.trim() || "";
-        const pubDate = (item.match(/<pubDate>(.*?)<\/pubDate>/) || [])[1]?.trim() || "";
+                         item.match(/<link\s[^>]*href="([^"]+)"/) || [])[1] || "");
+        const pubDate = cleanNewsText((item.match(/<pubDate>(.*?)<\/pubDate>/) || [])[1] || "");
         if (title && title.length > 10 && link) results.push({ title, link, pubDate, source: feed.source });
       }
     } catch (_) { /* skip failing feed */ }
   }
   if (results.length) { _newsCache = results.slice(0, 15); _newsCacheAt = Date.now(); }
   return _newsCache;
+}
+
+interface NewsTradeIdea {
+  symbol: string;
+  companyName: string | null;
+  newsTitle: string;
+  newsLink: string;
+  source: string;
+  pubDate: string;
+  price: number;
+  changePct: number;
+  volume: number;
+  trigger: number;
+  entryLow: number;
+  entryHigh: number;
+  stopLoss: number;
+  target1: number;
+  target2: number;
+  sellTrigger: number;
+  sellEntryLow: number;
+  sellEntryHigh: number;
+  sellStopLoss: number;
+  sellTarget1: number;
+  sellTarget2: number;
+  support: number;
+  resistance: number;
+  plan: string;
+  score: number;
+  tone: "positive" | "watch" | "avoid";
+}
+
+let _newsTradeIdeasCache: NewsTradeIdea[] = [];
+let _newsTradeIdeasCacheAt = 0;
+const NEWS_TRADE_TTL = 10 * 60 * 1000;
+
+function newsIdeaScore(title: string): number {
+  const t = title.toLowerCase();
+  let score = 50;
+  if (/\b(order|deal|contract|approval|launch|merger|acquisition|stake|profit|beats|upgrade|record|wins?|rally|surge|dividend|buyback)\b/.test(t)) score += 18;
+  if (/\b(loss|probe|penalty|downgrade|default|fraud|fire|resigns?|fall|slump|weak|misses)\b/.test(t)) score -= 22;
+  if (/\b(results?|earnings|q[1-4]|guidance|board|fundraise|ipo|listing)\b/.test(t)) score += 8;
+  return Math.max(5, Math.min(95, score));
+}
+
+function roundPriceLevel(v: number): number {
+  if (!isFinite(v) || v <= 0) return 0;
+  const tick = v >= 1000 ? 1 : v >= 250 ? 0.5 : 0.1;
+  return Math.round(v / tick) * tick;
+}
+
+function isNewsTradeEligibleStock(row: BhavRow & { company_name?: string | null }): boolean {
+  const symbol = String(row.symbol || "").toUpperCase();
+  const company = String(row.company_name || "").toUpperCase();
+  if (!symbol || !Number(row.price || 0)) return false;
+  if (/\d/.test(symbol)) return false;
+  return !/\b(ETF|ETFS|FUND|MUTUAL|INDEX|NIFTY|SENSEX|BEES|LIQUID|GOLD|SILVER|GSEC|SDL|TBILL)\b/.test(`${symbol} ${company}`);
+}
+
+function stockMentionedInNews(symbol: string, companyName: string | null, title: string): boolean {
+  const upperTitle = cleanNewsText(title).toUpperCase();
+  const aliasMap: Record<string, string[]> = {
+    APOLLO: ["APOLLO MICRO", "APOLLO MICRO SYSTEMS"],
+    IDEA: ["VODAFONE IDEA", "VI "],
+    RVNL: ["RAIL VIKAS", "RVNL"],
+    SUNPHARMA: ["SUN PHARMA", "SUNPHARMA"],
+    BEL: ["BHARAT ELECTRONICS", "BEL"],
+    BDL: ["BHARAT DYNAMICS", "BDL"],
+    HAL: ["HINDUSTAN AERONAUTICS", "HAL"],
+    IRFC: ["INDIAN RAILWAY FINANCE", "IRFC"],
+    RITES: ["RITES"],
+    IRCON: ["IRCON"],
+  };
+  const cleanSymbol = symbol.toUpperCase().replace(/[^A-Z0-9]/g, "");
+  if (new RegExp(`(^|[^A-Z0-9])${cleanSymbol}([^A-Z0-9]|$)`).test(upperTitle)) return true;
+  if ((aliasMap[cleanSymbol] || []).some(alias => new RegExp(`(^|[^A-Z0-9])${alias.replace(/\s+/g, "\\s+")}([^A-Z0-9]|$)`).test(upperTitle))) return true;
+  const companyCore = String(companyName || "")
+    .toUpperCase()
+    .replace(/\b(LIMITED|LTD|THE|CO|COMPANY|CORP|CORPORATION)\b/g, " ")
+    .replace(/[^A-Z0-9]+/g, " ")
+    .trim();
+  const coreTokens = companyCore.split(/\s+/).filter(Boolean);
+  if (coreTokens.length >= 2 && new RegExp(`(^|[^A-Z0-9])${coreTokens.join("\\s+")}([^A-Z0-9]|$)`).test(upperTitle)) {
+    return true;
+  }
+  const words = String(companyName || "")
+    .toUpperCase()
+    .replace(/\b(LIMITED|LTD|INDIA|THE|CO|COMPANY|CORP|CORPORATION|INDUSTRIES|INDUSTRY|ENTERPRISES|BANK|JEWELLER|JEWELLERS|JEWELLERY|MART|FINANCE|FINANCIAL|SERVICES|POWER|STEEL|PHARMA|PHARMACEUTICALS|TEXTILES|INFRA|REALTY|ENERGY|CAPITAL|VENTURE|VENTURES|ENGINEERING|TECH|TECHNOLOGY|SYSTEMS|MOTORS|LOGISTICS|RETAIL|MARKET)\b/g, " ")
+    .split(/[^A-Z0-9]+/)
+    .filter(w => w.length >= 4);
+  const distinctive = [...new Set(words)].slice(0, 4);
+  if (distinctive.length >= 2) {
+    const hits = distinctive.filter(w => new RegExp(`(^|[^A-Z0-9])${w}([^A-Z0-9]|$)`).test(upperTitle));
+    return hits.length >= 2;
+  }
+  return !!distinctive[0] && distinctive[0].length >= 6 && new RegExp(`(^|[^A-Z0-9])${distinctive[0]}([^A-Z0-9]|$)`).test(upperTitle);
+}
+
+async function buildNewsTradeIdeas(limit = 8): Promise<NewsTradeIdea[]> {
+  if (Date.now() - _newsTradeIdeasCacheAt < NEWS_TRADE_TTL && _newsTradeIdeasCache.length >= limit) {
+    return _newsTradeIdeasCache.slice(0, limit);
+  }
+  const news = await fetchMarketNews();
+  if (!news.length) return _newsTradeIdeasCache;
+
+  let stockRows: Array<BhavRow & { company_name?: string | null }> = await dbAll(`
+    SELECT s.symbol, s.company_name, p.price, p.volume, p.day_high AS dayHigh, p.day_low AS dayLow,
+           p.prev_close AS prevClose, p.change_pct AS changePct
+    FROM stocks s
+    JOIN prices p ON p.symbol = s.symbol
+    WHERE p.price IS NOT NULL AND p.day_high IS NOT NULL AND p.day_low IS NOT NULL
+    ORDER BY COALESCE(p.volume, 0) DESC
+    LIMIT 1200
+  `);
+  if (stockRows.length < 100) {
+    stockRows = (await fetchLatestBhavcopy()).map(row => ({ ...row, company_name: null }));
+  }
+
+  const ideas: NewsTradeIdea[] = [];
+  const seen = new Set<string>();
+  const makeIdea = (item: NewsItem, row: BhavRow & { company_name?: string | null }) => {
+    if (!isNewsTradeEligibleStock(row)) return;
+    if (seen.has(row.symbol)) return;
+    seen.add(row.symbol);
+    const price = Number(row.price || 0);
+    if (!price) return;
+    const high = Number(row.dayHigh || price);
+    const low = Number(row.dayLow || price);
+    const range = Math.max(high - low, price * 0.012);
+    const trigger = roundPriceLevel(Math.max(high * 1.002, price * 1.004));
+    const entryLow = trigger;
+    const entryHigh = roundPriceLevel(trigger + range * 0.18);
+    const stopLoss = roundPriceLevel(Math.max(low, trigger - range * 0.55));
+    const target1 = roundPriceLevel(trigger + range * 0.75);
+    const target2 = roundPriceLevel(trigger + range * 1.2);
+    const sellTrigger = roundPriceLevel(Math.min(low * 0.998, price * 0.996));
+    const sellEntryHigh = sellTrigger;
+    const sellEntryLow = roundPriceLevel(sellTrigger - range * 0.18);
+    const sellStopLoss = roundPriceLevel(Math.min(high, sellTrigger + range * 0.55));
+    const sellTarget1 = roundPriceLevel(sellTrigger - range * 0.75);
+    const sellTarget2 = roundPriceLevel(sellTrigger - range * 1.2);
+    const score = newsIdeaScore(item.title) + Math.min(12, Math.max(-8, Number(row.changePct || 0)));
+    const tone = score >= 68 ? "positive" : score >= 45 ? "watch" : "avoid";
+    ideas.push({
+      symbol: row.symbol,
+      companyName: row.company_name || null,
+      newsTitle: item.title,
+      newsLink: item.link,
+      source: item.source,
+      pubDate: item.pubDate,
+      price,
+      changePct: Number(row.changePct || 0),
+      volume: Number(row.volume || 0),
+      trigger,
+      entryLow,
+      entryHigh,
+      stopLoss,
+      target1,
+      target2,
+      sellTrigger,
+      sellEntryLow,
+      sellEntryHigh,
+      sellStopLoss,
+      sellTarget1,
+      sellTarget2,
+      support: roundPriceLevel(low),
+      resistance: roundPriceLevel(high),
+      plan: tone === "avoid"
+        ? "Avoid the middle. Trade only after price breaks either chart edge with volume."
+        : "Use the chart edges: buy above resistance or sell below support; skip inside the range.",
+      score: Math.round(Math.max(5, Math.min(95, score))),
+      tone,
+    });
+  };
+  for (const item of news.slice(0, 20)) {
+    const candidates = stockRows.filter(row => stockMentionedInNews(row.symbol, row.company_name || null, item.title));
+    for (const row of candidates.slice(0, 3)) {
+      makeIdea(item, row);
+    }
+  }
+
+  _newsTradeIdeasCache = ideas
+    .sort((a, b) => b.score - a.score || Math.abs(b.changePct) - Math.abs(a.changePct))
+    .slice(0, Math.max(limit, 30));
+  _newsTradeIdeasCacheAt = Date.now();
+  return _newsTradeIdeasCache.slice(0, limit);
 }
 
 // -- Session --------------------------------------------------------------------
@@ -2486,6 +2684,82 @@ app.get("/stock/:symbol", async (req: Request, res: Response) => {
   const latestRevenue = revenues[revenues.length - 1] ?? null;
   const profitMargin  = (latestProfit != null && latestRevenue && latestRevenue > 0)
     ? (latestProfit / latestRevenue) * 100 : null;
+  let newsTradeIdea = (await buildNewsTradeIdeas(12)).find(idea => idea.symbol.toUpperCase() === symbol) || null;
+  if (!newsTradeIdea && req.query.newsTrade === "1" && s.price && s.day_high && s.day_low) {
+    const range = Math.max(Number(s.day_high) - Number(s.day_low), Number(s.price) * 0.012);
+    const trigger = roundPriceLevel(Math.max(Number(s.day_high) * 1.002, Number(s.price) * 1.004));
+    const sellTrigger = roundPriceLevel(Math.min(Number(s.day_low) * 0.998, Number(s.price) * 0.996));
+    newsTradeIdea = {
+      symbol,
+      companyName: s.company_name || null,
+      newsTitle: `Chart trade plan for ${symbol} from the Daily News Trade Ideas click-through`,
+      newsLink: `/today`,
+      source: "ZeroScreen",
+      pubDate: new Date().toISOString(),
+      price: Number(s.price),
+      changePct: Number(s.change_pct || 0),
+      volume: Number(s.volume || 0),
+      trigger,
+      entryLow: trigger,
+      entryHigh: roundPriceLevel(trigger + range * 0.18),
+      stopLoss: roundPriceLevel(Math.max(Number(s.day_low), trigger - range * 0.55)),
+      target1: roundPriceLevel(trigger + range * 0.75),
+      target2: roundPriceLevel(trigger + range * 1.2),
+      sellTrigger,
+      sellEntryLow: roundPriceLevel(sellTrigger - range * 0.18),
+      sellEntryHigh: sellTrigger,
+      sellStopLoss: roundPriceLevel(Math.min(Number(s.day_high), sellTrigger + range * 0.55)),
+      sellTarget1: roundPriceLevel(sellTrigger - range * 0.75),
+      sellTarget2: roundPriceLevel(sellTrigger - range * 1.2),
+      support: roundPriceLevel(Number(s.day_low)),
+      resistance: roundPriceLevel(Number(s.day_high)),
+      plan: "Use the chart edges: buy above resistance or sell below support; skip inside the range.",
+      score: 50,
+      tone: "watch",
+    };
+  }
+  const tradeOverlay = (() => {
+    if (!newsTradeIdea) return "";
+    const levels = [
+      newsTradeIdea.target2, newsTradeIdea.target1, newsTradeIdea.entryHigh, newsTradeIdea.entryLow,
+      newsTradeIdea.resistance, newsTradeIdea.price, newsTradeIdea.support,
+      newsTradeIdea.sellEntryHigh, newsTradeIdea.sellEntryLow, newsTradeIdea.sellTarget1, newsTradeIdea.sellTarget2,
+    ].filter(v => isFinite(Number(v)) && Number(v) > 0);
+    const hi = Math.max(...levels);
+    const lo = Math.min(...levels);
+    const pad = Math.max((hi - lo) * 0.12, newsTradeIdea.price * 0.01);
+    const top = hi + pad;
+    const bottom = Math.max(0.01, lo - pad);
+    const pos = (v: number) => Math.max(4, Math.min(96, ((top - v) / (top - bottom)) * 100));
+    const line = (cls: string, label: string, value: number) =>
+      `<div class="sdp-plan-line ${cls}" style="top:${pos(value).toFixed(2)}%"><span>${label} &#8377;${value.toFixed(2)}</span></div>`;
+    return `<div class="sdp-trade-overlay" aria-hidden="true">
+      ${line("target", "T2", newsTradeIdea.target2)}
+      ${line("target", "T1", newsTradeIdea.target1)}
+      ${line("buy", "BUY ZONE", newsTradeIdea.entryLow)}
+      ${line("resistance", "RES", newsTradeIdea.resistance)}
+      ${line("ltp", "LTP", newsTradeIdea.price)}
+      ${line("support", "SUP", newsTradeIdea.support)}
+      ${line("sell", "SELL BELOW", newsTradeIdea.sellTrigger)}
+      ${line("shortTarget", "S-T1", newsTradeIdea.sellTarget1)}
+      ${line("shortTarget", "S-T2", newsTradeIdea.sellTarget2)}
+    </div>`;
+  })();
+  const newsTradePanel = newsTradeIdea ? `
+    <div class="sdp-news-plan-card">
+      <div class="sdp-news-plan-head">
+        <div><b>News Trade Plan</b><span>${esc(newsTradeIdea.source)} · ${newsTradeIdea.score}% setup score</span></div>
+        <a href="${esc(newsTradeIdea.newsLink)}" target="_blank" rel="noopener">News source</a>
+      </div>
+      <div class="sdp-news-headline">${esc(newsTradeIdea.newsTitle)}</div>
+      <div class="sdp-plan-grid">
+        <div><span>Chart Resistance</span><b>&#8377;${newsTradeIdea.resistance.toFixed(2)}</b></div>
+        <div><span>Chart Support</span><b>&#8377;${newsTradeIdea.support.toFixed(2)}</b></div>
+        <div class="long"><span>Buy zone</span><b>&#8377;${newsTradeIdea.entryLow.toFixed(2)} - &#8377;${newsTradeIdea.entryHigh.toFixed(2)}</b><small>SL &#8377;${newsTradeIdea.stopLoss.toFixed(2)} · Targets &#8377;${newsTradeIdea.target1.toFixed(2)} / &#8377;${newsTradeIdea.target2.toFixed(2)}</small></div>
+        <div class="short"><span>Sell below</span><b>&#8377;${newsTradeIdea.sellTrigger.toFixed(2)}</b><small>Zone &#8377;${newsTradeIdea.sellEntryLow.toFixed(2)} - &#8377;${newsTradeIdea.sellEntryHigh.toFixed(2)} · SL &#8377;${newsTradeIdea.sellStopLoss.toFixed(2)} · Targets &#8377;${newsTradeIdea.sellTarget1.toFixed(2)} / &#8377;${newsTradeIdea.sellTarget2.toFixed(2)}</small></div>
+      </div>
+      <div class="sdp-plan-rule">${esc(newsTradeIdea.plan)} Planned only: no Trade Page auto-trigger has been placed.</div>
+    </div>` : "";
 
   res.send(`<!DOCTYPE html>
 <html lang="en">
@@ -2495,6 +2769,20 @@ app.get("/stock/:symbol", async (req: Request, res: Response) => {
   <title>${symbol} — ${s.company_name || "Stock"} — ZeroScreen</title>
   <link rel="stylesheet" href="/public/css/style.css">
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.2/dist/chart.umd.min.js"></script>
+  <style>
+    .sdp-news-plan-card{border:1px solid #bfdbfe;background:#f8fbff;border-radius:16px;padding:16px 18px;margin:0 0 16px;box-shadow:0 10px 24px rgba(15,23,42,.06)}
+    .sdp-news-plan-head{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;margin-bottom:9px}
+    .sdp-news-plan-head b{display:block;color:#0f172a;font-size:17px}.sdp-news-plan-head span{display:block;color:#64748b;font-size:12px;margin-top:3px}
+    .sdp-news-plan-head a{color:#2563eb;font-size:12px;font-weight:800;text-decoration:none;white-space:nowrap}.sdp-news-headline{color:#334155;font-size:13px;line-height:1.45;margin-bottom:12px}
+    .sdp-plan-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}.sdp-plan-grid div{border:1px solid #e2e8f0;background:#fff;border-radius:12px;padding:10px;min-width:0}
+    .sdp-plan-grid div.long{border-color:#86efac;background:#f0fdf4}.sdp-plan-grid div.short{border-color:#fecaca;background:#fff1f2}
+    .sdp-plan-grid span{display:block;color:#64748b;font-size:10px;font-weight:900;text-transform:uppercase;letter-spacing:.06em}.sdp-plan-grid b{display:block;color:#0f172a;font-size:15px;margin-top:4px}.sdp-plan-grid small{display:block;color:#475569;font-size:12px;margin-top:5px;line-height:1.35}
+    .sdp-plan-rule{margin-top:10px;color:#475569;font-size:12px;line-height:1.45}.sdp-tv-wrap{position:relative;overflow:hidden}.sdp-trade-overlay{position:absolute;inset:0;pointer-events:none;z-index:4}.sdp-plan-line{position:absolute;left:0;right:0;border-top:2px dashed rgba(59,130,246,.85)}
+    .sdp-plan-line span{position:absolute;right:10px;top:-13px;border-radius:999px;padding:3px 8px;background:#0f172a;color:#fff;font-size:10px;font-weight:900;box-shadow:0 3px 10px rgba(15,23,42,.22)}
+    .sdp-plan-line.buy{border-top-color:#16a34a}.sdp-plan-line.buy span{background:#16a34a}.sdp-plan-line.sell,.sdp-plan-line.shortTarget{border-top-color:#dc2626}.sdp-plan-line.sell span,.sdp-plan-line.shortTarget span{background:#dc2626}
+    .sdp-plan-line.target{border-top-color:#0284c7}.sdp-plan-line.target span{background:#0284c7}.sdp-plan-line.support,.sdp-plan-line.resistance{border-top-color:#7c3aed}.sdp-plan-line.support span,.sdp-plan-line.resistance span{background:#7c3aed}.sdp-plan-line.ltp{border-top-style:solid;border-top-color:#111827}.sdp-plan-line.ltp span{background:#111827}
+    @media(max-width:760px){.sdp-plan-grid{grid-template-columns:1fr}.sdp-plan-line span{right:5px;font-size:9px}}
+  </style>
 </head>
 <body>
   ${nav("", req)}
@@ -2566,14 +2854,16 @@ app.get("/stock/:symbol", async (req: Request, res: Response) => {
       </div>
     </div>
 
+    ${newsTradePanel}
     <!-- -- TRADINGVIEW LIVE CHART -- -->
-    <div class="sdp-section-title">?? Live Price Chart</div>
+    <div class="sdp-section-title">?? Live Price Chart${newsTradeIdea ? " + Planned Trade Zones" : ""}</div>
     <div class="sdp-tv-wrap" id="sdp-tv-outer-${symbol}">
       <iframe id="tv-iframe-${symbol}"
         src="https://s.tradingview.com/widgetembed/?frameElementId=tv-iframe-${symbol}&symbol=NSE%3A${symbol}&interval=D&range=1Y&withdateranges=1&hidesidetoolbar=0&symboledit=0&saveimage=0&toolbarbg=f1f3f6&studies=[]&theme=light&style=1&timezone=Asia%2FKolkata&locale=in"
         style="width:100%;height:550px;border:none;display:block"
         allowtransparency="true" scrolling="no" allowfullscreen>
       </iframe>
+      ${tradeOverlay}
     </div>
     <script>
     (function(){
@@ -5742,6 +6032,7 @@ app.get("/today", async (req: Request, res: Response) => {
   const isLoggedIn = !!req.session?.userId;
   const isAdmin = req.session?.userRole === 'admin';
   const autoPicks = isLoggedIn ? await getAutoPaperPicks(req.session.userId!) : false;
+  const newsTradeIdeas = await buildNewsTradeIdeas(8);
 
   // Last generated: use the most recent pick's published_at
   const lastGenerated = picks.length > 0 ? picks[0].published_at?.slice(0, 10) : null;
@@ -5814,6 +6105,43 @@ app.get("/today", async (req: Request, res: Response) => {
     </div>`;
   }
 
+  function renderNewsTradeIdeas(ideas: NewsTradeIdea[]): string {
+    if (!ideas.length) return "";
+    return `<div class="news-trade-section">
+      <div class="picks-section-header">
+        <div>
+          <span class="picks-section-icon">N</span>
+          <span class="picks-section-title">Daily News Trade Ideas</span>
+          <span class="picks-section-sub">News-linked equity setups aligned to support/resistance</span>
+        </div>
+        <span class="picks-section-count">${ideas.length} idea${ideas.length !== 1 ? "s" : ""}</span>
+      </div>
+      <div class="news-trade-note">Refresh: page 5 min, news 5 min, levels 10 min. Watch-only today: these do not auto-trigger on Trade Page yet. Trade only when price breaks the shown chart edge with volume.</div>
+      <div class="news-trade-grid">${ideas.map(idea => `
+        <article class="news-trade-card news-tone-${idea.tone}">
+          <div class="news-trade-top">
+            <div>
+              <a class="news-trade-symbol" href="/stock/${encodeURIComponent(idea.symbol)}">${esc(idea.symbol)}</a>
+              ${idea.companyName ? `<span class="news-trade-company">${esc(idea.companyName)}</span>` : ""}
+            </div>
+            <span class="news-score">${idea.score}%</span>
+          </div>
+          <a class="news-headline" href="${esc(idea.newsLink)}" target="_blank" rel="noopener">${esc(idea.newsTitle)}</a>
+          <div class="news-meta">${esc(idea.source)}${idea.pubDate ? ` · ${esc(new Date(idea.pubDate).toLocaleString("en-IN", { timeZone: "Asia/Kolkata", day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" }))}` : ""}</div>
+          <div class="news-levels">
+            <div><span>LTP</span><b>&#8377;${idea.price.toFixed(2)}</b></div>
+            <div><span>Resistance</span><b>&#8377;${idea.resistance.toFixed(2)}</b></div>
+            <div><span>Support</span><b>&#8377;${idea.support.toFixed(2)}</b></div>
+            <div><span>Change</span><b class="${idea.changePct >= 0 ? "nt-positive" : "nt-negative"}">${idea.changePct.toFixed(2)}%</b></div>
+            <div class="news-long-zone"><span>Buy zone</span><b>&#8377;${idea.entryLow.toFixed(2)} - &#8377;${idea.entryHigh.toFixed(2)}</b><small>SL &#8377;${idea.stopLoss.toFixed(2)} · T &#8377;${idea.target1.toFixed(2)} / &#8377;${idea.target2.toFixed(2)}</small></div>
+            <div class="news-short-zone"><span>Sell below</span><b>&#8377;${idea.sellTrigger.toFixed(2)}</b><small>Zone &#8377;${idea.sellEntryLow.toFixed(2)} - &#8377;${idea.sellEntryHigh.toFixed(2)} · SL &#8377;${idea.sellStopLoss.toFixed(2)} · T &#8377;${idea.sellTarget1.toFixed(2)} / &#8377;${idea.sellTarget2.toFixed(2)}</small></div>
+          </div>
+          <div class="news-plan">${esc(idea.plan)} <a href="/stock/${encodeURIComponent(idea.symbol)}?newsTrade=1">Open chart</a></div>
+        </article>
+      `).join("")}</div>
+    </div>`;
+  }
+
   function renderSection(
     icon: string, title: string, subtitle: string,
     sectionPicks: any[], visible: boolean, showPrices: boolean,
@@ -5873,6 +6201,7 @@ app.get("/today", async (req: Request, res: Response) => {
   const intradaySection  = renderSection("?", "Intraday Picks", "Same-day entry & exit", intradayPicks, intradayVisible, intradayPrices, "Free");
   const swingSection     = renderSection("??", "Swing Picks", "2–10 day holding period", swingPicks, swingVisible, swingPrices, "Premium");
   const scalperSection   = renderSection("??", "Scalper Picks", "15–60 min · Tight SL · Quick exit", scalperPicks, scalperVisible, scalperPrices, "Free");
+  const newsTradeSection = renderNewsTradeIdeas(newsTradeIdeas);
   // For locked sections when not logged in or not premium, show teaser cards
   const swingTeaser = !swingVisible ? renderSection("??", "Swing Picks", "2–10 day holding period", swingPicks.length > 0 ? swingPicks : [{id:0,stock_symbol:"?",company_name:null,direction:"LONG",pick_type:"swing",entry_low:0,entry_high:0,target:null,stop_loss:null,reason:"",risk_level:"Medium",status:"active",published_at:"",expires_at:null,created_by:null}], false, false, "Free") : "";
 
@@ -5902,6 +6231,29 @@ app.get("/today", async (req: Request, res: Response) => {
     input:checked+.atp-knob:before{transform:translateX(20px)}
     .atp-label{font-size:.78rem;font-weight:600;color:var(--text-muted);min-width:44px}
     .picks-close-badge{display:inline-flex;align-items:center;gap:5px;font-size:.74rem;background:var(--bg2,#0f172a);border:1px solid var(--border);border-radius:8px;padding:4px 10px;color:var(--text-muted);margin-left:8px}
+    .news-trade-section{background:var(--card-bg);border:1px solid var(--border);border-radius:14px;padding:18px;margin-bottom:1.25rem}
+    .news-trade-note{font-size:.78rem;color:var(--text-muted);background:rgba(245,158,11,.1);border:1px solid rgba(245,158,11,.24);border-radius:10px;padding:9px 12px;margin:10px 0 14px}
+    .news-trade-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}
+    .news-trade-card{border:1px solid var(--border);border-radius:12px;background:var(--bg2);padding:14px;min-width:0}
+    .news-trade-card.news-tone-positive{border-color:rgba(34,197,94,.35)}
+    .news-trade-card.news-tone-avoid{border-color:rgba(239,68,68,.35)}
+    .news-trade-top{display:flex;align-items:flex-start;justify-content:space-between;gap:10px;margin-bottom:9px}
+    .news-trade-symbol{display:block;color:var(--accent);font-size:1.05rem;font-weight:800;text-decoration:none}
+    .news-trade-company{display:block;color:var(--text-muted);font-size:.72rem;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:260px}
+    .news-score{flex:0 0 auto;border-radius:999px;background:rgba(59,130,246,.12);border:1px solid rgba(59,130,246,.28);color:#60a5fa;font-size:.72rem;font-weight:800;padding:4px 8px}
+    .news-headline{display:block;color:var(--text);font-weight:750;font-size:.88rem;line-height:1.35;text-decoration:none;margin-bottom:5px}
+    .news-meta{color:var(--text-muted);font-size:.72rem;margin-bottom:11px}
+    .news-levels{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}
+    .news-levels div{background:rgba(148,163,184,.08);border:1px solid rgba(148,163,184,.14);border-radius:9px;padding:8px;min-width:0}
+    .news-levels .news-long-zone{grid-column:span 3;border-color:rgba(34,197,94,.28);background:rgba(34,197,94,.08)}
+    .news-levels .news-short-zone{grid-column:span 3;border-color:rgba(239,68,68,.28);background:rgba(239,68,68,.08)}
+    .news-levels span{display:block;color:var(--text-muted);font-size:.66rem;text-transform:uppercase;letter-spacing:.04em}
+    .news-levels b{display:block;color:var(--text);font-size:.8rem;margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+    .news-levels small{display:block;color:var(--text-muted);font-size:.7rem;margin-top:4px;white-space:normal;line-height:1.35}
+    .news-plan{font-size:.76rem;color:var(--text-muted);line-height:1.45;margin-top:10px}
+    .news-plan a{color:var(--accent);font-weight:800;text-decoration:none}
+    .nt-positive{color:#22c55e!important}.nt-negative{color:#ef4444!important}
+    @media(max-width:760px){.news-trade-grid{grid-template-columns:1fr}.news-levels{grid-template-columns:repeat(2,minmax(0,1fr))}.news-levels .news-long-zone,.news-levels .news-short-zone{grid-column:1/-1}}
 .history-source{border:1px solid #cfe0f5;background:#f8fbff;color:#385173;border-radius:13px;padding:10px 14px;font-size:12px;font-weight:650}.workspace-table-card .ws-card-b{padding-top:10px}.ws-table-wrap{border:1px solid #e6eef8;border-radius:12px;background:#fff;overflow:auto}.ws-table{min-width:760px}.ws-table th{position:sticky;top:0;z-index:2;background:#f8fbff!important;padding:0 10px}.ws-table td{padding:0 10px}.ws-table tbody tr:hover td{background:#f8fbff}.ws-table-footer{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-top:11px;color:#64748b;font-size:12px}.ws-pager{display:flex;align-items:center;gap:8px}.ws-pager .btn{height:29px;border-radius:999px;padding:0 12px}.ws-pager .btn:disabled{opacity:.45;cursor:not-allowed}.ws-page-info{min-width:150px;text-align:center;font-weight:700;color:#385173}.ws-page-total{font-weight:700}.server-log-full{grid-column:1/-1;background:#071827!important;border-color:#102b46!important;color:#eaf4ff!important}.server-log-full .ws-card-h{color:#fff!important;padding-bottom:10px}.server-log-full .ws-card-b{padding-top:0}.server-log-full .console.full{border:1px solid #173a58;background:#071827!important}.server-log-full .console.full .logs{height:620px!important;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:12px;line-height:1.7;padding:14px 16px}.server-log-full .log-actions{display:flex;gap:8px}.server-log-full .log-actions .btn{background:rgba(255,255,255,.06);border-color:#294966;color:#eaf4ff}.log-filter-card .filter-bar input{flex:1;min-width:260px}@media(max-width:1366px){.server-log-full .console.full .logs{height:500px!important}.ws-table{min-width:680px}.ws-page-info{min-width:120px}}
 .dashboard{align-items:start!important;grid-auto-rows:auto!important}.dashboard>.card{align-self:start!important}.pnl,.chart,.account{height:fit-content!important;min-height:0!important;max-height:none!important}.pnl .card-b,.chart .card-b,.account .card-b{height:auto!important}.pnl-main{margin-bottom:12px!important}.pnl-value{font-size:46px!important;margin:0!important}.pnl .metric-grid{gap:7px!important}.pnl .metric{min-height:56px!important;padding:9px 10px!important}.pnl-foot{margin-top:10px!important;padding-top:8px!important}.chart-box{height:210px!important;max-height:210px!important}.chart .tabs{margin-top:9px!important;align-items:center!important}.chart-footer{font-size:11px!important;white-space:normal!important;line-height:1.35!important;text-align:right!important}.account .card-b{padding-bottom:14px!important}.account .balance-big{font-size:28px!important;margin:8px 0 10px!important}.account .kv{padding:5px 0!important}.account-ident{grid-template-columns:repeat(3,minmax(0,1fr))!important}.workflow.card{min-height:72px!important;padding:10px 14px!important}.flow-step{height:52px!important}.flow-icon{width:34px!important;height:34px!important}.flow-ok{font-size:0!important}.flow-ok:before{content:"OK";font-size:7px;font-weight:900;line-height:1}.flow-step.blocked .flow-ok:before{content:"X"}.flow-actions .btn{height:33px!important}.content{padding-top:14px!important}.checks-row span{font-size:10px!important}@media(max-width:1366px){.pnl-value{font-size:38px!important}.chart-box{height:178px!important;max-height:178px!important}.pnl .metric{min-height:48px!important;padding:7px!important}.pnl .metric b{font-size:12px!important}.pnl .metric label{font-size:9.5px!important}.account .balance-big{font-size:24px!important}.workflow.card{min-height:64px!important}.flow-step{height:46px!important}.flow-icon{width:30px!important;height:30px!important}.flow-text b{font-size:11px!important}.flow-text span{font-size:9.5px!important}}
 </style>
@@ -5953,6 +6305,7 @@ app.get("/today", async (req: Request, res: Response) => {
       <a href="/login?next=/today" style="font-size:.8rem;background:var(--accent);color:#fff;border-radius:8px;padding:7px 14px;text-decoration:none;font-weight:700;white-space:nowrap">Sign In Free ?</a>
     </div>`}
 
+    ${newsTradeSection}
     ${scalperSection}
     ${intradaySection}
     ${swingSection || swingTeaser}
@@ -10911,12 +11264,13 @@ app.get("/dashboard", requireAuth, async (req: Request, res: Response) => {
   const isAdmin  = req.session.userRole === "admin";
 
   // Manual paper trade data
-  const [port, positions, trades, activeSub, allPicks] = await Promise.all([
+  const [port, positions, trades, activeSub, allPicks, newsShadowTrades] = await Promise.all([
     getPaperPortfolio(userId),
     getPaperPositions(userId),
     getPaperTrades(userId, 200),
     getActiveSubscription(userId),
     getAllPicks(),
+    getNewsShadowTrades(150),
   ]);
   const isPremium = !!activeSub || req.session.userRole === "premium" || isAdmin;
 
@@ -10938,6 +11292,14 @@ app.get("/dashboard", requireAuth, async (req: Request, res: Response) => {
       pickSymbolsNeeded
     );
     for (const r of pp) if (r.price != null) priceMap[r.symbol] = r.price;
+  }
+  const newsShadowSymbolsNeeded = [...new Set(newsShadowTrades.map((t: NewsShadowTradeRow) => t.symbol))].filter((s: string) => !priceMap[s]);
+  if (newsShadowSymbolsNeeded.length > 0) {
+    const np = await dbAll<{ symbol: string; price: number | null }>(
+      `SELECT symbol, price FROM prices WHERE symbol IN (${newsShadowSymbolsNeeded.map(() => "?").join(",")})`,
+      newsShadowSymbolsNeeded
+    );
+    for (const r of np) if (r.price != null) priceMap[r.symbol] = r.price;
   }
 
   // Picks data
@@ -10972,6 +11334,16 @@ app.get("/dashboard", requireAuth, async (req: Request, res: Response) => {
   const curValTotal   = posRows.reduce((s: number, p: any) => s + (p.livePrice * p.qty), 0);
   const portfolioValue = parseFloat((port.balance + curValTotal).toFixed(2));
   const totalPnl = parseFloat((portfolioValue - 100000).toFixed(2));
+  const newsShadowOpen = newsShadowTrades.filter((t: NewsShadowTradeRow) => t.status === "OPEN");
+  const newsShadowClosed = newsShadowTrades.filter((t: NewsShadowTradeRow) => t.status !== "OPEN");
+  const newsShadowRealized = parseFloat(newsShadowClosed.reduce((s: number, t: NewsShadowTradeRow) => s + Number(t.pnl || 0), 0).toFixed(2));
+  const newsShadowWins = newsShadowClosed.filter((t: NewsShadowTradeRow) => Number(t.pnl || 0) > 0).length;
+  const newsShadowOpenRows = newsShadowOpen.map((t: NewsShadowTradeRow) => {
+    const livePrice = priceMap[t.symbol] ?? t.entry_price;
+    const live = newsShadowPnl(t, livePrice);
+    return { ...t, livePrice, livePnl: live.pnl, livePnlPct: live.pnlPct };
+  });
+  const newsShadowOpenPnl = parseFloat(newsShadowOpenRows.reduce((s: number, t: any) => s + Number(t.livePnl || 0), 0).toFixed(2));
 
   // Weekly P&L (last 7 days)
   const _7dAgo = new Date(Date.now() - 7 * 86400000).toISOString().slice(0, 10);
@@ -11229,11 +11601,56 @@ app.get("/dashboard", requireAuth, async (req: Request, res: Response) => {
     <!-- Tabs -->
     <div class="db-tabs">
       ${isAdmin ? `<button class="db-tab active" onclick="dbTab('picks')" id="dbt-picks">Picks Tracker <span style="background:#a78bfa22;color:#a78bfa;border-radius:10px;padding:1px 7px;font-size:.72rem;margin-left:3px">${picksInPosition.length + pendingNonDupe.length}</span></button>` : ""}
+      <button class="db-tab" onclick="dbTab('news-shadow')" id="dbt-news-shadow">News Shadow <span style="background:#f59e0b22;color:#f59e0b;border-radius:10px;padding:1px 7px;font-size:.72rem;margin-left:3px">${newsShadowOpen.length}</span></button>
       <button class="db-tab${isAdmin ? '' : ' active'}" onclick="dbTab('positions')" id="dbt-positions">?? Positions (${posRows.length})</button>
       <button class="db-tab" onclick="dbTab('manual')" id="dbt-manual">My Trades (${sellTrades.length})</button>
       <button class="db-tab" onclick="dbTab('weekly')" id="dbt-weekly">?? Weekly</button>
       <button class="db-tab" onclick="dbTab('monthly')" id="dbt-monthly">?? Monthly</button>
       <button class="db-tab" onclick="dbTab('ai')" id="dbt-ai">?? AI Insights${pickAnomalies.length > 0 || overtradingAlert.warn || vixAlert === "extreme" || vixAlert === "high" ? ` <span style="background:#ef444422;color:#ef4444;border:1px solid #ef444444;border-radius:10px;padding:1px 7px;font-size:.7rem;margin-left:3px">!</span>` : ""}</button>
+    </div>
+
+    <!-- -- PANEL: NEWS SHADOW -- -->
+    <div class="db-panel" id="dbp-news-shadow">
+      <div class="db-kpi-grid">
+        <div class="db-kpi"><div class="db-kpi-lbl">Open News Shadow</div><div class="db-kpi-val" style="color:#f59e0b">${newsShadowOpen.length}</div></div>
+        <div class="db-kpi"><div class="db-kpi-lbl">Open MTM</div><div class="db-kpi-val ${newsShadowOpenPnl>=0?'db-green':'db-red'}">${newsShadowOpenPnl>=0?"+":""}&#8377;${Math.abs(newsShadowOpenPnl).toLocaleString("en-IN",{maximumFractionDigits:0})}</div></div>
+        <div class="db-kpi"><div class="db-kpi-lbl">Closed P&L</div><div class="db-kpi-val ${newsShadowRealized>=0?'db-green':'db-red'}">${newsShadowRealized>=0?"+":""}&#8377;${Math.abs(newsShadowRealized).toLocaleString("en-IN",{maximumFractionDigits:0})}</div></div>
+        <div class="db-kpi"><div class="db-kpi-lbl">Closed Wins</div><div class="db-kpi-val">${newsShadowWins}/${newsShadowClosed.length}</div></div>
+      </div>
+      <div class="db-section">Open News Shadow Trades</div>
+      ${newsShadowOpenRows.length === 0
+        ? `<div class="db-empty">No active news shadow trades. The scanner will create one only when live price touches a strict news setup that can target at least &#8377;10,000.</div>`
+        : `<div class="db-tbl-wrap"><table class="db-tbl">
+          <thead><tr><th>Symbol</th><th>Side</th><th>Qty</th><th>Entry</th><th>Live</th><th>SL</th><th>T1</th><th>T2</th><th>MTM</th><th>News</th></tr></thead>
+          <tbody>${newsShadowOpenRows.map((t: any) => `
+            <tr>
+              <td><a href="/stock/${encodeURIComponent(t.symbol)}?newsTrade=1" style="font-weight:800;color:var(--accent);text-decoration:none">${esc(t.symbol)}</a>${t.company_name ? `<br><span class="db-muted" style="font-size:.7rem">${esc(t.company_name)}</span>` : ""}</td>
+              <td><span class="${t.side === "BUY" ? "db-badge-buy" : "db-badge-sell"}">${t.side}</span></td>
+              <td>${t.qty}</td>
+              <td>&#8377;${Number(t.entry_price).toFixed(2)}</td>
+              <td style="font-weight:700">&#8377;${Number(t.livePrice).toFixed(2)}</td>
+              <td class="db-red">&#8377;${Number(t.stop_loss).toFixed(2)}</td>
+              <td class="db-green">&#8377;${Number(t.target1).toFixed(2)}</td>
+              <td class="db-green">&#8377;${Number(t.target2).toFixed(2)}</td>
+              <td class="${t.livePnl>=0?'db-green':'db-red'}">${t.livePnl>=0?"+":""}&#8377;${Math.abs(t.livePnl).toLocaleString("en-IN",{maximumFractionDigits:0})}<br><span style="font-size:.72rem">${t.livePnlPct>=0?"+":""}${t.livePnlPct}%</span></td>
+              <td style="max-width:260px;white-space:normal;font-size:.76rem"><a href="${esc(t.news_link)}" target="_blank" rel="noopener" style="color:var(--accent);text-decoration:none">${esc(t.news_title)}</a></td>
+            </tr>`).join("")}</tbody></table></div>`}
+      <div class="db-section">Recent News Shadow Exits</div>
+      ${newsShadowClosed.length === 0
+        ? `<div class="db-empty">No closed news shadow trades yet.</div>`
+        : `<div class="db-tbl-wrap"><table class="db-tbl">
+          <thead><tr><th>Date</th><th>Symbol</th><th>Side</th><th>Qty</th><th>Entry</th><th>Exit</th><th>Status</th><th>P&L</th></tr></thead>
+          <tbody>${newsShadowClosed.slice(0,80).map((t: NewsShadowTradeRow) => `
+            <tr>
+              <td class="db-muted">${(t.exit_at || t.entry_at || "").slice(0,16)}</td>
+              <td><a href="/stock/${encodeURIComponent(t.symbol)}?newsTrade=1" style="font-weight:800;color:var(--accent);text-decoration:none">${esc(t.symbol)}</a></td>
+              <td><span class="${t.side === "BUY" ? "db-badge-buy" : "db-badge-sell"}">${t.side}</span></td>
+              <td>${t.qty}</td>
+              <td>&#8377;${Number(t.entry_price).toFixed(2)}</td>
+              <td>&#8377;${Number(t.exit_price || 0).toFixed(2)}</td>
+              <td><span class="${t.status === "SL_HIT" ? "db-badge-sell" : "db-badge-buy"}">${esc(t.status)}</span></td>
+              <td class="${Number(t.pnl || 0)>=0?'db-green':'db-red'}">${Number(t.pnl || 0)>=0?"+":""}&#8377;${Math.abs(Number(t.pnl || 0)).toLocaleString("en-IN",{maximumFractionDigits:0})}<br><span style="font-size:.72rem">${Number(t.pnl_pct || 0)>=0?"+":""}${Number(t.pnl_pct || 0).toFixed(2)}%</span></td>
+            </tr>`).join("")}</tbody></table></div>`}
     </div>
 
     <!-- -- PANEL: POSITIONS -- -->
@@ -14433,7 +14850,332 @@ app.get("/holdings", requireAdmin, (_req: Request, res: Response) => {
 </html>`);
 });
 
+type NewsTradeQuote = { price: number; changePct: number; source: "kite" | "db" };
+type NewsShadowTradeRow = {
+  id: number;
+  symbol: string;
+  company_name: string | null;
+  side: "BUY" | "SELL";
+  qty: number;
+  entry_price: number;
+  stop_loss: number;
+  target1: number;
+  target2: number;
+  status: "OPEN" | "TARGET1_HIT" | "TARGET2_HIT" | "SL_HIT";
+  entry_at: string;
+  exit_price: number | null;
+  exit_at: string | null;
+  pnl: number | null;
+  pnl_pct: number | null;
+  news_title: string;
+  news_link: string;
+  source: string;
+  score: number;
+  quote_source: string | null;
+  raw_json: string | null;
+  created_at: string;
+};
+const NEWS_TRADE_ALERT_POLL_MS = Math.max(10_000, Number(process.env.NEWS_TRADE_ALERT_POLL_MS || 30_000));
+const NEWS_TRADE_ALERT_MIN_PROFIT_RS = Math.max(1000, Number(process.env.NEWS_TRADE_ALERT_MIN_PROFIT_RS || 10000));
+const NEWS_TRADE_ALERT_MAX_RISK_RS = Math.max(1000, Number(process.env.NEWS_TRADE_ALERT_MAX_RISK_RS || 5000));
+const NEWS_TRADE_ALERT_CAPITAL_RS = Math.max(10_000, Number(process.env.NEWS_TRADE_ALERT_CAPITAL_RS || 500000));
+const NEWS_TRADE_ALERT_MIN_RR = Math.max(1, Number(process.env.NEWS_TRADE_ALERT_MIN_RR || 1.8));
+const NEWS_SHADOW_SCAN_LIMIT = Math.max(8, Number(process.env.NEWS_SHADOW_SCAN_LIMIT || 30));
+const NEWS_TRADE_ALERTS_ENABLED = process.env.NEWS_TRADE_ALERTS_ENABLED !== "0";
+const NEWS_TRADE_ALERT_USE_DB_FALLBACK = process.env.NEWS_TRADE_ALERT_USE_DB_FALLBACK === "1";
+let _newsTradeAlertRunning = false;
+
+async function ensureNewsShadowTradesTable(): Promise<void> {
+  await dbRun(`CREATE TABLE IF NOT EXISTS news_shadow_trades (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    symbol TEXT NOT NULL,
+    company_name TEXT,
+    side TEXT NOT NULL,
+    qty INTEGER NOT NULL,
+    entry_price REAL NOT NULL,
+    stop_loss REAL NOT NULL,
+    target1 REAL NOT NULL,
+    target2 REAL NOT NULL,
+    status TEXT NOT NULL DEFAULT 'OPEN',
+    entry_at TEXT DEFAULT (datetime('now','localtime')),
+    exit_price REAL,
+    exit_at TEXT,
+    pnl REAL,
+    pnl_pct REAL,
+    news_title TEXT NOT NULL,
+    news_link TEXT NOT NULL,
+    source TEXT NOT NULL,
+    score INTEGER NOT NULL DEFAULT 0,
+    quote_source TEXT,
+    raw_json TEXT,
+    created_at TEXT DEFAULT (datetime('now','localtime'))
+  )`);
+  await dbRun("CREATE INDEX IF NOT EXISTS idx_news_shadow_status ON news_shadow_trades(status, entry_at)");
+  await dbRun("CREATE INDEX IF NOT EXISTS idx_news_shadow_symbol ON news_shadow_trades(symbol, side, entry_at)");
+}
+
+async function getNewsShadowTrades(limit = 100): Promise<NewsShadowTradeRow[]> {
+  await ensureNewsShadowTradesTable();
+  return dbAll<NewsShadowTradeRow>(
+    "SELECT * FROM news_shadow_trades ORDER BY id DESC LIMIT ?",
+    [limit]
+  );
+}
+
+async function hasOpenNewsShadowTrade(symbol: string, side: "BUY" | "SELL"): Promise<boolean> {
+  await ensureNewsShadowTradesTable();
+  const row = await dbAll<{ c: number }>(
+    "SELECT COUNT(*) AS c FROM news_shadow_trades WHERE symbol=? AND side=? AND status='OPEN'",
+    [symbol, side]
+  );
+  return (row[0]?.c || 0) > 0;
+}
+
+async function createNewsShadowTrade(
+  idea: NewsTradeIdea,
+  side: "BUY" | "SELL",
+  livePrice: number,
+  quoteSource: string,
+  qtyPlan: ReturnType<typeof newsTradeQty>
+): Promise<number | null> {
+  if (await hasOpenNewsShadowTrade(idea.symbol, side)) return null;
+  const stop = side === "BUY" ? idea.stopLoss : idea.sellStopLoss;
+  const target1 = side === "BUY" ? idea.target1 : idea.sellTarget1;
+  const target2 = side === "BUY" ? idea.target2 : idea.sellTarget2;
+  const existingToday = await dbAll<{ id: number }>(
+    `SELECT id FROM news_shadow_trades
+     WHERE symbol=? AND side=? AND date(entry_at)=date('now','localtime') LIMIT 1`,
+    [idea.symbol, side]
+  );
+  if (existingToday.length) return null;
+  await dbRun(
+    `INSERT INTO news_shadow_trades
+      (symbol,company_name,side,qty,entry_price,stop_loss,target1,target2,status,entry_at,
+       news_title,news_link,source,score,quote_source,raw_json)
+     VALUES (?,?,?,?,?,?,?,?, 'OPEN', datetime('now','localtime'), ?,?,?,?,?,?)`,
+    [
+      idea.symbol, idea.companyName, side, qtyPlan.qty, livePrice, stop, target1, target2,
+      idea.newsTitle, idea.newsLink, idea.source, idea.score, quoteSource,
+      JSON.stringify({ plannedEntry: side === "BUY" ? idea.entryLow : idea.sellEntryHigh, rr: qtyPlan.rr, capital: qtyPlan.capital }),
+    ]
+  );
+  const row = await dbAll<{ id: number }>("SELECT last_insert_rowid() AS id");
+  return row[0]?.id || null;
+}
+
+function newsShadowPnl(t: NewsShadowTradeRow, exitPrice: number): { pnl: number; pnlPct: number } {
+  const mult = t.side === "BUY" ? 1 : -1;
+  const pnl = Number(((exitPrice - t.entry_price) * mult * t.qty).toFixed(2));
+  const basis = Math.max(t.entry_price * t.qty, 1);
+  const pnlPct = Number((pnl / basis * 100).toFixed(2));
+  return { pnl, pnlPct };
+}
+
+async function closeNewsShadowTrade(t: NewsShadowTradeRow, status: "TARGET1_HIT" | "TARGET2_HIT" | "SL_HIT", exitPrice: number): Promise<void> {
+  const result = newsShadowPnl(t, exitPrice);
+  await dbRun(
+    `UPDATE news_shadow_trades
+     SET status=?, exit_price=?, exit_at=datetime('now','localtime'), pnl=?, pnl_pct=?
+     WHERE id=? AND status='OPEN'`,
+    [status, exitPrice, result.pnl, result.pnlPct, t.id]
+  );
+  notifyTelegram([
+    `NEWS SHADOW EXIT - ${status}`,
+    `${t.symbol} ${t.side} | Qty ${t.qty}`,
+    `Entry Rs ${t.entry_price.toFixed(2)} | Exit Rs ${exitPrice.toFixed(2)}`,
+    `P&L: ${result.pnl >= 0 ? "+" : ""}Rs ${result.pnl.toFixed(0)} (${result.pnlPct.toFixed(2)}%)`,
+    `Chart: http://139.59.18.52/stock/${encodeURIComponent(t.symbol)}?newsTrade=1`,
+  ].join("\n"));
+}
+
+async function updateNewsShadowTradeExits(): Promise<void> {
+  const open = (await getNewsShadowTrades(200)).filter(t => t.status === "OPEN");
+  if (!open.length) return;
+  const quotes = await getNewsTradeLiveQuotes(open.map(t => t.symbol));
+  for (const t of open) {
+    const q = quotes.get(t.symbol);
+    if (!q?.price) continue;
+    if (t.side === "BUY") {
+      if (q.price <= t.stop_loss) await closeNewsShadowTrade(t, "SL_HIT", q.price);
+      else if (q.price >= t.target1) await closeNewsShadowTrade(t, "TARGET1_HIT", q.price);
+    } else {
+      if (q.price >= t.stop_loss) await closeNewsShadowTrade(t, "SL_HIT", q.price);
+      else if (q.price <= t.target1) await closeNewsShadowTrade(t, "TARGET1_HIT", q.price);
+    }
+  }
+}
+
+async function getNewsTradeLiveQuotes(symbols: string[]): Promise<Map<string, NewsTradeQuote>> {
+  const clean = [...new Set(symbols.map(s => s.toUpperCase().replace(/[^A-Z0-9]/g, "")).filter(Boolean))];
+  const out = new Map<string, NewsTradeQuote>();
+  if (!clean.length) return out;
+  try {
+    const kite = await fetchKitePricesForHoldings(clean.map(s => `NSE:${s}`));
+    for (const symbol of clean) {
+      const q = kite.get(`NSE:${symbol}`);
+      if (q?.price) out.set(symbol, { price: Number(q.price), changePct: Number(q.changePct || 0), source: "kite" });
+    }
+    if (out.size) return out;
+  } catch (e: any) {
+    console.warn("[NewsTradeAlerts] Kite quote unavailable:", e?.message || e);
+  }
+
+  if (!NEWS_TRADE_ALERT_USE_DB_FALLBACK) return out;
+  const rows = await dbAll<{ symbol: string; price: number; change_pct?: number }>(
+    `SELECT symbol, price, change_pct FROM prices WHERE symbol IN (${clean.map(() => "?").join(",")})`,
+    clean
+  );
+  for (const row of rows) {
+    if (row.price) out.set(row.symbol, { price: Number(row.price), changePct: Number(row.change_pct || 0), source: "db" });
+  }
+  return out;
+}
+
+function newsTradeQty(
+  side: "BUY" | "SELL",
+  entry: number,
+  stopLoss: number,
+  target1: number,
+  target2: number
+): {
+  eligible: boolean;
+  rejectReason: string;
+  qty: number;
+  riskPerShare: number;
+  rewardPerShare: number;
+  rr: number;
+  capital: number;
+  maxLoss: number;
+  target1Profit: number;
+  target2Profit: number;
+} {
+  const riskPerShare = Math.max(Math.abs(entry - stopLoss), Math.max(0.05, entry * 0.005));
+  const validDirection = side === "BUY" ? target1 > entry && stopLoss < entry : target1 < entry && stopLoss > entry;
+  const rewardPerShare = validDirection ? Math.abs(target1 - entry) : 0;
+  const rr = rewardPerShare > 0 ? rewardPerShare / riskPerShare : 0;
+  const qty = rewardPerShare > 0 ? Math.ceil(NEWS_TRADE_ALERT_MIN_PROFIT_RS / rewardPerShare) : 0;
+  const capital = Number((qty * entry).toFixed(2));
+  const maxLoss = Number((qty * riskPerShare).toFixed(2));
+  const target1Profit = Number((qty * rewardPerShare).toFixed(2));
+  const target2Profit = Number((qty * Math.abs(target2 - entry)).toFixed(2));
+  const rejectReason = !validDirection ? "invalid target/SL direction"
+    : rr < NEWS_TRADE_ALERT_MIN_RR ? `RR ${rr.toFixed(2)} below ${NEWS_TRADE_ALERT_MIN_RR}`
+    : capital > NEWS_TRADE_ALERT_CAPITAL_RS ? `capital Rs ${capital.toFixed(0)} above cap Rs ${NEWS_TRADE_ALERT_CAPITAL_RS.toFixed(0)}`
+    : maxLoss > NEWS_TRADE_ALERT_MAX_RISK_RS ? `risk Rs ${maxLoss.toFixed(0)} above cap Rs ${NEWS_TRADE_ALERT_MAX_RISK_RS.toFixed(0)}`
+    : target1Profit < NEWS_TRADE_ALERT_MIN_PROFIT_RS ? `T1 profit Rs ${target1Profit.toFixed(0)} below Rs ${NEWS_TRADE_ALERT_MIN_PROFIT_RS.toFixed(0)}`
+    : "";
+  return {
+    eligible: !rejectReason,
+    rejectReason,
+    qty,
+    riskPerShare: Number(riskPerShare.toFixed(2)),
+    rewardPerShare: Number(rewardPerShare.toFixed(2)),
+    rr: Number(rr.toFixed(2)),
+    capital,
+    maxLoss,
+    target1Profit,
+    target2Profit,
+  };
+}
+
+function newsTradeAlertMessage(idea: NewsTradeIdea, side: "BUY" | "SELL", livePrice: number, quoteSource: string): string {
+  const entry = side === "BUY" ? idea.entryLow : idea.sellEntryHigh;
+  const entryBand = side === "BUY"
+    ? `${idea.entryLow.toFixed(2)}-${idea.entryHigh.toFixed(2)}`
+    : `${idea.sellEntryLow.toFixed(2)}-${idea.sellEntryHigh.toFixed(2)}`;
+  const stop = side === "BUY" ? idea.stopLoss : idea.sellStopLoss;
+  const t1 = side === "BUY" ? idea.target1 : idea.sellTarget1;
+  const t2 = side === "BUY" ? idea.target2 : idea.sellTarget2;
+  const qty = newsTradeQty(side, entry, stop, t1, t2);
+  const chartUrl = `http://139.59.18.52/stock/${encodeURIComponent(idea.symbol)}?newsTrade=1`;
+  return [
+    `NEWS TRADE ALERT - ${side}`,
+    `${idea.symbol}${idea.companyName ? ` (${idea.companyName})` : ""}`,
+    `LTP: Rs ${livePrice.toFixed(2)} | Entry touched: Rs ${entry.toFixed(2)} | Feed: ${quoteSource}`,
+    `Qty suggestion: ${qty.qty} shares | Capital approx: Rs ${qty.capital.toFixed(0)} | Max risk approx: Rs ${qty.maxLoss.toFixed(0)}`,
+    `Profit plan: T1 approx Rs ${qty.target1Profit.toFixed(0)} | T2 approx Rs ${qty.target2Profit.toFixed(0)} | RR ${qty.rr.toFixed(2)}`,
+    `Entry zone: Rs ${entryBand}`,
+    `Stop loss: Rs ${stop.toFixed(2)} | Targets: Rs ${t1.toFixed(2)}, Rs ${t2.toFixed(2)}`,
+    `Reason: ${idea.newsTitle}`,
+    `Chart: ${chartUrl}`,
+  ].join("\n");
+}
+
+async function getSentNewsTradeAlertKeys(today: string): Promise<Set<string>> {
+  const raw = await getSetting(`news_trade_alerts_sent_${today}`).catch(() => "");
+  try {
+    const parsed = JSON.parse(raw || "[]");
+    return new Set(Array.isArray(parsed) ? parsed.map(String) : []);
+  } catch {
+    return new Set();
+  }
+}
+
+async function saveSentNewsTradeAlertKeys(today: string, keys: Set<string>): Promise<void> {
+  await setSetting(`news_trade_alerts_sent_${today}`, JSON.stringify([...keys].slice(-200))).catch(() => {});
+}
+
+async function checkNewsTradeEntryAlerts(): Promise<void> {
+  if (!NEWS_TRADE_ALERTS_ENABLED || _newsTradeAlertRunning || !isMarketHours()) return;
+  _newsTradeAlertRunning = true;
+  try {
+    await updateNewsShadowTradeExits();
+    const ideas = await buildNewsTradeIdeas(NEWS_SHADOW_SCAN_LIMIT);
+    if (!ideas.length) return;
+    const quotes = await getNewsTradeLiveQuotes(ideas.map(i => i.symbol));
+    if (!quotes.size) return;
+    const today = new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" });
+    const sent = await getSentNewsTradeAlertKeys(today);
+    let changed = false;
+    for (const idea of ideas) {
+      const quote = quotes.get(idea.symbol);
+      if (!quote?.price) continue;
+      const checks: Array<{ side: "BUY" | "SELL"; hit: boolean; trigger: number }> = [
+        { side: "BUY", hit: quote.price >= idea.entryLow, trigger: idea.entryLow },
+        { side: "SELL", hit: quote.price <= idea.sellEntryHigh, trigger: idea.sellEntryHigh },
+      ];
+      for (const c of checks) {
+        if (!c.hit || !c.trigger) continue;
+        const stop = c.side === "BUY" ? idea.stopLoss : idea.sellStopLoss;
+        const t1 = c.side === "BUY" ? idea.target1 : idea.sellTarget1;
+        const t2 = c.side === "BUY" ? idea.target2 : idea.sellTarget2;
+        const qtyPlan = newsTradeQty(c.side, c.trigger, stop, t1, t2);
+        if (!qtyPlan.eligible) {
+          console.log(`[NewsTradeAlerts] Skipped ${c.side} ${idea.symbol}: ${qtyPlan.rejectReason}`);
+          continue;
+        }
+        const key = `${today}:${idea.symbol}:${c.side}:${c.trigger.toFixed(2)}`;
+        if (sent.has(key)) continue;
+        const shadowId = await createNewsShadowTrade(idea, c.side, quote.price, quote.source, qtyPlan);
+        notifyTelegram(newsTradeAlertMessage(idea, c.side, quote.price, quote.source));
+        if (shadowId) {
+          notifyTelegram(`NEWS SHADOW TRADE CREATED\n#${shadowId} ${idea.symbol} ${c.side} ${qtyPlan.qty} qty @ Rs ${quote.price.toFixed(2)}\nVisible in My Trade > News Shadow.`);
+        }
+        sent.add(key);
+        changed = true;
+        console.log(`[NewsTradeAlerts] ${c.side} ${idea.symbol} touched ${c.trigger} at ${quote.price}; shadow=${shadowId || "existing"}`);
+      }
+    }
+    if (changed) await saveSentNewsTradeAlertKeys(today, sent);
+  } catch (e: any) {
+    console.warn("[NewsTradeAlerts]", e?.message || e);
+  } finally {
+    _newsTradeAlertRunning = false;
+  }
+}
+
+function startNewsTradeEntryAlerts(): void {
+  if (!NEWS_TRADE_ALERTS_ENABLED) {
+    console.log("[NewsTradeAlerts] Disabled");
+    return;
+  }
+  setTimeout(() => { checkNewsTradeEntryAlerts().catch(() => {}); }, 15_000);
+  setInterval(() => { checkNewsTradeEntryAlerts().catch(() => {}); }, NEWS_TRADE_ALERT_POLL_MS);
+  console.log(`[NewsTradeAlerts] Watching news trade entries every ${Math.round(NEWS_TRADE_ALERT_POLL_MS / 1000)}s`);
+}
+
 initDb().then(async () => {
+  await ensureNewsShadowTradesTable();
   await ensureAdminEmail();
   // Run subscription expiry check on startup
   expireOldSubscriptions().catch(() => {});
@@ -14443,6 +15185,7 @@ initDb().then(async () => {
     console.log(`   Watchlists: http://localhost:${PORT}/watchlists`);
     console.log(`   API stats : http://localhost:${PORT}/api/stats\n`);
     startScheduler();
+    startNewsTradeEntryAlerts();
   });
 }).catch(err => { console.error("DB init failed:", err); process.exit(1); });
 

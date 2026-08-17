@@ -76,6 +76,20 @@ try {
   assert(bodyOptions.summary.unrealizedPnl === 300, 'Body Hold Options unrealized P&L mismatch');
   assert(bodyOptions.summary.totalPnl === 350 && bodyOptions.position.ltp === 700, 'Body Hold Options total/LTP mismatch');
 
+  const consolidated = bodyOptions.consolidated.tiles;
+  const noTradeLeaks = consolidated.filter((tile) =>
+    tile.positionState === 'NO TRADE'
+    && Number(tile.trades || 0) === 0
+    && Number(tile.openPositions || 0) === 0
+    && (
+      Number(tile.pnl || 0) !== 0
+      || Number(tile.capitalDeployed || 0) !== 0
+      || tile.capturedPoints !== null
+      || Number(tile.returnPct || 0) !== 0
+    )
+  );
+  assert(noTradeLeaks.length === 0, `NO TRADE consolidated tiles leaked P&L: ${noTradeLeaks.map((tile) => `${tile.strategyId}:${tile.instrumentType}:${tile.pnl}`).join(', ')}`);
+
   const drishtiFutures = buildShadowMonitorPayload('drishti', 'FUTURES');
   assert(drishtiFutures.summary.totalPnl === -4400, 'DRISHTI Futures rupee MTM mismatch');
   const drishtiOptions = buildShadowMonitorPayload('drishti', 'OPTIONS');
@@ -85,9 +99,14 @@ try {
   assert(source.includes('scheduledEvaluationMissed(strategy.id, fields)'), 'Consolidated missed-evaluation classification is absent');
   for (const artifact of [source, fs.readFileSync(path.join(__dirname, '..', '..', 'dist', 'shadowMonitor.js'), 'utf8')]) {
     assert(artifact.includes('sm-consolidated-groups'), 'Consolidated Futures/Options group layout is absent');
-    assert(artifact.includes('consolidatedGroupMarkup("FUTURES",futuresTiles)'), 'Consolidated Futures group rendering is absent');
-    assert(artifact.includes('consolidatedGroupMarkup("OPTIONS",optionsTiles)'), 'Consolidated Options group rendering is absent');
+    assert(artifact.includes('data-consolidated-instrument="FUTURES"'), 'Consolidated Futures switch is absent');
+    assert(artifact.includes('data-consolidated-instrument="OPTIONS"'), 'Consolidated Options switch is absent');
+    assert(artifact.includes('visibleTiles=tiles.filter(function(t){return t.instrumentType===selectedInstrument})'), 'Consolidated grid is not filtered by selected instrument');
     assert(artifact.includes('data-group-summary'), 'Consolidated instrument summaries are absent');
+    assert(artifact.includes('selectedShort+" Winner Day"'), 'Consolidated selected-instrument day winner card is absent');
+    assert(artifact.includes('selectedShort+" Loser Day"'), 'Consolidated selected-instrument day loser card is absent');
+    assert(artifact.includes('selectedShort+" Winner Month"'), 'Consolidated selected-instrument month winner card is absent');
+    assert(artifact.includes('selectedShort+" Loser Month"'), 'Consolidated selected-instrument month loser card is absent');
     assert(artifact.includes('sm-key-captured'), 'Per-tile captured points are absent');
     assert(artifact.includes('bankNiftyMovement'), 'BANKNIFTY movement display is absent');
     assert(artifact.includes('function renderMovementContext'), 'Cash/futures movement split is absent');

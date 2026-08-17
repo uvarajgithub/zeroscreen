@@ -51,6 +51,7 @@ function extractTopRatio(html, label) {
     return m ? parseFloat(m[1].replace(/,/g, "")) : null;
 }
 async function fetchFundamentals(symbol) {
+    var _a, _b;
     const result = {
         symbol, companyName: null, sector: null, marketCap: null, peRatio: null,
         roce: null, roe: null, deRatio: null, promoterPct: null,
@@ -147,10 +148,10 @@ async function fetchFundamentals(symbol) {
             result.week52Low = parseFloat(loMatch[1].replace(/,/g, ""));
         // ── Company About / Description ───────────────────────────────────────────
         // Try several screener.in patterns for the about paragraph
-        const aboutRaw = (html.match(/<div[^>]+class="[^"]*about[^"]*"[^>]*>[\s\S]*?<p[^>]*>([\s\S]*?)<\/p>/) ||
+        const aboutRaw = (_b = (_a = (html.match(/<div[^>]+class="[^"]*about[^"]*"[^>]*>[\s\S]*?<p[^>]*>([\s\S]*?)<\/p>/) ||
             html.match(/<p[^>]+class="[^"]*sub[^"]*"[^>]*>([\s\S]*?)<\/p>/) ||
             html.match(/<div[^>]+class="[^"]*company-info[^"]*"[^>]*>[\s\S]*?<p[^>]*>([\s\S]*?)<\/p>/) ||
-            html.match(/<meta[^>]+name="description"[^>]+content="([^"]{40,})"/))?.[1] ?? null;
+            html.match(/<meta[^>]+name="description"[^>]+content="([^"]{40,})"/))) === null || _a === void 0 ? void 0 : _a[1]) !== null && _b !== void 0 ? _b : null;
         if (aboutRaw) {
             result.about = aboutRaw.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim().substring(0, 1200);
         }

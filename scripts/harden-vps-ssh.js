@@ -1,7 +1,10 @@
 const fs = require('fs');
 const { execFileSync } = require('child_process');
 
-const target = '/etc/ssh/sshd_config.d/99-zeroscreen-key-only.conf';
+// OpenSSH uses the first value it encounters. This file must sort before
+// cloud-init's 50-cloud-init.conf, otherwise its PasswordAuthentication=yes
+// wins even though a later 99-* file says no.
+const target = '/etc/ssh/sshd_config.d/00-zeroscreen-key-only.conf';
 const backup = `${target}.backup-${new Date().toISOString().replace(/[^0-9]/g, '').slice(0, 14)}`;
 const prior = fs.existsSync(target) ? fs.readFileSync(target) : null;
 if (prior) fs.copyFileSync(target, backup, fs.constants.COPYFILE_EXCL);

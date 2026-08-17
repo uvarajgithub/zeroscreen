@@ -54,6 +54,26 @@ assert.equal(payload.consolidated.tiles.length, 27);
 assert(payload.consolidated.tiles.every(tile => tile.underlying === "NIFTY"));
 assert(payload.strategies.every(item => item.name.includes("(NIFTY)")));
 assert.equal(payload.backtest, null);
+assert.match(payload.health.checks.find(check => check.id === "process").source, /nifty-shadow/);
+
+const workerSource = fs.readFileSync(path.join(__dirname, "..", "..", "deployment", "trading-bot", "nifty-shadow.ts"), "utf8");
+const monitorSource = fs.readFileSync(path.join(__dirname, "..", "..", "src", "shadowMonitor.ts"), "utf8");
+const autoTokenSource = fs.readFileSync(path.join(__dirname, "..", "..", "auto_token.js"), "utf8");
+assert.match(workerSource, /candleDay\(c\) === dayIST\(\) && isCompletedCandle\(c\)/);
+assert.match(workerSource, /startedAt \+ 15 \* 60_000 <= nowMs/);
+assert.match(workerSource, /allowEntry && minute < 915/);
+assert.match(workerSource, /wallClockMinute >= 930/);
+assert.match(workerSource, /EOD wall-clock recovery/);
+assert.match(workerSource, /state\.phase = state\.trades > 0 \? "COMPLETED" : "NO TRADE"/);
+assert.match(workerSource, /Date\.now\(\) - 7 \* 86400000/);
+assert.doesNotMatch(workerSource, /Date\.now\(\) - 14 \* 86400000/);
+assert.match(workerSource, /kiteDateTimeIST\(from\), kiteDateTimeIST\(to\)/);
+assert.match(workerSource, /refreshOptionLtp && state\.inTrade && state\.optionSymbol/);
+assert.match(workerSource, /i === today\.length - 1/);
+assert.match(monitorSource, /heartbeatDegraded = \/\\b\(DEGRADED\|ERROR\|FAILED\)\\b\//);
+assert.match(autoTokenSource, /TOKEN_CONSUMER_PM2_NAMES/);
+assert.match(autoTokenSource, /nifty-shadow,drishti-v2-shadow,indicator-shadow/);
+assert.match(autoTokenSource, /pm2 restart \$\{processName\} --update-env/);
 
 fs.rmSync(temp, { recursive: true, force: true });
-console.log("PASS NIFTY shadow API contract, isolated tile identity and P&L calculation");
+console.log("PASS NIFTY shadow API, closed-candle/entry guards, EOD recovery, process identity, and P&L calculation");

@@ -131,14 +131,17 @@ async function sendContactNotification(senderName, senderEmail, subject, message
 async function sendAlertEmail(to, userName, alertName, stocks) {
     const firstName = userName.split(" ")[0];
     const topStocks = stocks.slice(0, 10);
-    const rows = topStocks.map(s => `
+    const rows = topStocks.map(s => {
+        var _a, _b;
+        return `
     <tr>
       <td style="padding:8px 12px;border-bottom:1px solid #e8eeff;font-weight:700;color:#2563eb">${s.symbol}</td>
       <td style="padding:8px 12px;border-bottom:1px solid #e8eeff;font-size:12px;color:#5b6490">${(s.company_name || "—").substring(0, 30)}</td>
-      <td style="padding:8px 12px;border-bottom:1px solid #e8eeff">₹${s.price?.toFixed(2) || "—"}</td>
-      <td style="padding:8px 12px;border-bottom:1px solid #e8eeff;font-weight:700;color:#16a34a">${s.roce?.toFixed(1) || "—"}%</td>
+      <td style="padding:8px 12px;border-bottom:1px solid #e8eeff">₹${((_a = s.price) === null || _a === void 0 ? void 0 : _a.toFixed(2)) || "—"}</td>
+      <td style="padding:8px 12px;border-bottom:1px solid #e8eeff;font-weight:700;color:#16a34a">${((_b = s.roce) === null || _b === void 0 ? void 0 : _b.toFixed(1)) || "—"}%</td>
       <td style="padding:8px 12px;border-bottom:1px solid #e8eeff;font-size:12px;color:${(s.change_pct || 0) >= 0 ? "#16a34a" : "#dc2626"}">${s.change_pct != null ? (s.change_pct >= 0 ? "+" : "") + s.change_pct.toFixed(2) + "%" : "—"}</td>
-    </tr>`).join("");
+    </tr>`;
+    }).join("");
     const html = baseTemplate(`
     <h2>📊 Alert: ${alertName}</h2>
     <p>Hi ${firstName}! Your alert found <strong>${stocks.length} stock${stocks.length !== 1 ? "s" : ""}</strong> matching your criteria today.</p>

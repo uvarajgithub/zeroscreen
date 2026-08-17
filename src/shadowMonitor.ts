@@ -60,7 +60,9 @@ const STRATEGIES: StrategyDefinition[] = [
     stateFile: "drishti-v2-state.json",
   },
   { id: "tt1030", name: "10:30 Breakout (BANKNIFTY)", version: "Current", prefix: "tt1030Shadow", backtestFile: "shadow-strategy-5yr-results.json", stateFile: "tt1030-shadow-state.json" },
+  { id: "tt1030-quality-reversal", name: "10:30 Quality Break 50 Lock (BANKNIFTY)", version: "Signal Close + Profit Lock", prefix: "tt1030Quality", instruments: ["FUTURES", "OPTIONS"], stateFile: "tt1030-quality-state.json" },
   { id: "tt1000", name: "10:00 Breakout (BANKNIFTY)", version: "V1", prefix: "tt1000", backtestFile: "shadow-strategy-5yr-results.json", stateFile: "tt1000-state.json" },
+  { id: "tt1000-quality-breakout", name: "10:00 Quality Breakout (BANKNIFTY)", version: "Quality V2", prefix: "tt1000Quality", instruments: ["FUTURES", "OPTIONS"], stateFile: "tt1000-quality-state.json" },
   { id: "tt0945", name: "09:45 Breakout (BANKNIFTY)", version: "V2 Shadow", prefix: "tt0945", backtestFile: "shadow-strategy-5yr-results.json", stateFile: "tt0945-state.json" },
   { id: "normal-breakout", name: "Normal Breakout (BANKNIFTY)", version: "V1", prefix: "normalBreakoutShadow", backtestFile: "shadow-strategy-5yr-results.json", stateFile: "normal-breakout-v1-state.json" },
   { id: "hybrid-body", name: "Hybrid Body Breakout (BANKNIFTY)", version: "Current", prefix: "hybridShadow", backtestFile: "shadow-strategy-5yr-results.json", stateFile: "hybrid-state.json" },
@@ -93,6 +95,58 @@ function runtimeFiles(strategy: StrategyDefinition, underlying: UnderlyingId): {
   return { heartbeat, state: stateRoot?.strategies?.[strategy.id] || heartbeat?.strategies?.[strategy.id] || {} };
 }
 
+function strategiesForUnderlying(underlying: UnderlyingId): StrategyDefinition[] {
+  return STRATEGIES;
+}
+
+function strategyAvailableForUnderlying(strategy: StrategyDefinition, underlying: UnderlyingId): boolean {
+  if (underlying === "BANKNIFTY") return true;
+  const stateRoot = readJson(UNDERLYINGS.NIFTY.stateFile, {});
+  const heartbeat = readJson(UNDERLYINGS.NIFTY.heartbeatFile, {});
+  const history = readJson(UNDERLYINGS.NIFTY.historyFile, {});
+  const ids = new Set<string>([
+    ...Object.keys(stateRoot?.strategies || {}),
+    ...Object.keys(heartbeat?.strategies || {}),
+    ...Object.keys(history?.strategies || {}),
+  ]);
+  return ids.size ? ids.has(strategy.id) : true;
+}
+
+function parseFirstJsonValue(raw: string): any {
+  const trimmed = raw.replace(/^\uFEFF/, "").trimStart();
+  try {
+    return JSON.parse(trimmed);
+  } catch {}
+
+  const objectAt = trimmed.indexOf("{");
+  const arrayAt = trimmed.indexOf("[");
+  const start = objectAt < 0 ? arrayAt : arrayAt < 0 ? objectAt : Math.min(objectAt, arrayAt);
+  if (start < 0) throw new Error("No JSON value found");
+
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+  for (let i = start; i < trimmed.length; i += 1) {
+    const ch = trimmed[i];
+    if (inString) {
+      if (escaped) escaped = false;
+      else if (ch === "\\") escaped = true;
+      else if (ch === "\"") inString = false;
+      continue;
+    }
+    if (ch === "\"") {
+      inString = true;
+      continue;
+    }
+    if (ch === "{" || ch === "[") depth += 1;
+    if (ch === "}" || ch === "]") {
+      depth -= 1;
+      if (depth === 0) return JSON.parse(trimmed.slice(start, i + 1));
+    }
+  }
+  throw new Error("Incomplete JSON value");
+}
+
 function readJson(file: string, fallback: any): any {
   try {
     const filePath = path.join(BOT_DIR, file);
@@ -100,19 +154,9 @@ function readJson(file: string, fallback: any): any {
     const mtimeMs = fs.statSync(filePath).mtimeMs;
     const cached = jsonFileCache.get(filePath);
     if (cached && cached.mtimeMs === mtimeMs) return cached.value;
-    const raw = fs.readFileSync(filePath, "utf8").replace(/^\uFEFF/, "");
-    try {
-      const value = JSON.parse(raw);
-      jsonFileCache.set(filePath, { mtimeMs, value });
-      return value;
-    } catch {
-      const objectAt = raw.indexOf("{");
-      const arrayAt = raw.indexOf("[");
-      const start = objectAt < 0 ? arrayAt : arrayAt < 0 ? objectAt : Math.min(objectAt, arrayAt);
-      const value = start >= 0 ? JSON.parse(raw.slice(start)) : fallback;
-      jsonFileCache.set(filePath, { mtimeMs, value });
-      return value;
-    }
+    const value = parseFirstJsonValue(fs.readFileSync(filePath, "utf8"));
+    jsonFileCache.set(filePath, { mtimeMs, value });
+    return value;
   } catch {
     return fallback;
   }
@@ -202,6 +246,10 @@ function recentServerLogs(strategy: StrategyDefinition): any[] {
       ? /drishti[_ -]?v2|challenger/i
     : strategy.id === "tt1030"
       ? /\b10[:.]?30\b|\btt1030\b/i
+      : strategy.id === "tt1030-quality-reversal"
+        ? /\b10[:.]?30\b|\bquality\b|\breversal\b|\btt1030Quality\b|\bTT1030_QUALITY\b/i
+      : strategy.id === "tt1000-quality-breakout"
+        ? /\b10[:.]?00\b|\bquality\b|\btt1000Quality\b|\bTT1000_QUALITY\b/i
       : strategy.id === "tt1000"
         ? /\b10[:.]?00\b|\btt1000\b/i
         : strategy.id === "normal-breakout"
@@ -404,6 +452,22 @@ function strategyFields(strategy: StrategyDefinition, hb: any, state: any, instr
     const entry = num(isOptions ? leg.entryPrem : leg.entryIdx ?? hb[`${hbPrefix}Entry`]);
     const direction = text(leg.dir ?? hb[`${hbPrefix}Dir`]);
     const inTrade = !!(leg.inTrade ?? hb[`${hbPrefix}InTrade`]);
+    const processedCandleKeys = stateIsCurrent && Array.isArray(state?.processedCandleKeys) ? state.processedCandleKeys : [];
+    const candleLog = processedCandleKeys.map((key: any, idx: number) => {
+      const time = String(key || "").split("|").pop() || "";
+      const isLast = idx === processedCandleKeys.length - 1;
+      return {
+        idx: idx + 1,
+        time,
+        status: isLast && !inTrade ? "done" : "processed",
+        note: isLast && !inTrade ? "processed through latest candle" : "processed",
+      };
+    });
+    const phase = inTrade
+      ? "IN TRADE"
+      : todayRows.length || processedCandleKeys.some((key: any) => String(key).endsWith("|15:15"))
+        ? "DONE"
+        : hb.status;
     const publishedUnrealized = num(hb[isOptions ? `${hbPrefix}OptionsUnrealizedPnL` : `${hbPrefix}FuturesUnrealizedPnL`]);
     const unrealized = publishedUnrealized ?? (inTrade && live !== null && entry !== null
       ? isOptions
@@ -427,13 +491,13 @@ function strategyFields(strategy: StrategyDefinition, hb: any, state: any, instr
       quantity,
       entryTime: null,
       entryAt: null,
-      phase: text(leg.inTrade ? "IN TRADE" : todayRows.length ? "DONE" : hb.status),
+      phase: text(phase),
       dayHigh: null,
       dayLow: null,
       volume: null,
       openInterest: null,
       rawTrades,
-      candleLog: [],
+      candleLog,
     };
   }
 
@@ -820,7 +884,9 @@ function shadowHistory(strategy: StrategyDefinition, instrument: InstrumentType,
   };
   const monthlyHistoryKey: Record<string, string> = {
     tt1030Shadow: "TEN_THIRTY",
+    tt1030Quality: "TEN_THIRTY_QUALITY",
     tt1000: "TEN_O_CLOCK",
+    tt1000Quality: "TEN_O_CLOCK_QUALITY",
     tt0945: "NINE_FORTY_FIVE",
     normalBreakoutShadow: "NORMAL_BREAKOUT_V1",
     hybridShadow: "HYBRID_BODY",
@@ -829,7 +895,9 @@ function shadowHistory(strategy: StrategyDefinition, instrument: InstrumentType,
   const ledgerTypeMap: Record<string, { FUTURES: string; OPTIONS: string }> = {
     drishti: { FUTURES: "DRISHTI_V1", OPTIONS: "DRISHTI_V1_OPT" },
     tt1030Shadow: { FUTURES: "TEN_THIRTY_INDEX", OPTIONS: "TEN_THIRTY_OPT" },
+    tt1030Quality: { FUTURES: "TEN_THIRTY_QUALITY_INDEX", OPTIONS: "TEN_THIRTY_QUALITY_OPT" },
     tt1000: { FUTURES: "TEN_O_CLOCK_INDEX", OPTIONS: "TEN_O_CLOCK_OPT" },
+    tt1000Quality: { FUTURES: "TEN_O_CLOCK_QUALITY_INDEX", OPTIONS: "TEN_O_CLOCK_QUALITY_OPT" },
     normalBreakoutShadow: { FUTURES: "NORMAL_BREAKOUT_V1_INDEX", OPTIONS: "NORMAL_BREAKOUT_V1_OPT" },
     hybridShadow: { FUTURES: "HYBRID_BODY_INDEX", OPTIONS: "HYBRID_BODY_OPT" },
     bodyHoldS1: { FUTURES: "BH_S1_FUT", OPTIONS: "BH_S1_OPT" },
@@ -1068,9 +1136,17 @@ function runtimeEvidence(processName = "trading-bot"): any {
       stdio: ["ignore", "pipe", "ignore"],
     });
     const rows = JSON.parse(raw);
-    const tradingBot = Array.isArray(rows) ? rows.find((row: any) => row?.name === processName) : null;
+    const processNames = [
+      process.env.TRADING_BOT_PM2_NAME,
+      processName,
+      ...(processName === "trading-bot" ? ["amina-100-variant-b"] : []),
+    ].filter((name, index, names): name is string => !!name && names.indexOf(name) === index);
+    const tradingBot = Array.isArray(rows)
+      ? processNames.map(name => rows.find((row: any) => row?.name === name)).find(Boolean)
+      : null;
     if (tradingBot) {
       processInfo = {
+        name: text(tradingBot?.name) || processName,
         status: text(tradingBot?.pm2_env?.status)?.toUpperCase() || "UNKNOWN",
         pid: num(tradingBot?.pid),
         uptimeStartedAt: num(tradingBot?.pm2_env?.pm_uptime),
@@ -1126,7 +1202,9 @@ const STRATEGY_TRIGGER_MINUTES: Record<string, number> = {
   "drishti-v2": 570,
   tt0945: 585,
   tt1000: 600,
+  "tt1000-quality-breakout": 600,
   tt1030: 630,
+  "tt1030-quality-reversal": 630,
   "normal-breakout": 585,
   "hybrid-body": 570,
 };
@@ -1147,20 +1225,34 @@ function systemHealth(
   candles: any[],
   heartbeatAgeSec: number | null,
   externalHealth: any,
+  underlying: UnderlyingId,
 ): any {
-  const processName = strategy.processName || "trading-bot";
+  const processName = underlying === "NIFTY" ? "nifty-shadow" : strategy.processName || "trading-bot";
+  const evidenceStrategy = underlying === "NIFTY"
+    ? { ...strategy, processName, heartbeatFile: UNDERLYINGS.NIFTY.heartbeatFile }
+    : strategy;
   const evidence = runtimeEvidence(processName);
   const processState = String(evidence.process?.status || "UNKNOWN");
   const processOnline = processState === "ONLINE";
+  const reportedHeartbeatStatus = String(hb?.status || "").toUpperCase();
+  const heartbeatDegraded = /\b(DEGRADED|ERROR|FAILED)\b/.test(reportedHeartbeatStatus);
+  const detectedProcessName = evidence.process?.name || processName;
+  const botDirectoryAvailable = fs.existsSync(BOT_DIR);
+  const runtimeExpected = process.env.NODE_ENV === "production"
+    || !!process.env.PM2_HOME
+    || !!process.env.TRADING_BOT_DIR
+    || botDirectoryAvailable;
   const clock = istClock();
   const tradingDay = clock.weekday >= 1 && clock.weekday <= 5;
   const marketOpen = tradingDay && clock.minutes >= NSE_MARKET_OPEN_MINUTES && clock.minutes <= NSE_FO_MARKET_CLOSE_MINUTES;
   const triggerByStrategy: Record<string, { time: string; minutes: number }> = {
     drishti: { time: "09:25", minutes: 565 },
     "drishti-v2": { time: "09:30", minutes: 570 },
-    tt1000: { time: "10:00", minutes: 600 },
-    tt0945: { time: "09:45", minutes: 585 },
+        tt1000: { time: "10:00", minutes: 600 },
+        "tt1000-quality-breakout": { time: "10:00", minutes: 600 },
+        tt0945: { time: "09:45", minutes: 585 },
     tt1030: { time: "10:30", minutes: 630 },
+    "tt1030-quality-reversal": { time: "10:30", minutes: 630 },
     "normal-breakout": { time: "09:45", minutes: 585 },
     "hybrid-body": { time: "09:30", minutes: 570 },
   };
@@ -1188,7 +1280,7 @@ function systemHealth(
       ?? (strategy.id === "drishti" ? hb?.strategy : null)
       ?? fields.phase,
   );
-  const recentLogs = recentServerLogs(strategy);
+  const recentLogs = recentServerLogs(evidenceStrategy);
   const recentRuntimeErrors = recentLogs.filter(row => /UNCAUGHT|CRASH|FATAL|SAVE_FAIL|WRITE_FAIL/i.test(String(row.message || "")));
   let storageWritable = false;
   try {
@@ -1197,7 +1289,7 @@ function systemHealth(
   } catch {
     storageWritable = false;
   }
-  const heartbeatFile = path.join(BOT_DIR, strategy.heartbeatFile || "bot-heartbeat.json");
+  const heartbeatFile = path.join(BOT_DIR, underlying === "NIFTY" ? UNDERLYINGS.NIFTY.heartbeatFile : strategy.heartbeatFile || "bot-heartbeat.json");
   const snapshotReadable = fs.existsSync(heartbeatFile);
   const tokenValid = externalHealth?.token?.valid === true;
   const tokenChecked = !!externalHealth?.token?.source;
@@ -1237,19 +1329,23 @@ function systemHealth(
     {
       id: "process",
       label: "Bot Process",
-      level: processOnline ? "PASS" : "FAIL",
-      value: processOnline ? "Online" : processState === "UNKNOWN" ? "Unknown" : processState,
-      detail: processOnline
-        ? `PID ${evidence.process?.pid || "--"}; uptime ${processUptime}; ${evidence.process?.restarts || 0} lifetime restarts`
-        : `PM2 ${processName} process is not online.`,
-      source: `PM2 jlist (${processName})`,
+      level: processOnline && !heartbeatDegraded ? "PASS" : runtimeExpected ? "FAIL" : "INFO",
+      value: processOnline && heartbeatDegraded ? "Degraded" : processOnline ? "Online" : runtimeExpected ? (processState === "UNKNOWN" ? "Unknown" : processState) : "Not monitored locally",
+      detail: processOnline && heartbeatDegraded
+        ? `${detectedProcessName} is online but reports ${reportedHeartbeatStatus}: ${text(hb?.error) || "runtime tick failure"}`
+        : processOnline
+        ? `${detectedProcessName}; PID ${evidence.process?.pid || "--"}; uptime ${processUptime}; ${evidence.process?.restarts || 0} lifetime restarts`
+        : runtimeExpected
+          ? `PM2 ${processName} process is not online.`
+          : "PM2 bot monitoring is unavailable in this local environment.",
+      source: `PM2 jlist (${detectedProcessName})`,
       critical: true,
     },
     {
       id: "scheduler",
       label: "Scheduler",
-      level: !processOnline ? "FAIL" : !scheduledTrigger ? "PASS" : !marketOpen ? "PASS" : missedTriggers ? "FAIL" : triggerCompleted ? "PASS" : "INFO",
-      value: !processOnline ? "Stopped" : !scheduledTrigger ? "Condition based" : !marketOpen ? "Awaiting next session" : missedTriggers ? "Missed trigger" : triggerCompleted ? "Active" : "Waiting",
+      level: !runtimeExpected ? "INFO" : !processOnline ? "FAIL" : !scheduledTrigger ? "PASS" : !marketOpen ? "PASS" : missedTriggers ? "FAIL" : triggerCompleted ? "PASS" : "INFO",
+      value: !runtimeExpected ? "Not monitored locally" : !processOnline ? "Stopped" : !scheduledTrigger ? "Condition based" : !marketOpen ? "Awaiting next session" : missedTriggers ? "Missed trigger" : triggerCompleted ? "Active" : "Waiting",
       detail: !scheduledTrigger
         ? "No fixed intraday trigger; engine runs from live conditions and heartbeat state."
         : `Expected ${trigger.time}; last evaluation ${latestCandleMinute === null ? "--" : `${String(Math.floor(latestCandleMinute / 60)).padStart(2, "0")}:${String(latestCandleMinute % 60).padStart(2, "0")}`}; missed ${missedTriggers}`,
@@ -1259,8 +1355,8 @@ function systemHealth(
     {
       id: "trigger",
       label: "Latest Automatic Trigger",
-      level: !scheduledTrigger ? "INFO" : !marketOpen ? "INFO" : missedTriggers ? "FAIL" : triggerCompleted ? "PASS" : triggerDue ? "WARN" : "INFO",
-      value: !scheduledTrigger ? "Condition based" : !marketOpen ? "Next session" : missedTriggers ? "Missed" : triggerCompleted ? "Completed" : "Pending",
+      level: !runtimeExpected ? "INFO" : !scheduledTrigger ? "INFO" : !marketOpen ? "INFO" : missedTriggers ? "FAIL" : triggerCompleted ? "PASS" : triggerDue ? "WARN" : "INFO",
+      value: !runtimeExpected ? "Not monitored locally" : !scheduledTrigger ? "Condition based" : !marketOpen ? "Next session" : missedTriggers ? "Missed" : triggerCompleted ? "Completed" : "Pending",
       detail: !scheduledTrigger
         ? "Entry is driven by live strategy conditions rather than a fixed clock trigger."
         : `Scheduled ${trigger.time}; latest strategy evaluation ${latestCandleMinute === null ? "--" : `${String(Math.floor(latestCandleMinute / 60)).padStart(2, "0")}:${String(latestCandleMinute % 60).padStart(2, "0")}`}`,
@@ -1270,11 +1366,16 @@ function systemHealth(
     {
       id: "heartbeat",
       label: "Strategy Heartbeat",
-      level: !marketOpen && processOnline ? "INFO" : freshHeartbeat ? "PASS" : delayedHeartbeat ? "WARN" : "FAIL",
-      value: !marketOpen && processOnline
+      level: !runtimeExpected ? "INFO" : heartbeatDegraded ? "FAIL" : !marketOpen && processOnline ? "INFO" : freshHeartbeat ? "PASS" : delayedHeartbeat ? "WARN" : "FAIL",
+      value: !runtimeExpected
+        ? "Not monitored locally"
+        : heartbeatDegraded ? reportedHeartbeatStatus
+        : !marketOpen && processOnline
         ? "Idle after market close"
         : heartbeatAgeSec === null ? "Missing" : `${heartbeatAgeSec}s ago`,
-      detail: !marketOpen && processOnline
+      detail: heartbeatDegraded
+        ? text(hb?.error) || "Worker heartbeat reports a runtime failure."
+        : !marketOpen && processOnline
         ? "The PM2 process is online; an active strategy heartbeat is not required outside market hours."
         : `Expected within ${HEARTBEAT_HEALTHY_SEC}s; critical after ${HEARTBEAT_CRITICAL_SEC}s`,
       source: "bot-heartbeat.json",
@@ -1283,8 +1384,8 @@ function systemHealth(
     {
       id: "marketHeartbeat",
       label: "Market Data Heartbeat",
-      level: !marketOpen ? "INFO" : freshHeartbeat && ((livePrice !== null && livePrice > 0) || completedWithoutLivePrice) ? "PASS" : delayedHeartbeat ? "WARN" : "FAIL",
-      value: !marketOpen ? "Market closed" : freshHeartbeat ? "Receiving" : "Stale",
+      level: !runtimeExpected ? "INFO" : !marketOpen ? "INFO" : freshHeartbeat && ((livePrice !== null && livePrice > 0) || completedWithoutLivePrice) ? "PASS" : delayedHeartbeat ? "WARN" : "FAIL",
+      value: !runtimeExpected ? "Not monitored locally" : !marketOpen ? "Market closed" : freshHeartbeat ? "Receiving" : "Stale",
       detail: completedWithoutLivePrice && !(livePrice !== null && livePrice > 0)
         ? `Strategy phase ${fields.phase}; heartbeat ${heartbeatAgeSec === null ? "missing" : `${heartbeatAgeSec}s ago`}; no open-position LTP required.`
         : `Latest price ${livePrice ?? "--"}; heartbeat ${heartbeatAgeSec === null ? "missing" : `${heartbeatAgeSec}s ago`}`,
@@ -1294,8 +1395,8 @@ function systemHealth(
     {
       id: "feed",
       label: "Feed Freshness",
-      level: !marketOpen ? "INFO" : freshHeartbeat && ((livePrice !== null && livePrice > 0) || completedWithoutLivePrice) ? "PASS" : delayedHeartbeat ? "WARN" : "FAIL",
-      value: !marketOpen ? "Market closed" : livePrice || completedWithoutLivePrice ? "Fresh" : "No price",
+      level: !runtimeExpected ? "INFO" : !marketOpen ? "INFO" : freshHeartbeat && ((livePrice !== null && livePrice > 0) || completedWithoutLivePrice) ? "PASS" : delayedHeartbeat ? "WARN" : "FAIL",
+      value: !runtimeExpected ? "Not monitored locally" : !marketOpen ? "Market closed" : livePrice || completedWithoutLivePrice ? "Fresh" : "No price",
       detail: !marketOpen
         ? `Fresh ticks are not required outside market hours. Last event: ${latestFeedLog?.message || "not published"}`
         : completedWithoutLivePrice && !(livePrice !== null && livePrice > 0)
@@ -1307,8 +1408,8 @@ function systemHealth(
     {
       id: "candles",
       label: "Candle Generation",
-      level: duplicateCandles > 0 ? "FAIL" : !scheduledTrigger && !candles.length ? "INFO" : !marketOpen ? "INFO" : missedTriggers ? "FAIL" : gapCount > 0 ? "WARN" : triggerCompleted ? "PASS" : "INFO",
-      value: duplicateCandles ? `${duplicateCandles} duplicate` : !scheduledTrigger && !candles.length ? "Not required" : !marketOpen ? "Next session" : gapCount ? `${gapCount} gap` : triggerCompleted ? "Updating" : "Waiting",
+      level: duplicateCandles > 0 ? "FAIL" : !runtimeExpected && !candles.length ? "INFO" : !scheduledTrigger && !candles.length ? "INFO" : !marketOpen ? "INFO" : missedTriggers ? "FAIL" : gapCount > 0 ? "WARN" : triggerCompleted ? "PASS" : "INFO",
+      value: duplicateCandles ? `${duplicateCandles} duplicate` : !runtimeExpected && !candles.length ? "Not monitored locally" : !scheduledTrigger && !candles.length ? "Not required" : !marketOpen ? "Next session" : gapCount ? `${gapCount} gap` : triggerCompleted ? "Updating" : "Waiting",
       detail: !scheduledTrigger && !candles.length
         ? "This condition-based engine publishes live heartbeat and position state instead of a scheduled candle log."
         : `${candles.length} candles; latest ${candles[0]?.time || "--"}; duplicate ${duplicateCandles}; gaps ${gapCount}`,
@@ -1318,8 +1419,8 @@ function systemHealth(
     {
       id: "strategy",
       label: "Strategy Engine",
-      level: !processOnline || recentRuntimeErrors.length ? "FAIL" : strategyMarker || candles.length ? "PASS" : "WARN",
-      value: !processOnline ? "Offline" : recentRuntimeErrors.length ? "Runtime error" : strategyMarker || candles.length ? "Loaded" : "Unverified",
+      level: !runtimeExpected ? "INFO" : !processOnline || recentRuntimeErrors.length ? "FAIL" : strategyMarker || candles.length ? "PASS" : "WARN",
+      value: !runtimeExpected ? "Not monitored locally" : !processOnline ? "Offline" : recentRuntimeErrors.length ? "Runtime error" : strategyMarker || candles.length ? "Loaded" : "Unverified",
       detail: `${strategy.name}; version ${strategy.version}; phase ${fields.phase || "--"}; recent fatal errors ${recentRuntimeErrors.length}`,
       source: "Heartbeat strategy fields + PM2 logs",
       critical: true,
@@ -1327,8 +1428,8 @@ function systemHealth(
     {
       id: "futuresExecutor",
       label: "Futures Shadow Executor",
-      level: futuresReady ? "PASS" : processOnline ? "WARN" : "FAIL",
-      value: futuresReady ? "Ready" : "Unverified",
+      level: !runtimeExpected ? "INFO" : futuresReady ? "PASS" : processOnline ? "WARN" : "FAIL",
+      value: !runtimeExpected ? "Not monitored locally" : futuresReady ? "Ready" : "Unverified",
       detail: `Futures execution adapter; selected strategy ${strategy.name}; mode SHADOW`,
       source: "Futures strategy runtime fields",
       critical: true,
@@ -1336,8 +1437,8 @@ function systemHealth(
     {
       id: "optionsExecutor",
       label: "Options Shadow Executor",
-      level: supportsOptions ? (optionsReady ? "PASS" : processOnline ? "WARN" : "FAIL") : "INFO",
-      value: supportsOptions ? (optionsReady ? "Ready" : "Unverified") : "Not used",
+      level: !runtimeExpected ? "INFO" : supportsOptions ? (optionsReady ? "PASS" : processOnline ? "WARN" : "FAIL") : "INFO",
+      value: !runtimeExpected ? "Not monitored locally" : supportsOptions ? (optionsReady ? "Ready" : "Unverified") : "Not used",
       detail: supportsOptions
         ? `Options execution adapter; selected strategy ${strategy.name}; mode SHADOW`
         : `${strategy.name} is intentionally futures-only.`,
@@ -1347,8 +1448,8 @@ function systemHealth(
     {
       id: "storage",
       label: "Database & Storage",
-      level: databaseOK && storageWritable && snapshotReadable && !recentRuntimeErrors.some(row => /SAVE_FAIL|WRITE_FAIL/i.test(String(row.message || ""))) ? "PASS" : "FAIL",
-      value: databaseOK && storageWritable ? "Connected" : "Unavailable",
+      level: !databaseOK ? "FAIL" : !runtimeExpected ? "INFO" : storageWritable && snapshotReadable && !recentRuntimeErrors.some(row => /SAVE_FAIL|WRITE_FAIL/i.test(String(row.message || ""))) ? "PASS" : "FAIL",
+      value: !databaseOK ? "Database unavailable" : !runtimeExpected ? "Local database connected" : storageWritable ? "Connected" : "Unavailable",
       detail: `SQLite ${databaseOK ? "readable" : "failed"}; bot storage ${storageWritable ? "writable" : "not writable"}; heartbeat snapshot ${snapshotReadable ? "readable" : "missing"}`,
       source: "SQLite SELECT 1 + filesystem access",
       critical: true,
@@ -1356,8 +1457,8 @@ function systemHealth(
     {
       id: "token",
       label: "Broker Token",
-      level: tokenValid ? "PASS" : marketOpen ? "FAIL" : tokenChecked ? "WARN" : "INFO",
-      value: tokenValid ? "Valid" : tokenChecked ? "Invalid" : "Not verified",
+      level: tokenValid ? "PASS" : !runtimeExpected ? "INFO" : marketOpen ? "FAIL" : tokenChecked ? "WARN" : "INFO",
+      value: tokenValid ? "Valid" : !runtimeExpected ? "Not configured locally" : tokenChecked ? "Invalid" : "Not verified",
       detail: tokenValid
         ? `Kite profile verified; auto refresh ${autoRefreshDetail}`
         : `${externalHealth?.token?.error || "Profile validation unavailable"}; auto refresh ${autoRefreshDetail}`,
@@ -1423,11 +1524,15 @@ function bankNiftyMovement(): any {
     ? heartbeat.bankNiftyFuturesSession
     : null;
   const candidateLogs = [
+    heartbeat?.tt1030QualityCandleLog,
     heartbeat?.tt1030ShadowCandleLog,
     heartbeat?.tt1030CandleLog,
+    heartbeat?.tt1000QualityCandleLog,
     heartbeat?.tt1000CandleLog,
     heartbeat?.tt0945CandleLog,
     readJson("tt1030-shadow-state.json", {})?.candleLog,
+    readJson("tt1030-quality-state.json", {})?.candleLog,
+    readJson("tt1000-quality-state.json", {})?.candleLog,
     readJson("ema-trend-state.json", {})?.candleLog,
   ].filter(Array.isArray) as any[][];
   const rows = candidateLogs
@@ -1517,11 +1622,22 @@ function capitalForTrade(row: any, instrument: InstrumentType): number {
 }
 
 function consolidatedShadowSummary(externalHealth: any = {}, underlying: UnderlyingId = "BANKNIFTY"): any {
-  const tradeDate = todayIST();
+  const today = todayIST();
   const market = marketStatus();
+  const availableStrategies = strategiesForUnderlying(underlying);
+  const latestHistoryDate = availableStrategies.flatMap(strategy =>
+    (strategy.instruments || (["FUTURES", "OPTIONS"] as InstrumentType[])).flatMap(instrument =>
+      (shadowHistory(strategy, instrument, false, underlying).days || [])
+        .filter((row: any) => (num(row?.trades) ?? 0) > 0)
+        .map((row: any) => String(row?.date || row?.period || ""))
+        .filter(date => date && date <= today)
+    )
+  ).sort().reverse()[0] || "";
+  const tradeDate = market === "OPEN" ? today : latestHistoryDate || today;
   const tiles: any[] = [];
 
-  for (const strategy of STRATEGIES) {
+  for (const strategy of availableStrategies) {
+    const strategyAvailable = strategyAvailableForUnderlying(strategy, underlying);
     const runtime = runtimeFiles(strategy, underlying);
     const heartbeat = runtime.heartbeat;
     const strategyState = runtime.state;
@@ -1552,17 +1668,24 @@ function consolidatedShadowSummary(externalHealth: any = {}, underlying: Underly
       const historyPnl = num(todayHistory?.pnl);
       const tradeCount = Math.max(num(fields.trades) ?? 0, closedTrades.length, historyTrades, fields.inTrade ? 1 : 0);
       const capitalDeployed = tradeCount > 0
-        ? (instrument === "OPTIONS" ? OPTIONS_CAPITAL_FALLBACK : FUTURES_CAPITAL_FALLBACK)
+        ? Math.round(num(todayHistory?.capitalDeployed ?? todayHistory?.capitalUsed) ?? (instrument === "OPTIONS" ? OPTIONS_CAPITAL_FALLBACK : FUTURES_CAPITAL_FALLBACK))
         : 0;
-      const hasEvidence = stateIsCurrent || hasStrategyHeartbeatEvidence || trades.length > 0 || !!todayHistory;
-      const missedEvaluation = scheduledEvaluationMissed(strategy.id, fields);
-      const pnl = num(fields.total) ?? historyPnl ?? 0;
+      const hasEvidence = strategyAvailable && (stateIsCurrent || hasStrategyHeartbeatEvidence || trades.length > 0 || !!todayHistory);
+      const missedEvaluation = strategyAvailable && scheduledEvaluationMissed(strategy.id, fields);
+      const hasTradePnl = tradeCount > 0 || fields.inTrade;
+      const pnl = fields.inTrade
+        ? (num(fields.total) ?? historyPnl ?? 0)
+        : hasTradePnl
+          ? (historyPnl ?? num(fields.total) ?? 0)
+          : 0;
       const points = capturedPoints(pnl, num(fields.quantity), tradeCount > 0 || fields.inTrade);
       const returnPct = pnl !== null && capitalDeployed > 0 ? pnl / capitalDeployed * 100 : tradeCount === 0 ? 0 : null;
       const positionState = fields.inTrade
         ? "OPEN"
         : stale
           ? "STALE"
+          : !strategyAvailable
+            ? "NOT CONFIGURED"
           : missedEvaluation
             ? "MISSED"
             : !hasEvidence
@@ -1586,7 +1709,7 @@ function consolidatedShadowSummary(externalHealth: any = {}, underlying: Underly
         openPositions: fields.inTrade ? 1 : 0,
         positionState,
         stale,
-        configured: true,
+        configured: strategyAvailable,
         lastUpdatedAt: heartbeat?.at || strategyState?.savedAt || null,
       });
     }
@@ -1615,6 +1738,7 @@ function consolidatedShadowSummary(externalHealth: any = {}, underlying: Underly
 }
 
 function performanceOverview(hb: any, state: any, tradeDate: string, underlying: UnderlyingId = "BANKNIFTY"): any {
+  const availableStrategies = strategiesForUnderlying(underlying);
   const coverageMonth = tradeDate.slice(0, 7);
   const coverageYear = tradeDate.slice(0, 4);
   const coverageWeek = (() => {
@@ -1626,8 +1750,26 @@ function performanceOverview(hb: any, state: any, tradeDate: string, underlying:
     return `${parsed.getUTCFullYear()}-W${String(week).padStart(2, "0")}`;
   })();
   const rows: Record<"TODAY" | "WEEK" | "MONTH" | "YEAR", any[]> = { TODAY: [], WEEK: [], MONTH: [], YEAR: [] };
+  const liveTodayFallback: any[] = [];
+  const dailyCandidates: any[] = [];
+  const performanceRow = (strategy: StrategyDefinition, instrument: InstrumentType, periodRow: any, fallbackCapital: number) => {
+    const pnl = num(periodRow?.pnl) ?? 0;
+    const trades = num(periodRow?.trades) ?? 0;
+    const capitalUsed = Math.round(num(periodRow?.capitalDeployed ?? periodRow?.capitalUsed) ?? (trades > 0 ? fallbackCapital : 0));
+    return {
+      strategyId: strategy.id,
+      strategyName: strategy.name.replace(" (BANKNIFTY)", ""),
+      instrument,
+      pnl,
+      capitalUsed,
+      returnPct: capitalUsed > 0 ? pnl / capitalUsed * 100 : null,
+      trades,
+      date: periodRow?.date,
+      period: periodRow?.period,
+    };
+  };
 
-  for (const strategy of STRATEGIES) {
+  for (const strategy of availableStrategies) {
     const runtime = runtimeFiles(strategy, underlying);
     const strategyHeartbeat = underlying === "BANKNIFTY" && !strategy.heartbeatFile ? hb : runtime.heartbeat;
     const strategyState = underlying === "BANKNIFTY" && !strategy.stateFile ? state : runtime.state;
@@ -1645,7 +1787,7 @@ function performanceOverview(hb: any, state: any, tradeDate: string, underlying:
       const liveTradeCount = Math.max(trades.length, fields.trades, fields.inTrade ? 1 : 0);
       const liveCapital = liveTradeCount > 0 ? fallbackPerTrade : 0;
       if (liveCapital > 0) {
-        rows.TODAY.push({
+        liveTodayFallback.push({
           strategyId: strategy.id,
           strategyName: strategy.name.replace(" (BANKNIFTY)", ""),
           instrument,
@@ -1657,50 +1799,41 @@ function performanceOverview(hb: any, state: any, tradeDate: string, underlying:
       }
 
       const liveHistory = shadowHistory(strategy, instrument, false, underlying);
+      if (Array.isArray(liveHistory.days)) {
+        for (const day of liveHistory.days) {
+          const date = String(day?.date || day?.period || "");
+          if (!date || date > tradeDate || num(day?.pnl) === null || (num(day?.trades) ?? 0) <= 0) continue;
+          dailyCandidates.push(performanceRow(strategy, instrument, day, fallbackPerTrade));
+        }
+      }
       const week = Array.isArray(liveHistory.weekly)
         ? liveHistory.weekly.find((row: any) => row.period === coverageWeek)
         : null;
       if (week && num(week.pnl) !== null && (num(week.trades) ?? 0) > 0) {
-        rows.WEEK.push({
-          strategyId: strategy.id,
-          strategyName: strategy.name.replace(" (BANKNIFTY)", ""),
-          instrument,
-          pnl: num(week.pnl) ?? 0,
-          capitalUsed: fallbackPerTrade,
-          returnPct: (num(week.pnl) ?? 0) / fallbackPerTrade * 100,
-          trades: num(week.trades) ?? 0,
-        });
+        rows.WEEK.push(performanceRow(strategy, instrument, week, fallbackPerTrade));
       }
       const month = Array.isArray(liveHistory.monthly)
         ? liveHistory.monthly.find((row: any) => row.period === coverageMonth)
         : null;
       if (month && num(month.pnl) !== null && (num(month.trades) ?? 0) > 0) {
-        rows.MONTH.push({
-          strategyId: strategy.id,
-          strategyName: strategy.name.replace(" (BANKNIFTY)", ""),
-          instrument,
-          pnl: num(month.pnl) ?? 0,
-          capitalUsed: fallbackPerTrade,
-          returnPct: (num(month.pnl) ?? 0) / fallbackPerTrade * 100,
-          trades: num(month.trades) ?? 0,
-        });
+        rows.MONTH.push(performanceRow(strategy, instrument, month, fallbackPerTrade));
       }
       const year = Array.isArray(liveHistory.yearly)
         ? liveHistory.yearly.find((row: any) => row.period === coverageYear)
         : null;
       if (year && num(year.pnl) !== null && (num(year.trades) ?? 0) > 0) {
-        rows.YEAR.push({
-          strategyId: strategy.id,
-          strategyName: strategy.name.replace(" (BANKNIFTY)", ""),
-          instrument,
-          pnl: num(year.pnl) ?? 0,
-          capitalUsed: fallbackPerTrade,
-          returnPct: (num(year.pnl) ?? 0) / fallbackPerTrade * 100,
-          trades: num(year.trades) ?? 0,
-        });
+        rows.YEAR.push(performanceRow(strategy, instrument, year, fallbackPerTrade));
       }
     }
   }
+  const latestTradeDate = dailyCandidates
+    .map(row => String(row.date || ""))
+    .filter(Boolean)
+    .sort()
+    .reverse()[0] || "";
+  rows.TODAY = latestTradeDate
+    ? dailyCandidates.filter(row => row.date === latestTradeDate)
+    : liveTodayFallback;
 
   const summarize = (periodRows: any[], label: string, source: "LIVE" | "BACKTEST") => {
     const capitalUsed = periodRows.reduce((sum, row) => sum + Number(row.capitalUsed || 0), 0);
@@ -1708,8 +1841,13 @@ function performanceOverview(hb: any, state: any, tradeDate: string, underlying:
     const best = (instrument: InstrumentType) => periodRows
       .filter(row => row.instrument === instrument)
       .sort((a, b) => Number(b.returnPct) - Number(a.returnPct))[0] || null;
+    const worst = (instrument: InstrumentType) => periodRows
+      .filter(row => row.instrument === instrument)
+      .sort((a, b) => Number(a.returnPct) - Number(b.returnPct))[0] || null;
     const bestOverall = [...periodRows]
       .sort((a, b) => Number(b.returnPct) - Number(a.returnPct))[0] || null;
+    const worstOverall = [...periodRows]
+      .sort((a, b) => Number(a.returnPct) - Number(b.returnPct))[0] || null;
     return {
       label,
       source,
@@ -1718,8 +1856,11 @@ function performanceOverview(hb: any, state: any, tradeDate: string, underlying:
       pnl: Math.round(pnl),
       strategiesCompared: periodRows.length,
       bestOverall,
+      worstOverall,
       bestFutures: best("FUTURES"),
       bestOptions: best("OPTIONS"),
+      worstFutures: worst("FUTURES"),
+      worstOptions: worst("OPTIONS"),
     };
   };
 
@@ -1730,7 +1871,7 @@ function performanceOverview(hb: any, state: any, tradeDate: string, underlying:
       options: "Rs.50,000 allocated capital",
     },
     periods: {
-      TODAY: summarize(rows.TODAY, tradeDate, "LIVE"),
+      TODAY: summarize(rows.TODAY, latestTradeDate || tradeDate, "LIVE"),
       WEEK: summarize(rows.WEEK, coverageWeek || "Current week", "LIVE"),
       MONTH: summarize(rows.MONTH, coverageMonth || "Latest month", "LIVE"),
       YEAR: summarize(
@@ -1745,7 +1886,8 @@ function performanceOverview(hb: any, state: any, tradeDate: string, underlying:
 export function buildShadowMonitorPayload(strategyId = "", instrumentValue = "", externalHealth: any = {}, underlyingValue = "BANKNIFTY"): any {
   const tradeDate = todayIST();
   const underlying = underlyingId(underlyingValue);
-  const strategy = STRATEGIES.find(item => item.id === strategyId) || STRATEGIES[0];
+  const availableStrategies = strategiesForUnderlying(underlying);
+  const strategy = availableStrategies.find(item => item.id === strategyId) || availableStrategies[0] || STRATEGIES[0];
   const requestedInstrument: InstrumentType = instrumentValue === "OPTIONS" ? "OPTIONS" : "FUTURES";
   const instrument: InstrumentType = strategy.instruments?.includes(requestedInstrument)
     ? requestedInstrument
@@ -1813,7 +1955,7 @@ export function buildShadowMonitorPayload(strategyId = "", instrumentValue = "",
     });
   }
   const candles = normalizedCandles(fields.candleLog, hb, instrument);
-  const aggregateHealth = systemHealth(strategy, hb, fields, candles, heartbeatAgeSec, externalHealth);
+  const aggregateHealth = systemHealth(strategy, hb, fields, candles, heartbeatAgeSec, externalHealth, underlying);
   const closedTrades = trades.filter((row: any) => String(row.status).toUpperCase() === "CLOSED");
   const wins = fields.wins || closedTrades.filter((row: any) => (row.pnl ?? 0) > 0).length;
   const losses = fields.losses || closedTrades.filter((row: any) => (row.pnl ?? 0) < 0).length;
@@ -1869,7 +2011,7 @@ export function buildShadowMonitorPayload(strategyId = "", instrumentValue = "",
       executionMode: "SHADOW",
     },
     underlyings: Object.values(UNDERLYINGS).map(item => ({ id: item.id, label: item.label })),
-    strategies: STRATEGIES.map(item => ({
+    strategies: availableStrategies.map(item => ({
       id: item.id,
       name: displayStrategyName(item, underlying),
       version: item.version,
@@ -2415,6 +2557,13 @@ export function renderShadowStrategyMonitorPage(navHtml: string): string {
     .sm-consolidated-mode .sm-shadow-badge{display:none}
     .sm-consolidated-mode .sm-market,.sm-consolidated-mode .sm-refresh{color:#e5e7eb;border-color:rgba(148,163,184,.28);background:rgba(15,23,42,.66)}
     .sm-consolidated{color:#e5e7eb}
+    .sm-consolidated-toolbar{display:flex;align-items:center;justify-content:space-between;gap:12px;margin:0 0 12px;padding:12px 14px;border:1px solid rgba(96,165,250,.2);border-radius:12px;background:rgba(4,10,22,.42)}
+    .sm-consolidated-toolbar-title{display:flex;flex-direction:column;gap:3px;min-width:0}
+    .sm-consolidated-toolbar-title b{color:#f8fafc;font-size:15px}
+    .sm-consolidated-toolbar-title span{color:#9fb0ce;font-size:11px;font-weight:700}
+    .sm-consolidated-instrument{display:grid;grid-template-columns:1fr 1fr;width:250px;height:40px;padding:4px;border:1px solid rgba(148,163,184,.24);border-radius:10px;background:rgba(15,23,42,.72);gap:4px}
+    .sm-consolidated-instrument button{border:0;border-radius:7px;background:transparent;color:#9fb0ce;font-size:13px;font-weight:850;cursor:pointer}
+    .sm-consolidated-instrument button.active{background:#5148e8;color:#fff;box-shadow:0 6px 16px rgba(81,72,232,.26)}
     .sm-movement-strip{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:10px;margin-bottom:12px;padding:12px 14px;border:1px solid rgba(56,189,248,.3);border-radius:12px;background:linear-gradient(135deg,rgba(8,29,52,.96),rgba(12,20,43,.96))}
     .sm-movement-item{min-width:0;padding-left:13px;border-left:1px solid rgba(148,163,184,.2)}.sm-movement-item:first-child{padding-left:0;border-left:0}.sm-movement-item span{display:block;color:#93c5fd;font-size:9px;font-weight:850;letter-spacing:.06em;text-transform:uppercase}.sm-movement-item b{display:block;margin-top:4px;color:#f8fafc;font-size:17px;font-weight:850;font-variant-numeric:tabular-nums}.sm-movement-item small{display:block;margin-top:2px;color:#94a3b8;font-size:10px}.sm-movement-item b.positive{color:#34d399}.sm-movement-item b.negative{color:#fb7185}
     .sm-winner-strip{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin-bottom:12px}
@@ -2475,14 +2624,14 @@ export function renderShadowStrategyMonitorPage(navHtml: string): string {
     .sm-key-tile.top-performer .sm-key-instrument{margin-right:28px}
     .sm-key-bottom{position:relative;z-index:2;display:flex;align-items:center;justify-content:space-between;gap:7px;margin-top:auto;padding-top:9px;color:#e2e8f0;font-size:10px;font-weight:700;text-transform:uppercase}
     .sm-key-state{display:inline-flex;align-items:center;gap:7px;padding:0;background:transparent;font-size:12px;font-weight:800}
-    .sm-key-state.open,.sm-key-state.running,.sm-key-state.closed{color:#4ade80}.sm-key-state.waiting,.sm-key-state.no-trade{color:#bfdbfe}.sm-key-state.stale,.sm-key-state.error,.sm-key-state.blocked,.sm-key-state.missed{color:#fbbf24}
+    .sm-key-state.open,.sm-key-state.running,.sm-key-state.closed{color:#4ade80}.sm-key-state.waiting,.sm-key-state.no-trade{color:#bfdbfe}.sm-key-state.stale,.sm-key-state.error,.sm-key-state.blocked,.sm-key-state.missed,.sm-key-state.eod{color:#fbbf24}
     .sm-key-state.open:before,.sm-key-state.running:before{content:"";width:7px;height:7px;border-radius:50%;background:#34d399;box-shadow:0 0 0 4px rgba(52,211,153,.12)}
     .sm-key-state.waiting:before,.sm-key-state.no-trade:before{content:"";width:7px;height:7px;border-radius:50%;background:#60a5fa;box-shadow:0 0 0 4px rgba(96,165,250,.1)}
-    .sm-key-state.blocked:before,.sm-key-state.stale:before,.sm-key-state.error:before,.sm-key-state.missed:before{content:"";width:7px;height:7px;border-radius:50%;background:#fbbf24;box-shadow:0 0 0 4px rgba(251,191,36,.12)}
+    .sm-key-state.blocked:before,.sm-key-state.stale:before,.sm-key-state.error:before,.sm-key-state.missed:before,.sm-key-state.eod:before{content:"";width:7px;height:7px;border-radius:50%;background:#fbbf24;box-shadow:0 0 0 4px rgba(251,191,36,.12)}
     .sm-consolidated-empty{padding:50px 20px;text-align:center;border:1px dashed rgba(148,163,184,.3);border-radius:14px;color:#94a3b8}
     .sm-consolidated-empty b{display:block;color:#f8fafc;font-size:18px;margin-bottom:7px}
     @media(max-width:1350px){.sm-consolidated-grid{grid-template-columns:repeat(6,minmax(0,1fr));gap:9px}.sm-key-tile{min-height:136px;padding:12px}.sm-key-name{font-size:12px}.sm-key-pnl{font-size:20px}}
-    @media(max-width:1023px){.sm-movement-strip{grid-template-columns:repeat(2,minmax(0,1fr))}.sm-movement-item:nth-child(3){padding-left:0;border-left:0}.sm-winner-strip{grid-template-columns:repeat(2,minmax(0,1fr))}.sm-consolidated-grid{grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}.sm-key-tile{min-height:142px}.sm-key-name{font-size:14px}.sm-key-pnl{font-size:23px}}
+    @media(max-width:1023px){.sm-movement-strip{grid-template-columns:repeat(2,minmax(0,1fr))}.sm-movement-item:nth-child(3){padding-left:0;border-left:0}.sm-winner-strip{grid-template-columns:repeat(4,minmax(0,1fr))}.sm-consolidated-grid{grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}.sm-key-tile{min-height:142px}.sm-key-name{font-size:14px}.sm-key-pnl{font-size:23px}}
     @media(max-width:700px){.sm-consolidated-mode .sm-head{padding:14px;align-items:stretch}.sm-consolidated-mode .sm-head-actions{display:grid;grid-template-columns:1fr auto;gap:8px}.sm-consolidated-mode .sm-refresh-meta{grid-column:1/-1;text-align:left}.sm-consolidated-toggle{height:40px;padding:0 11px}.sm-movement-strip{grid-template-columns:1fr 1fr;padding:11px}.sm-movement-item b{font-size:14px}.sm-winner-strip{grid-template-columns:1fr}.sm-consolidated-groups{gap:14px}.sm-instrument-group{padding:11px}.sm-instrument-group-head{align-items:flex-start}.sm-instrument-group-summary{max-width:58%;font-size:10px}.sm-consolidated-grid{grid-template-columns:1fr;gap:14px}.sm-key-tile{min-height:166px;padding:17px 18px}.sm-key-name{font-size:16px}.sm-key-pnl{margin-top:18px;font-size:27px}.sm-key-return{font-size:15px}}
     @media(max-width:1100px){.sm-pnl{min-height:292px}.sm-pnl .sm-metrics{grid-template-columns:repeat(3,minmax(0,1fr));row-gap:2px}.sm-pnl .sm-metric:nth-child(4){border-left:0}.sm-pnl-value{font-size:clamp(46px,6vw,56px)}}
     @media(max-width:700px){.sm-pnl{min-height:0;padding:16px 14px;border-radius:18px}.sm-pnl-heading{gap:9px}.sm-pnl-heading-icon{width:40px;height:40px;flex-basis:40px}.sm-pnl-heading-copy h2,.sm-pnl .sm-card-head h2{font-size:16px}.sm-pnl-heading-copy p{font-size:10px}.sm-pnl .sm-live-chip{height:30px;min-width:76px;font-size:10px}.sm-pnl-value{margin-top:12px;font-size:clamp(40px,11vw,50px)}.sm-pnl .sm-metrics{grid-template-columns:repeat(2,minmax(0,1fr));row-gap:2px}.sm-pnl .sm-metric,.sm-pnl .sm-metric:nth-child(4){justify-content:flex-start;min-height:56px;padding:7px 6px;border-left:0;border-top:1px solid rgba(151,178,220,.18)}.sm-pnl .sm-metric:nth-child(1),.sm-pnl .sm-metric:nth-child(2){border-top:0}.sm-pnl .sm-metric:nth-child(even){border-left:1px solid rgba(151,178,220,.18)}.sm-pnl-metric-icon{width:32px;height:32px;flex-basis:32px}.sm-pnl .sm-metric b{font-size:14px}.sm-pnl .sm-metric span:not(.sm-pnl-metric-icon){font-size:9px}.sm-pnl .sm-card-foot{align-items:flex-start;line-height:1.4}.sm-backtest-card .sm-backtest{grid-template-columns:repeat(2,minmax(0,1fr))}.sm-backtest-card .sm-bt-cell b{font-size:12px}}
@@ -2507,6 +2656,7 @@ export function renderShadowStrategyMonitorPage(navHtml: string): string {
         </div>
       </header>
       <section class="sm-consolidated sm-consolidated-view" id="consolidatedView" hidden>
+        <div class="sm-consolidated-toolbar"><div class="sm-consolidated-toolbar-title"><b id="consolidatedInstrumentTitle">Futures Consolidated</b><span id="consolidatedInstrumentMeta">All Futures shadow strategies</span></div><div class="sm-consolidated-instrument" role="tablist" aria-label="Consolidated instrument"><button type="button" class="active" data-consolidated-instrument="FUTURES">Futures</button><button type="button" data-consolidated-instrument="OPTIONS">Options</button></div></div>
         <div class="sm-movement-strip" id="bankNiftyMovement"></div>
         <div class="sm-winner-strip" id="consolidatedWinners"></div>
         <div class="sm-consolidated-groups" id="consolidatedGrid"></div>
@@ -2578,12 +2728,12 @@ export function renderShadowStrategyMonitorPage(navHtml: string): string {
       function renderLogs(d){var box=el("logConsole");var nearBottom=box.scrollHeight-box.scrollTop-box.clientHeight<28;var rows=(d.logs||[]).map(function(l){return'<div class="sm-log-line"><span>'+esc(l.time||"--:--:--")+'</span><b class="'+esc(l.level)+'">'+esc(l.level)+'</b><span>'+esc(l.message)+'</span></div>'}).join("");box.innerHTML=rows||'<div class="sm-muted">No server log entries available.</div>';if(state.logStick&&nearBottom)box.scrollTop=box.scrollHeight;el("resumeLogs").hidden=state.logStick}
       function renderSection(name,fn){try{fn()}catch(error){console.error("Shadow monitor "+name+" render failed",error)}}
       function consolidatedKey(t){return [t.underlying||state.underlying,t.strategyId,t.strategyVersion,t.instrumentType,t.executionMode,t.tradeDate].join("|")}
-      function tileClass(t){if(t.positionState==="MISSED")return"missed";if(t.positionState==="ERROR")return"error";if(t.positionState==="STALE")return"stale";if(t.positionState==="OPEN"){var n=Number(t.pnl);return"open "+(n<0?"open-loss":n>0?"open-profit":"open-flat")}return Number(t.pnl)>0?"profit":Number(t.pnl)<0?"loss":"no-trade"}
-      function tileStateLabel(t){if(t.positionState==="MISSED")return"MISSED";if(t.positionState==="ERROR"||t.positionState==="STALE")return"BLOCKED";if(t.positionState==="OPEN")return"RUNNING";return"WAITING"}
-      function winnerCard(period,label){var best=period&&period.bestOverall;if(!best)return'<article class="sm-winner-card"><div class="sm-winner-period"><span class="star">&#9733;</span>'+esc(label)+'</div><div class="sm-winner-empty">No completed trades</div></article>';var positive=Number(best.returnPct)>=0;return'<article class="sm-winner-card"><div class="sm-winner-period"><span class="star">&#9733;</span>'+esc(label)+'</div><div class="sm-winner-main"><div class="sm-winner-name">'+esc(best.strategyName)+'<span class="sm-winner-type">'+esc(best.instrument==="FUTURES"?"FUT":"OPT")+'</span></div><div class="sm-winner-values"><span class="sm-winner-return '+(positive?"sm-positive":"sm-negative")+'">'+pct(best.returnPct)+'</span><span class="sm-winner-pnl">'+money(best.pnl)+' · '+money(best.capitalUsed).replace(/^\\+/,"")+' capital</span></div></div></article>'}
+      function tileClass(t){var marketClosed=state.data&&state.data.market&&state.data.market.status!=="OPEN";if(t.positionState==="MISSED")return"missed";if(t.positionState==="ERROR")return"error";if(t.positionState==="NOT CONFIGURED")return"no-trade";if(t.positionState==="STALE"||marketClosed&&t.positionState==="OPEN")return"stale";if(t.positionState==="OPEN"){var n=Number(t.pnl);return"open "+(n<0?"open-loss":n>0?"open-profit":"open-flat")}return Number(t.pnl)>0?"profit":Number(t.pnl)<0?"loss":"no-trade"}
+      function tileStateLabel(t){var marketClosed=state.data&&state.data.market&&state.data.market.status!=="OPEN";if(t.positionState==="MISSED")return"MISSED";if(t.positionState==="NOT CONFIGURED")return"NOT CONFIGURED";if(t.positionState==="ERROR"||t.positionState==="STALE")return"BLOCKED";if(t.positionState==="OPEN")return marketClosed?"EOD PENDING":"RUNNING";if(t.positionState==="CLOSED")return"CLOSED";if(t.positionState==="NO TRADE")return"NO TRADE";return"WAITING"}
+      function rankCard(row,label,icon){if(!row)return'<article class="sm-winner-card"><div class="sm-winner-period"><span class="star">'+esc(icon||"★")+'</span>'+esc(label)+'</div><div class="sm-winner-empty">No completed trades</div></article>';var positive=Number(row.returnPct)>=0;return'<article class="sm-winner-card"><div class="sm-winner-period"><span class="star">'+esc(icon||"★")+'</span>'+esc(label)+'</div><div class="sm-winner-main"><div class="sm-winner-name">'+esc(row.strategyName)+'<span class="sm-winner-type">'+esc(row.instrument==="FUTURES"?"FUT":"OPT")+'</span></div><div class="sm-winner-values"><span class="sm-winner-return '+(positive?"sm-positive":"sm-negative")+'">'+pct(row.returnPct)+'</span><span class="sm-winner-pnl">'+money(row.pnl)+' · '+money(row.capitalUsed).replace(/^\\+/,"")+' capital</span></div></div></article>'}
       function consolidatedTileMarkup(t){var key=consolidatedKey(t);return'<button class="sm-key-tile" type="button" data-tile-key="'+esc(key)+'" data-strategy="'+esc(t.strategyId)+'" data-instrument="'+esc(t.instrumentType)+'"><span class="sm-key-select-mark" aria-hidden="true" title="Top performer today">&#9733;</span><div class="sm-key-head"><span class="sm-key-name"></span><span class="sm-key-instrument"></span></div><div class="sm-key-pnl"></div><div class="sm-key-return"></div><div class="sm-key-captured"></div><svg class="sm-key-spark" viewBox="0 0 320 58" preserveAspectRatio="none" aria-hidden="true"><polyline points="0,43 18,38 34,42 50,34 68,36 86,30 103,33 120,28 138,31 156,24 175,27 193,20 211,23 230,17 248,19 266,12 284,15 302,8 320,4"/></svg><div class="sm-key-bottom"><span class="sm-key-trades"></span><span class="sm-key-state"></span></div></button>'}
       function consolidatedGroupMarkup(type,tiles){var label=type==="FUTURES"?"Futures":"Options";return'<section class="sm-instrument-group '+type.toLowerCase()+'" data-instrument-group="'+type+'"><header class="sm-instrument-group-head"><h2 class="sm-instrument-group-title">'+label+'</h2><span class="sm-instrument-group-summary" data-group-summary="'+type+'"></span></header><div class="sm-consolidated-grid">'+tiles.map(consolidatedTileMarkup).join("")+'</div></section>'}
-      function renderConsolidated(d){var c=d.consolidated||{};var tiles=c.tiles||[];var periods=d.performance&&d.performance.periods||{};var m=c.bankNiftyMovement||d.market&&d.market.bankNiftyMovement||{};var moveClass=Number(m.movementPoints)>0?"positive":Number(m.movementPoints)<0?"negative":"";el("bankNiftyMovement").innerHTML='<div class="sm-movement-item"><span>BANKNIFTY Movement</span><b class="'+moveClass+'">'+points(m.movementPoints)+'</b><small>Open '+value(m.open)+' &rarr; '+value(m.current)+'</small></div><div class="sm-movement-item"><span>Intraday Range</span><b>'+points(m.rangePoints)+'</b><small>Low '+value(m.low)+' &middot; High '+value(m.high)+'</small></div><div class="sm-movement-item"><span>F&amp;O Session</span><b>'+esc(m.session||"09:15 - 15:40")+'</b><small>Official close 3:40 PM</small></div><div class="sm-movement-item"><span>Measurement</span><b>Net points</b><small>FUT underlying &middot; OPT premium</small></div>';el("consolidatedWinners").innerHTML=winnerCard(periods.TODAY,"Winner Today")+winnerCard(periods.WEEK,"Winner This Week")+winnerCard(periods.MONTH,"Winner This Month")+winnerCard(periods.YEAR,"Winner This Year");var grid=el("consolidatedGrid");if(!tiles.length){grid.innerHTML='<div class="sm-consolidated-empty"><b>No active shadow strategies</b>Configure at least one Futures or Options shadow strategy to view consolidated P&amp;L.</div>';return}var todayBest=periods.TODAY&&periods.TODAY.bestOverall;var top=todayBest?tiles.find(function(t){return t.strategyId===todayBest.strategyId&&t.instrumentType===todayBest.instrument}):null;var topKey=top?consolidatedKey(top):"";var futuresTiles=tiles.filter(function(t){return t.instrumentType==="FUTURES"});var optionsTiles=tiles.filter(function(t){return t.instrumentType==="OPTIONS"});var expected=tiles.map(consolidatedKey).join(",");if(grid.dataset.keys!==expected){grid.dataset.keys=expected;grid.innerHTML=consolidatedGroupMarkup("FUTURES",futuresTiles)+consolidatedGroupMarkup("OPTIONS",optionsTiles)}tiles.forEach(function(t){var key=consolidatedKey(t);var tile=grid.querySelector('[data-tile-key="'+CSS.escape(key)+'"]');if(!tile)return;var cls=tileClass(t);var selected=t.strategyId===state.strategy&&t.instrumentType===state.instrument;var topPerformer=key===topKey&&t.positionState!=="OPEN";var previousPnl=Number(tile.dataset.pnl);var nextPnl=Number(t.pnl);var displayPnl=Number.isFinite(nextPnl)?nextPnl:0;var shouldFlash=t.positionState==="OPEN"&&Number.isFinite(previousPnl)&&Number.isFinite(displayPnl)&&previousPnl!==displayPnl;var flashClass=shouldFlash?(displayPnl>previousPnl?"flash-up":"flash-down"):"";tile.className="sm-key-tile "+cls+(selected?" selected":"")+(topPerformer?" top-performer":"");if(flashClass){void tile.offsetWidth;tile.classList.add(flashClass)}tile.dataset.pnl=String(displayPnl);tile.querySelector(".sm-key-name").textContent=t.strategyName;tile.querySelector(".sm-key-instrument").textContent=t.instrumentType==="FUTURES"?"FUT":"OPT";tile.querySelector(".sm-key-pnl").innerHTML=money(displayPnl);tile.querySelector(".sm-key-return").textContent=t.positionState==="MISSED"?"Trigger missed":t.positionState==="ERROR"||t.positionState==="STALE"?"Needs attention":t.returnPct==null?"0.00% return":pct(t.returnPct)+" return";var captured=tile.querySelector(".sm-key-captured");captured.className="sm-key-captured "+(Number(t.capturedPoints)>0?"positive":Number(t.capturedPoints)<0?"negative":"");captured.textContent=t.capturedPoints==null?"Captured --":"Captured "+points(t.capturedPoints);tile.querySelector(".sm-key-trades").textContent=value(t.trades,0)+" "+(Number(t.trades)===1?"trade":"trades");var stateNode=tile.querySelector(".sm-key-state");var stateLabel=tileStateLabel(t);stateNode.className="sm-key-state "+stateLabel.toLowerCase();stateNode.textContent=stateLabel;tile.title=(topPerformer?"Top performer today | ":"")+t.strategyName+" "+t.instrumentType+" | "+stateLabel+" | Captured "+points(t.capturedPoints)+" | P&L "+money(displayPnl)+" | Allocated capital "+value(t.capitalDeployed,0)});["FUTURES","OPTIONS"].forEach(function(type){var groupTiles=type==="FUTURES"?futuresTiles:optionsTiles;var total=groupTiles.reduce(function(sum,t){return sum+(Number(t.pnl)||0)},0);var trades=groupTiles.reduce(function(sum,t){return sum+(Number(t.trades)||0)},0);var summary=grid.querySelector('[data-group-summary="'+type+'"]');if(summary)summary.textContent=groupTiles.length+" strategies · "+money(total)+" · "+trades+" trades"})}
+      function renderConsolidated(d){var c=d.consolidated||{};var tiles=c.tiles||[];var periods=d.performance&&d.performance.periods||{};var m=c.bankNiftyMovement||d.market&&d.market.bankNiftyMovement||{};var selectedInstrument=state.instrument==="OPTIONS"?"OPTIONS":"FUTURES";var selectedShort=selectedInstrument==="OPTIONS"?"OPT":"FUT";var selectedLabel=selectedInstrument==="OPTIONS"?"Options":"Futures";document.querySelectorAll("[data-consolidated-instrument]").forEach(function(b){b.classList.toggle("active",b.dataset.consolidatedInstrument===selectedInstrument)});el("consolidatedInstrumentTitle").textContent=selectedLabel+" Consolidated";el("consolidatedInstrumentMeta").textContent="All "+selectedLabel+" shadow strategies";var moveClass=Number(m.movementPoints)>0?"positive":Number(m.movementPoints)<0?"negative":"";el("bankNiftyMovement").innerHTML='<div class="sm-movement-item"><span>BANKNIFTY Movement</span><b class="'+moveClass+'">'+points(m.movementPoints)+'</b><small>Open '+value(m.open)+' &rarr; '+value(m.current)+'</small></div><div class="sm-movement-item"><span>Intraday Range</span><b>'+points(m.rangePoints)+'</b><small>Low '+value(m.low)+' &middot; High '+value(m.high)+'</small></div><div class="sm-movement-item"><span>F&amp;O Session</span><b>'+esc(m.session||"09:15 - 15:40")+'</b><small>Official close 3:40 PM</small></div><div class="sm-movement-item"><span>Measurement</span><b>Net points</b><small>FUT underlying &middot; OPT premium</small></div>';var bestDay=selectedInstrument==="OPTIONS"?"bestOptions":"bestFutures";var worstDay=selectedInstrument==="OPTIONS"?"worstOptions":"worstFutures";el("consolidatedWinners").innerHTML=rankCard(periods.TODAY&&periods.TODAY[bestDay],selectedShort+" Winner Day","&#9733;")+rankCard(periods.TODAY&&periods.TODAY[worstDay],selectedShort+" Loser Day","&#9660;")+rankCard(periods.MONTH&&periods.MONTH[bestDay],selectedShort+" Winner Month","&#9733;")+rankCard(periods.MONTH&&periods.MONTH[worstDay],selectedShort+" Loser Month","&#9660;");var grid=el("consolidatedGrid");var visibleTiles=tiles.filter(function(t){return t.instrumentType===selectedInstrument});if(!visibleTiles.length){grid.innerHTML='<div class="sm-consolidated-empty"><b>No '+selectedLabel+' shadow strategies</b>Configure at least one '+selectedLabel+' shadow strategy to view consolidated P&amp;L.</div>';return}var todayBest=periods.TODAY&&periods.TODAY[bestDay];var top=todayBest?visibleTiles.find(function(t){return t.strategyId===todayBest.strategyId&&t.instrumentType===todayBest.instrument}):null;var topKey=top?consolidatedKey(top):"";var expected=selectedInstrument+"|"+visibleTiles.map(consolidatedKey).join(",");if(grid.dataset.keys!==expected){grid.dataset.keys=expected;grid.innerHTML=consolidatedGroupMarkup(selectedInstrument,visibleTiles)}visibleTiles.forEach(function(t){var key=consolidatedKey(t);var tile=grid.querySelector('[data-tile-key="'+CSS.escape(key)+'"]');if(!tile)return;var cls=tileClass(t);var selected=t.strategyId===state.strategy&&t.instrumentType===state.instrument;var topPerformer=key===topKey&&t.positionState!=="OPEN";var previousPnl=Number(tile.dataset.pnl);var nextPnl=Number(t.pnl);var displayPnl=Number.isFinite(nextPnl)?nextPnl:0;var shouldFlash=t.positionState==="OPEN"&&Number.isFinite(previousPnl)&&Number.isFinite(displayPnl)&&previousPnl!==displayPnl;var flashClass=shouldFlash?(displayPnl>previousPnl?"flash-up":"flash-down"):"";tile.className="sm-key-tile "+cls+(selected?" selected":"")+(topPerformer?" top-performer":"");if(flashClass){void tile.offsetWidth;tile.classList.add(flashClass)}tile.dataset.pnl=String(displayPnl);tile.querySelector(".sm-key-name").textContent=t.strategyName;tile.querySelector(".sm-key-instrument").textContent=t.instrumentType==="FUTURES"?"FUT":"OPT";tile.querySelector(".sm-key-pnl").innerHTML=money(displayPnl);tile.querySelector(".sm-key-return").textContent=t.positionState==="NOT CONFIGURED"?"Not configured for "+(t.underlying||state.underlying):t.positionState==="MISSED"?"Trigger missed":t.positionState==="ERROR"||t.positionState==="STALE"?"Needs attention":t.returnPct==null?"0.00% return":pct(t.returnPct)+" return";var captured=tile.querySelector(".sm-key-captured");captured.className="sm-key-captured "+(Number(t.capturedPoints)>0?"positive":Number(t.capturedPoints)<0?"negative":"");captured.textContent=t.capturedPoints==null?"Captured --":"Captured "+points(t.capturedPoints);tile.querySelector(".sm-key-trades").textContent=value(t.trades,0)+" "+(Number(t.trades)===1?"trade":"trades");var stateNode=tile.querySelector(".sm-key-state");var stateLabel=tileStateLabel(t);stateNode.className="sm-key-state "+stateLabel.toLowerCase();stateNode.textContent=stateLabel;tile.title=(topPerformer?"Top performer today | ":"")+t.strategyName+" "+t.instrumentType+" | "+stateLabel+" | Captured "+points(t.capturedPoints)+" | P&L "+money(displayPnl)+" | Allocated capital "+value(t.capitalDeployed,0)});var total=visibleTiles.reduce(function(sum,t){return sum+(Number(t.pnl)||0)},0);var trades=visibleTiles.reduce(function(sum,t){return sum+(Number(t.trades)||0)},0);var summary=grid.querySelector('[data-group-summary="'+selectedInstrument+'"]');if(summary)summary.textContent=visibleTiles.length+" strategies · "+money(total)+" · "+trades+" trades"}
       function renderMovementContext(d){var c=d.consolidated||{};var m=c.bankNiftyMovement||d.market&&d.market.bankNiftyMovement||{};var cash=m.cash||{};var fut=m.futures||m;var regime=fut.regime||m.regime||{};var cashClass=Number(cash.movementPoints)>0?"positive":Number(cash.movementPoints)<0?"negative":"";var futClass=Number(fut.movementPoints)>0?"positive":Number(fut.movementPoints)<0?"negative":"";el("bankNiftyMovement").innerHTML='<div class="sm-movement-item"><span>Cash Move</span><b class="'+cashClass+'">'+points(cash.movementPoints)+'</b><small>Open '+value(cash.open)+' &rarr; '+value(cash.current)+'</small></div><div class="sm-movement-item"><span>Cash Range</span><b>'+points(cash.rangePoints)+'</b><small>Low '+value(cash.low)+' &middot; High '+value(cash.high)+'</small></div><div class="sm-movement-item"><span>Futures Move</span><b class="'+futClass+'">'+points(fut.movementPoints)+'</b><small>'+esc(fut.symbol||"BANKNIFTY FUT")+'</small></div><div class="sm-movement-item"><span>Futures Range</span><b>'+points(fut.rangePoints)+'</b><small>Low '+value(fut.low)+' &middot; High '+value(fut.high)+'</small></div><div class="sm-movement-item"><span>Market Regime</span><b>'+esc(regime.label||"--")+'</b><small>'+value(regime.directionality)+'% directional &middot; '+esc(regime.suggestedMode||"--")+'</small></div><div class="sm-movement-item"><span>Measurement</span><b>Futures benchmark</b><small>Options premium &middot; cash reference</small></div>'}
       function setViewMode(mode){state.viewMode=mode;var consolidated=mode==="consolidated";el("shadowMonitor").classList.toggle("sm-consolidated-mode",consolidated);el("shadowPage").classList.toggle("sm-consolidated-page",consolidated);el("consolidatedView").hidden=!consolidated;el("monitorTitle").textContent=consolidated?"Consolidated Shadow P&L":"Shadow Strategy Monitor";el("monitorSubtitle").textContent=consolidated?"Today's P&L across all shadow strategies and instruments":"Simulated trades only. No real broker orders are placed.";el("consolidatedToggle").querySelector("span").textContent=consolidated?"Back to Dashboard":"Consolidated P&L";if(consolidated&&state.data){renderConsolidated(state.data);renderMovementContext(state.data)}if(refreshTimer)scheduleRefresh();window.scrollTo({top:0,behavior:"auto"})}
       function render(d){state.data=d;state.instrument=d.identity.instrumentType||state.instrument;localStorage.setItem("zsShadowInstrument",state.instrument);renderSection("strategies",function(){renderStrategies(d.strategies)});renderSection("trades",function(){renderTrades(d)});renderSection("candles",function(){renderCandles(d)});renderSection("health",function(){renderHealth(d);el("healthAction").textContent="View Checks"});renderSection("summary",function(){renderSummary(d)});renderSection("logs",function(){renderLogs(d)});renderSection("consolidated",function(){renderConsolidated(d);renderMovementContext(d)});var m=el("marketStatus");m.className="sm-market "+(d.market.status==="OPEN"?"open":"closed");m.querySelector("span:last-child").textContent="Market "+(d.market.status==="OPEN"?"Open":"Closed");el("refreshMeta").textContent="Last refreshed: "+dt(d.refreshedAt);document.querySelectorAll(".sm-segment [data-instrument]").forEach(function(b){b.classList.toggle("active",b.dataset.instrument===state.instrument)});el("shadowMonitor").classList.remove("sm-loading");el("monitorLoader").classList.remove("active")}
@@ -2591,6 +2741,7 @@ export function renderShadowStrategyMonitorPage(navHtml: string): string {
       el("strategySelect").addEventListener("change",function(){state.userRequestedLoad=true},{capture:true});document.querySelectorAll("[data-instrument]").forEach(function(button){button.addEventListener("click",function(){state.userRequestedLoad=true},{capture:true})});
       el("strategySelect").addEventListener("change",function(){state.strategy=this.value;var selected=state.data&&state.data.strategies&&state.data.strategies.find(function(s){return s.id===state.strategy});var allowed=selected&&selected.instruments||["FUTURES","OPTIONS"];if(allowed.indexOf(state.instrument)<0)state.instrument=allowed[0]||"FUTURES";localStorage.setItem("zsShadowStrategy",state.strategy);localStorage.setItem("zsShadowInstrument",state.instrument);load()});document.querySelectorAll("[data-instrument]").forEach(function(b){b.addEventListener("click",function(){if(this.disabled)return;state.instrument=this.dataset.instrument;localStorage.setItem("zsShadowInstrument",state.instrument);load()})});document.querySelectorAll("[data-performance-period]").forEach(function(b){b.addEventListener("click",function(){state.performancePeriod=this.dataset.performancePeriod;localStorage.setItem("zsShadowPerformancePeriod",state.performancePeriod);if(state.data)renderPerformance(state.data)})});el("refreshAll").addEventListener("click",load);el("logConsole").addEventListener("scroll",function(){if(this.scrollHeight-this.scrollTop-this.clientHeight>=28){state.logStick=false;el("resumeLogs").hidden=false;el("pauseLogs").hidden=true}});el("pauseLogs").addEventListener("click",function(){state.logStick=false;this.hidden=true;el("resumeLogs").hidden=false});el("resumeLogs").addEventListener("click",function(){state.logStick=true;el("logConsole").scrollTop=el("logConsole").scrollHeight;this.hidden=true;el("pauseLogs").hidden=false});el("openHistory").addEventListener("click",function(){var period=state.data&&state.data.history&&state.data.history.trades&&state.data.history.trades.length?"TRADES":"DAILY";document.querySelectorAll("[data-period]").forEach(function(x){x.classList.toggle("active",x.dataset.period===period)});el("historyModal").classList.add("open");renderHistory(period)});el("closeHistory").addEventListener("click",function(){el("historyModal").classList.remove("open")});el("historyModal").addEventListener("click",function(e){if(e.target===this)this.classList.remove("open")});el("openCandles").addEventListener("click",function(){el("candleModal").classList.add("open")});el("closeCandles").addEventListener("click",function(){el("candleModal").classList.remove("open")});el("candleModal").addEventListener("click",function(e){if(e.target===this)this.classList.remove("open")});document.querySelectorAll("[data-period]").forEach(function(b){b.addEventListener("click",function(){document.querySelectorAll("[data-period]").forEach(function(x){x.classList.toggle("active",x===b)});renderHistory(b.dataset.period)})});
       el("consolidatedToggle").addEventListener("click",function(){setViewMode(state.viewMode==="consolidated"?"dashboard":"consolidated")});
+      document.querySelectorAll("[data-consolidated-instrument]").forEach(function(b){b.addEventListener("click",function(){state.instrument=this.dataset.consolidatedInstrument==="OPTIONS"?"OPTIONS":"FUTURES";localStorage.setItem("zsShadowInstrument",state.instrument);if(state.data){renderConsolidated(state.data);renderMovementContext(state.data)}state.userRequestedLoad=true;load(true)})});
       el("consolidatedGrid").addEventListener("click",function(event){var tile=event.target.closest("[data-strategy][data-instrument]");if(!tile)return;state.strategy=tile.dataset.strategy;state.instrument=tile.dataset.instrument;localStorage.setItem("zsShadowStrategy",state.strategy);localStorage.setItem("zsShadowInstrument",state.instrument);setViewMode("dashboard");state.userRequestedLoad=true;load(true)});
       function historyRows(rows,withAction){return'<div class="sm-table-wrap" style="max-height:58vh"><table class="sm-table"><thead><tr><th>Period</th><th>Net P&amp;L</th><th>Capital Used</th><th>Return</th><th>Points</th><th>Trading Days</th><th>Trades</th><th>Wins</th><th>Losses</th><th>Win Rate</th>'+(withAction?'<th>Details</th>':'')+'</tr></thead><tbody>'+rows.map(function(r){return"<tr><td>"+esc(r.period)+"</td><td class='"+clsPnl(r.pnl)+"'>"+money(r.pnl)+"</td><td>"+money(r.capitalUsed).replace(/^\\+/,"")+"</td><td class='"+clsPnl(r.returnPct)+"'>"+pct(r.returnPct)+"</td><td>"+value(r.points)+"</td><td>"+value(r.tradingDays,0)+"</td><td>"+value(r.trades,0)+"</td><td class='sm-positive'>"+value(r.wins,0)+"</td><td class='sm-negative'>"+value(r.losses,0)+"</td><td>"+pct(r.winRate)+"</td>"+(withAction?'<td><button class="sm-month-open" data-month-open="'+esc(r.period)+'">View days</button></td>':'')+"</tr>"}).join("")+"</tbody></table></div>"}
       function renderMonthDays(month){var d=state.data;var b=d&&d.backtest;var rows=(b&&b.days||[]).filter(function(r){return String(r.date||"").slice(0,7)===month}).sort(function(a,z){return String(a.date).localeCompare(String(z.date))});var body=el("historyBody");body.innerHTML='<div class="sm-history-toolbar"><div><h3>'+esc(month)+' daily results</h3><div class="sm-health-note">'+esc(d.identity.strategyName)+' · '+esc(d.identity.instrumentType)+(b.modelled?' · Modelled options':' · Historical candles')+'</div></div><button class="sm-history-btn" id="backToMonths" type="button">Back to months</button></div><div class="sm-table-wrap" style="max-height:58vh"><table class="sm-table"><thead><tr><th>Date</th><th>Net P&amp;L</th><th>Capital Used</th><th>Return</th><th>Gross P&amp;L</th><th>Points</th><th>Trades</th><th>Wins</th><th>Losses</th><th>Exit reasons</th></tr></thead><tbody>'+rows.map(function(r){return"<tr><td>"+esc(r.date)+"</td><td class='"+clsPnl(r.pnl)+"'>"+money(r.pnl)+"</td><td>"+money(r.capitalUsed).replace(/^\\+/,"")+"</td><td class='"+clsPnl(r.returnPct)+"'>"+pct(r.returnPct)+"</td><td class='"+clsPnl(r.grossPnl)+"'>"+money(r.grossPnl)+"</td><td>"+value(r.points)+"</td><td>"+value(r.trades,0)+"</td><td class='sm-positive'>"+value(r.wins,0)+"</td><td class='sm-negative'>"+value(r.losses,0)+"</td><td title='"+esc((r.reasons||[]).join(", "))+"'>"+esc((r.reasons||[]).join(", ")||"--")+"</td></tr>"}).join("")+"</tbody></table></div>";el("backToMonths").addEventListener("click",function(){renderHistory("MONTHLY")})}
@@ -2598,7 +2749,7 @@ export function renderShadowStrategyMonitorPage(navHtml: string): string {
       function renderHealthDetails(health){var h=health||{};var status=String(h.overall||"WARNING").toUpperCase();var stateClass=status==="HEALTHY"?"":status.toLowerCase();el("healthModalState").className="sm-health-state "+stateClass;el("healthModalState").textContent=status;el("healthModalSummary").textContent=h.summary||"Health evidence temporarily unavailable";el("healthModalChecked").textContent="Checked: "+dt(h.checkedAt||new Date().toISOString());var checks=Array.isArray(h.checks)?h.checks:[];el("healthDetails").innerHTML=checks.length?checks.map(function(c){var level=String(c.level||"INFO").toLowerCase();return'<div class="sm-health-row"><div class="sm-health-row-title"><b>'+esc(c.label)+'</b><small>'+esc(c.source||"Runtime evidence")+'</small></div><div class="sm-health-row-value"><span class="sm-check-badge '+level+'">'+esc(c.level||"INFO")+'</span><div>'+esc(c.value||"--")+'</div></div><div class="sm-health-row-detail">'+esc(c.detail||"No additional detail")+'<small>'+(c.critical?"Critical check":"Supporting check")+'</small></div></div>'}).join(""):'<div class="sm-history-state">Health evidence is being refreshed. No failed check was assumed.</div>'}
       renderHealth=function(d){var h=d.health||{};var status=String(h.overall||"CRITICAL").toUpperCase();var healthy=status==="HEALTHY";var warning=status==="WARNING";var checks=Array.isArray(h.checks)?h.checks:[];var check=function(id){return checks.find(function(c){return c.id===id})||{level:"INFO",value:"--",detail:"Evidence unavailable"}};var feed=check("feed");var strategy=check("strategy");var candles=d.candles||[];var count=function(tf){return candles.filter(function(c){return String(c.timeframe).toLowerCase()===tf}).length};var healthCard=el("healthStep");healthCard.classList.toggle("good-step",healthy);healthCard.classList.toggle("warning-step",warning);healthCard.classList.toggle("critical-step",!healthy&&!warning);el("healthIcon").className="sm-health-icon health "+(healthy?"good":warning?"warn":"fail");el("healthValue").className="sm-health-value "+(healthy?"":warning?"warn":"fail");el("healthValue").textContent=h.label||status;el("healthNote").textContent=h.summary||"Health evidence unavailable";var feedGood=feed.level==="PASS";var feedWarn=feed.level==="WARN"||feed.level==="INFO";el("feedStep").classList.toggle("good-step",feedGood);el("feedStep").classList.toggle("warning-step",feedWarn&&!feedGood);el("feedStep").classList.toggle("critical-step",!feedGood&&!feedWarn);el("feedIcon").className="sm-health-icon feed "+(feedGood?"good":feedWarn?"warn":"fail");el("feedValue").textContent=feed.value||h.feed||"--";el("feedNote").textContent=feed.detail||"Market data evidence unavailable";var runtimeGood=strategy.level==="PASS";el("runtimeStep").classList.toggle("good-step",runtimeGood);el("runtimeStep").classList.toggle("warning-step",strategy.level==="WARN"||strategy.level==="INFO");el("runtimeStep").classList.toggle("critical-step",strategy.level==="FAIL");el("runtimeValue").textContent=strategy.value||d.runtime.status;el("runtimeNote").textContent=strategy.detail||((d.runtime.status||"--")+" | "+(d.runtime.version||"--"));el("candleLatest").textContent="Latest: "+(candles[0]&&candles[0].time||"--");el("count1m").textContent=count("1m");el("count5m").textContent=count("5m");el("count15m").textContent=count("15m");var b=d.backtest;el("backtestStep").classList.toggle("good-step",!!b);el("backtestSummary").innerHTML='<div class="sm-health-icon backtest '+(b?"good":"warn")+'"><svg class="sm-icon" viewBox="0 0 24 24"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10Z"/><path d="'+(b?"m8.5 12 2.2 2.2 4.8-5":"M12 8v5m0 3h.01")+'"/></svg></div>'+(b?'<div class="sm-bt-cell"><span>5Y Backtest</span><b title="'+esc((b.coverage||"5Y")+(b.modelled?" · Modelled":" · Historical")+" · "+(b.methodology||b.source))+'">'+esc(b.coverage||"5Y")+'</b></div><div class="sm-bt-cell"><span>5Y P&amp;L</span><b class="'+clsPnl(b.pnl)+'">'+compactMoney(b.pnl,false)+'</b></div><div class="sm-bt-cell"><span>Win Rate</span><b>'+pct(b.winRate)+'</b></div><div class="sm-bt-cell"><span>Max Drawdown</span><b class="sm-negative">'+compactMoney(b.maxDrawdown,true)+'</b></div><div class="sm-bt-cell"><span>Avg Monthly</span><b>'+compactMoney(b.avgMonthlyPnl,false)+'</b></div>':'<div class="sm-bt-cell" style="grid-column:2/-1"><span>5Y Backtest Summary</span><b>No strategy-specific result available</b></div>');renderHealthDetails(h)};
       function bestPerformer(row,label){if(!row)return'<div class="sm-best-group"><span>'+label+'</span><b>No qualifying trades</b><small>--</small><strong>--</strong></div>';return'<div class="sm-best-group"><span>'+label+'</span><b>'+esc(row.strategyName||"--")+'</b><small>'+esc(row.instrument==="OPTIONS"?"Options":"Futures")+'</small><strong class="'+clsPnl(row.returnPct)+'">'+pct(row.returnPct)+'</strong><small class="'+clsPnl(row.pnl)+'">'+money(row.pnl)+'</small></div>'}
-      function renderBestPerformers(d){var periods=d.performance&&d.performance.periods||{};el("bestPerformers").innerHTML=bestPerformer(periods.TODAY&&periods.TODAY.bestOverall,"Best Today")+bestPerformer(periods.MONTH&&periods.MONTH.bestOverall,"Best This Month")+bestPerformer(periods.YEAR&&periods.YEAR.bestOverall,"Best This Year")}
+      function renderBestPerformers(d){var periods=d.performance&&d.performance.periods||{};el("bestPerformers").innerHTML=bestPerformer(periods.TODAY&&periods.TODAY.bestOverall,"Best Last Day")+bestPerformer(periods.MONTH&&periods.MONTH.bestOverall,"Best This Month")+bestPerformer(periods.MONTH&&periods.MONTH.worstOverall,"Loser This Month")}
       renderHealth=function(d){var h=d.health||{};var status=String(h.overall||"WARNING").toUpperCase();var healthy=status==="HEALTHY";var warning=status==="WARNING";var checks=Array.isArray(h.checks)?h.checks:[];var check=function(id){return checks.find(function(c){return c.id===id})||{level:"INFO",value:"--",detail:"Evidence unavailable"}};var feed=check("feed");var healthCard=el("healthStep");healthCard.classList.toggle("good-step",healthy);healthCard.classList.toggle("warning-step",warning);healthCard.classList.toggle("critical-step",!healthy&&!warning);el("healthIcon").className="sm-health-icon health "+(healthy?"good":warning?"warn":"fail");el("healthValue").className="sm-health-value "+(healthy?"":warning?"warn":"fail");el("healthValue").textContent=h.label||status;el("healthNote").textContent=h.summary||"Health evidence temporarily unavailable";el("healthAction").textContent=(h.passedCritical==null?"--":h.passedCritical)+"/"+(h.criticalTotal==null?"--":h.criticalTotal)+" · View checks";var marketClosed=d.market&&d.market.status==="CLOSED";var feedGood=feed.level==="PASS";var feedWarn=marketClosed||feed.level==="WARN"||feed.level==="INFO";el("feedStep").classList.toggle("market-closed-step",marketClosed);el("feedStep").classList.toggle("good-step",feedGood||marketClosed);el("feedStep").classList.toggle("warning-step",feedWarn&&!feedGood&&!marketClosed);el("feedStep").classList.toggle("critical-step",!feedGood&&!feedWarn);el("feedIcon").className="sm-health-icon feed "+(feedGood||marketClosed?"good":feedWarn?"warn":"fail");el("feedValue").textContent=marketClosed?"Market Closed":feedGood?"Connected":feed.level==="WARN"?"Delayed":"Disconnected";el("feedLatestTick").textContent=dt(h.lastTickAt);el("feedLatency").textContent=h.feedLatencyMs==null?"Unavailable":value(h.feedLatencyMs,0)+" ms";el("feedHeartbeat").textContent=esc(h.heartbeatState||"--");var event=h.lastFeedEvent&&h.lastFeedEvent.message||"No feed event published";el("feedEvent").textContent=event.length>64?event.slice(0,61)+"...":event;el("feedEvent").title=event;var b=d.backtest;el("backtestStep").classList.toggle("good-step",!!b);el("backtestSummary").innerHTML='<div class="sm-health-icon backtest '+(b?"good":"warn")+'"><svg class="sm-icon" viewBox="0 0 24 24"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10Z"/><path d="'+(b?"m8.5 12 2.2 2.2 4.8-5":"M12 8v5m0 3h.01")+'"/></svg></div>'+(b?'<div class="sm-bt-cell"><span>5Y Return</span><b class="'+clsPnl(b.returnPct)+'">'+pct(b.returnPct)+'</b></div><div class="sm-bt-cell"><span>Net Backtest P&amp;L</span><b class="'+clsPnl(b.pnl)+'">'+money(b.pnl)+'</b></div><div class="sm-bt-cell"><span>Win Rate</span><b>'+pct(b.winRate)+'</b></div><div class="sm-bt-cell"><span>Max Drawdown</span><b class="sm-negative">'+money(-Math.abs(Number(b.maxDrawdown||0)))+'</b></div><div class="sm-bt-cell"><span>Avg Monthly Return</span><b>'+pct(b.avgMonthlyReturnPct)+'</b></div><div class="sm-bt-cell"><span>Total Trades</span><b>'+value(b.totalTrades,0)+'</b></div>':'<div class="sm-bt-cell"><span>5Y Backtest Summary</span><b>No selected strategy result</b></div>');renderBestPerformers(d);renderHealthDetails(h)};
       renderTrades=function(d){var option=d.identity.instrumentType==="OPTIONS";el("tradeTitle").innerHTML="Today's Trade History <small>(Today Only &middot; "+(option?"Options":"Futures")+")</small>";var headers=["Time","Instrument","Contract","Order Flow","Entry","Exit","Qty","Net P&L","Return %","Status"];var trades=d.trades||[];var rows=trades.slice(0,7).map(function(t){var contract=esc(t.contract||"--");var action=String(t.action||"--").toUpperCase();var exitAction=String(t.exitAction||"--").toUpperCase();var status=esc(t.status||"--");var flow='<span class="sm-order-flow"><span class="sm-action '+action.toLowerCase()+'">'+esc(action)+'</span><span class="sm-flow-arrow">&rarr;</span><span class="sm-action '+exitAction.toLowerCase()+'">'+esc(exitAction)+'</span></span>';var cells=[esc(t.time||"--"),esc(t.instrument||"--"),'<span class="sm-side '+contract.toLowerCase()+'">'+contract+"</span>",flow,value(t.entry),value(t.exit),value(t.quantity,0),'<span class="'+clsPnl(t.pnl)+'">'+money(t.pnl)+"</span>",'<span class="'+clsPnl(t.returnPct)+'">'+pct(t.returnPct)+"</span>",'<span class="sm-tag '+status.toLowerCase()+'">'+status+"</span>"];return"<tr data-trade-id='"+esc(t.tradeId||t.id||"")+"'>"+cells.map(function(c){return"<td>"+c+"</td>"}).join("")+"</tr>"}).join("");el("tradeTable").innerHTML="<thead><tr>"+headers.map(function(h){return"<th>"+esc(h)+"</th>"}).join("")+"</tr></thead><tbody>"+(rows||'<tr><td class="sm-table-empty" colspan="10">No shadow trades recorded today for this strategy and instrument.</td></tr>')+"</tbody>"};
       function tradeHistoryTable(rows){return'<div class="sm-table-wrap" style="max-height:58vh"><table class="sm-table"><thead><tr><th>Date</th><th>Time</th><th>Instrument</th><th>Contract</th><th>Order Flow</th><th>Entry</th><th>Exit</th><th>Qty</th><th>Net P&amp;L</th><th>Return %</th><th>Status</th><th>Reason</th></tr></thead><tbody>'+rows.map(function(t){var action=String(t.action||"--").toUpperCase();var exitAction=String(t.exitAction||"--").toUpperCase();var flow='<span class="sm-order-flow"><span class="sm-action '+action.toLowerCase()+'">'+esc(action)+'</span><span class="sm-flow-arrow">&rarr;</span><span class="sm-action '+exitAction.toLowerCase()+'">'+esc(exitAction)+'</span></span>';return"<tr><td>"+esc(t.date||"--")+"</td><td>"+esc(t.time||"--")+"</td><td>"+esc(t.instrument||"--")+"</td><td><span class='sm-side "+esc(String(t.contract||"").toLowerCase())+"'>"+esc(t.contract||"--")+"</span></td><td>"+flow+"</td><td>"+value(t.entry)+"</td><td>"+value(t.exit)+"</td><td>"+value(t.quantity,0)+"</td><td class='"+clsPnl(t.pnl)+"'>"+money(t.pnl)+"</td><td class='"+clsPnl(t.returnPct)+"'>"+pct(t.returnPct)+"</td><td><span class='sm-tag "+esc(String(t.status||"").toLowerCase())+"'>"+esc(t.status||"--")+"</span></td><td title='"+esc(t.reason||"--")+"'>"+esc(t.reason||"--")+"</td></tr>"}).join("")+"</tbody></table></div>"}

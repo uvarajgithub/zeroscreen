@@ -49,6 +49,7 @@ const db_1 = require("./db");
 const scheduler_1 = require("./scheduler");
 const scraper_1 = require("./scraper");
 const mailer_1 = require("./mailer");
+const nse_1 = require("./nse");
 const crypto_1 = __importDefault(require("crypto"));
 const https_1 = __importDefault(require("https"));
 const fs_1 = __importDefault(require("fs"));
@@ -128,7 +129,19 @@ function strategyParams(s) {
 let _newsCache = [];
 let _newsCacheAt = 0;
 const NEWS_TTL = 5 * 60 * 1000; // 5 min
+function cleanNewsText(value) {
+    return String(value || "")
+        .replace(/^<!\[CDATA\[/, "")
+        .replace(/\]\]>$/, "")
+        .replace(/&amp;/g, "&")
+        .replace(/&quot;/g, "\"")
+        .replace(/&#39;/g, "'")
+        .replace(/&lt;/g, "<")
+        .replace(/&gt;/g, ">")
+        .trim();
+}
 async function fetchMarketNews() {
+    var _a, _b, _c;
     if (Date.now() - _newsCacheAt < NEWS_TTL && _newsCache.length)
         return _newsCache;
     const feeds = [
@@ -159,12 +172,12 @@ async function fetchMarketNews() {
             const xml = await fetchXml(feed.url);
             const items = xml.match(/<item>([\s\S]*?)<\/item>/g) || [];
             for (const item of items.slice(0, 10)) {
-                const title = (item.match(/<title><!\[CDATA\[(.*?)\]\]><\/title>/) ||
-                    item.match(/<title>(.*?)<\/title>/) || [])[1]?.trim() || "";
-                const link = (item.match(/<link>(.*?)<\/link>/) ||
+                const title = cleanNewsText((item.match(/<title><!\[CDATA\[(.*?)\]\]><\/title>/) ||
+                    item.match(/<title>(.*?)<\/title>/) || [])[1] || "");
+                const link = cleanNewsText((item.match(/<link>(.*?)<\/link>/) ||
                     item.match(/<guid[^>]*>(.*?)<\/guid>/) ||
-                    item.match(/<link\s[^>]*href="([^"]+)"/) || [])[1]?.trim() || "";
-                const pubDate = (item.match(/<pubDate>(.*?)<\/pubDate>/) || [])[1]?.trim() || "";
+                    item.match(/<link\s[^>]*href="([^"]+)"/) || [])[1] || "");
+                const pubDate = cleanNewsText((item.match(/<pubDate>(.*?)<\/pubDate>/) || [])[1] || "");
                 if (title && title.length > 10 && link)
                     results.push({ title, link, pubDate, source: feed.source });
             }
@@ -176,6 +189,165 @@ async function fetchMarketNews() {
         _newsCacheAt = Date.now();
     }
     return _newsCache;
+}
+let _newsTradeIdeasCache = [];
+let _newsTradeIdeasCacheAt = 0;
+const NEWS_TRADE_TTL = 10 * 60 * 1000;
+function newsIdeaScore(title) {
+    const t = title.toLowerCase();
+    let score = 50;
+    if (/\b(order|deal|contract|approval|launch|merger|acquisition|stake|profit|beats|upgrade|record|wins?|rally|surge|dividend|buyback)\b/.test(t))
+        score += 18;
+    if (/\b(loss|probe|penalty|downgrade|default|fraud|fire|resigns?|fall|slump|weak|misses)\b/.test(t))
+        score -= 22;
+    if (/\b(results?|earnings|q[1-4]|guidance|board|fundraise|ipo|listing)\b/.test(t))
+        score += 8;
+    return Math.max(5, Math.min(95, score));
+}
+function roundPriceLevel(v) {
+    if (!isFinite(v) || v <= 0)
+        return 0;
+    const tick = v >= 1000 ? 1 : v >= 250 ? 0.5 : 0.1;
+    return Math.round(v / tick) * tick;
+}
+function isNewsTradeEligibleStock(row) {
+    const symbol = String(row.symbol || "").toUpperCase();
+    const company = String(row.company_name || "").toUpperCase();
+    if (!symbol || !Number(row.price || 0))
+        return false;
+    if (/\d/.test(symbol))
+        return false;
+    return !/\b(ETF|ETFS|FUND|MUTUAL|INDEX|NIFTY|SENSEX|BEES|LIQUID|GOLD|SILVER|GSEC|SDL|TBILL)\b/.test(`${symbol} ${company}`);
+}
+function stockMentionedInNews(symbol, companyName, title) {
+    const upperTitle = cleanNewsText(title).toUpperCase();
+    const aliasMap = {
+        APOLLO: ["APOLLO MICRO", "APOLLO MICRO SYSTEMS"],
+        IDEA: ["VODAFONE IDEA", "VI "],
+        RVNL: ["RAIL VIKAS", "RVNL"],
+        SUNPHARMA: ["SUN PHARMA", "SUNPHARMA"],
+        BEL: ["BHARAT ELECTRONICS", "BEL"],
+        BDL: ["BHARAT DYNAMICS", "BDL"],
+        HAL: ["HINDUSTAN AERONAUTICS", "HAL"],
+        IRFC: ["INDIAN RAILWAY FINANCE", "IRFC"],
+        RITES: ["RITES"],
+        IRCON: ["IRCON"],
+    };
+    const cleanSymbol = symbol.toUpperCase().replace(/[^A-Z0-9]/g, "");
+    if (new RegExp(`(^|[^A-Z0-9])${cleanSymbol}([^A-Z0-9]|$)`).test(upperTitle))
+        return true;
+    if ((aliasMap[cleanSymbol] || []).some(alias => new RegExp(`(^|[^A-Z0-9])${alias.replace(/\s+/g, "\\s+")}([^A-Z0-9]|$)`).test(upperTitle)))
+        return true;
+    const companyCore = String(companyName || "")
+        .toUpperCase()
+        .replace(/\b(LIMITED|LTD|THE|CO|COMPANY|CORP|CORPORATION)\b/g, " ")
+        .replace(/[^A-Z0-9]+/g, " ")
+        .trim();
+    const coreTokens = companyCore.split(/\s+/).filter(Boolean);
+    if (coreTokens.length >= 2 && new RegExp(`(^|[^A-Z0-9])${coreTokens.join("\\s+")}([^A-Z0-9]|$)`).test(upperTitle)) {
+        return true;
+    }
+    const words = String(companyName || "")
+        .toUpperCase()
+        .replace(/\b(LIMITED|LTD|INDIA|THE|CO|COMPANY|CORP|CORPORATION|INDUSTRIES|INDUSTRY|ENTERPRISES|BANK|JEWELLER|JEWELLERS|JEWELLERY|MART|FINANCE|FINANCIAL|SERVICES|POWER|STEEL|PHARMA|PHARMACEUTICALS|TEXTILES|INFRA|REALTY|ENERGY|CAPITAL|VENTURE|VENTURES|ENGINEERING|TECH|TECHNOLOGY|SYSTEMS|MOTORS|LOGISTICS|RETAIL|MARKET)\b/g, " ")
+        .split(/[^A-Z0-9]+/)
+        .filter(w => w.length >= 4);
+    const distinctive = [...new Set(words)].slice(0, 4);
+    if (distinctive.length >= 2) {
+        const hits = distinctive.filter(w => new RegExp(`(^|[^A-Z0-9])${w}([^A-Z0-9]|$)`).test(upperTitle));
+        return hits.length >= 2;
+    }
+    return !!distinctive[0] && distinctive[0].length >= 6 && new RegExp(`(^|[^A-Z0-9])${distinctive[0]}([^A-Z0-9]|$)`).test(upperTitle);
+}
+async function buildNewsTradeIdeas(limit = 8) {
+    if (Date.now() - _newsTradeIdeasCacheAt < NEWS_TRADE_TTL && _newsTradeIdeasCache.length >= limit) {
+        return _newsTradeIdeasCache.slice(0, limit);
+    }
+    const news = await fetchMarketNews();
+    if (!news.length)
+        return _newsTradeIdeasCache;
+    let stockRows = await (0, db_1.dbAll)(`
+    SELECT s.symbol, s.company_name, p.price, p.volume, p.day_high AS dayHigh, p.day_low AS dayLow,
+           p.prev_close AS prevClose, p.change_pct AS changePct
+    FROM stocks s
+    JOIN prices p ON p.symbol = s.symbol
+    WHERE p.price IS NOT NULL AND p.day_high IS NOT NULL AND p.day_low IS NOT NULL
+    ORDER BY COALESCE(p.volume, 0) DESC
+    LIMIT 1200
+  `);
+    if (stockRows.length < 100) {
+        stockRows = (await (0, nse_1.fetchLatestBhavcopy)()).map(row => ({ ...row, company_name: null }));
+    }
+    const ideas = [];
+    const seen = new Set();
+    const makeIdea = (item, row) => {
+        if (!isNewsTradeEligibleStock(row))
+            return;
+        if (seen.has(row.symbol))
+            return;
+        seen.add(row.symbol);
+        const price = Number(row.price || 0);
+        if (!price)
+            return;
+        const high = Number(row.dayHigh || price);
+        const low = Number(row.dayLow || price);
+        const range = Math.max(high - low, price * 0.012);
+        const trigger = roundPriceLevel(Math.max(high * 1.002, price * 1.004));
+        const entryLow = trigger;
+        const entryHigh = roundPriceLevel(trigger + range * 0.18);
+        const stopLoss = roundPriceLevel(Math.max(low, trigger - range * 0.55));
+        const target1 = roundPriceLevel(trigger + range * 0.75);
+        const target2 = roundPriceLevel(trigger + range * 1.2);
+        const sellTrigger = roundPriceLevel(Math.min(low * 0.998, price * 0.996));
+        const sellEntryHigh = sellTrigger;
+        const sellEntryLow = roundPriceLevel(sellTrigger - range * 0.18);
+        const sellStopLoss = roundPriceLevel(Math.min(high, sellTrigger + range * 0.55));
+        const sellTarget1 = roundPriceLevel(sellTrigger - range * 0.75);
+        const sellTarget2 = roundPriceLevel(sellTrigger - range * 1.2);
+        const score = newsIdeaScore(item.title) + Math.min(12, Math.max(-8, Number(row.changePct || 0)));
+        const tone = score >= 68 ? "positive" : score >= 45 ? "watch" : "avoid";
+        ideas.push({
+            symbol: row.symbol,
+            companyName: row.company_name || null,
+            newsTitle: item.title,
+            newsLink: item.link,
+            source: item.source,
+            pubDate: item.pubDate,
+            price,
+            changePct: Number(row.changePct || 0),
+            volume: Number(row.volume || 0),
+            trigger,
+            entryLow,
+            entryHigh,
+            stopLoss,
+            target1,
+            target2,
+            sellTrigger,
+            sellEntryLow,
+            sellEntryHigh,
+            sellStopLoss,
+            sellTarget1,
+            sellTarget2,
+            support: roundPriceLevel(low),
+            resistance: roundPriceLevel(high),
+            plan: tone === "avoid"
+                ? "Avoid the middle. Trade only after price breaks either chart edge with volume."
+                : "Use the chart edges: buy above resistance or sell below support; skip inside the range.",
+            score: Math.round(Math.max(5, Math.min(95, score))),
+            tone,
+        });
+    };
+    for (const item of news.slice(0, 20)) {
+        const candidates = stockRows.filter(row => stockMentionedInNews(row.symbol, row.company_name || null, item.title));
+        for (const row of candidates.slice(0, 3)) {
+            makeIdea(item, row);
+        }
+    }
+    _newsTradeIdeasCache = ideas
+        .sort((a, b) => b.score - a.score || Math.abs(b.changePct) - Math.abs(a.changePct))
+        .slice(0, Math.max(limit, 30));
+    _newsTradeIdeasCacheAt = Date.now();
+    return _newsTradeIdeasCache.slice(0, limit);
 }
 // -- Session --------------------------------------------------------------------
 // eslint-disable-next-line @typescript-eslint/no-var-requires
@@ -255,6 +427,7 @@ app.use((_req, res, next) => {
 });
 // -- Analytics middleware -------------------------------------------------------
 app.use((req, _res, next) => {
+    var _a;
     if (req.method === "GET" &&
         !req.path.startsWith("/api/") &&
         !req.path.startsWith("/public/") &&
@@ -264,7 +437,7 @@ app.use((req, _res, next) => {
         const ua = (req.headers["user-agent"] || "").slice(0, 150);
         const ref = (req.headers["referer"] || "").slice(0, 200);
         (0, db_1.dbRun)(`INSERT INTO page_views (path, ip_hash, user_agent, referrer, is_logged_in, created_at)
-       VALUES (?,?,?,?,?,datetime('now','localtime'))`, [req.path, ipHash, ua, ref, req.session?.userId ? 1 : 0]).catch(() => { });
+       VALUES (?,?,?,?,?,datetime('now','localtime'))`, [req.path, ipHash, ua, ref, ((_a = req.session) === null || _a === void 0 ? void 0 : _a.userId) ? 1 : 0]).catch(() => { });
     }
     next();
 });
@@ -357,7 +530,8 @@ function premiumGate(settingKey, featureName) {
     };
 }
 function userIsPremium(req) {
-    const role = req.session?.userRole;
+    var _a;
+    const role = (_a = req.session) === null || _a === void 0 ? void 0 : _a.userRole;
     return role === "premium" || role === "admin";
 }
 /** Returns true if current IST time is within NSE cash-market hours (Mon-Fri 9:15-15:30). */
@@ -449,9 +623,10 @@ function changeColor(c) {
 }
 // -- Nav HTML ------------------------------------------------------------------
 function nav(active, req) {
-    const isLoggedIn = !!(req?.session?.userId);
-    const userName = req?.session?.userName || "";
-    const userRole = req?.session?.userRole || "guest";
+    var _a, _b, _c;
+    const isLoggedIn = !!((_a = req === null || req === void 0 ? void 0 : req.session) === null || _a === void 0 ? void 0 : _a.userId);
+    const userName = ((_b = req === null || req === void 0 ? void 0 : req.session) === null || _b === void 0 ? void 0 : _b.userName) || "";
+    const userRole = ((_c = req === null || req === void 0 ? void 0 : req.session) === null || _c === void 0 ? void 0 : _c.userRole) || "guest";
     const isAdmin = userRole === "admin";
     const isPremium = userRole === "premium" || isAdmin;
     // -- Tier-based dropdowns ---------------------------------------------------
@@ -1440,7 +1615,7 @@ app.get("/auth/google/callback", async (req, res) => {
         req.session.userRole = user.role;
         res.redirect("/");
     }
-    catch {
+    catch (_a) {
         res.redirect("/login?error=Google+sign-in+failed.+Please+try+again");
     }
 });
@@ -1744,12 +1919,13 @@ app.post("/verify-mobile/confirm", requireAuth, async (req, res) => {
 });
 // -- GET / — Screener -----------------------------------------------------------
 app.get("/", async (req, res) => {
+    var _a, _b, _c;
     // Redirect unauthenticated non-guest users to login
-    if (!req.session?.userId) {
+    if (!((_a = req.session) === null || _a === void 0 ? void 0 : _a.userId)) {
         if (req.query.guest === "1") {
             req.session.guestMode = true; // persist guest choice
         }
-        else if (!req.session?.guestMode) {
+        else if (!((_b = req.session) === null || _b === void 0 ? void 0 : _b.guestMode)) {
             res.redirect("/login");
             return;
         }
@@ -2279,7 +2455,7 @@ app.get("/", async (req, res) => {
 
       <!-- Results -->
       <div id="results-section" class="results-header">
-        <span>${stocks.length}${hasNextPage ? "+" : ""} stocks${page > 1 ? ` · Page ${page}` : ""}${activeStrategy ? ` · <strong>${STRATEGIES.find(s => s.id === activeStrategy)?.label || ""}</strong>` : ""}</span>
+        <span>${stocks.length}${hasNextPage ? "+" : ""} stocks${page > 1 ? ` · Page ${page}` : ""}${activeStrategy ? ` · <strong>${((_c = STRATEGIES.find(s => s.id === activeStrategy)) === null || _c === void 0 ? void 0 : _c.label) || ""}</strong>` : ""}</span>
         <span class="tier-pill tier-expert">?? Investors</span>
         <div class="results-actions">
           <button class="btn-ghost" id="cmp-btn" style="display:none" onclick="goCompare()">?? Compare (0)</button>
@@ -2476,6 +2652,7 @@ app.get("/", async (req, res) => {
 });
 // -- GET /stock/:symbol ---------------------------------------------------------
 app.get("/stock/:symbol", async (req, res) => {
+    var _a, _b, _c, _e, _f, _g, _h, _j, _k, _l;
     const symbol = req.params.symbol.toUpperCase();
     const s = await (0, db_1.getStock)(symbol);
     if (!s) {
@@ -2500,10 +2677,86 @@ app.get("/stock/:symbol", async (req, res) => {
         ? Math.max(0, Math.min(100, ((s.price - w52Low) / (w52High - w52Low)) * 100))
         : null;
     // Profit margin % (latest year)
-    const latestProfit = netProfits[netProfits.length - 1] ?? null;
-    const latestRevenue = revenues[revenues.length - 1] ?? null;
+    const latestProfit = (_a = netProfits[netProfits.length - 1]) !== null && _a !== void 0 ? _a : null;
+    const latestRevenue = (_b = revenues[revenues.length - 1]) !== null && _b !== void 0 ? _b : null;
     const profitMargin = (latestProfit != null && latestRevenue && latestRevenue > 0)
         ? (latestProfit / latestRevenue) * 100 : null;
+    let newsTradeIdea = (await buildNewsTradeIdeas(12)).find(idea => idea.symbol.toUpperCase() === symbol) || null;
+    if (!newsTradeIdea && req.query.newsTrade === "1" && s.price && s.day_high && s.day_low) {
+        const range = Math.max(Number(s.day_high) - Number(s.day_low), Number(s.price) * 0.012);
+        const trigger = roundPriceLevel(Math.max(Number(s.day_high) * 1.002, Number(s.price) * 1.004));
+        const sellTrigger = roundPriceLevel(Math.min(Number(s.day_low) * 0.998, Number(s.price) * 0.996));
+        newsTradeIdea = {
+            symbol,
+            companyName: s.company_name || null,
+            newsTitle: `Chart trade plan for ${symbol} from the Daily News Trade Ideas click-through`,
+            newsLink: `/today`,
+            source: "ZeroScreen",
+            pubDate: new Date().toISOString(),
+            price: Number(s.price),
+            changePct: Number(s.change_pct || 0),
+            volume: Number(s.volume || 0),
+            trigger,
+            entryLow: trigger,
+            entryHigh: roundPriceLevel(trigger + range * 0.18),
+            stopLoss: roundPriceLevel(Math.max(Number(s.day_low), trigger - range * 0.55)),
+            target1: roundPriceLevel(trigger + range * 0.75),
+            target2: roundPriceLevel(trigger + range * 1.2),
+            sellTrigger,
+            sellEntryLow: roundPriceLevel(sellTrigger - range * 0.18),
+            sellEntryHigh: sellTrigger,
+            sellStopLoss: roundPriceLevel(Math.min(Number(s.day_high), sellTrigger + range * 0.55)),
+            sellTarget1: roundPriceLevel(sellTrigger - range * 0.75),
+            sellTarget2: roundPriceLevel(sellTrigger - range * 1.2),
+            support: roundPriceLevel(Number(s.day_low)),
+            resistance: roundPriceLevel(Number(s.day_high)),
+            plan: "Use the chart edges: buy above resistance or sell below support; skip inside the range.",
+            score: 50,
+            tone: "watch",
+        };
+    }
+    const tradeOverlay = (() => {
+        if (!newsTradeIdea)
+            return "";
+        const levels = [
+            newsTradeIdea.target2, newsTradeIdea.target1, newsTradeIdea.entryHigh, newsTradeIdea.entryLow,
+            newsTradeIdea.resistance, newsTradeIdea.price, newsTradeIdea.support,
+            newsTradeIdea.sellEntryHigh, newsTradeIdea.sellEntryLow, newsTradeIdea.sellTarget1, newsTradeIdea.sellTarget2,
+        ].filter(v => isFinite(Number(v)) && Number(v) > 0);
+        const hi = Math.max(...levels);
+        const lo = Math.min(...levels);
+        const pad = Math.max((hi - lo) * 0.12, newsTradeIdea.price * 0.01);
+        const top = hi + pad;
+        const bottom = Math.max(0.01, lo - pad);
+        const pos = (v) => Math.max(4, Math.min(96, ((top - v) / (top - bottom)) * 100));
+        const line = (cls, label, value) => `<div class="sdp-plan-line ${cls}" style="top:${pos(value).toFixed(2)}%"><span>${label} &#8377;${value.toFixed(2)}</span></div>`;
+        return `<div class="sdp-trade-overlay" aria-hidden="true">
+      ${line("target", "T2", newsTradeIdea.target2)}
+      ${line("target", "T1", newsTradeIdea.target1)}
+      ${line("buy", "BUY ZONE", newsTradeIdea.entryLow)}
+      ${line("resistance", "RES", newsTradeIdea.resistance)}
+      ${line("ltp", "LTP", newsTradeIdea.price)}
+      ${line("support", "SUP", newsTradeIdea.support)}
+      ${line("sell", "SELL BELOW", newsTradeIdea.sellTrigger)}
+      ${line("shortTarget", "S-T1", newsTradeIdea.sellTarget1)}
+      ${line("shortTarget", "S-T2", newsTradeIdea.sellTarget2)}
+    </div>`;
+    })();
+    const newsTradePanel = newsTradeIdea ? `
+    <div class="sdp-news-plan-card">
+      <div class="sdp-news-plan-head">
+        <div><b>News Trade Plan</b><span>${esc(newsTradeIdea.source)} · ${newsTradeIdea.score}% setup score</span></div>
+        <a href="${esc(newsTradeIdea.newsLink)}" target="_blank" rel="noopener">News source</a>
+      </div>
+      <div class="sdp-news-headline">${esc(newsTradeIdea.newsTitle)}</div>
+      <div class="sdp-plan-grid">
+        <div><span>Chart Resistance</span><b>&#8377;${newsTradeIdea.resistance.toFixed(2)}</b></div>
+        <div><span>Chart Support</span><b>&#8377;${newsTradeIdea.support.toFixed(2)}</b></div>
+        <div class="long"><span>Buy zone</span><b>&#8377;${newsTradeIdea.entryLow.toFixed(2)} - &#8377;${newsTradeIdea.entryHigh.toFixed(2)}</b><small>SL &#8377;${newsTradeIdea.stopLoss.toFixed(2)} · Targets &#8377;${newsTradeIdea.target1.toFixed(2)} / &#8377;${newsTradeIdea.target2.toFixed(2)}</small></div>
+        <div class="short"><span>Sell below</span><b>&#8377;${newsTradeIdea.sellTrigger.toFixed(2)}</b><small>Zone &#8377;${newsTradeIdea.sellEntryLow.toFixed(2)} - &#8377;${newsTradeIdea.sellEntryHigh.toFixed(2)} · SL &#8377;${newsTradeIdea.sellStopLoss.toFixed(2)} · Targets &#8377;${newsTradeIdea.sellTarget1.toFixed(2)} / &#8377;${newsTradeIdea.sellTarget2.toFixed(2)}</small></div>
+      </div>
+      <div class="sdp-plan-rule">${esc(newsTradeIdea.plan)} Planned only: no Trade Page auto-trigger has been placed.</div>
+    </div>` : "";
     res.send(`<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -2512,6 +2765,20 @@ app.get("/stock/:symbol", async (req, res) => {
   <title>${symbol} — ${s.company_name || "Stock"} — ZeroScreen</title>
   <link rel="stylesheet" href="/public/css/style.css">
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.2/dist/chart.umd.min.js"></script>
+  <style>
+    .sdp-news-plan-card{border:1px solid #bfdbfe;background:#f8fbff;border-radius:16px;padding:16px 18px;margin:0 0 16px;box-shadow:0 10px 24px rgba(15,23,42,.06)}
+    .sdp-news-plan-head{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;margin-bottom:9px}
+    .sdp-news-plan-head b{display:block;color:#0f172a;font-size:17px}.sdp-news-plan-head span{display:block;color:#64748b;font-size:12px;margin-top:3px}
+    .sdp-news-plan-head a{color:#2563eb;font-size:12px;font-weight:800;text-decoration:none;white-space:nowrap}.sdp-news-headline{color:#334155;font-size:13px;line-height:1.45;margin-bottom:12px}
+    .sdp-plan-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}.sdp-plan-grid div{border:1px solid #e2e8f0;background:#fff;border-radius:12px;padding:10px;min-width:0}
+    .sdp-plan-grid div.long{border-color:#86efac;background:#f0fdf4}.sdp-plan-grid div.short{border-color:#fecaca;background:#fff1f2}
+    .sdp-plan-grid span{display:block;color:#64748b;font-size:10px;font-weight:900;text-transform:uppercase;letter-spacing:.06em}.sdp-plan-grid b{display:block;color:#0f172a;font-size:15px;margin-top:4px}.sdp-plan-grid small{display:block;color:#475569;font-size:12px;margin-top:5px;line-height:1.35}
+    .sdp-plan-rule{margin-top:10px;color:#475569;font-size:12px;line-height:1.45}.sdp-tv-wrap{position:relative;overflow:hidden}.sdp-trade-overlay{position:absolute;inset:0;pointer-events:none;z-index:4}.sdp-plan-line{position:absolute;left:0;right:0;border-top:2px dashed rgba(59,130,246,.85)}
+    .sdp-plan-line span{position:absolute;right:10px;top:-13px;border-radius:999px;padding:3px 8px;background:#0f172a;color:#fff;font-size:10px;font-weight:900;box-shadow:0 3px 10px rgba(15,23,42,.22)}
+    .sdp-plan-line.buy{border-top-color:#16a34a}.sdp-plan-line.buy span{background:#16a34a}.sdp-plan-line.sell,.sdp-plan-line.shortTarget{border-top-color:#dc2626}.sdp-plan-line.sell span,.sdp-plan-line.shortTarget span{background:#dc2626}
+    .sdp-plan-line.target{border-top-color:#0284c7}.sdp-plan-line.target span{background:#0284c7}.sdp-plan-line.support,.sdp-plan-line.resistance{border-top-color:#7c3aed}.sdp-plan-line.support span,.sdp-plan-line.resistance span{background:#7c3aed}.sdp-plan-line.ltp{border-top-style:solid;border-top-color:#111827}.sdp-plan-line.ltp span{background:#111827}
+    @media(max-width:760px){.sdp-plan-grid{grid-template-columns:1fr}.sdp-plan-line span{right:5px;font-size:9px}}
+  </style>
 </head>
 <body>
   ${nav("", req)}
@@ -2583,14 +2850,16 @@ app.get("/stock/:symbol", async (req, res) => {
       </div>
     </div>
 
+    ${newsTradePanel}
     <!-- -- TRADINGVIEW LIVE CHART -- -->
-    <div class="sdp-section-title">?? Live Price Chart</div>
+    <div class="sdp-section-title">?? Live Price Chart${newsTradeIdea ? " + Planned Trade Zones" : ""}</div>
     <div class="sdp-tv-wrap" id="sdp-tv-outer-${symbol}">
       <iframe id="tv-iframe-${symbol}"
         src="https://s.tradingview.com/widgetembed/?frameElementId=tv-iframe-${symbol}&symbol=NSE%3A${symbol}&interval=D&range=1Y&withdateranges=1&hidesidetoolbar=0&symboledit=0&saveimage=0&toolbarbg=f1f3f6&studies=[]&theme=light&style=1&timezone=Asia%2FKolkata&locale=in"
         style="width:100%;height:550px;border:none;display:block"
         allowtransparency="true" scrolling="no" allowfullscreen>
       </iframe>
+      ${tradeOverlay}
     </div>
     <script>
     (function(){
@@ -2744,11 +3013,11 @@ app.get("/stock/:symbol", async (req, res) => {
     new Chart(document.getElementById('roceRoeChart'), {
       type: 'bar',
       data: { labels: ['ROCE', 'ROE'],
-        datasets: [{ data: [${s.roce ?? null}, ${s.roe ?? null}],
+        datasets: [{ data: [${(_c = s.roce) !== null && _c !== void 0 ? _c : null}, ${(_e = s.roe) !== null && _e !== void 0 ? _e : null}],
           backgroundColor: ['rgba(16,185,129,0.8)', 'rgba(99,102,241,0.8)'],
           borderRadius: 8, borderSkipped: false }] },
       options: { ...baseOpts, plugins: { legend:{display:false} },
-        scales: { y: { ...baseOpts.scales.y, max: Math.max(${Math.ceil(Math.max(s.roce ?? 0, s.roe ?? 0) * 1.4) + 5}, 30) },
+        scales: { y: { ...baseOpts.scales.y, max: Math.max(${Math.ceil(Math.max((_f = s.roce) !== null && _f !== void 0 ? _f : 0, (_g = s.roe) !== null && _g !== void 0 ? _g : 0) * 1.4) + 5}, 30) },
                   x: baseOpts.scales.x } }
     });` : ""}
 
@@ -2757,7 +3026,7 @@ app.get("/stock/:symbol", async (req, res) => {
     new Chart(document.getElementById('promoterChart'), {
       type: 'doughnut',
       data: { labels: ['Promoter', 'Public'],
-        datasets: [{ data: [${s.promoter_pct ?? null}, ${s.promoter_pct != null ? +(100 - s.promoter_pct).toFixed(1) : null}],
+        datasets: [{ data: [${(_h = s.promoter_pct) !== null && _h !== void 0 ? _h : null}, ${s.promoter_pct != null ? +(100 - s.promoter_pct).toFixed(1) : null}],
           backgroundColor: ['rgba(99,102,241,0.85)','rgba(200,200,220,0.25)'],
           borderWidth: 0, cutout: '72%' }] },
       options: { responsive:true, maintainAspectRatio:false,
@@ -2770,7 +3039,7 @@ app.get("/stock/:symbol", async (req, res) => {
     new Chart(document.getElementById('valuationChart'), {
       type: 'bar',
       data: { labels: ['P/E', 'P/B', 'Curr.Ratio', 'Div.Yld'],
-        datasets: [{ data: [${s.pe_ratio ?? null}, ${pbRatio ?? null}, ${s.current_ratio ?? null}, ${s.dividend_yield ?? null}],
+        datasets: [{ data: [${(_j = s.pe_ratio) !== null && _j !== void 0 ? _j : null}, ${pbRatio !== null && pbRatio !== void 0 ? pbRatio : null}, ${(_k = s.current_ratio) !== null && _k !== void 0 ? _k : null}, ${(_l = s.dividend_yield) !== null && _l !== void 0 ? _l : null}],
           backgroundColor: ['rgba(245,158,11,0.8)','rgba(16,185,129,0.8)','rgba(14,165,233,0.8)','rgba(168,85,247,0.8)'],
           borderRadius: 8, borderSkipped: false }] },
       options: { ...baseOpts, indexAxis: 'y',
@@ -2998,10 +3267,11 @@ app.delete("/watchlists/:id", async (req, res) => {
 // -- Admin routes ---------------------------------------------------------------
 // -- GET /admin -----------------------------------------------------------------
 app.get("/admin", requireAdmin, async (req, res) => {
+    var _a, _b, _c, _e, _f, _g;
     res.setHeader("Cache-Control", "no-store");
     const users = await (0, db_1.getAllUsers)();
     const today = new Date().toISOString().slice(0, 10);
-    const todaySignups = users.filter(u => u.created_at?.slice(0, 10) === today).length;
+    const todaySignups = users.filter(u => { var _a; return ((_a = u.created_at) === null || _a === void 0 ? void 0 : _a.slice(0, 10)) === today; }).length;
     const activePicks = await (0, db_1.getActivePicks)();
     const [pvToday, pvTotal, uvToday] = await Promise.all([
         (0, db_1.dbAll)("SELECT COUNT(*) as c FROM page_views WHERE date(created_at) = date('now','localtime')"),
@@ -3012,7 +3282,7 @@ app.get("/admin", requireAdmin, async (req, res) => {
         try {
             return JSON.parse(require("fs").readFileSync(`${BOT_DIR}/trade-state.json`, "utf-8"));
         }
-        catch {
+        catch (_a) {
             return {};
         }
     })();
@@ -3045,15 +3315,15 @@ app.get("/admin", requireAdmin, async (req, res) => {
         <div class="admin-stat-label">New Today</div>
       </div>
       <div class="admin-stat-card">
-        <div class="admin-stat-num">${pvToday[0]?.c ?? 0}</div>
+        <div class="admin-stat-num">${(_b = (_a = pvToday[0]) === null || _a === void 0 ? void 0 : _a.c) !== null && _b !== void 0 ? _b : 0}</div>
         <div class="admin-stat-label">Page Views Today</div>
       </div>
       <div class="admin-stat-card">
-        <div class="admin-stat-num">${uvToday[0]?.c ?? 0}</div>
+        <div class="admin-stat-num">${(_e = (_c = uvToday[0]) === null || _c === void 0 ? void 0 : _c.c) !== null && _e !== void 0 ? _e : 0}</div>
         <div class="admin-stat-label">Unique Visitors Today</div>
       </div>
       <div class="admin-stat-card">
-        <div class="admin-stat-num">${pvTotal[0]?.c ?? 0}</div>
+        <div class="admin-stat-num">${(_g = (_f = pvTotal[0]) === null || _f === void 0 ? void 0 : _f.c) !== null && _g !== void 0 ? _g : 0}</div>
         <div class="admin-stat-label">Total Page Views</div>
       </div>
       <div class="admin-stat-card">
@@ -3235,7 +3505,7 @@ app.get("/admin/users", requireAdmin, async (req, res) => {
     const total = users.length;
     const admins = users.filter(u => u.role === "admin").length;
     const today = new Date().toISOString().slice(0, 10);
-    const todayCount = users.filter(u => u.created_at?.slice(0, 10) === today).length;
+    const todayCount = users.filter(u => { var _a; return ((_a = u.created_at) === null || _a === void 0 ? void 0 : _a.slice(0, 10)) === today; }).length;
     const rows = users.map((u, i) => `
     <tr>
       <td class="admin-num">${i + 1}</td>
@@ -3605,22 +3875,25 @@ app.get("/api/screen/csv", requireAuth, async (req, res) => {
     };
     const stocks = await (0, db_1.screenStocks)(f);
     const header = "Symbol,Company,Sector,Price,Change%,Volume,ROCE%,ROE%,D/E,Promoter%,PE,MarketCap_Cr,AllProfitable,ProfitUptrend";
-    const csvRows = stocks.map(s => [
-        s.symbol,
-        `"${(s.company_name || "").replace(/"/g, '""')}"`,
-        `"${(s.sector || "").replace(/"/g, '""')}"`,
-        s.price?.toFixed(2) || "",
-        s.change_pct?.toFixed(2) || "",
-        s.volume || "",
-        s.roce?.toFixed(2) || "",
-        s.roe?.toFixed(2) || "",
-        s.de_ratio?.toFixed(2) || "",
-        s.promoter_pct?.toFixed(2) || "",
-        s.pe_ratio?.toFixed(1) || "",
-        s.market_cap?.toFixed(0) || "",
-        s.all_profitable ? "Yes" : "No",
-        s.profit_uptrend ? "Yes" : "No",
-    ].join(","));
+    const csvRows = stocks.map(s => {
+        var _a, _b, _c, _e, _f, _g, _h, _j;
+        return [
+            s.symbol,
+            `"${(s.company_name || "").replace(/"/g, '""')}"`,
+            `"${(s.sector || "").replace(/"/g, '""')}"`,
+            ((_a = s.price) === null || _a === void 0 ? void 0 : _a.toFixed(2)) || "",
+            ((_b = s.change_pct) === null || _b === void 0 ? void 0 : _b.toFixed(2)) || "",
+            s.volume || "",
+            ((_c = s.roce) === null || _c === void 0 ? void 0 : _c.toFixed(2)) || "",
+            ((_e = s.roe) === null || _e === void 0 ? void 0 : _e.toFixed(2)) || "",
+            ((_f = s.de_ratio) === null || _f === void 0 ? void 0 : _f.toFixed(2)) || "",
+            ((_g = s.promoter_pct) === null || _g === void 0 ? void 0 : _g.toFixed(2)) || "",
+            ((_h = s.pe_ratio) === null || _h === void 0 ? void 0 : _h.toFixed(1)) || "",
+            ((_j = s.market_cap) === null || _j === void 0 ? void 0 : _j.toFixed(0)) || "",
+            s.all_profitable ? "Yes" : "No",
+            s.profit_uptrend ? "Yes" : "No",
+        ].join(",");
+    });
     const csv = [header, ...csvRows].join("\n");
     const date = new Date().toISOString().slice(0, 10);
     res.setHeader("Content-Type", "text/csv; charset=utf-8");
@@ -3959,7 +4232,7 @@ async function fetchNseMarkets() {
         if (!idxRes.ok)
             throw new Error(`NSE HTTP ${idxRes.status}`);
         const data = await idxRes.json();
-        const indices = data?.data || [];
+        const indices = (data === null || data === void 0 ? void 0 : data.data) || [];
         const pick = (name, label) => {
             const i = indices.find((x) => x.indexSymbol === name || x.index === name);
             if (!i)
@@ -3983,7 +4256,7 @@ async function fetchNseMarkets() {
         return results;
     }
     catch (e) {
-        console.warn("[Markets]", e?.message);
+        console.warn("[Markets]", e === null || e === void 0 ? void 0 : e.message);
         return _mktCache;
     }
 }
@@ -4001,19 +4274,20 @@ async function fetchGlobalMarkets() {
         return _globalCache;
     try {
         const results = await Promise.all(GLOBAL_SYMBOLS.map(async ([sym, label]) => {
+            var _a, _b, _c, _e;
             try {
                 const r = await fetch(`https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(sym)}?interval=1d&range=1d`, { headers: { "User-Agent": "Mozilla/5.0" }, signal: AbortSignal.timeout(8000) });
                 const d = await r.json();
-                const meta = d?.chart?.result?.[0]?.meta;
-                const price = meta?.regularMarketPrice;
-                const prev = meta?.chartPreviousClose ?? meta?.previousClose;
+                const meta = (_c = (_b = (_a = d === null || d === void 0 ? void 0 : d.chart) === null || _a === void 0 ? void 0 : _a.result) === null || _b === void 0 ? void 0 : _b[0]) === null || _c === void 0 ? void 0 : _c.meta;
+                const price = meta === null || meta === void 0 ? void 0 : meta.regularMarketPrice;
+                const prev = (_e = meta === null || meta === void 0 ? void 0 : meta.chartPreviousClose) !== null && _e !== void 0 ? _e : meta === null || meta === void 0 ? void 0 : meta.previousClose;
                 const change = (price && prev) ? +(price - prev).toFixed(2) : 0;
                 const changePct = (price && prev) ? +((price - prev) / prev * 100).toFixed(2) : 0;
                 if (!price)
                     return null;
                 return { symbol: sym, label, price, change, changePct, region: "global" };
             }
-            catch {
+            catch (_f) {
                 return null;
             }
         }));
@@ -4025,7 +4299,7 @@ async function fetchGlobalMarkets() {
         return valid.length ? valid : _globalCache;
     }
     catch (e) {
-        console.warn("[GlobalMarkets]", e?.message);
+        console.warn("[GlobalMarkets]", e === null || e === void 0 ? void 0 : e.message);
         return _globalCache;
     }
 }
@@ -4038,7 +4312,7 @@ app.get("/api/news/:symbol", async (req, res) => {
     const symbol = req.params.symbol.toUpperCase().replace(/[^A-Z0-9]/g, "");
     const s = await (0, db_1.getStock)(symbol);
     // Build search query using company name + NSE to get relevant results
-    const co = s?.company_name ? s.company_name.replace(/[^a-zA-Z0-9 ]/g, " ").trim() : symbol;
+    const co = (s === null || s === void 0 ? void 0 : s.company_name) ? s.company_name.replace(/[^a-zA-Z0-9 ]/g, " ").trim() : symbol;
     const query = encodeURIComponent(`${co} NSE India stock`);
     const feedUrl = `https://news.google.com/rss/search?q=${query}&hl=en-IN&gl=IN&ceid=IN:en`;
     try {
@@ -4065,10 +4339,11 @@ app.get("/api/news/:symbol", async (req, res) => {
         const items = xml.match(/<item>([\s\S]*?)<\/item>/g) || [];
         const now = Date.now();
         const news = items.slice(0, 20).map(item => {
-            const title = (item.match(/<title><!\[CDATA\[(.+?)\]\]><\/title>/) || item.match(/<title>([^<]+)<\/title>/) || [])[1]?.trim() || "";
-            const link = (item.match(/<link>([^<]+)<\/link>/) || [])[1]?.trim() || "";
-            const pubDate = (item.match(/<pubDate>([^<]+)<\/pubDate>/) || [])[1]?.trim() || "";
-            const source = (item.match(/<source[^>]*>([^<]+)<\/source>/) || item.match(/\.com\/([^/]+)/g) || [])[1]?.trim() || "";
+            var _a, _b, _c, _e;
+            const title = ((_a = (item.match(/<title><!\[CDATA\[(.+?)\]\]><\/title>/) || item.match(/<title>([^<]+)<\/title>/) || [])[1]) === null || _a === void 0 ? void 0 : _a.trim()) || "";
+            const link = ((_b = (item.match(/<link>([^<]+)<\/link>/) || [])[1]) === null || _b === void 0 ? void 0 : _b.trim()) || "";
+            const pubDate = ((_c = (item.match(/<pubDate>([^<]+)<\/pubDate>/) || [])[1]) === null || _c === void 0 ? void 0 : _c.trim()) || "";
+            const source = ((_e = (item.match(/<source[^>]*>([^<]+)<\/source>/) || item.match(/\.com\/([^/]+)/g) || [])[1]) === null || _e === void 0 ? void 0 : _e.trim()) || "";
             const ts = pubDate ? new Date(pubDate).getTime() : 0;
             const diffMs = now - ts;
             const diffH = diffMs / 3600000;
@@ -4085,7 +4360,7 @@ app.get("/api/news/:symbol", async (req, res) => {
         }).filter(n => n.title && n.link);
         res.json(news);
     }
-    catch {
+    catch (_a) {
         res.json([]);
     }
 });
@@ -4110,6 +4385,7 @@ app.post("/api/refresh/fundamentals", requireAdmin, async (_req, res) => {
     }
 });
 app.post("/api/refresh/stock/:symbol", async (req, res) => {
+    var _a, _b, _c, _e, _f, _g;
     const symbol = req.params.symbol.toUpperCase();
     try {
         const f = await (0, scraper_1.fetchFundamentals)(symbol);
@@ -4123,12 +4399,12 @@ app.post("/api/refresh/stock/:symbol", async (req, res) => {
             pe_ratio: f.peRatio, roce: f.roce, roe: f.roe, de_ratio: f.deRatio,
             promoter_pct: f.promoterPct, eps: f.eps, book_value: f.bookValue,
             dividend_yield: f.dividendYield, current_ratio: f.currentRatio,
-            net_profit_1: f.netProfits[f.netProfits.length - 3] ?? null,
-            net_profit_2: f.netProfits[f.netProfits.length - 2] ?? null,
-            net_profit_3: f.netProfits[f.netProfits.length - 1] ?? null,
-            revenue_1: f.revenues[f.revenues.length - 3] ?? null,
-            revenue_2: f.revenues[f.revenues.length - 2] ?? null,
-            revenue_3: f.revenues[f.revenues.length - 1] ?? null,
+            net_profit_1: (_a = f.netProfits[f.netProfits.length - 3]) !== null && _a !== void 0 ? _a : null,
+            net_profit_2: (_b = f.netProfits[f.netProfits.length - 2]) !== null && _b !== void 0 ? _b : null,
+            net_profit_3: (_c = f.netProfits[f.netProfits.length - 1]) !== null && _c !== void 0 ? _c : null,
+            revenue_1: (_e = f.revenues[f.revenues.length - 3]) !== null && _e !== void 0 ? _e : null,
+            revenue_2: (_f = f.revenues[f.revenues.length - 2]) !== null && _f !== void 0 ? _f : null,
+            revenue_3: (_g = f.revenues[f.revenues.length - 1]) !== null && _g !== void 0 ? _g : null,
             all_profitable: f.allProfitable ? 1 : 0,
             profit_uptrend: f.profitUptrend ? 1 : 0,
             week52_high: f.week52High,
@@ -4376,7 +4652,7 @@ function readBotJSON(file, fallback = null) {
             return fallback;
         return JSON.parse(fs_1.default.readFileSync(p, "utf-8"));
     }
-    catch {
+    catch (_a) {
         return fallback;
     }
 }
@@ -4387,7 +4663,7 @@ function readBotText(file, fallback = "") {
             return fallback;
         return fs_1.default.readFileSync(p, "utf-8");
     }
-    catch {
+    catch (_a) {
         return fallback;
     }
 }
@@ -4400,7 +4676,7 @@ function readBotJSONL(file) {
         try {
             return JSON.parse(line);
         }
-        catch {
+        catch (_a) {
             return { ts: "", event: "raw", message: line };
         }
     });
@@ -4409,24 +4685,26 @@ function getTodayIST() {
     return new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" });
 }
 function computeAnalytics(trades) {
+    var _a, _b;
     const tradePnlRs = (t) => {
-        const v = Number(t?.pnlRs);
+        const v = Number(t === null || t === void 0 ? void 0 : t.pnlRs);
         if (Number.isFinite(v))
             return v;
-        const legacy = Number(t?.pnl);
+        const legacy = Number(t === null || t === void 0 ? void 0 : t.pnl);
         return Number.isFinite(legacy) ? legacy : 0;
     };
     // Build premiumEntry lookup from open records (exitPrice = 0), then enrich close records
     const premiumMap = {};
     for (const t of trades) {
-        if ((t.exitPrice ?? 0) === 0 && t.premiumEntry > 0) {
-            premiumMap[`${t.direction}|${(t.entryPrice ?? 0).toFixed(1)}`] = t.premiumEntry;
+        if (((_a = t.exitPrice) !== null && _a !== void 0 ? _a : 0) === 0 && t.premiumEntry > 0) {
+            premiumMap[`${t.direction}|${((_b = t.entryPrice) !== null && _b !== void 0 ? _b : 0).toFixed(1)}`] = t.premiumEntry;
         }
     }
     // Only include completed trades, with premiumEntry filled in
     trades = trades.filter((t) => t.exitPrice && t.exitPrice > 0).map((t) => {
+        var _a;
         if (!(t.premiumEntry > 0)) {
-            const key = `${t.direction}|${(t.entryPrice ?? 0).toFixed(1)}`;
+            const key = `${t.direction}|${((_a = t.entryPrice) !== null && _a !== void 0 ? _a : 0).toFixed(1)}`;
             if (premiumMap[key])
                 return { ...t, premiumEntry: premiumMap[key] };
         }
@@ -4745,10 +5023,11 @@ async function fetchYahooHistory(symbol) {
     if (cached && Date.now() - cached.ts < YH_CACHE_TTL)
         return cached;
     const parseResult = (d) => {
-        const result = d?.chart?.result?.[0];
+        var _a, _b, _c, _e;
+        const result = (_b = (_a = d === null || d === void 0 ? void 0 : d.chart) === null || _a === void 0 ? void 0 : _a.result) === null || _b === void 0 ? void 0 : _b[0];
         if (!result)
             return null;
-        const q0 = result.indicators?.quote?.[0] || {};
+        const q0 = ((_e = (_c = result.indicators) === null || _c === void 0 ? void 0 : _c.quote) === null || _e === void 0 ? void 0 : _e[0]) || {};
         const closes = (q0.close || []).filter((v) => v != null);
         const highs = (q0.high || []).filter((v) => v != null);
         const lows = (q0.low || []).filter((v) => v != null);
@@ -4776,7 +5055,7 @@ async function fetchYahooHistory(symbol) {
             _yhCache.set(nseSym, data);
             return data;
         }
-        catch {
+        catch (_a) {
             continue;
         }
     }
@@ -5373,6 +5652,7 @@ app.get("/strategy-builder", featureGate("feature_strategy_builder", "Strategy B
 });
 // -- GET /admin/analytics -------------------------------------------------------
 app.get("/admin/analytics", requireAdmin, async (req, res) => {
+    var _a, _b, _c;
     // Daily views (last 14 days)
     const daily = await (0, db_1.dbAll)(`SELECT date(created_at) as day,
             COUNT(*) as views,
@@ -5386,14 +5666,14 @@ app.get("/admin/analytics", requireAdmin, async (req, res) => {
      GROUP BY path ORDER BY views DESC LIMIT 15`);
     // Total views today
     const todayRow = await (0, db_1.dbAll)(`SELECT COUNT(*) as c FROM page_views WHERE date(created_at) = date('now','localtime')`);
-    const todayViews = todayRow[0]?.c || 0;
+    const todayViews = ((_a = todayRow[0]) === null || _a === void 0 ? void 0 : _a.c) || 0;
     const todayUnique = await (0, db_1.dbAll)(`SELECT COUNT(DISTINCT ip_hash) as c FROM page_views WHERE date(created_at) = date('now','localtime')`);
-    const todayUniqueV = todayUnique[0]?.c || 0;
+    const todayUniqueV = ((_b = todayUnique[0]) === null || _b === void 0 ? void 0 : _b.c) || 0;
     // Recent visits
     const recent = await (0, db_1.dbAll)(`SELECT path, ip_hash, substr(user_agent,1,60) as user_agent, created_at
      FROM page_views ORDER BY id DESC LIMIT 30`);
     const totalAllTime = await (0, db_1.dbAll)(`SELECT COUNT(*) as c FROM page_views`);
-    const totalV = totalAllTime[0]?.c || 0;
+    const totalV = ((_c = totalAllTime[0]) === null || _c === void 0 ? void 0 : _c.c) || 0;
     res.send(`<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -5480,17 +5760,19 @@ app.get("/admin/picks", requireAdmin, async (req, res) => {
     const err = req.query.err;
     const riskColors = { Low: "#10b981", Medium: "#f59e0b", High: "#ef4444" };
     const typeLabel = { intraday: "? Intraday", swing: "?? Swing", longterm: "?? Long Term" };
-    const rows = picks.map(p => `
+    const rows = picks.map(p => {
+        var _a, _b, _c, _e, _f;
+        return `
     <tr>
       <td><strong>${esc(p.stock_symbol)}</strong>${p.company_name ? `<br><small class="text-dim">${esc(p.company_name)}</small>` : ""}</td>
-      <td><span class="pick-type-badge pick-type-${(p.pick_type || 'intraday').replace(' ', '-')}">${typeLabel[p.pick_type ?? 'intraday'] ?? p.pick_type}</span></td>
+      <td><span class="pick-type-badge pick-type-${(p.pick_type || 'intraday').replace(' ', '-')}">${(_b = typeLabel[(_a = p.pick_type) !== null && _a !== void 0 ? _a : 'intraday']) !== null && _b !== void 0 ? _b : p.pick_type}</span></td>
       <td><span class="pick-badge-${p.direction.toLowerCase()}">${p.direction}</span></td>
       <td>?${p.entry_low}–${p.entry_high}</td>
       <td>${p.target ? "?" + p.target : "—"}</td>
       <td>${p.stop_loss ? "?" + p.stop_loss : "—"}</td>
-      <td><span style="color:${riskColors[p.risk_level] ?? "#888"}">${esc(p.risk_level)}</span></td>
+      <td><span style="color:${(_c = riskColors[p.risk_level]) !== null && _c !== void 0 ? _c : "#888"}">${esc(p.risk_level)}</span></td>
       <td><span class="pick-status-badge pick-status-${p.status}">${p.status}</span></td>
-      <td style="font-size:12px;color:var(--text-muted)">${p.published_at?.slice(0, 16) ?? "—"}</td>
+      <td style="font-size:12px;color:var(--text-muted)">${(_f = (_e = p.published_at) === null || _e === void 0 ? void 0 : _e.slice(0, 16)) !== null && _f !== void 0 ? _f : "—"}</td>
       <td>
         <form method="POST" action="/admin/picks/${p.id}/status" style="display:inline">
           <input type="hidden" name="status" value="${p.status === "active" ? "expired" : "active"}">
@@ -5501,7 +5783,8 @@ app.get("/admin/picks", requireAdmin, async (req, res) => {
           <button class="btn-admin-action btn-danger">Delete</button>
         </form>
       </td>
-    </tr>`).join("");
+    </tr>`;
+    }).join("");
     res.send(`<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -5607,13 +5890,13 @@ app.post("/admin/picks", requireAdmin, async (req, res) => {
     const sym = (stock_symbol || "").trim().toUpperCase();
     const eLow = parseFloat(entry_low);
     const eHigh = parseFloat(entry_high);
-    if (!sym || !reason?.trim() || isNaN(eLow) || isNaN(eHigh)) {
+    if (!sym || !(reason === null || reason === void 0 ? void 0 : reason.trim()) || isNaN(eLow) || isNaN(eHigh)) {
         res.redirect("/admin/picks?err=Missing+required+fields");
         return;
     }
     await (0, db_1.createPick)({
         stock_symbol: sym,
-        company_name: company_name?.trim() || undefined,
+        company_name: (company_name === null || company_name === void 0 ? void 0 : company_name.trim()) || undefined,
         direction: direction === "SHORT" ? "SHORT" : "LONG",
         pick_type: ["intraday", "swing", "longterm"].includes(pick_type) ? pick_type : "intraday",
         entry_low: eLow, entry_high: eHigh,
@@ -5647,6 +5930,7 @@ app.post("/admin/picks/:id/delete", requireAdmin, async (req, res) => {
 });
 // -- Admin Content -------------------------------------------------------------
 app.get("/admin/content", requireAdmin, async (req, res) => {
+    var _a, _b, _c;
     const settings = await (0, db_1.getAllSettings)();
     const msg = req.query.msg;
     res.send(`<!DOCTYPE html>
@@ -5671,15 +5955,15 @@ app.get("/admin/content", requireAdmin, async (req, res) => {
     <form method="POST" action="/admin/content" class="admin-form-card" style="display:flex;flex-direction:column;gap:16px">
       <div class="form-group">
         <label>Home Page Headline</label>
-        <input type="text" name="home_headline" class="form-input" value="${esc(settings.home_headline ?? "India\\'s sharpest NSE screener")}">
+        <input type="text" name="home_headline" class="form-input" value="${esc((_a = settings.home_headline) !== null && _a !== void 0 ? _a : "India\\'s sharpest NSE screener")}">
       </div>
       <div class="form-group">
         <label>Banner Text <small class="text-dim">(optional — shown at top of home page)</small></label>
-        <input type="text" name="banner_text" class="form-input" value="${esc(settings.banner_text ?? "")}" placeholder="e.g. ?? New feature: Picks page is live!">
+        <input type="text" name="banner_text" class="form-input" value="${esc((_b = settings.banner_text) !== null && _b !== void 0 ? _b : "")}" placeholder="e.g. ?? New feature: Picks page is live!">
       </div>
       <div class="form-group">
         <label>Telegram Link</label>
-        <input type="url" name="telegram_link" class="form-input" value="${esc(settings.telegram_link ?? "")}" placeholder="https://t.me/your_channel">
+        <input type="url" name="telegram_link" class="form-input" value="${esc((_c = settings.telegram_link) !== null && _c !== void 0 ? _c : "")}" placeholder="https://t.me/your_channel">
       </div>
       <button type="submit" class="btn-primary">Save Changes</button>
     </form>
@@ -5691,9 +5975,9 @@ app.get("/admin/content", requireAdmin, async (req, res) => {
 app.post("/admin/content", requireAdmin, async (req, res) => {
     const { home_headline, banner_text, telegram_link } = req.body;
     await Promise.all([
-        (0, db_1.setSetting)("home_headline", (home_headline ?? "").trim()),
-        (0, db_1.setSetting)("banner_text", (banner_text ?? "").trim()),
-        (0, db_1.setSetting)("telegram_link", (telegram_link ?? "").trim()),
+        (0, db_1.setSetting)("home_headline", (home_headline !== null && home_headline !== void 0 ? home_headline : "").trim()),
+        (0, db_1.setSetting)("banner_text", (banner_text !== null && banner_text !== void 0 ? banner_text : "").trim()),
+        (0, db_1.setSetting)("telegram_link", (telegram_link !== null && telegram_link !== void 0 ? telegram_link : "").trim()),
     ]);
     res.redirect("/admin/content?msg=Content+updated+successfully");
 });
@@ -5798,15 +6082,17 @@ app.post("/admin/signals/token", requireAdmin, async (req, res) => {
 });
 // -- GET /today -----------------------------------------------------------------
 app.get("/today", async (req, res) => {
+    var _a, _b, _c;
     const picks = await (0, db_1.getActivePicks)();
     const isPremium = userIsPremium(req);
-    const isLoggedIn = !!req.session?.userId;
-    const isAdmin = req.session?.userRole === 'admin';
+    const isLoggedIn = !!((_a = req.session) === null || _a === void 0 ? void 0 : _a.userId);
+    const isAdmin = ((_b = req.session) === null || _b === void 0 ? void 0 : _b.userRole) === 'admin';
     const autoPicks = isLoggedIn ? await (0, db_1.getAutoPaperPicks)(req.session.userId) : false;
+    const newsTradeIdeas = await buildNewsTradeIdeas(8);
     // Last generated: use the most recent pick's published_at
-    const lastGenerated = picks.length > 0 ? picks[0].published_at?.slice(0, 10) : null;
+    const lastGenerated = picks.length > 0 ? (_c = picks[0].published_at) === null || _c === void 0 ? void 0 : _c.slice(0, 10) : null;
     // Determine "based on" close date (picks generated at 6:45 PM from same-day close)
-    const basedOnDate = lastGenerated ?? new Date().toISOString().slice(0, 10);
+    const basedOnDate = lastGenerated !== null && lastGenerated !== void 0 ? lastGenerated : new Date().toISOString().slice(0, 10);
     // Access tiers:
     // Guest       ? intraday direction only (prices locked), swing/longterm fully locked
     // Free user   ? intraday full + swing direction only (prices locked), longterm locked
@@ -5818,6 +6104,7 @@ app.get("/today", async (req, res) => {
     const longtermPicks = picks.filter(p => p.pick_type === 'longterm');
     const scalperPicks = picks.filter(p => p.pick_type === 'scalper');
     function renderPickCard(p, showPrices) {
+        var _a, _b, _c, _e, _f, _g, _h, _j;
         // Extract confidence % from reason string (e.g. "Confidence 74%")
         const confMatch = (p.reason || "").match(/Confidence\s+(\d+)%/i);
         const confPct = confMatch ? parseInt(confMatch[1], 10) : null;
@@ -5854,8 +6141,8 @@ app.get("/today", async (req, res) => {
       ${p.stop_loss ? `<div class="pick-sl"><span class="pick-sl-label">??? Stop Loss</span><span class="pick-sl-val">?${p.stop_loss}</span></div>` : ""}
       <div class="pick-reason">${esc(displayReason)}</div>
       <div class="pick-footer">
-        <span class="pick-risk-badge ${riskClass[p.risk_level] ?? "risk-medium"}">${riskIcon[p.risk_level] ?? "??"} ${p.risk_level} Risk</span>
-        <span class="pick-date">${p.published_at?.slice(0, 10) ?? ""}</span>
+        <span class="pick-risk-badge ${(_a = riskClass[p.risk_level]) !== null && _a !== void 0 ? _a : "risk-medium"}">${(_b = riskIcon[p.risk_level]) !== null && _b !== void 0 ? _b : "??"} ${p.risk_level} Risk</span>
+        <span class="pick-date">${(_e = (_c = p.published_at) === null || _c === void 0 ? void 0 : _c.slice(0, 10)) !== null && _e !== void 0 ? _e : ""}</span>
       </div>` : `
       <div class="pick-locked-body">
         <div class="pick-locked-row"><span>Entry Zone</span><span class="lock-val">??</span></div>
@@ -5863,9 +6150,46 @@ app.get("/today", async (req, res) => {
         <div class="pick-locked-row"><span>Stop Loss</span><span class="lock-val">??</span></div>
       </div>
       <div class="pick-footer">
-        <span class="pick-risk-badge ${riskClass[p.risk_level] ?? "risk-medium"}">${riskIcon[p.risk_level] ?? "??"} ${p.risk_level} Risk</span>
-        <span class="pick-date">${p.published_at?.slice(0, 10) ?? ""}</span>
+        <span class="pick-risk-badge ${(_f = riskClass[p.risk_level]) !== null && _f !== void 0 ? _f : "risk-medium"}">${(_g = riskIcon[p.risk_level]) !== null && _g !== void 0 ? _g : "??"} ${p.risk_level} Risk</span>
+        <span class="pick-date">${(_j = (_h = p.published_at) === null || _h === void 0 ? void 0 : _h.slice(0, 10)) !== null && _j !== void 0 ? _j : ""}</span>
       </div>`}
+    </div>`;
+    }
+    function renderNewsTradeIdeas(ideas) {
+        if (!ideas.length)
+            return "";
+        return `<div class="news-trade-section">
+      <div class="picks-section-header">
+        <div>
+          <span class="picks-section-icon">N</span>
+          <span class="picks-section-title">Daily News Trade Ideas</span>
+          <span class="picks-section-sub">News-linked equity setups aligned to support/resistance</span>
+        </div>
+        <span class="picks-section-count">${ideas.length} idea${ideas.length !== 1 ? "s" : ""}</span>
+      </div>
+      <div class="news-trade-note">Refresh: page 5 min, news 5 min, levels 10 min. Watch-only today: these do not auto-trigger on Trade Page yet. Trade only when price breaks the shown chart edge with volume.</div>
+      <div class="news-trade-grid">${ideas.map(idea => `
+        <article class="news-trade-card news-tone-${idea.tone}">
+          <div class="news-trade-top">
+            <div>
+              <a class="news-trade-symbol" href="/stock/${encodeURIComponent(idea.symbol)}">${esc(idea.symbol)}</a>
+              ${idea.companyName ? `<span class="news-trade-company">${esc(idea.companyName)}</span>` : ""}
+            </div>
+            <span class="news-score">${idea.score}%</span>
+          </div>
+          <a class="news-headline" href="${esc(idea.newsLink)}" target="_blank" rel="noopener">${esc(idea.newsTitle)}</a>
+          <div class="news-meta">${esc(idea.source)}${idea.pubDate ? ` · ${esc(new Date(idea.pubDate).toLocaleString("en-IN", { timeZone: "Asia/Kolkata", day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" }))}` : ""}</div>
+          <div class="news-levels">
+            <div><span>LTP</span><b>&#8377;${idea.price.toFixed(2)}</b></div>
+            <div><span>Resistance</span><b>&#8377;${idea.resistance.toFixed(2)}</b></div>
+            <div><span>Support</span><b>&#8377;${idea.support.toFixed(2)}</b></div>
+            <div><span>Change</span><b class="${idea.changePct >= 0 ? "nt-positive" : "nt-negative"}">${idea.changePct.toFixed(2)}%</b></div>
+            <div class="news-long-zone"><span>Buy zone</span><b>&#8377;${idea.entryLow.toFixed(2)} - &#8377;${idea.entryHigh.toFixed(2)}</b><small>SL &#8377;${idea.stopLoss.toFixed(2)} · T &#8377;${idea.target1.toFixed(2)} / &#8377;${idea.target2.toFixed(2)}</small></div>
+            <div class="news-short-zone"><span>Sell below</span><b>&#8377;${idea.sellTrigger.toFixed(2)}</b><small>Zone &#8377;${idea.sellEntryLow.toFixed(2)} - &#8377;${idea.sellEntryHigh.toFixed(2)} · SL &#8377;${idea.sellStopLoss.toFixed(2)} · T &#8377;${idea.sellTarget1.toFixed(2)} / &#8377;${idea.sellTarget2.toFixed(2)}</small></div>
+          </div>
+          <div class="news-plan">${esc(idea.plan)} <a href="/stock/${encodeURIComponent(idea.symbol)}?newsTrade=1">Open chart</a></div>
+        </article>
+      `).join("")}</div>
     </div>`;
     }
     function renderSection(icon, title, subtitle, sectionPicks, visible, showPrices, requiredTier) {
@@ -5922,6 +6246,7 @@ app.get("/today", async (req, res) => {
     const intradaySection = renderSection("?", "Intraday Picks", "Same-day entry & exit", intradayPicks, intradayVisible, intradayPrices, "Free");
     const swingSection = renderSection("??", "Swing Picks", "2–10 day holding period", swingPicks, swingVisible, swingPrices, "Premium");
     const scalperSection = renderSection("??", "Scalper Picks", "15–60 min · Tight SL · Quick exit", scalperPicks, scalperVisible, scalperPrices, "Free");
+    const newsTradeSection = renderNewsTradeIdeas(newsTradeIdeas);
     // For locked sections when not logged in or not premium, show teaser cards
     const swingTeaser = !swingVisible ? renderSection("??", "Swing Picks", "2–10 day holding period", swingPicks.length > 0 ? swingPicks : [{ id: 0, stock_symbol: "?", company_name: null, direction: "LONG", pick_type: "swing", entry_low: 0, entry_high: 0, target: null, stop_loss: null, reason: "", risk_level: "Medium", status: "active", published_at: "", expires_at: null, created_by: null }], false, false, "Free") : "";
     const tierLabel = isAdmin ? "Admin" : isPremium ? "Premium" : isLoggedIn ? "Free User" : "Guest";
@@ -5949,6 +6274,29 @@ app.get("/today", async (req, res) => {
     input:checked+.atp-knob:before{transform:translateX(20px)}
     .atp-label{font-size:.78rem;font-weight:600;color:var(--text-muted);min-width:44px}
     .picks-close-badge{display:inline-flex;align-items:center;gap:5px;font-size:.74rem;background:var(--bg2,#0f172a);border:1px solid var(--border);border-radius:8px;padding:4px 10px;color:var(--text-muted);margin-left:8px}
+    .news-trade-section{background:var(--card-bg);border:1px solid var(--border);border-radius:14px;padding:18px;margin-bottom:1.25rem}
+    .news-trade-note{font-size:.78rem;color:var(--text-muted);background:rgba(245,158,11,.1);border:1px solid rgba(245,158,11,.24);border-radius:10px;padding:9px 12px;margin:10px 0 14px}
+    .news-trade-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}
+    .news-trade-card{border:1px solid var(--border);border-radius:12px;background:var(--bg2);padding:14px;min-width:0}
+    .news-trade-card.news-tone-positive{border-color:rgba(34,197,94,.35)}
+    .news-trade-card.news-tone-avoid{border-color:rgba(239,68,68,.35)}
+    .news-trade-top{display:flex;align-items:flex-start;justify-content:space-between;gap:10px;margin-bottom:9px}
+    .news-trade-symbol{display:block;color:var(--accent);font-size:1.05rem;font-weight:800;text-decoration:none}
+    .news-trade-company{display:block;color:var(--text-muted);font-size:.72rem;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:260px}
+    .news-score{flex:0 0 auto;border-radius:999px;background:rgba(59,130,246,.12);border:1px solid rgba(59,130,246,.28);color:#60a5fa;font-size:.72rem;font-weight:800;padding:4px 8px}
+    .news-headline{display:block;color:var(--text);font-weight:750;font-size:.88rem;line-height:1.35;text-decoration:none;margin-bottom:5px}
+    .news-meta{color:var(--text-muted);font-size:.72rem;margin-bottom:11px}
+    .news-levels{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}
+    .news-levels div{background:rgba(148,163,184,.08);border:1px solid rgba(148,163,184,.14);border-radius:9px;padding:8px;min-width:0}
+    .news-levels .news-long-zone{grid-column:span 3;border-color:rgba(34,197,94,.28);background:rgba(34,197,94,.08)}
+    .news-levels .news-short-zone{grid-column:span 3;border-color:rgba(239,68,68,.28);background:rgba(239,68,68,.08)}
+    .news-levels span{display:block;color:var(--text-muted);font-size:.66rem;text-transform:uppercase;letter-spacing:.04em}
+    .news-levels b{display:block;color:var(--text);font-size:.8rem;margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+    .news-levels small{display:block;color:var(--text-muted);font-size:.7rem;margin-top:4px;white-space:normal;line-height:1.35}
+    .news-plan{font-size:.76rem;color:var(--text-muted);line-height:1.45;margin-top:10px}
+    .news-plan a{color:var(--accent);font-weight:800;text-decoration:none}
+    .nt-positive{color:#22c55e!important}.nt-negative{color:#ef4444!important}
+    @media(max-width:760px){.news-trade-grid{grid-template-columns:1fr}.news-levels{grid-template-columns:repeat(2,minmax(0,1fr))}.news-levels .news-long-zone,.news-levels .news-short-zone{grid-column:1/-1}}
 .history-source{border:1px solid #cfe0f5;background:#f8fbff;color:#385173;border-radius:13px;padding:10px 14px;font-size:12px;font-weight:650}.workspace-table-card .ws-card-b{padding-top:10px}.ws-table-wrap{border:1px solid #e6eef8;border-radius:12px;background:#fff;overflow:auto}.ws-table{min-width:760px}.ws-table th{position:sticky;top:0;z-index:2;background:#f8fbff!important;padding:0 10px}.ws-table td{padding:0 10px}.ws-table tbody tr:hover td{background:#f8fbff}.ws-table-footer{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-top:11px;color:#64748b;font-size:12px}.ws-pager{display:flex;align-items:center;gap:8px}.ws-pager .btn{height:29px;border-radius:999px;padding:0 12px}.ws-pager .btn:disabled{opacity:.45;cursor:not-allowed}.ws-page-info{min-width:150px;text-align:center;font-weight:700;color:#385173}.ws-page-total{font-weight:700}.server-log-full{grid-column:1/-1;background:#071827!important;border-color:#102b46!important;color:#eaf4ff!important}.server-log-full .ws-card-h{color:#fff!important;padding-bottom:10px}.server-log-full .ws-card-b{padding-top:0}.server-log-full .console.full{border:1px solid #173a58;background:#071827!important}.server-log-full .console.full .logs{height:620px!important;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:12px;line-height:1.7;padding:14px 16px}.server-log-full .log-actions{display:flex;gap:8px}.server-log-full .log-actions .btn{background:rgba(255,255,255,.06);border-color:#294966;color:#eaf4ff}.log-filter-card .filter-bar input{flex:1;min-width:260px}@media(max-width:1366px){.server-log-full .console.full .logs{height:500px!important}.ws-table{min-width:680px}.ws-page-info{min-width:120px}}
 .dashboard{align-items:start!important;grid-auto-rows:auto!important}.dashboard>.card{align-self:start!important}.pnl,.chart,.account{height:fit-content!important;min-height:0!important;max-height:none!important}.pnl .card-b,.chart .card-b,.account .card-b{height:auto!important}.pnl-main{margin-bottom:12px!important}.pnl-value{font-size:46px!important;margin:0!important}.pnl .metric-grid{gap:7px!important}.pnl .metric{min-height:56px!important;padding:9px 10px!important}.pnl-foot{margin-top:10px!important;padding-top:8px!important}.chart-box{height:210px!important;max-height:210px!important}.chart .tabs{margin-top:9px!important;align-items:center!important}.chart-footer{font-size:11px!important;white-space:normal!important;line-height:1.35!important;text-align:right!important}.account .card-b{padding-bottom:14px!important}.account .balance-big{font-size:28px!important;margin:8px 0 10px!important}.account .kv{padding:5px 0!important}.account-ident{grid-template-columns:repeat(3,minmax(0,1fr))!important}.workflow.card{min-height:72px!important;padding:10px 14px!important}.flow-step{height:52px!important}.flow-icon{width:34px!important;height:34px!important}.flow-ok{font-size:0!important}.flow-ok:before{content:"OK";font-size:7px;font-weight:900;line-height:1}.flow-step.blocked .flow-ok:before{content:"X"}.flow-actions .btn{height:33px!important}.content{padding-top:14px!important}.checks-row span{font-size:10px!important}@media(max-width:1366px){.pnl-value{font-size:38px!important}.chart-box{height:178px!important;max-height:178px!important}.pnl .metric{min-height:48px!important;padding:7px!important}.pnl .metric b{font-size:12px!important}.pnl .metric label{font-size:9.5px!important}.account .balance-big{font-size:24px!important}.workflow.card{min-height:64px!important}.flow-step{height:46px!important}.flow-icon{width:30px!important;height:30px!important}.flow-text b{font-size:11px!important}.flow-text span{font-size:9.5px!important}}
 </style>
@@ -5999,6 +6347,7 @@ app.get("/today", async (req, res) => {
       <a href="/login?next=/today" style="font-size:.8rem;background:var(--accent);color:#fff;border-radius:8px;padding:7px 14px;text-decoration:none;font-weight:700;white-space:nowrap">Sign In Free ?</a>
     </div>`}
 
+    ${newsTradeSection}
     ${scalperSection}
     ${intradaySection}
     ${swingSection || swingTeaser}
@@ -6029,15 +6378,18 @@ app.get("/admin/subs", requireAdmin, async (req, res) => {
     const subs = await (0, db_1.getAllSubscriptions)();
     const active = subs.filter(s => s.status === "active").length;
     const revenue = subs.filter(s => s.status === "active").reduce((sum) => sum + 499, 0);
-    const rows = subs.map(s => `
+    const rows = subs.map(s => {
+        var _a, _b, _c, _e, _f;
+        return `
     <tr>
       <td>${esc(s.user_name)}<br><small class="text-dim">${esc(s.user_email)}</small></td>
       <td><span class="pick-status-badge pick-status-${s.status}">${s.status}</span></td>
       <td>?${(s.amount / 100).toFixed(0)}</td>
-      <td style="font-size:12px;color:var(--text-muted)">${s.starts_at?.slice(0, 10) ?? "—"}</td>
-      <td style="font-size:12px;color:var(--text-muted)">${s.expires_at?.slice(0, 10) ?? "—"}</td>
-      <td style="font-family:monospace;font-size:11px;color:var(--text-muted)">${s.razorpay_payment_id ?? "—"}</td>
-    </tr>`).join("");
+      <td style="font-size:12px;color:var(--text-muted)">${(_b = (_a = s.starts_at) === null || _a === void 0 ? void 0 : _a.slice(0, 10)) !== null && _b !== void 0 ? _b : "—"}</td>
+      <td style="font-size:12px;color:var(--text-muted)">${(_e = (_c = s.expires_at) === null || _c === void 0 ? void 0 : _c.slice(0, 10)) !== null && _e !== void 0 ? _e : "—"}</td>
+      <td style="font-family:monospace;font-size:11px;color:var(--text-muted)">${(_f = s.razorpay_payment_id) !== null && _f !== void 0 ? _f : "—"}</td>
+    </tr>`;
+    }).join("");
     res.send(`<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -6070,8 +6422,9 @@ app.get("/admin/subs", requireAdmin, async (req, res) => {
 });
 // -- GET /premium ----------------------------------------------------------------
 app.get("/premium", async (req, res) => {
+    var _a, _b, _c;
     const isPremium = userIsPremium(req);
-    const isLoggedIn = !!req.session?.userId;
+    const isLoggedIn = !!((_a = req.session) === null || _a === void 0 ? void 0 : _a.userId);
     let activeSub = null;
     if (isLoggedIn)
         activeSub = await (0, db_1.getActiveSubscription)(req.session.userId);
@@ -6093,7 +6446,7 @@ app.get("/premium", async (req, res) => {
     <div class="premium-hero">
       <div class="premium-badge-large">??</div>
       <h1>You're a Premium Member</h1>
-      <p>Your premium access is active${activeSub?.expires_at ? ` until <strong>${activeSub.expires_at.slice(0, 10)}</strong>` : ""}.</p>
+      <p>Your premium access is active${(activeSub === null || activeSub === void 0 ? void 0 : activeSub.expires_at) ? ` until <strong>${activeSub.expires_at.slice(0, 10)}</strong>` : ""}.</p>
       <div class="premium-active-features">
         <div class="paf-item">? Live position — exact entry price &amp; stop loss in real time</div>
         <div class="paf-item">? Telegram instant alerts when bot enters or exits</div>
@@ -6183,7 +6536,7 @@ app.get("/premium", async (req, res) => {
         name: 'ZeroScreen Premium',
         description: '1 Month Premium Subscription',
         order_id: order.id,
-        prefill: { name: '${req.session?.userName ?? ""}', email: '' },
+        prefill: { name: '${(_c = (_b = req.session) === null || _b === void 0 ? void 0 : _b.userName) !== null && _c !== void 0 ? _c : ""}', email: '' },
         theme: { color: '#7c3aed' },
         handler: async function(response) {
           btn.textContent = 'Verifying…';
@@ -6278,6 +6631,7 @@ app.post("/api/razorpay/verify", requireAuth, async (req, res) => {
 });
 // -- GET /api/bot/status ---------------------------------------------------------
 app.get("/api/bot/status", async (_req, res) => {
+    var _a, _b, _c, _e, _f;
     // Primary: DB (pushed by bot via webhook)
     const dbState = await (0, db_1.getBotState)().catch(() => null);
     const dbTrades = await (0, db_1.getBotTrades)(50).catch(() => []);
@@ -6286,7 +6640,7 @@ app.get("/api/bot/status", async (_req, res) => {
     const hb = readBotJSON("bot-heartbeat.json", null);
     const fileTrades = readBotJSON("trades.json", []);
     // Prefer DB state if it was updated in the last 10 min, else fall back to files
-    const dbUpdatedAt = dbState?._db_updated_at ? new Date(dbState._db_updated_at).getTime() : 0;
+    const dbUpdatedAt = (dbState === null || dbState === void 0 ? void 0 : dbState._db_updated_at) ? new Date(dbState._db_updated_at).getTime() : 0;
     const useDb = dbUpdatedAt > 0 && (Date.now() - dbUpdatedAt) < 10 * 60 * 1000;
     const state = useDb ? dbState : fileState;
     const trades = useDb && dbTrades.length > 0
@@ -6298,8 +6652,8 @@ app.get("/api/bot/status", async (_req, res) => {
         const botEnv = fs_1.default.readFileSync('/home/ubuntu/trading-bot/.env', 'utf-8');
         const akMatch = botEnv.match(/^API_KEY=(.+)$/m);
         const atMatch = botEnv.match(/^ACCESS_TOKEN=(.+)$/m);
-        const apiKey = akMatch?.[1]?.trim() ?? "";
-        const accTok = atMatch?.[1]?.trim() ?? "";
+        const apiKey = (_b = (_a = akMatch === null || akMatch === void 0 ? void 0 : akMatch[1]) === null || _a === void 0 ? void 0 : _a.trim()) !== null && _b !== void 0 ? _b : "";
+        const accTok = (_e = (_c = atMatch === null || atMatch === void 0 ? void 0 : atMatch[1]) === null || _c === void 0 ? void 0 : _c.trim()) !== null && _e !== void 0 ? _e : "";
         if (apiKey && accTok) {
             // Validate via Zerodha REST — profile endpoint returns 200 only for valid tokens
             const resp = await fetch("https://api.kite.trade/user/profile", { headers: { "X-Kite-Version": "3", "Authorization": `token ${apiKey}:${accTok}` }, signal: AbortSignal.timeout(4000) });
@@ -6307,10 +6661,10 @@ app.get("/api/bot/status", async (_req, res) => {
         }
     }
     catch (_) { }
-    const isAlive = hb?.at ? (Date.now() - new Date(hb.at).getTime()) < 3 * 60 * 1000
+    const isAlive = (hb === null || hb === void 0 ? void 0 : hb.at) ? (Date.now() - new Date(hb.at).getTime()) < 3 * 60 * 1000
         : (useDb && (Date.now() - dbUpdatedAt) < 3 * 60 * 1000);
-    const botStatus = isAlive ? (hb?.status ?? "RUNNING") : (hb ? "STOPPED" : "UNKNOWN");
-    const botColor = isAlive ? (hb?.inTrade ? (hb.direction === "CE" ? "blue" : "red") : "green") : "red";
+    const botStatus = isAlive ? ((_f = hb === null || hb === void 0 ? void 0 : hb.status) !== null && _f !== void 0 ? _f : "RUNNING") : (hb ? "STOPPED" : "UNKNOWN");
+    const botColor = isAlive ? ((hb === null || hb === void 0 ? void 0 : hb.inTrade) ? (hb.direction === "CE" ? "blue" : "red") : "green") : "red";
     res.json({
         timestamp: new Date().toLocaleString("en-IN", { timeZone: "Asia/Kolkata" }),
         validations: {
@@ -6323,7 +6677,7 @@ app.get("/api/bot/status", async (_req, res) => {
                 ok: isAlive,
                 label: isAlive ? "Heartbeat fresh" : "Heartbeat stale or missing",
                 source: "bot-heartbeat.json",
-                heartbeatAgeSec: hb?.at ? Math.max(0, Math.round((Date.now() - new Date(hb.at).getTime()) / 1000)) : null,
+                heartbeatAgeSec: (hb === null || hb === void 0 ? void 0 : hb.at) ? Math.max(0, Math.round((Date.now() - new Date(hb.at).getTime()) / 1000)) : null,
             },
         },
         activeState: state,
@@ -6339,6 +6693,7 @@ app.get("/api/bot/status", async (_req, res) => {
 // Shadow-only ZeroScreen monitor. This endpoint never places broker orders.
 let shadowExternalHealthCache = { checkedAt: 0, value: null };
 async function shadowExternalHealth() {
+    var _a, _b, _c, _e, _f;
     if (shadowExternalHealthCache.value && Date.now() - shadowExternalHealthCache.checkedAt < 45000) {
         return shadowExternalHealthCache.value;
     }
@@ -6348,9 +6703,9 @@ async function shadowExternalHealth() {
         (0, db_1.dbAll)("SELECT 1 AS ok"),
         tradeOpsKiteJSON("/user/profile"),
     ]);
-    const tokenProfile = tokenResult.status === "fulfilled" ? tokenResult.value?.data : null;
+    const tokenProfile = tokenResult.status === "fulfilled" ? (_a = tokenResult.value) === null || _a === void 0 ? void 0 : _a.data : null;
     const tokenError = tokenResult.status === "rejected"
-        ? String(tokenResult.reason?.message || tokenResult.reason || "Token validation failed")
+        ? String(((_b = tokenResult.reason) === null || _b === void 0 ? void 0 : _b.message) || tokenResult.reason || "Token validation failed")
         : "";
     const autoTokenScript = "/home/ubuntu/trading-bot/auto_token.js";
     const autoTokenLog = "/home/ubuntu/trading-bot/logs/auto_token.log";
@@ -6363,14 +6718,14 @@ async function shadowExternalHealth() {
         checkedAt,
         apiLatencyMs: Date.now() - startedAt,
         database: {
-            ok: databaseResult.status === "fulfilled" && databaseResult.value?.[0]?.ok === 1,
+            ok: databaseResult.status === "fulfilled" && ((_e = (_c = databaseResult.value) === null || _c === void 0 ? void 0 : _c[0]) === null || _e === void 0 ? void 0 : _e.ok) === 1,
             error: databaseResult.status === "rejected"
-                ? String(databaseResult.reason?.message || databaseResult.reason || "Database check failed")
+                ? String(((_f = databaseResult.reason) === null || _f === void 0 ? void 0 : _f.message) || databaseResult.reason || "Database check failed")
                 : "",
         },
         token: {
             valid: !!tokenProfile,
-            userId: tokenProfile?.user_id || null,
+            userId: (tokenProfile === null || tokenProfile === void 0 ? void 0 : tokenProfile.user_id) || null,
             error: tokenError,
             source: "Kite /user/profile",
             autoRefreshImplemented: fs_1.default.existsSync(autoTokenScript),
@@ -6389,7 +6744,7 @@ app.get("/api/shadow-monitor", featureGate("feature_signals", "Signals"), async 
         res.json((0, shadowMonitor_1.buildShadowMonitorPayload)(String(_req.query.strategy || ""), String(_req.query.instrument || ""), externalHealth, String(_req.query.underlying || "BANKNIFTY")));
     }
     catch (error) {
-        res.status(500).json({ ok: false, error: error?.message || "Shadow monitor unavailable" });
+        res.status(500).json({ ok: false, error: (error === null || error === void 0 ? void 0 : error.message) || "Shadow monitor unavailable" });
     }
 });
 // -- POST /api/bot/action — admin restart / stop the trading bot -----------------
@@ -6445,7 +6800,7 @@ function tradeOpsReadStrategyOverrides() {
         const parsed = JSON.parse(fs_1.default.readFileSync(TRADEOPS_STRATEGY_CONFIG_FILE, "utf8"));
         return parsed && typeof parsed === "object" ? parsed : {};
     }
-    catch {
+    catch (_a) {
         return {};
     }
 }
@@ -6478,21 +6833,22 @@ function tradeOpsWriteStrategyOverride(id, patch) {
     fs_1.default.writeFileSync(TRADEOPS_STRATEGY_CONFIG_FILE, JSON.stringify(current, null, 2) + "\n");
 }
 async function tradeOpsReadKiteCreds() {
+    var _a, _b, _c, _e;
     const settingsToken = await (0, db_1.getSetting)("kite_access_token").catch(() => "");
     try {
         const raw = fs_1.default.readFileSync("/home/ubuntu/trading-bot/.env", "utf8");
-        const apiKey = (raw.match(/^API_KEY=(.+)$/m)?.[1] ?? "").trim();
-        const envToken = (raw.match(/^ACCESS_TOKEN=(.+)$/m)?.[1] ?? "").trim();
+        const apiKey = ((_b = (_a = raw.match(/^API_KEY=(.+)$/m)) === null || _a === void 0 ? void 0 : _a[1]) !== null && _b !== void 0 ? _b : "").trim();
+        const envToken = ((_e = (_c = raw.match(/^ACCESS_TOKEN=(.+)$/m)) === null || _c === void 0 ? void 0 : _c[1]) !== null && _e !== void 0 ? _e : "").trim();
         let token = envToken || settingsToken;
         try {
             const tokenFile = fs_1.default.readFileSync("/home/ubuntu/trading-bot/access_token.txt", "utf8").trim();
             if (tokenFile)
                 token = tokenFile;
         }
-        catch { }
+        catch (_f) { }
         return { apiKey, token };
     }
-    catch {
+    catch (_g) {
         return { apiKey: "", token: settingsToken || "" };
     }
 }
@@ -6507,7 +6863,7 @@ function tradeOpsReadBotEnv() {
         });
         return { raw, map };
     }
-    catch {
+    catch (_a) {
         return { raw: "", map: {} };
     }
 }
@@ -6529,16 +6885,16 @@ function tradeOpsWriteBotEnvValue(key, value) {
 function tradeOpsLiveSafety(hb) {
     const issues = [];
     const env = tradeOpsReadBotEnv().map;
-    const mode = String(hb?.tt1030FuturesMode || env.TT1030_FUTURES_MODE || "SHADOW").toUpperCase();
-    const strategyMarker = String(hb?.tt1030Strategy || "").toUpperCase();
+    const mode = String((hb === null || hb === void 0 ? void 0 : hb.tt1030FuturesMode) || env.TT1030_FUTURES_MODE || "SHADOW").toUpperCase();
+    const strategyMarker = String((hb === null || hb === void 0 ? void 0 : hb.tt1030Strategy) || "").toUpperCase();
     const confirmedStrategy = /^(TEN_THIRTY_INDEX_SHADOW|TEN_THIRTY_FUTURES_(LIVE|SHADOW))$/.test(strategyMarker);
     if (!confirmedStrategy) {
         issues.push("10:30 futures heartbeat is not confirmed.");
     }
-    if (hb?.tt1030AuditStatus === "BLOCKED") {
+    if ((hb === null || hb === void 0 ? void 0 : hb.tt1030AuditStatus) === "BLOCKED") {
         issues.push("10:30 audit status is BLOCKED.");
     }
-    if (hb?.tt1030InTrade) {
+    if (hb === null || hb === void 0 ? void 0 : hb.tt1030InTrade) {
         issues.push("10:30 strategy is currently in a trade; mode changes are blocked while a position is active.");
     }
     return {
@@ -6565,7 +6921,7 @@ async function tradeOpsKiteJSON(pathname, init = {}) {
     try {
         json = text ? JSON.parse(text) : {};
     }
-    catch {
+    catch (_a) {
         json = { raw: text };
     }
     if (!resp.ok || json.status === "error")
@@ -6598,10 +6954,10 @@ function tradeOpsMaybeNum(v) {
     return Number.isFinite(n) ? n : null;
 }
 function tradeOpsPnl(t) {
-    const pnlRs = Number(t?.pnlRs);
+    const pnlRs = Number(t === null || t === void 0 ? void 0 : t.pnlRs);
     if (Number.isFinite(pnlRs))
         return pnlRs;
-    const pnl = Number(t?.pnl);
+    const pnl = Number(t === null || t === void 0 ? void 0 : t.pnl);
     return Number.isFinite(pnl) ? pnl : 0;
 }
 function tradeOpsDateKey(value) {
@@ -6668,8 +7024,8 @@ function tradeOpsSanitizeSymbol(value) {
     return cleaned || "Completed trade";
 }
 function tradeOpsIsFuturesTrade(value) {
-    const symbol = String(value?.tradeSymbol || value?.symbol || value?.tradingsymbol || "").toUpperCase();
-    const segment = String(value?.segment || value?.instrumentType || value?.product || "").toUpperCase();
+    const symbol = String((value === null || value === void 0 ? void 0 : value.tradeSymbol) || (value === null || value === void 0 ? void 0 : value.symbol) || (value === null || value === void 0 ? void 0 : value.tradingsymbol) || "").toUpperCase();
+    const segment = String((value === null || value === void 0 ? void 0 : value.segment) || (value === null || value === void 0 ? void 0 : value.instrumentType) || (value === null || value === void 0 ? void 0 : value.product) || "").toUpperCase();
     if (symbol.includes("INDEX_SHADOW") || symbol.includes("SHADOW"))
         return false;
     if (!symbol.includes("BANKNIFTY"))
@@ -6677,70 +7033,72 @@ function tradeOpsIsFuturesTrade(value) {
     return symbol.includes("FUT") || segment.includes("FUT");
 }
 function tradeOpsIsTenThirtyFuturesTrade(value) {
-    const type = String(value?.type || value?.strategy || "").toUpperCase();
-    const reason = `${value?.reasonEntry || ""} ${value?.reasonExit || ""} ${value?.status || ""}`.toLowerCase();
-    const symbol = tradeOpsSanitizeSymbol(value?.symbol || value?.tradeSymbol || value?.tradingsymbol || "");
+    const type = String((value === null || value === void 0 ? void 0 : value.type) || (value === null || value === void 0 ? void 0 : value.strategy) || "").toUpperCase();
+    const reason = `${(value === null || value === void 0 ? void 0 : value.reasonEntry) || ""} ${(value === null || value === void 0 ? void 0 : value.reasonExit) || ""} ${(value === null || value === void 0 ? void 0 : value.status) || ""}`.toLowerCase();
+    const symbol = tradeOpsSanitizeSymbol((value === null || value === void 0 ? void 0 : value.symbol) || (value === null || value === void 0 ? void 0 : value.tradeSymbol) || (value === null || value === void 0 ? void 0 : value.tradingsymbol) || "");
     const isTenThirtyIndex = type.includes("TEN_THIRTY_INDEX") || symbol.includes("BANKNIFTY_INDEX_SHADOW");
     const isTenThirtyFut = tradeOpsIsFuturesTrade(value) && reason.includes("ten_thirty");
     return isTenThirtyIndex || isTenThirtyFut;
 }
 function tradeOpsIsVerifiedLiveFuturesTrade(value) {
-    const symbol = String(value?.tradeSymbol || value?.symbol || value?.tradingsymbol || "").toUpperCase();
-    const source = String(value?.source || value?.executionMode || value?.mode || "").toUpperCase();
-    const orderId = String(value?.brokerOrderId || value?.orderId || value?.entryOrderId || "").trim();
+    const symbol = String((value === null || value === void 0 ? void 0 : value.tradeSymbol) || (value === null || value === void 0 ? void 0 : value.symbol) || (value === null || value === void 0 ? void 0 : value.tradingsymbol) || "").toUpperCase();
+    const source = String((value === null || value === void 0 ? void 0 : value.source) || (value === null || value === void 0 ? void 0 : value.executionMode) || (value === null || value === void 0 ? void 0 : value.mode) || "").toUpperCase();
+    const orderId = String((value === null || value === void 0 ? void 0 : value.brokerOrderId) || (value === null || value === void 0 ? void 0 : value.orderId) || (value === null || value === void 0 ? void 0 : value.entryOrderId) || "").trim();
     if (!tradeOpsIsFuturesTrade(value) || /SHADOW|SIMULAT|PAPER/.test(symbol + " " + source))
         return false;
     return !!orderId || /LIVE|BROKER|ZERODHA/.test(source);
 }
 function tradeOpsHeartbeat1030Rows(hb, sessionDate) {
-    const log = Array.isArray(hb?.tt1030TradeLog) ? hb.tt1030TradeLog : [];
+    var _a, _b, _c, _e;
+    const log = Array.isArray(hb === null || hb === void 0 ? void 0 : hb.tt1030TradeLog) ? hb.tt1030TradeLog : [];
     if (!log.length)
         return [];
-    const entries = log.filter((x) => x?.entry != null && x?.exit == null);
-    const exits = log.filter((x) => x?.exit != null || x?.pnlRs != null || x?.pts != null);
+    const entries = log.filter((x) => (x === null || x === void 0 ? void 0 : x.entry) != null && (x === null || x === void 0 ? void 0 : x.exit) == null);
+    const exits = log.filter((x) => (x === null || x === void 0 ? void 0 : x.exit) != null || (x === null || x === void 0 ? void 0 : x.pnlRs) != null || (x === null || x === void 0 ? void 0 : x.pts) != null);
     const rows = [];
     for (const exit of exits) {
-        const dir = String(exit?.dir || "").toUpperCase();
-        const entry = [...entries].reverse().find((x) => String(x?.dir || "").toUpperCase() === dir) || entries[entries.length - 1] || {};
-        const time = exit?.time || entry?.time || "15:15";
+        const dir = String((exit === null || exit === void 0 ? void 0 : exit.dir) || "").toUpperCase();
+        const entry = [...entries].reverse().find((x) => String((x === null || x === void 0 ? void 0 : x.dir) || "").toUpperCase() === dir) || entries[entries.length - 1] || {};
+        const time = (exit === null || exit === void 0 ? void 0 : exit.time) || (entry === null || entry === void 0 ? void 0 : entry.time) || "15:15";
         rows.push({
             date: `${sessionDate}T${String(time).padStart(5, "0")}:00+05:30`,
             type: "TEN_THIRTY_INDEX_SHADOW_HEARTBEAT",
             direction: dir || "PE",
             symbol: "BANKNIFTY_INDEX_SHADOW",
-            entryPrice: tradeOpsNum(exit?.entry ?? entry?.entry),
-            exitPrice: tradeOpsNum(exit?.exit),
-            premiumEntry: tradeOpsNum(exit?.premIn ?? entry?.premIn),
-            premiumExit: tradeOpsNum(exit?.premOut),
-            pnl: tradeOpsNum(exit?.pts),
-            pnlRs: tradeOpsNum(exit?.pnlRs),
-            reasonEntry: entry?.reason || "ten_thirty_shadow_entry",
-            reasonExit: exit?.reason || "ten_thirty_shadow_exit",
-            qty: tradeOpsNum(hb?.tt1030Qty ?? hb?.qty ?? 30),
+            entryPrice: tradeOpsNum((_a = exit === null || exit === void 0 ? void 0 : exit.entry) !== null && _a !== void 0 ? _a : entry === null || entry === void 0 ? void 0 : entry.entry),
+            exitPrice: tradeOpsNum(exit === null || exit === void 0 ? void 0 : exit.exit),
+            premiumEntry: tradeOpsNum((_b = exit === null || exit === void 0 ? void 0 : exit.premIn) !== null && _b !== void 0 ? _b : entry === null || entry === void 0 ? void 0 : entry.premIn),
+            premiumExit: tradeOpsNum(exit === null || exit === void 0 ? void 0 : exit.premOut),
+            pnl: tradeOpsNum(exit === null || exit === void 0 ? void 0 : exit.pts),
+            pnlRs: tradeOpsNum(exit === null || exit === void 0 ? void 0 : exit.pnlRs),
+            reasonEntry: (entry === null || entry === void 0 ? void 0 : entry.reason) || "ten_thirty_shadow_entry",
+            reasonExit: (exit === null || exit === void 0 ? void 0 : exit.reason) || "ten_thirty_shadow_exit",
+            qty: tradeOpsNum((_e = (_c = hb === null || hb === void 0 ? void 0 : hb.tt1030Qty) !== null && _c !== void 0 ? _c : hb === null || hb === void 0 ? void 0 : hb.qty) !== null && _e !== void 0 ? _e : 30),
             source: "heartbeat_shadow",
         });
     }
     return rows;
 }
 function tradeOpsState1030Rows(state1030, sessionDate) {
-    const log = Array.isArray(state1030?.log) ? state1030.log : [];
+    const log = Array.isArray(state1030 === null || state1030 === void 0 ? void 0 : state1030.log) ? state1030.log : [];
     return log.map((x, idx) => {
-        const time = String(x?.time || "15:15").slice(0, 5);
-        const isExit = x?.exit != null || x?.pnlRs != null || x?.pts != null;
+        var _a;
+        const time = String((x === null || x === void 0 ? void 0 : x.time) || "15:15").slice(0, 5);
+        const isExit = (x === null || x === void 0 ? void 0 : x.exit) != null || (x === null || x === void 0 ? void 0 : x.pnlRs) != null || (x === null || x === void 0 ? void 0 : x.pts) != null;
         return {
             date: `${sessionDate}T${time.padStart(5, "0")}:00+05:30`,
             type: isExit ? "TEN_THIRTY_INDEX_EVENT_EXIT" : "TEN_THIRTY_INDEX_EVENT_ENTRY",
-            direction: String(x?.dir || "").toUpperCase(),
+            direction: String((x === null || x === void 0 ? void 0 : x.dir) || "").toUpperCase(),
             symbol: "BANKNIFTY_INDEX",
-            entryPrice: tradeOpsNum(x?.entry),
-            exitPrice: isExit ? tradeOpsNum(x?.exit) : 0,
-            premiumEntry: tradeOpsNum(x?.premIn),
-            premiumExit: isExit ? tradeOpsNum(x?.premOut) : 0,
-            pnl: isExit ? tradeOpsNum(x?.pts) : 0,
-            pnlRs: isExit ? tradeOpsNum(x?.pnlRs) : 0,
-            reasonEntry: x?.reason || (isExit ? "ten_thirty_exit" : "ten_thirty_entry"),
-            reasonExit: isExit ? (x?.reason || "ten_thirty_exit") : "",
-            qty: tradeOpsNum(state1030?.qty ?? 30),
+            entryPrice: tradeOpsNum(x === null || x === void 0 ? void 0 : x.entry),
+            exitPrice: isExit ? tradeOpsNum(x === null || x === void 0 ? void 0 : x.exit) : 0,
+            premiumEntry: tradeOpsNum(x === null || x === void 0 ? void 0 : x.premIn),
+            premiumExit: isExit ? tradeOpsNum(x === null || x === void 0 ? void 0 : x.premOut) : 0,
+            pnl: isExit ? tradeOpsNum(x === null || x === void 0 ? void 0 : x.pts) : 0,
+            pnlRs: isExit ? tradeOpsNum(x === null || x === void 0 ? void 0 : x.pnlRs) : 0,
+            reasonEntry: (x === null || x === void 0 ? void 0 : x.reason) || (isExit ? "ten_thirty_exit" : "ten_thirty_entry"),
+            reasonExit: isExit ? ((x === null || x === void 0 ? void 0 : x.reason) || "ten_thirty_exit") : "",
+            qty: tradeOpsNum((_a = state1030 === null || state1030 === void 0 ? void 0 : state1030.qty) !== null && _a !== void 0 ? _a : 30),
             status: isExit ? "Filled" : "Entry",
             source: "tt1030_state_log",
             eventIndex: idx + 1,
@@ -6796,17 +7154,17 @@ function tradeOpsReadRecentLogFiles() {
                 rows.push({ time: "", level, message: tradeOpsSanitizeLog(line) });
             }
         }
-        catch { }
+        catch (_a) { }
     }
     return rows.slice(-18);
 }
 function tradeOpsTodayCandleLog(hb, today = getTodayIST()) {
-    const hbAt = hb?.at ? new Date(hb.at).getTime() : 0;
+    const hbAt = (hb === null || hb === void 0 ? void 0 : hb.at) ? new Date(hb.at).getTime() : 0;
     const heartbeatSession = hbAt ? new Date(hb.at).toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" }) : "";
     const heartbeatIsToday = heartbeatSession === today;
-    const raw = Array.isArray(hb?.tt1030CandleLog) ? hb.tt1030CandleLog : [];
+    const raw = Array.isArray(hb === null || hb === void 0 ? void 0 : hb.tt1030CandleLog) ? hb.tt1030CandleLog : [];
     return raw.filter((c) => {
-        const rawTime = c?.date || c?.at || c?.time;
+        const rawTime = (c === null || c === void 0 ? void 0 : c.date) || (c === null || c === void 0 ? void 0 : c.at) || (c === null || c === void 0 ? void 0 : c.time);
         if (!rawTime)
             return heartbeatIsToday;
         const parsed = new Date(rawTime);
@@ -6818,17 +7176,17 @@ function tradeOpsTodayCandleLog(hb, today = getTodayIST()) {
 }
 function tradeOpsAuditIsRejection(x) {
     const text = [
-        x?.event,
-        x?.code,
-        x?.message,
-        x?.error,
-        x?.reason,
-        x?.status,
+        x === null || x === void 0 ? void 0 : x.event,
+        x === null || x === void 0 ? void 0 : x.code,
+        x === null || x === void 0 ? void 0 : x.message,
+        x === null || x === void 0 ? void 0 : x.error,
+        x === null || x === void 0 ? void 0 : x.reason,
+        x === null || x === void 0 ? void 0 : x.status,
     ].map(v => String(v || "")).join(" ");
     return /LIVE_ENTRY_ORDER_FAILED|live_margin_precheck|broker rejected|order rejected|rejected by broker|insufficient margin|order failed/i.test(text);
 }
 function tradeOpsAuditLevel(x) {
-    const text = [x?.severity, x?.level, x?.event, x?.code, x?.message, x?.error].map(v => String(v || "")).join(" ");
+    const text = [x === null || x === void 0 ? void 0 : x.severity, x === null || x === void 0 ? void 0 : x.level, x === null || x === void 0 ? void 0 : x.event, x === null || x === void 0 ? void 0 : x.code, x === null || x === void 0 ? void 0 : x.message, x === null || x === void 0 ? void 0 : x.error].map(v => String(v || "")).join(" ");
     if (/error|failed|rejected|blocked|insufficient/i.test(text))
         return "ERROR";
     if (/warn|margin|token/i.test(text))
@@ -6836,15 +7194,15 @@ function tradeOpsAuditLevel(x) {
     return "INFO";
 }
 function tradeOpsAuditMessage(x) {
-    const requiredMargin = tradeOpsMaybeNum(x?.requiredMargin);
-    const neededMargin = tradeOpsMaybeNum(x?.neededMargin);
-    const availableMargin = tradeOpsMaybeNum(x?.availableMargin);
-    const safetyBuffer = tradeOpsMaybeNum(x?.safetyBuffer);
-    const symbol = x?.symbol || x?.tradeSymbol || x?.instrument || "BANKNIFTY futures";
-    const side = x?.side || x?.direction || "";
-    const qty = x?.qty || x?.quantity || "";
-    if (String(x?.event || "").toLowerCase() === "live_margin_precheck" || requiredMargin !== null || neededMargin !== null) {
-        const need = neededMargin ?? requiredMargin;
+    const requiredMargin = tradeOpsMaybeNum(x === null || x === void 0 ? void 0 : x.requiredMargin);
+    const neededMargin = tradeOpsMaybeNum(x === null || x === void 0 ? void 0 : x.neededMargin);
+    const availableMargin = tradeOpsMaybeNum(x === null || x === void 0 ? void 0 : x.availableMargin);
+    const safetyBuffer = tradeOpsMaybeNum(x === null || x === void 0 ? void 0 : x.safetyBuffer);
+    const symbol = (x === null || x === void 0 ? void 0 : x.symbol) || (x === null || x === void 0 ? void 0 : x.tradeSymbol) || (x === null || x === void 0 ? void 0 : x.instrument) || "BANKNIFTY futures";
+    const side = (x === null || x === void 0 ? void 0 : x.side) || (x === null || x === void 0 ? void 0 : x.direction) || "";
+    const qty = (x === null || x === void 0 ? void 0 : x.qty) || (x === null || x === void 0 ? void 0 : x.quantity) || "";
+    if (String((x === null || x === void 0 ? void 0 : x.event) || "").toLowerCase() === "live_margin_precheck" || requiredMargin !== null || neededMargin !== null) {
+        const need = neededMargin !== null && neededMargin !== void 0 ? neededMargin : requiredMargin;
         const parts = [
             `Live order blocked: margin precheck failed for ${symbol}${side ? ` ${side}` : ""}${qty ? ` qty ${qty}` : ""}.`,
             requiredMargin !== null ? `Required Rs.${Math.round(requiredMargin).toLocaleString("en-IN")}` : "",
@@ -6854,24 +7212,24 @@ function tradeOpsAuditMessage(x) {
         ].filter(Boolean);
         return tradeOpsSanitizeLog(parts.join(" "));
     }
-    return tradeOpsSanitizeLog(x?.error || x?.message || x?.reason || x?.code || x?.event || "TradeOps audit event");
+    return tradeOpsSanitizeLog((x === null || x === void 0 ? void 0 : x.error) || (x === null || x === void 0 ? void 0 : x.message) || (x === null || x === void 0 ? void 0 : x.reason) || (x === null || x === void 0 ? void 0 : x.code) || (x === null || x === void 0 ? void 0 : x.event) || "TradeOps audit event");
 }
 function tradeOpsAuditRows() {
     return readBotJSONL("tt1030-live-audit.jsonl");
 }
 function tradeOpsTodayAuditRows(today = getTodayIST()) {
     return tradeOpsAuditRows()
-        .filter((x) => tradeOpsDateKey(x?.ts || x?.at || x?.date || x?.day) === today);
+        .filter((x) => tradeOpsDateKey((x === null || x === void 0 ? void 0 : x.ts) || (x === null || x === void 0 ? void 0 : x.at) || (x === null || x === void 0 ? void 0 : x.date) || (x === null || x === void 0 ? void 0 : x.day)) === today);
 }
 function tradeOpsDedupeRejections(rows) {
     const grouped = new Map();
     for (const row of rows) {
-        const at = String(row?.ts || row?.at || "");
-        const minute = at ? at.slice(0, 16) : tradeOpsTime(row?.ts || row?.at).slice(0, 5);
-        const key = String(row?.signalKey || `${tradeOpsDateKey(row?.ts || row?.at || row?.day)}|${minute}|${row?.symbol || row?.futuresSymbol || ""}`);
+        const at = String((row === null || row === void 0 ? void 0 : row.ts) || (row === null || row === void 0 ? void 0 : row.at) || "");
+        const minute = at ? at.slice(0, 16) : tradeOpsTime((row === null || row === void 0 ? void 0 : row.ts) || (row === null || row === void 0 ? void 0 : row.at)).slice(0, 5);
+        const key = String((row === null || row === void 0 ? void 0 : row.signalKey) || `${tradeOpsDateKey((row === null || row === void 0 ? void 0 : row.ts) || (row === null || row === void 0 ? void 0 : row.at) || (row === null || row === void 0 ? void 0 : row.day))}|${minute}|${(row === null || row === void 0 ? void 0 : row.symbol) || (row === null || row === void 0 ? void 0 : row.futuresSymbol) || ""}`);
         const current = grouped.get(key);
-        const currentScore = /LIVE_ENTRY_ORDER_FAILED/i.test(String(current?.code || current?.event || "")) ? 2 : 1;
-        const nextScore = /LIVE_ENTRY_ORDER_FAILED/i.test(String(row?.code || row?.event || "")) ? 2 : 1;
+        const currentScore = /LIVE_ENTRY_ORDER_FAILED/i.test(String((current === null || current === void 0 ? void 0 : current.code) || (current === null || current === void 0 ? void 0 : current.event) || "")) ? 2 : 1;
+        const nextScore = /LIVE_ENTRY_ORDER_FAILED/i.test(String((row === null || row === void 0 ? void 0 : row.code) || (row === null || row === void 0 ? void 0 : row.event) || "")) ? 2 : 1;
         if (!current || nextScore >= currentScore)
             grouped.set(key, row);
     }
@@ -6882,14 +7240,14 @@ function buildTradeOpsLogPreview() {
     const tt1030State = readBotJSON("tt1030-state.json", {}) || {};
     const tt1030CandleFile = readBotJSON("tt1030-candle-log.json", {}) || {};
     const today = getTodayIST();
-    const hbAt = hb?.at ? new Date(hb.at).getTime() : 0;
+    const hbAt = (hb === null || hb === void 0 ? void 0 : hb.at) ? new Date(hb.at).getTime() : 0;
     const heartbeatAgeSec = hbAt ? Math.max(0, Math.round((Date.now() - hbAt) / 1000)) : null;
     const isAlive = hbAt ? heartbeatAgeSec < 180 : false;
     const heartbeatCandles = tradeOpsTodayCandleLog(hb, today);
-    const stateCandles = tt1030State?.date && tradeOpsDateKey(tt1030State.date) === today && Array.isArray(tt1030State?.candleLog) ? tt1030State.candleLog : [];
-    const fileCandles = tt1030CandleFile?.date && tradeOpsDateKey(tt1030CandleFile.date) === today && Array.isArray(tt1030CandleFile?.log) ? tt1030CandleFile.log : [];
+    const stateCandles = (tt1030State === null || tt1030State === void 0 ? void 0 : tt1030State.date) && tradeOpsDateKey(tt1030State.date) === today && Array.isArray(tt1030State === null || tt1030State === void 0 ? void 0 : tt1030State.candleLog) ? tt1030State.candleLog : [];
+    const fileCandles = (tt1030CandleFile === null || tt1030CandleFile === void 0 ? void 0 : tt1030CandleFile.date) && tradeOpsDateKey(tt1030CandleFile.date) === today && Array.isArray(tt1030CandleFile === null || tt1030CandleFile === void 0 ? void 0 : tt1030CandleFile.log) ? tt1030CandleFile.log : [];
     const todayCandles = heartbeatCandles.length ? heartbeatCandles : stateCandles.length ? stateCandles : fileCandles;
-    const liveNet = tradeOpsMaybeNum(hb?.tt1030PnL);
+    const liveNet = tradeOpsMaybeNum(hb === null || hb === void 0 ? void 0 : hb.tt1030PnL);
     const botAuditTail = tradeOpsTodayAuditRows(today).slice(-40);
     const recentFileRows = tradeOpsReadRecentLogFiles();
     const auditTail = (() => {
@@ -6899,37 +7257,38 @@ function buildTradeOpsLogPreview() {
                 try {
                     return JSON.parse(line);
                 }
-                catch {
+                catch (_a) {
                     return { at: "", message: line };
                 }
-            }).filter((x) => tradeOpsDateKey(x?.at) === today);
+            }).filter((x) => tradeOpsDateKey(x === null || x === void 0 ? void 0 : x.at) === today);
         }
-        catch {
+        catch (_a) {
             return [];
         }
     })();
-    const heartbeatLogRows = (hb?.logs || hb?.serverLogs || []).slice(-20).filter((x) => {
-        const raw = x?.time || x?.at || x?.message || x;
+    const heartbeatLogRows = ((hb === null || hb === void 0 ? void 0 : hb.logs) || (hb === null || hb === void 0 ? void 0 : hb.serverLogs) || []).slice(-20).filter((x) => {
+        const raw = (x === null || x === void 0 ? void 0 : x.time) || (x === null || x === void 0 ? void 0 : x.at) || (x === null || x === void 0 ? void 0 : x.message) || x;
         return tradeOpsLogDateKey(raw) === today;
     }).map((x) => {
-        const message = tradeOpsSanitizeLog(x?.message || x);
-        const rawLevel = String(x?.level || "INFO").toUpperCase();
+        const message = tradeOpsSanitizeLog((x === null || x === void 0 ? void 0 : x.message) || x);
+        const rawLevel = String((x === null || x === void 0 ? void 0 : x.level) || "INFO").toUpperCase();
         const isError = /Error:|Exception|ETIMEDOUT|failed|rejected/i.test(message);
-        return { time: tradeOpsTime(x?.time || x?.at), level: (isError ? "ERROR" : rawLevel).slice(0, 8), message };
+        return { time: tradeOpsTime((x === null || x === void 0 ? void 0 : x.time) || (x === null || x === void 0 ? void 0 : x.at)), level: (isError ? "ERROR" : rawLevel).slice(0, 8), message };
     });
     const candleLines = todayCandles.slice(-5).reverse().map((c) => {
-        const close = tradeOpsMaybeNum(c?.close ?? c?.c);
+        var _a;
+        const close = tradeOpsMaybeNum((_a = c === null || c === void 0 ? void 0 : c.close) !== null && _a !== void 0 ? _a : c === null || c === void 0 ? void 0 : c.c);
         const suffix = close === null ? "" : ` close ${close}`;
         return {
-            time: tradeOpsTime(c?.time || c?.at || c?.date || hb?.at),
+            time: tradeOpsTime((c === null || c === void 0 ? void 0 : c.time) || (c === null || c === void 0 ? void 0 : c.at) || (c === null || c === void 0 ? void 0 : c.date) || (hb === null || hb === void 0 ? void 0 : hb.at)),
             level: "INFO",
-            message: tradeOpsSanitizeLog(c?.note || c?.reason || c?.status || `Today candle update${suffix}`),
+            message: tradeOpsSanitizeLog((c === null || c === void 0 ? void 0 : c.note) || (c === null || c === void 0 ? void 0 : c.reason) || (c === null || c === void 0 ? void 0 : c.status) || `Today candle update${suffix}`),
         };
     });
     const operationalLogs = [
-        { time: tradeOpsTime(hb?.at), level: isAlive ? "INFO" : "WARN", message: `Bot heartbeat ${isAlive ? "fresh" : "stale"} (${heartbeatAgeSec ?? "no"}s)` },
-        { time: tradeOpsTime(hb?.at), level: todayCandles.length ? "INFO" : "WARN", message: `Operational candle feed: ${todayCandles.length} candles today` },
-        { time: tradeOpsTime(hb?.at), level: liveNet === null || liveNet >= 0 ? "INFO" : "WARN", message: `TradeOps heartbeat P&L ${liveNet === null ? "unavailable" : liveNet.toFixed(2)}` },
+        { time: tradeOpsTime(hb === null || hb === void 0 ? void 0 : hb.at), level: isAlive ? "INFO" : "WARN", message: `Bot heartbeat ${isAlive ? "fresh" : "stale"} (${heartbeatAgeSec !== null && heartbeatAgeSec !== void 0 ? heartbeatAgeSec : "no"}s)` },
+        { time: tradeOpsTime(hb === null || hb === void 0 ? void 0 : hb.at), level: todayCandles.length ? "INFO" : "WARN", message: `Operational candle feed: ${todayCandles.length} candles today` },
+        { time: tradeOpsTime(hb === null || hb === void 0 ? void 0 : hb.at), level: liveNet === null || liveNet >= 0 ? "INFO" : "WARN", message: `TradeOps heartbeat P&L ${liveNet === null ? "unavailable" : liveNet.toFixed(2)}` },
     ];
     return [
         ...heartbeatLogRows,
@@ -6941,6 +7300,7 @@ function buildTradeOpsLogPreview() {
     ].slice(-30).reverse();
 }
 async function buildTradeOpsStatus(strategyId = "") {
+    var _a, _b, _c, _e, _f, _g, _h, _j, _k, _l, _m, _o, _p, _q, _r, _s, _t, _u, _w, _x, _y, _z, _0, _1, _2, _3, _4, _5, _6, _7, _8;
     const strategies = tradeOpsStrategyList();
     const selectedStrategy = strategies.find((s) => s.id === String(strategyId || "").trim()) || strategies.find((s) => s.enabled) || strategies[0];
     const hb = readBotJSON("bot-heartbeat.json", {}) || {};
@@ -6948,24 +7308,24 @@ async function buildTradeOpsStatus(strategyId = "") {
     const tt1030State = readBotJSON("tt1030-state.json", {}) || {};
     const tt1030CandleFile = readBotJSON("tt1030-candle-log.json", {}) || {};
     const rawTrades = readBotJSON("trades.json", []) || [];
-    const hbAt = hb?.at ? new Date(hb.at).getTime() : 0;
+    const hbAt = (hb === null || hb === void 0 ? void 0 : hb.at) ? new Date(hb.at).getTime() : 0;
     const heartbeatAgeSec = hbAt ? Math.max(0, Math.round((Date.now() - hbAt) / 1000)) : null;
     const isAlive = hbAt ? heartbeatAgeSec < 180 : false;
-    const openTrade = hb?.tt1030InTrade === true;
+    const openTrade = (hb === null || hb === void 0 ? void 0 : hb.tt1030InTrade) === true;
     const today = getTodayIST();
     const todayAuditRows = tradeOpsTodayAuditRows(today);
     const rejectionRows = tradeOpsDedupeRejections(todayAuditRows.filter(tradeOpsAuditIsRejection));
     const allRejectionRows = tradeOpsDedupeRejections(tradeOpsAuditRows().filter(tradeOpsAuditIsRejection));
     const latestRejection = rejectionRows[rejectionRows.length - 1] || null;
     const heartbeatTrades = tradeOpsHeartbeat1030Rows(hb, today);
-    const persistedEventRows = tradeOpsDateKey(tt1030State?.date || today) === today ? tradeOpsState1030Rows(tt1030State, today) : [];
-    const persistedEventKeys = new Set(persistedEventRows.map((t) => `${tradeOpsDateKey(t?.date)}|${String(t?.direction || "").toUpperCase()}|${tradeOpsPnl(t)}`));
+    const persistedEventRows = tradeOpsDateKey((tt1030State === null || tt1030State === void 0 ? void 0 : tt1030State.date) || today) === today ? tradeOpsState1030Rows(tt1030State, today) : [];
+    const persistedEventKeys = new Set(persistedEventRows.map((t) => `${tradeOpsDateKey(t === null || t === void 0 ? void 0 : t.date)}|${String((t === null || t === void 0 ? void 0 : t.direction) || "").toUpperCase()}|${tradeOpsPnl(t)}`));
     const rawTenThirtyTrades = rawTrades
         .filter(tradeOpsIsTenThirtyFuturesTrade)
         .filter((t) => {
         if (!persistedEventRows.length)
             return true;
-        const key = `${tradeOpsDateKey(t?.date || t?.exitTime || t?.entryTime)}|${String(t?.direction || t?.side || "").toUpperCase()}|${tradeOpsPnl(t)}`;
+        const key = `${tradeOpsDateKey((t === null || t === void 0 ? void 0 : t.date) || (t === null || t === void 0 ? void 0 : t.exitTime) || (t === null || t === void 0 ? void 0 : t.entryTime))}|${String((t === null || t === void 0 ? void 0 : t.direction) || (t === null || t === void 0 ? void 0 : t.side) || "").toUpperCase()}|${tradeOpsPnl(t)}`;
         return !persistedEventKeys.has(key);
     });
     const verifiedLiveTrades = rawTrades
@@ -6973,29 +7333,30 @@ async function buildTradeOpsStatus(strategyId = "") {
         .filter(tradeOpsIsVerifiedLiveFuturesTrade);
     const strategyTradeMap = new Map();
     for (const t of [...heartbeatTrades, ...persistedEventRows, ...rawTenThirtyTrades]) {
-        const key = `${tradeOpsDateKey(t?.date || t?.exitTime || t?.entryTime)}|${tradeOpsSanitizeSymbol(t?.symbol || t?.tradeSymbol || "")}|${String(t?.direction || t?.side || "").toUpperCase()}|${tradeOpsPnl(t)}`;
+        const key = `${tradeOpsDateKey((t === null || t === void 0 ? void 0 : t.date) || (t === null || t === void 0 ? void 0 : t.exitTime) || (t === null || t === void 0 ? void 0 : t.entryTime))}|${tradeOpsSanitizeSymbol((t === null || t === void 0 ? void 0 : t.symbol) || (t === null || t === void 0 ? void 0 : t.tradeSymbol) || "")}|${String((t === null || t === void 0 ? void 0 : t.direction) || (t === null || t === void 0 ? void 0 : t.side) || "").toUpperCase()}|${tradeOpsPnl(t)}`;
         strategyTradeMap.set(key, t);
     }
-    const strategyTradeCandidates = Array.from(strategyTradeMap.values()).sort((a, b) => new Date(a?.date || a?.exitTime || a?.entryTime || 0).getTime() - new Date(b?.date || b?.exitTime || b?.entryTime || 0).getTime());
+    const strategyTradeCandidates = Array.from(strategyTradeMap.values()).sort((a, b) => new Date((a === null || a === void 0 ? void 0 : a.date) || (a === null || a === void 0 ? void 0 : a.exitTime) || (a === null || a === void 0 ? void 0 : a.entryTime) || 0).getTime() - new Date((b === null || b === void 0 ? void 0 : b.date) || (b === null || b === void 0 ? void 0 : b.exitTime) || (b === null || b === void 0 ? void 0 : b.entryTime) || 0).getTime());
     const strategyTrades = [];
     for (const candidate of strategyTradeCandidates) {
-        const candidateAt = new Date(candidate?.date || candidate?.exitTime || candidate?.entryTime || 0).getTime();
+        const candidateAt = new Date((candidate === null || candidate === void 0 ? void 0 : candidate.date) || (candidate === null || candidate === void 0 ? void 0 : candidate.exitTime) || (candidate === null || candidate === void 0 ? void 0 : candidate.entryTime) || 0).getTime();
         const candidateKey = [
-            tradeOpsDateKey(candidate?.date || candidate?.exitTime || candidate?.entryTime),
-            tradeOpsSanitizeSymbol(candidate?.symbol || candidate?.tradeSymbol || ""),
-            String(candidate?.direction || candidate?.side || "").toUpperCase(),
-            tradeOpsNum(candidate?.qty ?? candidate?.quantity ?? candidate?.mainQty ?? 30),
-            tradeOpsNum(candidate?.entryPrice ?? candidate?.premiumEntry),
+            tradeOpsDateKey((candidate === null || candidate === void 0 ? void 0 : candidate.date) || (candidate === null || candidate === void 0 ? void 0 : candidate.exitTime) || (candidate === null || candidate === void 0 ? void 0 : candidate.entryTime)),
+            tradeOpsSanitizeSymbol((candidate === null || candidate === void 0 ? void 0 : candidate.symbol) || (candidate === null || candidate === void 0 ? void 0 : candidate.tradeSymbol) || ""),
+            String((candidate === null || candidate === void 0 ? void 0 : candidate.direction) || (candidate === null || candidate === void 0 ? void 0 : candidate.side) || "").toUpperCase(),
+            tradeOpsNum((_c = (_b = (_a = candidate === null || candidate === void 0 ? void 0 : candidate.qty) !== null && _a !== void 0 ? _a : candidate === null || candidate === void 0 ? void 0 : candidate.quantity) !== null && _b !== void 0 ? _b : candidate === null || candidate === void 0 ? void 0 : candidate.mainQty) !== null && _c !== void 0 ? _c : 30),
+            tradeOpsNum((_e = candidate === null || candidate === void 0 ? void 0 : candidate.entryPrice) !== null && _e !== void 0 ? _e : candidate === null || candidate === void 0 ? void 0 : candidate.premiumEntry),
         ].join("|");
         const duplicateIndex = strategyTrades.findIndex(existing => {
+            var _a, _b, _c, _e;
             const existingKey = [
-                tradeOpsDateKey(existing?.date || existing?.exitTime || existing?.entryTime),
-                tradeOpsSanitizeSymbol(existing?.symbol || existing?.tradeSymbol || ""),
-                String(existing?.direction || existing?.side || "").toUpperCase(),
-                tradeOpsNum(existing?.qty ?? existing?.quantity ?? existing?.mainQty ?? 30),
-                tradeOpsNum(existing?.entryPrice ?? existing?.premiumEntry),
+                tradeOpsDateKey((existing === null || existing === void 0 ? void 0 : existing.date) || (existing === null || existing === void 0 ? void 0 : existing.exitTime) || (existing === null || existing === void 0 ? void 0 : existing.entryTime)),
+                tradeOpsSanitizeSymbol((existing === null || existing === void 0 ? void 0 : existing.symbol) || (existing === null || existing === void 0 ? void 0 : existing.tradeSymbol) || ""),
+                String((existing === null || existing === void 0 ? void 0 : existing.direction) || (existing === null || existing === void 0 ? void 0 : existing.side) || "").toUpperCase(),
+                tradeOpsNum((_c = (_b = (_a = existing === null || existing === void 0 ? void 0 : existing.qty) !== null && _a !== void 0 ? _a : existing === null || existing === void 0 ? void 0 : existing.quantity) !== null && _b !== void 0 ? _b : existing === null || existing === void 0 ? void 0 : existing.mainQty) !== null && _c !== void 0 ? _c : 30),
+                tradeOpsNum((_e = existing === null || existing === void 0 ? void 0 : existing.entryPrice) !== null && _e !== void 0 ? _e : existing === null || existing === void 0 ? void 0 : existing.premiumEntry),
             ].join("|");
-            const existingAt = new Date(existing?.date || existing?.exitTime || existing?.entryTime || 0).getTime();
+            const existingAt = new Date((existing === null || existing === void 0 ? void 0 : existing.date) || (existing === null || existing === void 0 ? void 0 : existing.exitTime) || (existing === null || existing === void 0 ? void 0 : existing.entryTime) || 0).getTime();
             return existingKey === candidateKey && Number.isFinite(candidateAt) && Number.isFinite(existingAt) && Math.abs(candidateAt - existingAt) <= 60000;
         });
         if (duplicateIndex < 0) {
@@ -7005,50 +7366,49 @@ async function buildTradeOpsStatus(strategyId = "") {
         const existing = strategyTrades[duplicateIndex];
         const existingLive = tradeOpsIsVerifiedLiveFuturesTrade(existing);
         const candidateLive = tradeOpsIsVerifiedLiveFuturesTrade(candidate);
-        const existingAt = new Date(existing?.date || existing?.exitTime || existing?.entryTime || 0).getTime();
+        const existingAt = new Date((existing === null || existing === void 0 ? void 0 : existing.date) || (existing === null || existing === void 0 ? void 0 : existing.exitTime) || (existing === null || existing === void 0 ? void 0 : existing.entryTime) || 0).getTime();
         if ((candidateLive && !existingLive) || (candidateLive === existingLive && candidateAt >= existingAt)) {
             strategyTrades[duplicateIndex] = candidate;
         }
     }
-    const tt1030DisplayMode = String(hb?.tt1030FuturesMode || tradeOpsReadBotEnv().map.TT1030_FUTURES_MODE || "SHADOW").toUpperCase();
+    const tt1030DisplayMode = String((hb === null || hb === void 0 ? void 0 : hb.tt1030FuturesMode) || tradeOpsReadBotEnv().map.TT1030_FUTURES_MODE || "SHADOW").toUpperCase();
     const currentSessionTrades = tt1030DisplayMode === "LIVE"
         ? verifiedLiveTrades
         : strategyTrades;
     // In LIVE mode, current-session TradeOps P&L must be verified broker orders only.
     // In SHADOW mode, the TradeOps screen should show the recorded TT1030 shadow result.
     const reportingTrades = [
-        ...strategyTrades.filter(t => tradeOpsDateKey(t?.date || t?.exitTime || t?.entryTime) !== today),
-        ...currentSessionTrades.filter(t => tradeOpsDateKey(t?.date || t?.exitTime || t?.entryTime) === today),
+        ...strategyTrades.filter(t => tradeOpsDateKey((t === null || t === void 0 ? void 0 : t.date) || (t === null || t === void 0 ? void 0 : t.exitTime) || (t === null || t === void 0 ? void 0 : t.entryTime)) !== today),
+        ...currentSessionTrades.filter(t => tradeOpsDateKey((t === null || t === void 0 ? void 0 : t.date) || (t === null || t === void 0 ? void 0 : t.exitTime) || (t === null || t === void 0 ? void 0 : t.entryTime)) === today),
     ];
-    const todayHasTrades = reportingTrades.some(t => tradeOpsDateKey(t?.date || t?.exitTime || t?.entryTime) === today);
-    const latestTradeSession = reportingTrades.map(t => tradeOpsDateKey(t?.date || t?.exitTime || t?.entryTime)).filter(Boolean).sort().pop() || today;
-    const botSessionDate = tradeOpsDateKey(tt1030State?.date || tt1030CandleFile?.date || hb?.at || today);
-    const botSessionHasOperationalData = !!botSessionDate && ((Array.isArray(tt1030State?.candleLog) && tt1030State.candleLog.length > 0)
-        || (Array.isArray(tt1030CandleFile?.log) && tt1030CandleFile.log.length > 0)
-        || tradeOpsDateKey(hb?.at) === botSessionDate);
+    const todayHasTrades = reportingTrades.some(t => tradeOpsDateKey((t === null || t === void 0 ? void 0 : t.date) || (t === null || t === void 0 ? void 0 : t.exitTime) || (t === null || t === void 0 ? void 0 : t.entryTime)) === today);
+    const latestTradeSession = reportingTrades.map(t => tradeOpsDateKey((t === null || t === void 0 ? void 0 : t.date) || (t === null || t === void 0 ? void 0 : t.exitTime) || (t === null || t === void 0 ? void 0 : t.entryTime))).filter(Boolean).sort().pop() || today;
+    const botSessionDate = tradeOpsDateKey((tt1030State === null || tt1030State === void 0 ? void 0 : tt1030State.date) || (tt1030CandleFile === null || tt1030CandleFile === void 0 ? void 0 : tt1030CandleFile.date) || (hb === null || hb === void 0 ? void 0 : hb.at) || today);
+    const botSessionHasOperationalData = !!botSessionDate && ((Array.isArray(tt1030State === null || tt1030State === void 0 ? void 0 : tt1030State.candleLog) && tt1030State.candleLog.length > 0)
+        || (Array.isArray(tt1030CandleFile === null || tt1030CandleFile === void 0 ? void 0 : tt1030CandleFile.log) && tt1030CandleFile.log.length > 0)
+        || tradeOpsDateKey(hb === null || hb === void 0 ? void 0 : hb.at) === botSessionDate);
     const latestKnownSession = botSessionHasOperationalData && (!latestTradeSession || botSessionDate >= latestTradeSession)
         ? botSessionDate
         : latestTradeSession;
     const displaySession = (tradeOpsMarketStartedToday() || todayHasTrades) ? today : latestKnownSession;
-    const displayTrades = reportingTrades.filter(t => tradeOpsDateKey(t?.date || t?.exitTime || t?.entryTime) === displaySession);
-    const displayClosed = displayTrades.filter(t => tradeOpsNum(t?.exitPrice) > 0 || tradeOpsNum(t?.premiumExit) > 0);
-    const todayTrades = reportingTrades.filter(t => tradeOpsDateKey(t?.date || t?.exitTime || t?.entryTime) === today);
-    const todayClosed = todayTrades.filter(t => tradeOpsNum(t?.exitPrice) > 0 || tradeOpsNum(t?.premiumExit) > 0);
+    const displayTrades = reportingTrades.filter(t => tradeOpsDateKey((t === null || t === void 0 ? void 0 : t.date) || (t === null || t === void 0 ? void 0 : t.exitTime) || (t === null || t === void 0 ? void 0 : t.entryTime)) === displaySession);
+    const displayClosed = displayTrades.filter(t => tradeOpsNum(t === null || t === void 0 ? void 0 : t.exitPrice) > 0 || tradeOpsNum(t === null || t === void 0 ? void 0 : t.premiumExit) > 0);
+    const todayTrades = reportingTrades.filter(t => tradeOpsDateKey((t === null || t === void 0 ? void 0 : t.date) || (t === null || t === void 0 ? void 0 : t.exitTime) || (t === null || t === void 0 ? void 0 : t.entryTime)) === today);
+    const todayClosed = todayTrades.filter(t => tradeOpsNum(t === null || t === void 0 ? void 0 : t.exitPrice) > 0 || tradeOpsNum(t === null || t === void 0 ? void 0 : t.premiumExit) > 0);
     const todayPnl = todayClosed.reduce((sum, t) => sum + tradeOpsPnl(t), 0);
-    const todayStateActive = tradeOpsDateKey(tt1030State?.date || today) === today;
-    const todayHeartbeatActive = tradeOpsDateKey(hb?.at) === today;
-    const persistedDayRs = todayStateActive ? tradeOpsMaybeNum(tt1030State?.dayRs) : null;
-    const persistedTrades = todayStateActive ? tradeOpsMaybeNum(tt1030State?.trades) : null;
+    const todayStateActive = tradeOpsDateKey((tt1030State === null || tt1030State === void 0 ? void 0 : tt1030State.date) || today) === today;
+    const todayHeartbeatActive = tradeOpsDateKey(hb === null || hb === void 0 ? void 0 : hb.at) === today;
+    const persistedDayRs = todayStateActive ? tradeOpsMaybeNum(tt1030State === null || tt1030State === void 0 ? void 0 : tt1030State.dayRs) : null;
+    const persistedTrades = todayStateActive ? tradeOpsMaybeNum(tt1030State === null || tt1030State === void 0 ? void 0 : tt1030State.trades) : null;
     const heartbeatHas1030Session = todayHeartbeatActive
-        && (openTrade || (Array.isArray(hb?.tt1030TradeLog) && hb.tt1030TradeLog.length > 0) || tradeOpsNum(hb?.tt1030Trades) > 0);
-    const liveNetCandidate = heartbeatHas1030Session ? tradeOpsMaybeNum(hb?.tt1030PnL) : persistedDayRs;
-    const liveClosedCandidate = (todayHeartbeatActive ? tradeOpsMaybeNum(hb?.tt1030ClosedPnL) : null) ?? persistedDayRs ?? todayPnl;
-    const liveUnrealizedCandidate = (todayHeartbeatActive ? tradeOpsMaybeNum(hb?.tt1030UnrealizedPnL) : null)
-        ?? (liveNetCandidate !== null ? liveNetCandidate - liveClosedCandidate : null);
+        && (openTrade || (Array.isArray(hb === null || hb === void 0 ? void 0 : hb.tt1030TradeLog) && hb.tt1030TradeLog.length > 0) || tradeOpsNum(hb === null || hb === void 0 ? void 0 : hb.tt1030Trades) > 0);
+    const liveNetCandidate = heartbeatHas1030Session ? tradeOpsMaybeNum(hb === null || hb === void 0 ? void 0 : hb.tt1030PnL) : persistedDayRs;
+    const liveClosedCandidate = (_g = (_f = (todayHeartbeatActive ? tradeOpsMaybeNum(hb === null || hb === void 0 ? void 0 : hb.tt1030ClosedPnL) : null)) !== null && _f !== void 0 ? _f : persistedDayRs) !== null && _g !== void 0 ? _g : todayPnl;
+    const liveUnrealizedCandidate = (_h = (todayHeartbeatActive ? tradeOpsMaybeNum(hb === null || hb === void 0 ? void 0 : hb.tt1030UnrealizedPnL) : null)) !== null && _h !== void 0 ? _h : (liveNetCandidate !== null ? liveNetCandidate - liveClosedCandidate : null);
     const live1030Closed = liveClosedCandidate;
-    const live1030Net = liveNetCandidate ?? (live1030Closed + (liveUnrealizedCandidate ?? 0));
+    const live1030Net = liveNetCandidate !== null && liveNetCandidate !== void 0 ? liveNetCandidate : (live1030Closed + (liveUnrealizedCandidate !== null && liveUnrealizedCandidate !== void 0 ? liveUnrealizedCandidate : 0));
     const realized = live1030Closed;
-    const unrealized = liveUnrealizedCandidate ?? (openTrade && todayHeartbeatActive ? live1030Net - live1030Closed : 0);
+    const unrealized = liveUnrealizedCandidate !== null && liveUnrealizedCandidate !== void 0 ? liveUnrealizedCandidate : (openTrade && todayHeartbeatActive ? live1030Net - live1030Closed : 0);
     const netPnl = live1030Net;
     const todayHadTrade = todayClosed.length > 0 || heartbeatHas1030Session || (openTrade && todayHeartbeatActive);
     const pnlSource = todayHadTrade
@@ -7067,18 +7427,18 @@ async function buildTradeOpsStatus(strategyId = "") {
             tradeOpsKiteJSON("/user/margins").catch(() => null),
             tradeOpsKiteJSON("/portfolio/positions").catch(() => null),
         ]);
-        const hasProfile = !!profile?.data;
+        const hasProfile = !!(profile === null || profile === void 0 ? void 0 : profile.data);
         broker = {
             ok: hasProfile,
             tokenOK: hasProfile,
-            profile: profile?.data || null,
-            margins: margins?.data || null,
-            positions: positions?.data?.net || [],
+            profile: (profile === null || profile === void 0 ? void 0 : profile.data) || null,
+            margins: (margins === null || margins === void 0 ? void 0 : margins.data) || null,
+            positions: ((_j = positions === null || positions === void 0 ? void 0 : positions.data) === null || _j === void 0 ? void 0 : _j.net) || [],
             error: hasProfile ? "" : "Broker profile unavailable",
         };
     }
     catch (e) {
-        broker.error = e?.message || "Broker unavailable";
+        broker.error = (e === null || e === void 0 ? void 0 : e.message) || "Broker unavailable";
     }
     const openPositions = openTrade ? (broker.positions || [])
         .filter((p) => tradeOpsNum(p.quantity) !== 0)
@@ -7092,82 +7452,86 @@ async function buildTradeOpsStatus(strategyId = "") {
         product: p.product || "",
         status: "Open",
     })) : [];
-    const stateSymbol = hb?.tt1030Symbol || "BANKNIFTY FUT";
+    const stateSymbol = (hb === null || hb === void 0 ? void 0 : hb.tt1030Symbol) || "BANKNIFTY FUT";
     if (!openPositions.length && openTrade && tradeOpsIsFuturesTrade({ symbol: stateSymbol })) {
         openPositions.push({
             symbol: tradeOpsSanitizeSymbol(stateSymbol || "Open position"),
-            qty: tradeOpsNum(hb?.tt1030Qty ?? hb?.qty),
-            avg: tradeOpsNum(hb?.tt1030Entry),
-            ltp: tradeOpsNum(hb?.tt1030Live),
+            qty: tradeOpsNum((_k = hb === null || hb === void 0 ? void 0 : hb.tt1030Qty) !== null && _k !== void 0 ? _k : hb === null || hb === void 0 ? void 0 : hb.qty),
+            avg: tradeOpsNum(hb === null || hb === void 0 ? void 0 : hb.tt1030Entry),
+            ltp: tradeOpsNum(hb === null || hb === void 0 ? void 0 : hb.tt1030Live),
             pnl: unrealized,
             product: "Live",
             status: "Open",
         });
     }
-    const equity = broker.margins?.equity || null;
-    const availableRaw = tradeOpsMaybeNum(equity?.available?.cash ?? equity?.available?.live_balance ?? equity?.available?.opening_balance);
-    const usedRaw = tradeOpsMaybeNum(equity?.utilised?.debits ?? equity?.utilised?.span ?? equity?.utilised?.exposure);
-    const totalBalanceRaw = tradeOpsMaybeNum(equity?.net);
+    const equity = ((_l = broker.margins) === null || _l === void 0 ? void 0 : _l.equity) || null;
+    const availableRaw = tradeOpsMaybeNum((_q = (_o = (_m = equity === null || equity === void 0 ? void 0 : equity.available) === null || _m === void 0 ? void 0 : _m.cash) !== null && _o !== void 0 ? _o : (_p = equity === null || equity === void 0 ? void 0 : equity.available) === null || _p === void 0 ? void 0 : _p.live_balance) !== null && _q !== void 0 ? _q : (_r = equity === null || equity === void 0 ? void 0 : equity.available) === null || _r === void 0 ? void 0 : _r.opening_balance);
+    const usedRaw = tradeOpsMaybeNum((_w = (_t = (_s = equity === null || equity === void 0 ? void 0 : equity.utilised) === null || _s === void 0 ? void 0 : _s.debits) !== null && _t !== void 0 ? _t : (_u = equity === null || equity === void 0 ? void 0 : equity.utilised) === null || _u === void 0 ? void 0 : _u.span) !== null && _w !== void 0 ? _w : (_x = equity === null || equity === void 0 ? void 0 : equity.utilised) === null || _x === void 0 ? void 0 : _x.exposure);
+    const totalBalanceRaw = tradeOpsMaybeNum(equity === null || equity === void 0 ? void 0 : equity.net);
     const marginsSynced = !!(broker.ok && equity && (availableRaw !== null || usedRaw !== null || totalBalanceRaw !== null));
-    const available = availableRaw ?? 0;
-    const used = usedRaw ?? 0;
-    const totalBalance = totalBalanceRaw ?? (marginsSynced ? available + used : 0);
+    const available = availableRaw !== null && availableRaw !== void 0 ? availableRaw : 0;
+    const used = usedRaw !== null && usedRaw !== void 0 ? usedRaw : 0;
+    const totalBalance = totalBalanceRaw !== null && totalBalanceRaw !== void 0 ? totalBalanceRaw : (marginsSynced ? available + used : 0);
     const exposurePct = marginsSynced && totalBalance > 0 ? Math.min(100, Math.max(0, used / totalBalance * 100)) : null;
-    const openingBalance = tradeOpsMaybeNum(equity?.available?.opening_balance);
-    const cashBalance = tradeOpsMaybeNum(equity?.available?.cash ?? equity?.available?.live_balance);
+    const openingBalance = tradeOpsMaybeNum((_y = equity === null || equity === void 0 ? void 0 : equity.available) === null || _y === void 0 ? void 0 : _y.opening_balance);
+    const cashBalance = tradeOpsMaybeNum((_0 = (_z = equity === null || equity === void 0 ? void 0 : equity.available) === null || _z === void 0 ? void 0 : _z.cash) !== null && _0 !== void 0 ? _0 : (_1 = equity === null || equity === void 0 ? void 0 : equity.available) === null || _1 === void 0 ? void 0 : _1.live_balance);
     const requiredMargin = Math.max(used, openPositions.reduce((s, p) => s + Math.abs(p.qty * p.ltp), 0));
     const shortfall = marginsSynced ? Math.max(0, requiredMargin - available) : null;
     const marginReady = marginsSynced && (requiredMargin <= 0 || available >= requiredMargin);
     const todayLow = pnls.length ? Math.min(...pnls) : netPnl;
     const todayHigh = pnls.length ? Math.max(...pnls) : netPnl;
-    const tradeRows = verifiedLiveTrades.slice(-500).reverse().map(t => ({
-        time: tradeOpsTime(t?.date || t?.exitTime || t?.entryTime),
-        date: tradeOpsDateKey(t?.date || t?.exitTime || t?.entryTime),
-        direction: String(t?.direction || t?.side || "").toUpperCase(),
-        side: tradeOpsSide(t?.direction || t?.side),
-        symbol: tradeOpsSanitizeSymbol(t?.tradeSymbol || t?.symbol || "Completed trade"),
-        qty: tradeOpsNum(t?.qty ?? t?.quantity ?? t?.mainQty ?? 0),
-        entry: tradeOpsNum(t?.premiumEntry ?? t?.entryPrice),
-        exit: tradeOpsNum(t?.premiumExit ?? t?.exitPrice),
-        pnl: tradeOpsPnl(t),
-        status: t?.status || (tradeOpsNum(t?.exitPrice) > 0 || tradeOpsNum(t?.premiumExit) > 0 ? "Filled" : "Pending"),
-        note: tradeOpsSanitizeLog(t?.reasonExit || t?.status || t?.source || ""),
-        source: t?.source || t?.type || "verified_live_trade",
-        executionMode: "LIVE",
-        brokerOrderId: t?.brokerOrderId || t?.orderId || t?.entryOrderId || "",
-    }));
+    const tradeRows = verifiedLiveTrades.slice(-500).reverse().map(t => {
+        var _a, _b, _c, _e, _f;
+        return ({
+            time: tradeOpsTime((t === null || t === void 0 ? void 0 : t.date) || (t === null || t === void 0 ? void 0 : t.exitTime) || (t === null || t === void 0 ? void 0 : t.entryTime)),
+            date: tradeOpsDateKey((t === null || t === void 0 ? void 0 : t.date) || (t === null || t === void 0 ? void 0 : t.exitTime) || (t === null || t === void 0 ? void 0 : t.entryTime)),
+            direction: String((t === null || t === void 0 ? void 0 : t.direction) || (t === null || t === void 0 ? void 0 : t.side) || "").toUpperCase(),
+            side: tradeOpsSide((t === null || t === void 0 ? void 0 : t.direction) || (t === null || t === void 0 ? void 0 : t.side)),
+            symbol: tradeOpsSanitizeSymbol((t === null || t === void 0 ? void 0 : t.tradeSymbol) || (t === null || t === void 0 ? void 0 : t.symbol) || "Completed trade"),
+            qty: tradeOpsNum((_c = (_b = (_a = t === null || t === void 0 ? void 0 : t.qty) !== null && _a !== void 0 ? _a : t === null || t === void 0 ? void 0 : t.quantity) !== null && _b !== void 0 ? _b : t === null || t === void 0 ? void 0 : t.mainQty) !== null && _c !== void 0 ? _c : 0),
+            entry: tradeOpsNum((_e = t === null || t === void 0 ? void 0 : t.premiumEntry) !== null && _e !== void 0 ? _e : t === null || t === void 0 ? void 0 : t.entryPrice),
+            exit: tradeOpsNum((_f = t === null || t === void 0 ? void 0 : t.premiumExit) !== null && _f !== void 0 ? _f : t === null || t === void 0 ? void 0 : t.exitPrice),
+            pnl: tradeOpsPnl(t),
+            status: (t === null || t === void 0 ? void 0 : t.status) || (tradeOpsNum(t === null || t === void 0 ? void 0 : t.exitPrice) > 0 || tradeOpsNum(t === null || t === void 0 ? void 0 : t.premiumExit) > 0 ? "Filled" : "Pending"),
+            note: tradeOpsSanitizeLog((t === null || t === void 0 ? void 0 : t.reasonExit) || (t === null || t === void 0 ? void 0 : t.status) || (t === null || t === void 0 ? void 0 : t.source) || ""),
+            source: (t === null || t === void 0 ? void 0 : t.source) || (t === null || t === void 0 ? void 0 : t.type) || "verified_live_trade",
+            executionMode: "LIVE",
+            brokerOrderId: (t === null || t === void 0 ? void 0 : t.brokerOrderId) || (t === null || t === void 0 ? void 0 : t.orderId) || (t === null || t === void 0 ? void 0 : t.entryOrderId) || "",
+        });
+    });
     const historyTradeRows = reportingTrades
-        .filter(t => tradeOpsNum(t?.exitPrice) > 0 || tradeOpsNum(t?.premiumExit) > 0)
+        .filter(t => tradeOpsNum(t === null || t === void 0 ? void 0 : t.exitPrice) > 0 || tradeOpsNum(t === null || t === void 0 ? void 0 : t.premiumExit) > 0)
         .slice(-500)
         .reverse()
         .map(t => {
+        var _a, _b, _c, _e, _f;
         const verifiedLive = tradeOpsIsVerifiedLiveFuturesTrade(t);
         return {
-            time: tradeOpsTime(t?.date || t?.exitTime || t?.entryTime),
-            date: tradeOpsDateKey(t?.date || t?.exitTime || t?.entryTime),
-            direction: String(t?.direction || t?.side || "").toUpperCase(),
-            side: tradeOpsSide(t?.direction || t?.side),
-            symbol: tradeOpsSanitizeSymbol(t?.tradeSymbol || t?.symbol || "BANKNIFTY"),
-            qty: tradeOpsNum(t?.qty ?? t?.quantity ?? t?.mainQty ?? 30),
-            entry: tradeOpsNum(t?.entryPrice ?? t?.premiumEntry),
-            exit: tradeOpsNum(t?.exitPrice ?? t?.premiumExit),
+            time: tradeOpsTime((t === null || t === void 0 ? void 0 : t.date) || (t === null || t === void 0 ? void 0 : t.exitTime) || (t === null || t === void 0 ? void 0 : t.entryTime)),
+            date: tradeOpsDateKey((t === null || t === void 0 ? void 0 : t.date) || (t === null || t === void 0 ? void 0 : t.exitTime) || (t === null || t === void 0 ? void 0 : t.entryTime)),
+            direction: String((t === null || t === void 0 ? void 0 : t.direction) || (t === null || t === void 0 ? void 0 : t.side) || "").toUpperCase(),
+            side: tradeOpsSide((t === null || t === void 0 ? void 0 : t.direction) || (t === null || t === void 0 ? void 0 : t.side)),
+            symbol: tradeOpsSanitizeSymbol((t === null || t === void 0 ? void 0 : t.tradeSymbol) || (t === null || t === void 0 ? void 0 : t.symbol) || "BANKNIFTY"),
+            qty: tradeOpsNum((_c = (_b = (_a = t === null || t === void 0 ? void 0 : t.qty) !== null && _a !== void 0 ? _a : t === null || t === void 0 ? void 0 : t.quantity) !== null && _b !== void 0 ? _b : t === null || t === void 0 ? void 0 : t.mainQty) !== null && _c !== void 0 ? _c : 30),
+            entry: tradeOpsNum((_e = t === null || t === void 0 ? void 0 : t.entryPrice) !== null && _e !== void 0 ? _e : t === null || t === void 0 ? void 0 : t.premiumEntry),
+            exit: tradeOpsNum((_f = t === null || t === void 0 ? void 0 : t.exitPrice) !== null && _f !== void 0 ? _f : t === null || t === void 0 ? void 0 : t.premiumExit),
             pnl: tradeOpsPnl(t),
-            status: t?.status || "Filled",
-            note: tradeOpsSanitizeLog(t?.reasonExit || t?.status || t?.source || ""),
+            status: (t === null || t === void 0 ? void 0 : t.status) || "Filled",
+            note: tradeOpsSanitizeLog((t === null || t === void 0 ? void 0 : t.reasonExit) || (t === null || t === void 0 ? void 0 : t.status) || (t === null || t === void 0 ? void 0 : t.source) || ""),
             source: verifiedLive ? "verified_live_broker_order" : "recorded_1030_bot_result",
             executionMode: verifiedLive ? "LIVE" : "RECORDED",
-            brokerOrderId: t?.brokerOrderId || t?.orderId || t?.entryOrderId || "",
+            brokerOrderId: (t === null || t === void 0 ? void 0 : t.brokerOrderId) || (t === null || t === void 0 ? void 0 : t.orderId) || (t === null || t === void 0 ? void 0 : t.entryOrderId) || "",
         };
     });
-    const candleQty = tradeOpsNum(hb?.tt1030Qty ?? hb?.qty ?? 30);
-    const stateEvents = (Array.isArray(tt1030State?.log) ? tt1030State.log : []).map((x) => ({
+    const candleQty = tradeOpsNum((_3 = (_2 = hb === null || hb === void 0 ? void 0 : hb.tt1030Qty) !== null && _2 !== void 0 ? _2 : hb === null || hb === void 0 ? void 0 : hb.qty) !== null && _3 !== void 0 ? _3 : 30);
+    const stateEvents = (Array.isArray(tt1030State === null || tt1030State === void 0 ? void 0 : tt1030State.log) ? tt1030State.log : []).map((x) => ({
         ...x,
-        hhmm: String(x?.time || "").slice(0, 5),
+        hhmm: String((x === null || x === void 0 ? void 0 : x.time) || "").slice(0, 5),
         minute: (() => {
-            const m = String(x?.time || "").match(/^(\d{1,2}):(\d{2})/);
+            const m = String((x === null || x === void 0 ? void 0 : x.time) || "").match(/^(\d{1,2}):(\d{2})/);
             return m ? Number(m[1]) * 60 + Number(m[2]) : -1;
         })(),
-        isExit: x?.exit != null || x?.pnlRs != null || x?.pts != null,
+        isExit: (x === null || x === void 0 ? void 0 : x.exit) != null || (x === null || x === void 0 ? void 0 : x.pnlRs) != null || (x === null || x === void 0 ? void 0 : x.pts) != null,
     })).filter((x) => x.minute >= 0).sort((a, b) => a.minute - b.minute);
     function tradeOps1030LockedProfitPts(maxFavPts, trailAfterPts = 300) {
         if (!(trailAfterPts > 0) || maxFavPts === null || !(maxFavPts >= trailAfterPts))
@@ -7176,6 +7540,7 @@ async function buildTradeOpsStatus(strategyId = "") {
     }
     let candleLogSourceForState = [];
     function candleTradeState(c, hhmm, close, sl) {
+        var _a, _b, _c, _e;
         const m = String(hhmm || "").match(/^(\d{1,2}):(\d{2})/);
         if (!m)
             return null;
@@ -7200,28 +7565,28 @@ async function buildTradeOpsStatus(strategyId = "") {
         const entry = tradeOpsMaybeNum(ev.entry);
         const dir = String(ev.dir || "").toUpperCase();
         const eventExit = tradeOpsMaybeNum(ev.exit);
-        let high = tradeOpsMaybeNum(c?.high ?? c?.h);
-        let low = tradeOpsMaybeNum(c?.low ?? c?.l);
+        let high = tradeOpsMaybeNum((_a = c === null || c === void 0 ? void 0 : c.high) !== null && _a !== void 0 ? _a : c === null || c === void 0 ? void 0 : c.h);
+        let low = tradeOpsMaybeNum((_b = c === null || c === void 0 ? void 0 : c.low) !== null && _b !== void 0 ? _b : c === null || c === void 0 ? void 0 : c.l);
         for (const prior of candleLogSourceForState) {
-            const priorTime = String(prior?.time || prior?.at || prior?.date || "").match(/(\d{1,2}):(\d{2})/);
+            const priorTime = String((prior === null || prior === void 0 ? void 0 : prior.time) || (prior === null || prior === void 0 ? void 0 : prior.at) || (prior === null || prior === void 0 ? void 0 : prior.date) || "").match(/(\d{1,2}):(\d{2})/);
             if (!priorTime)
                 continue;
             const priorMinute = Number(priorTime[1]) * 60 + Number(priorTime[2]);
             if (priorMinute < ev.minute || priorMinute > candleMinute)
                 continue;
-            const ph = tradeOpsMaybeNum(prior?.high ?? prior?.h);
-            const pl = tradeOpsMaybeNum(prior?.low ?? prior?.l);
+            const ph = tradeOpsMaybeNum((_c = prior === null || prior === void 0 ? void 0 : prior.high) !== null && _c !== void 0 ? _c : prior === null || prior === void 0 ? void 0 : prior.h);
+            const pl = tradeOpsMaybeNum((_e = prior === null || prior === void 0 ? void 0 : prior.low) !== null && _e !== void 0 ? _e : prior === null || prior === void 0 ? void 0 : prior.l);
             if (ph !== null)
                 high = high === null ? ph : Math.max(high, ph);
             if (pl !== null)
                 low = low === null ? pl : Math.min(low, pl);
         }
-        const rawSl = tradeOpsMaybeNum(sl ?? ev.sl);
+        const rawSl = tradeOpsMaybeNum(sl !== null && sl !== void 0 ? sl : ev.sl);
         const maxFavPts = entry === null ? null
             : dir === "PE" || dir === "SHORT" || dir === "SELL"
                 ? (low === null ? null : entry - low)
                 : (high === null ? null : high - entry);
-        const trendTrailEnabled = /300 pts|trail/i.test(String(c?.note || c?.reason || c?.status || ev?.reason || ""));
+        const trendTrailEnabled = /300 pts|trail/i.test(String((c === null || c === void 0 ? void 0 : c.note) || (c === null || c === void 0 ? void 0 : c.reason) || (c === null || c === void 0 ? void 0 : c.status) || (ev === null || ev === void 0 ? void 0 : ev.reason) || ""));
         const protectedPts = tradeOps1030LockedProfitPts(maxFavPts, 300);
         const protectedSl = trendTrailEnabled && protectedPts > 0 && entry !== null
             ? (dir === "PE" || dir === "SHORT" || dir === "SELL" ? entry - protectedPts : entry + protectedPts)
@@ -7247,10 +7612,10 @@ async function buildTradeOpsStatus(strategyId = "") {
             protectedPts,
         };
     }
-    const stateCandleLog = Array.isArray(tt1030State?.candleLog) ? tt1030State.candleLog : [];
-    const fileCandleLog = Array.isArray(tt1030CandleFile?.log) ? tt1030CandleFile.log : [];
-    const stateCandleDate = tt1030State?.date ? tradeOpsDateKey(tt1030State.date) : "";
-    const fileCandleDate = tt1030CandleFile?.date ? tradeOpsDateKey(tt1030CandleFile.date) : "";
+    const stateCandleLog = Array.isArray(tt1030State === null || tt1030State === void 0 ? void 0 : tt1030State.candleLog) ? tt1030State.candleLog : [];
+    const fileCandleLog = Array.isArray(tt1030CandleFile === null || tt1030CandleFile === void 0 ? void 0 : tt1030CandleFile.log) ? tt1030CandleFile.log : [];
+    const stateCandleDate = (tt1030State === null || tt1030State === void 0 ? void 0 : tt1030State.date) ? tradeOpsDateKey(tt1030State.date) : "";
+    const fileCandleDate = (tt1030CandleFile === null || tt1030CandleFile === void 0 ? void 0 : tt1030CandleFile.date) ? tradeOpsDateKey(tt1030CandleFile.date) : "";
     const currentStateCandles = stateCandleDate === today ? stateCandleLog : [];
     const currentFileCandles = fileCandleDate === today ? fileCandleLog : [];
     const latestPersistedCandles = stateCandleDate >= fileCandleDate ? stateCandleLog : fileCandleLog;
@@ -7263,16 +7628,16 @@ async function buildTradeOpsStatus(strategyId = "") {
     const candleLogSource = heartbeatCandleLog.length ? heartbeatCandleLog : persistedCandleLog;
     candleLogSourceForState = candleLogSource;
     const failureNote = latestRejection ? tradeOpsAuditMessage(latestRejection) : "";
-    const rawBlockedCandle = (c) => /blocked|rejected|failed|insufficient margin|no LIVE order|not opened/i.test(String(c?.status || "") + " " + String(c?.note || c?.reason || ""));
+    const rawBlockedCandle = (c) => /blocked|rejected|failed|insufficient margin|no LIVE order|not opened/i.test(String((c === null || c === void 0 ? void 0 : c.status) || "") + " " + String((c === null || c === void 0 ? void 0 : c.note) || (c === null || c === void 0 ? void 0 : c.reason) || ""));
     const firstBlockedRows = new WeakSet();
     const seenBlockedKeys = new Set();
     for (const row of candleLogSource) {
         if (!row || typeof row !== "object" || !rawBlockedCandle(row))
             continue;
         const key = [
-            String(row?.dir || row?.direction || "").toUpperCase(),
-            String(row?.entry ?? ""),
-            String(row?.note || row?.reason || row?.status || "").replace(/\d{1,2}:\d{2}/g, "").trim().toLowerCase(),
+            String((row === null || row === void 0 ? void 0 : row.dir) || (row === null || row === void 0 ? void 0 : row.direction) || "").toUpperCase(),
+            String((_4 = row === null || row === void 0 ? void 0 : row.entry) !== null && _4 !== void 0 ? _4 : ""),
+            String((row === null || row === void 0 ? void 0 : row.note) || (row === null || row === void 0 ? void 0 : row.reason) || (row === null || row === void 0 ? void 0 : row.status) || "").replace(/\d{1,2}:\d{2}/g, "").trim().toLowerCase(),
         ].join("|");
         if (seenBlockedKeys.has(key))
             continue;
@@ -7280,9 +7645,10 @@ async function buildTradeOpsStatus(strategyId = "") {
         firstBlockedRows.add(row);
     }
     const candleLog = candleLogSource.slice(-50).reverse().map((c, idx) => {
-        const closeOnly = c?.open == null && c?.high == null && c?.low == null && c?.close != null;
-        const close = tradeOpsNum(c?.close ?? c?.c);
-        const rawTime = c?.time || c?.at || c?.date;
+        var _a, _b, _c, _e, _f, _g, _h, _j, _k, _l, _m, _o, _p, _q;
+        const closeOnly = (c === null || c === void 0 ? void 0 : c.open) == null && (c === null || c === void 0 ? void 0 : c.high) == null && (c === null || c === void 0 ? void 0 : c.low) == null && (c === null || c === void 0 ? void 0 : c.close) != null;
+        const close = tradeOpsNum((_a = c === null || c === void 0 ? void 0 : c.close) !== null && _a !== void 0 ? _a : c === null || c === void 0 ? void 0 : c.c);
+        const rawTime = (c === null || c === void 0 ? void 0 : c.time) || (c === null || c === void 0 ? void 0 : c.at) || (c === null || c === void 0 ? void 0 : c.date);
         const timeText = tradeOpsTime(rawTime);
         let chartTime = null;
         const dateValue = rawTime ? new Date(rawTime) : null;
@@ -7295,38 +7661,38 @@ async function buildTradeOpsStatus(strategyId = "") {
                 chartTime = Math.floor(new Date(`${today}T${hhmm[1].padStart(2, "0")}:${hhmm[2]}:00+05:30`).getTime() / 1000);
             }
         }
-        const hhmmText = String(rawTime || timeText || "").match(/(\d{1,2}:\d{2})/)?.[1] || timeText;
+        const hhmmText = ((_b = String(rawTime || timeText || "").match(/(\d{1,2}:\d{2})/)) === null || _b === void 0 ? void 0 : _b[1]) || timeText;
         const blockedCandle = rawBlockedCandle(c);
         const firstBlockedCandle = blockedCandle && c && typeof c === "object" && firstBlockedRows.has(c);
         const carriedBlockedCandle = blockedCandle && !firstBlockedCandle;
-        const tradeAtClose = blockedCandle ? null : candleTradeState(c, String(hhmmText).slice(0, 5), close, c?.sl ?? hb?.tt1030SL);
-        const protectedNote = tradeAtClose?.protectedSl !== null && tradeAtClose?.protectedSl !== undefined
+        const tradeAtClose = blockedCandle ? null : candleTradeState(c, String(hhmmText).slice(0, 5), close, (_c = c === null || c === void 0 ? void 0 : c.sl) !== null && _c !== void 0 ? _c : hb === null || hb === void 0 ? void 0 : hb.tt1030SL);
+        const protectedNote = (tradeAtClose === null || tradeAtClose === void 0 ? void 0 : tradeAtClose.protectedSl) !== null && (tradeAtClose === null || tradeAtClose === void 0 ? void 0 : tradeAtClose.protectedSl) !== undefined
             ? ` Protected +${tradeAtClose.protectedPts || 300} SL: ${tradeAtClose.protectedSl}.`
             : "";
         return {
             idx: candleLogSource.length - idx,
             time: timeText,
             chartTime,
-            open: closeOnly ? close : tradeOpsNum(c?.open ?? c?.o),
-            high: closeOnly ? close : tradeOpsNum(c?.high ?? c?.h),
-            low: closeOnly ? close : tradeOpsNum(c?.low ?? c?.l),
+            open: closeOnly ? close : tradeOpsNum((_e = c === null || c === void 0 ? void 0 : c.open) !== null && _e !== void 0 ? _e : c === null || c === void 0 ? void 0 : c.o),
+            high: closeOnly ? close : tradeOpsNum((_f = c === null || c === void 0 ? void 0 : c.high) !== null && _f !== void 0 ? _f : c === null || c === void 0 ? void 0 : c.h),
+            low: closeOnly ? close : tradeOpsNum((_g = c === null || c === void 0 ? void 0 : c.low) !== null && _g !== void 0 ? _g : c === null || c === void 0 ? void 0 : c.l),
             close,
-            volume: tradeOpsNum(c?.volume ?? c?.v),
+            volume: tradeOpsNum((_h = c === null || c === void 0 ? void 0 : c.volume) !== null && _h !== void 0 ? _h : c === null || c === void 0 ? void 0 : c.v),
             closeOnly,
-            status: firstBlockedCandle ? "Entry blocked" : carriedBlockedCandle ? "Blocked context" : (c?.status || (tradeAtClose ? "In trade" : "Monitoring")),
-            entry: blockedCandle ? null : (tradeAtClose?.entry ?? null),
-            dir: blockedCandle ? (c?.dir || c?.direction || "--") : (tradeAtClose?.dir || "--"),
-            sl: blockedCandle ? null : (tradeAtClose?.sl ?? null),
-            pnlPts: blockedCandle ? null : (tradeAtClose?.pnlPts ?? null),
-            pnlRs: blockedCandle ? null : (tradeAtClose?.pnlRs ?? null),
-            closePnlPts: blockedCandle ? null : (tradeAtClose?.closePnlPts ?? null),
-            closePnlRs: blockedCandle ? null : (tradeAtClose?.closePnlRs ?? null),
-            protectedSl: tradeAtClose?.protectedSl ?? null,
-            note: tradeOpsSanitizeLog((c?.note || c?.reason || "") + (blockedCandle && failureNote ? ` ${failureNote}` : "") + protectedNote),
+            status: firstBlockedCandle ? "Entry blocked" : carriedBlockedCandle ? "Blocked context" : ((c === null || c === void 0 ? void 0 : c.status) || (tradeAtClose ? "In trade" : "Monitoring")),
+            entry: blockedCandle ? null : ((_j = tradeAtClose === null || tradeAtClose === void 0 ? void 0 : tradeAtClose.entry) !== null && _j !== void 0 ? _j : null),
+            dir: blockedCandle ? ((c === null || c === void 0 ? void 0 : c.dir) || (c === null || c === void 0 ? void 0 : c.direction) || "--") : ((tradeAtClose === null || tradeAtClose === void 0 ? void 0 : tradeAtClose.dir) || "--"),
+            sl: blockedCandle ? null : ((_k = tradeAtClose === null || tradeAtClose === void 0 ? void 0 : tradeAtClose.sl) !== null && _k !== void 0 ? _k : null),
+            pnlPts: blockedCandle ? null : ((_l = tradeAtClose === null || tradeAtClose === void 0 ? void 0 : tradeAtClose.pnlPts) !== null && _l !== void 0 ? _l : null),
+            pnlRs: blockedCandle ? null : ((_m = tradeAtClose === null || tradeAtClose === void 0 ? void 0 : tradeAtClose.pnlRs) !== null && _m !== void 0 ? _m : null),
+            closePnlPts: blockedCandle ? null : ((_o = tradeAtClose === null || tradeAtClose === void 0 ? void 0 : tradeAtClose.closePnlPts) !== null && _o !== void 0 ? _o : null),
+            closePnlRs: blockedCandle ? null : ((_p = tradeAtClose === null || tradeAtClose === void 0 ? void 0 : tradeAtClose.closePnlRs) !== null && _p !== void 0 ? _p : null),
+            protectedSl: (_q = tradeAtClose === null || tradeAtClose === void 0 ? void 0 : tradeAtClose.protectedSl) !== null && _q !== void 0 ? _q : null,
+            note: tradeOpsSanitizeLog(((c === null || c === void 0 ? void 0 : c.note) || (c === null || c === void 0 ? void 0 : c.reason) || "") + (blockedCandle && failureNote ? ` ${failureNote}` : "") + protectedNote),
         };
     });
     const feedFresh = isAlive && candleLog.length > 0 && (heartbeatAgeSec === null || heartbeatAgeSec < 180);
-    const pendingExecution = !!(hb?.tt1030PendingOrder || hb?.pendingOrder || state?.pendingOrder || state?.nextOrder);
+    const pendingExecution = !!((hb === null || hb === void 0 ? void 0 : hb.tt1030PendingOrder) || (hb === null || hb === void 0 ? void 0 : hb.pendingOrder) || (state === null || state === void 0 ? void 0 : state.pendingOrder) || (state === null || state === void 0 ? void 0 : state.nextOrder));
     const botEnv = tradeOpsReadBotEnv().map;
     const envMode = String(botEnv.TT1030_FUTURES_MODE || "SHADOW").toUpperCase();
     const telegramEnv = String(botEnv.TT1030_TELEGRAM_ENABLED || "OFF").toUpperCase();
@@ -7377,7 +7743,7 @@ async function buildTradeOpsStatus(strategyId = "") {
                 ok: candleLog.length > 0,
                 label: candleLog.length > 0 ? "Candle feed available" : "No candle feed recorded",
                 source: "bot heartbeat candle log",
-                lastCandle: candleLog[0]?.time || null,
+                lastCandle: ((_5 = candleLog[0]) === null || _5 === void 0 ? void 0 : _5.time) || null,
                 candleCount: candleLog.length,
             },
         },
@@ -7386,14 +7752,14 @@ async function buildTradeOpsStatus(strategyId = "") {
             name: "TEN_THIRTY_INDEX_FUTURES",
             label: "10:30 Futures",
             mode: modeSafety.mode,
-            source: hb?.tt1030Strategy || "TEN_THIRTY_INDEX",
+            source: (hb === null || hb === void 0 ? void 0 : hb.tt1030Strategy) || "TEN_THIRTY_INDEX",
             instrument: "BANKNIFTY futures/index shadow",
         },
         modeControl: {
             scope: "TT1030_FUTURES",
             runningMode: modeSafety.mode,
             envMode,
-            restartRequired: !!hb?.tt1030FuturesMode && envMode !== String(hb.tt1030FuturesMode).toUpperCase(),
+            restartRequired: !!(hb === null || hb === void 0 ? void 0 : hb.tt1030FuturesMode) && envMode !== String(hb.tt1030FuturesMode).toUpperCase(),
             liveAllowed: modeSafety.liveAllowed,
             safetyIssues: modeSafety.issues,
         },
@@ -7408,8 +7774,8 @@ async function buildTradeOpsStatus(strategyId = "") {
         broker: {
             connected: broker.ok,
             tokenOK: broker.tokenOK,
-            accountName: broker.profile?.user_name || broker.profile?.user_shortname || "Unavailable",
-            accountId: broker.profile?.user_id || "Unavailable",
+            accountName: ((_6 = broker.profile) === null || _6 === void 0 ? void 0 : _6.user_name) || ((_7 = broker.profile) === null || _7 === void 0 ? void 0 : _7.user_shortname) || "Unavailable",
+            accountId: ((_8 = broker.profile) === null || _8 === void 0 ? void 0 : _8.user_id) || "Unavailable",
             error: broker.error,
         },
         bot: {
@@ -7418,7 +7784,7 @@ async function buildTradeOpsStatus(strategyId = "") {
             state: isAlive ? (openTrade ? "In Trade" : "Online") : "Offline",
             heartbeatAgeSec,
             lastHeartbeat: hbAt ? new Date(hb.at).toISOString() : null,
-            uptime: hb?.uptime || "Unavailable",
+            uptime: (hb === null || hb === void 0 ? void 0 : hb.uptime) || "Unavailable",
         },
         pnl: {
             net: netPnl,
@@ -7463,13 +7829,13 @@ async function buildTradeOpsStatus(strategyId = "") {
         trades: tradeRows,
         historyTrades: historyTradeRows,
         rejections: allRejectionRows.slice(-200).reverse().map((x, idx) => ({
-            id: x?.id || x?.code || `rejection-${idx}`,
-            date: tradeOpsDateKey(x?.ts || x?.at || today),
-            time: tradeOpsTime(x?.ts || x?.at),
-            symbol: x?.symbol || x?.futuresSymbol || x?.tradeSymbol || x?.instrument || "Futures order",
-            side: x?.side || x?.transaction || x?.direction || x?.dir || "--",
-            qty: x?.qty || x?.quantity || 30,
-            entry: x?.entry || x?.entryPrice || x?.price || null,
+            id: (x === null || x === void 0 ? void 0 : x.id) || (x === null || x === void 0 ? void 0 : x.code) || `rejection-${idx}`,
+            date: tradeOpsDateKey((x === null || x === void 0 ? void 0 : x.ts) || (x === null || x === void 0 ? void 0 : x.at) || today),
+            time: tradeOpsTime((x === null || x === void 0 ? void 0 : x.ts) || (x === null || x === void 0 ? void 0 : x.at)),
+            symbol: (x === null || x === void 0 ? void 0 : x.symbol) || (x === null || x === void 0 ? void 0 : x.futuresSymbol) || (x === null || x === void 0 ? void 0 : x.tradeSymbol) || (x === null || x === void 0 ? void 0 : x.instrument) || "Futures order",
+            side: (x === null || x === void 0 ? void 0 : x.side) || (x === null || x === void 0 ? void 0 : x.transaction) || (x === null || x === void 0 ? void 0 : x.direction) || (x === null || x === void 0 ? void 0 : x.dir) || "--",
+            qty: (x === null || x === void 0 ? void 0 : x.qty) || (x === null || x === void 0 ? void 0 : x.quantity) || 30,
+            entry: (x === null || x === void 0 ? void 0 : x.entry) || (x === null || x === void 0 ? void 0 : x.entryPrice) || (x === null || x === void 0 ? void 0 : x.price) || null,
             exit: null,
             pnl: 0,
             status: "Blocked",
@@ -7537,7 +7903,7 @@ app.get("/api/tradeops/status", requireAdmin, async (req, res) => {
         res.json(await buildTradeOpsStatus(String(req.query.strategy || "")));
     }
     catch (e) {
-        res.status(500).json({ ok: false, error: e?.message || "Status unavailable" });
+        res.status(500).json({ ok: false, error: (e === null || e === void 0 ? void 0 : e.message) || "Status unavailable" });
     }
 });
 app.get("/api/tradeops/logs", requireAdmin, async (req, res) => {
@@ -7546,17 +7912,18 @@ app.get("/api/tradeops/logs", requireAdmin, async (req, res) => {
         res.json({ ok: true, updatedAt: new Date().toISOString(), logs: buildTradeOpsLogPreview() });
     }
     catch (e) {
-        res.status(500).json({ ok: false, error: e?.message || "Logs unavailable" });
+        res.status(500).json({ ok: false, error: (e === null || e === void 0 ? void 0 : e.message) || "Logs unavailable" });
     }
 });
 app.post("/api/tradeops/strategy-config", requireAdmin, async (req, res) => {
+    var _a, _b, _c, _e, _f, _g, _h, _j, _k, _l, _m, _o;
     try {
-        const id = String(req.body?.strategyId || req.body?.id || "").trim();
+        const id = String(((_a = req.body) === null || _a === void 0 ? void 0 : _a.strategyId) || ((_b = req.body) === null || _b === void 0 ? void 0 : _b.id) || "").trim();
         const strategies = tradeOpsStrategyList();
         const existing = strategies.find((s) => s.id === id);
         if (!existing)
             return res.status(404).json({ ok: false, error: "Unknown strategy" });
-        const nextMode = String(req.body?.mode || existing.mode || "SHADOW").toUpperCase() === "LIVE" ? "LIVE" : "SHADOW";
+        const nextMode = String(((_c = req.body) === null || _c === void 0 ? void 0 : _c.mode) || existing.mode || "SHADOW").toUpperCase() === "LIVE" ? "LIVE" : "SHADOW";
         if (nextMode === "LIVE" && !existing.liveCapable) {
             return res.status(400).json({ ok: false, error: "LIVE is not enabled for this strategy yet. Keep it in SHADOW." });
         }
@@ -7564,35 +7931,36 @@ app.post("/api/tradeops/strategy-config", requireAdmin, async (req, res) => {
         if (nextMode === "LIVE" && otherLive) {
             return res.status(400).json({ ok: false, error: `${otherLive.name} is already LIVE. Only one LIVE strategy is allowed initially.` });
         }
-        const enabled = req.body?.enabled === undefined ? existing.enabled : !!req.body.enabled;
+        const enabled = ((_e = req.body) === null || _e === void 0 ? void 0 : _e.enabled) === undefined ? existing.enabled : !!req.body.enabled;
         if (!enabled && existing.mode === "LIVE") {
             const hb = readBotJSON("bot-heartbeat.json", {}) || {};
-            if (existing.id === "tt1030-futures" && hb?.tt1030InTrade) {
+            if (existing.id === "tt1030-futures" && (hb === null || hb === void 0 ? void 0 : hb.tt1030InTrade)) {
                 return res.status(400).json({ ok: false, error: "Cannot disable while the LIVE strategy has an active trade." });
             }
         }
         tradeOpsWriteStrategyOverride(id, {
             enabled,
             mode: nextMode,
-            instrument: String(req.body?.instrument || existing.instrument),
-            product: String(req.body?.product || existing.product),
-            entryTime: String(req.body?.entryTime || existing.entryTime),
-            quantity: tradeOpsNum(req.body?.quantity, existing.quantity),
-            sl: String(req.body?.sl || existing.sl),
-            target: String(req.body?.target || existing.target),
-            maxDailyLoss: String(req.body?.maxDailyLoss || existing.maxDailyLoss),
-            config: { ...(existing.config || {}), ...(req.body?.config || {}) },
+            instrument: String(((_f = req.body) === null || _f === void 0 ? void 0 : _f.instrument) || existing.instrument),
+            product: String(((_g = req.body) === null || _g === void 0 ? void 0 : _g.product) || existing.product),
+            entryTime: String(((_h = req.body) === null || _h === void 0 ? void 0 : _h.entryTime) || existing.entryTime),
+            quantity: tradeOpsNum((_j = req.body) === null || _j === void 0 ? void 0 : _j.quantity, existing.quantity),
+            sl: String(((_k = req.body) === null || _k === void 0 ? void 0 : _k.sl) || existing.sl),
+            target: String(((_l = req.body) === null || _l === void 0 ? void 0 : _l.target) || existing.target),
+            maxDailyLoss: String(((_m = req.body) === null || _m === void 0 ? void 0 : _m.maxDailyLoss) || existing.maxDailyLoss),
+            config: { ...(existing.config || {}), ...(((_o = req.body) === null || _o === void 0 ? void 0 : _o.config) || {}) },
         });
         res.json({ ok: true, strategy: tradeOpsStrategyList().find((s) => s.id === id), restartRequired: true });
     }
     catch (e) {
-        res.status(500).json({ ok: false, error: e?.message || "Strategy config save failed" });
+        res.status(500).json({ ok: false, error: (e === null || e === void 0 ? void 0 : e.message) || "Strategy config save failed" });
     }
 });
 app.post("/api/tradeops/strategy-mode", requireAdmin, async (req, res) => {
+    var _a, _b, _c;
     try {
-        const id = String(req.body?.strategyId || req.body?.id || "").trim();
-        const mode = String(req.body?.mode || "SHADOW").toUpperCase() === "LIVE" ? "LIVE" : "SHADOW";
+        const id = String(((_a = req.body) === null || _a === void 0 ? void 0 : _a.strategyId) || ((_b = req.body) === null || _b === void 0 ? void 0 : _b.id) || "").trim();
+        const mode = String(((_c = req.body) === null || _c === void 0 ? void 0 : _c.mode) || "SHADOW").toUpperCase() === "LIVE" ? "LIVE" : "SHADOW";
         const strategies = tradeOpsStrategyList();
         const existing = strategies.find((s) => s.id === id);
         if (!existing)
@@ -7606,7 +7974,7 @@ app.post("/api/tradeops/strategy-mode", requireAdmin, async (req, res) => {
         res.json({ ok: true, strategy: tradeOpsStrategyList().find((s) => s.id === id), restartRequired: true });
     }
     catch (e) {
-        res.status(500).json({ ok: false, error: e?.message || "Strategy mode save failed" });
+        res.status(500).json({ ok: false, error: (e === null || e === void 0 ? void 0 : e.message) || "Strategy mode save failed" });
     }
 });
 app.post("/api/tradeops/token-refresh", requireAdmin, async (_req, res) => {
@@ -7635,12 +8003,13 @@ app.post("/api/tradeops/token-refresh", requireAdmin, async (_req, res) => {
         });
     }
     catch (e) {
-        res.status(500).json({ ok: false, error: e?.message || "Could not start auto token refresh" });
+        res.status(500).json({ ok: false, error: (e === null || e === void 0 ? void 0 : e.message) || "Could not start auto token refresh" });
     }
 });
 app.post("/api/tradeops/mode", requireAdmin, async (req, res) => {
+    var _a, _b, _c, _e, _f, _g;
     try {
-        const requested = String(req.body?.mode || "").toUpperCase();
+        const requested = String(((_a = req.body) === null || _a === void 0 ? void 0 : _a.mode) || "").toUpperCase();
         const target = requested === "LIVE_SHADOW" ? "SHADOW" : requested;
         const allowed = new Set(["SHADOW", "LIVE"]);
         if (!allowed.has(target)) {
@@ -7650,7 +8019,7 @@ app.post("/api/tradeops/mode", requireAdmin, async (req, res) => {
         const hb = readBotJSON("bot-heartbeat.json", {}) || {};
         const safety = tradeOpsLiveSafety(hb);
         if (target === "LIVE") {
-            if (req.body?.confirm !== true) {
+            if (((_b = req.body) === null || _b === void 0 ? void 0 : _b.confirm) !== true) {
                 res.status(400).json({ ok: false, error: "Confirmation required", safety });
                 return;
             }
@@ -7666,12 +8035,12 @@ app.post("/api/tradeops/mode", requireAdmin, async (req, res) => {
             action: "tt1030_futures_mode_change_requested",
             scope: "TT1030_FUTURES",
             mode: target,
-            restartBot: req.body?.restartBot === true,
+            restartBot: ((_c = req.body) === null || _c === void 0 ? void 0 : _c.restartBot) === true,
             safety,
-            user: req.session?.user?.email || "admin",
+            user: ((_f = (_e = req.session) === null || _e === void 0 ? void 0 : _e.user) === null || _f === void 0 ? void 0 : _f.email) || "admin",
         }) + "\n");
         let restarted = false;
-        if (req.body?.restartBot === true) {
+        if (((_g = req.body) === null || _g === void 0 ? void 0 : _g.restartBot) === true) {
             (0, child_process_1.execSync)("pm2 reload trading-bot --update-env", {
                 cwd: TRADEOPS_BOT_DIR,
                 stdio: "pipe",
@@ -7688,12 +8057,13 @@ app.post("/api/tradeops/mode", requireAdmin, async (req, res) => {
         });
     }
     catch (e) {
-        res.status(500).json({ ok: false, error: e?.message || "Mode change failed" });
+        res.status(500).json({ ok: false, error: (e === null || e === void 0 ? void 0 : e.message) || "Mode change failed" });
     }
 });
 app.post("/api/tradeops/notifications", requireAdmin, async (req, res) => {
+    var _a, _b, _c, _e;
     try {
-        const enabled = req.body?.telegramEnabled === true || req.body?.enabled === true;
+        const enabled = ((_a = req.body) === null || _a === void 0 ? void 0 : _a.telegramEnabled) === true || ((_b = req.body) === null || _b === void 0 ? void 0 : _b.enabled) === true;
         const value = enabled ? "ON" : "OFF";
         tradeOpsWriteBotEnvValue("TT1030_TELEGRAM_ENABLED", value);
         tradeOpsWriteBotEnvValue("DRISHTI_TELEGRAM_ENABLED", "OFF");
@@ -7707,7 +8077,7 @@ app.post("/api/tradeops/notifications", requireAdmin, async (req, res) => {
             drishtiTelegram: "OFF",
             tokenConfigured: !!botEnv.TELEGRAM_BOT_TOKEN,
             chatConfigured: !!botEnv.TELEGRAM_CHAT_ID,
-            user: req.session?.user?.email || "admin",
+            user: ((_e = (_c = req.session) === null || _c === void 0 ? void 0 : _c.user) === null || _e === void 0 ? void 0 : _e.email) || "admin",
         }) + "\n");
         res.json({
             ok: true,
@@ -7718,17 +8088,18 @@ app.post("/api/tradeops/notifications", requireAdmin, async (req, res) => {
         });
     }
     catch (e) {
-        res.status(500).json({ ok: false, error: e?.message || "Notification change failed" });
+        res.status(500).json({ ok: false, error: (e === null || e === void 0 ? void 0 : e.message) || "Notification change failed" });
     }
 });
 app.post("/api/tradeops/emergency-stop", requireAdmin, async (req, res) => {
-    const confirmed = req.body?.confirm === true;
+    var _a, _b, _c, _e, _f, _g;
+    const confirmed = ((_a = req.body) === null || _a === void 0 ? void 0 : _a.confirm) === true;
     const auditPath = path_1.default.join(__dirname, "..", "tradeops-audit.jsonl");
     const audit = (entry) => {
         try {
             fs_1.default.appendFileSync(auditPath, JSON.stringify({ at: new Date().toISOString(), ...entry }) + "\n");
         }
-        catch { }
+        catch (_a) { }
     };
     if (!confirmed) {
         audit({ action: "emergency_stop_rejected", ok: false, message: "Confirmation missing" });
@@ -7737,7 +8108,7 @@ app.post("/api/tradeops/emergency-stop", requireAdmin, async (req, res) => {
     }
     try {
         const posJson = await tradeOpsKiteJSON("/portfolio/positions");
-        let positions = (posJson?.data?.net || []).filter((p) => tradeOpsNum(p.quantity) !== 0);
+        let positions = (((_b = posJson === null || posJson === void 0 ? void 0 : posJson.data) === null || _b === void 0 ? void 0 : _b.net) || []).filter((p) => tradeOpsNum(p.quantity) !== 0);
         const disarmLiveTrading = () => {
             tradeOpsWriteBotEnvValue("TT1030_FUTURES_MODE", "SHADOW");
             tradeOpsWriteStrategyOverride("tt1030-futures", { enabled: true, mode: "SHADOW" });
@@ -7753,7 +8124,7 @@ app.post("/api/tradeops/emergency-stop", requireAdmin, async (req, res) => {
                         throw new Error(`${processName} did not load TT1030_FUTURES_MODE=SHADOW`);
                     return true;
                 }
-                catch { }
+                catch (_a) { }
             }
             return false;
         };
@@ -7772,18 +8143,18 @@ app.post("/api/tradeops/emergency-stop", requireAdmin, async (req, res) => {
         const orderBook = await tradeOpsKiteJSON("/orders").catch(() => ({ data: [] }));
         const cancellable = new Set(["OPEN", "TRIGGER PENDING", "VALIDATION PENDING", "PUT ORDER REQ RECEIVED", "MODIFY VALIDATION PENDING", "MODIFY PENDING"]);
         const cancelledProtection = [];
-        for (const order of orderBook?.data || []) {
-            if (!symbols.has(String(order?.tradingsymbol || "")) || !cancellable.has(String(order?.status || "").toUpperCase()))
+        for (const order of (orderBook === null || orderBook === void 0 ? void 0 : orderBook.data) || []) {
+            if (!symbols.has(String((order === null || order === void 0 ? void 0 : order.tradingsymbol) || "")) || !cancellable.has(String((order === null || order === void 0 ? void 0 : order.status) || "").toUpperCase()))
                 continue;
-            const orderId = String(order?.order_id || "");
+            const orderId = String((order === null || order === void 0 ? void 0 : order.order_id) || "");
             if (!orderId)
                 continue;
-            await tradeOpsKiteJSON(`/orders/${encodeURIComponent(String(order?.variety || "regular"))}/${encodeURIComponent(orderId)}`, { method: "DELETE" });
-            let cancelStatus = String(order?.status || "").toUpperCase();
+            await tradeOpsKiteJSON(`/orders/${encodeURIComponent(String((order === null || order === void 0 ? void 0 : order.variety) || "regular"))}/${encodeURIComponent(orderId)}`, { method: "DELETE" });
+            let cancelStatus = String((order === null || order === void 0 ? void 0 : order.status) || "").toUpperCase();
             for (let attempt = 0; attempt < 10 && cancellable.has(cancelStatus); attempt++) {
                 await new Promise(resolve => setTimeout(resolve, 500));
                 const latest = await tradeOpsKiteJSON("/orders");
-                cancelStatus = String((latest?.data || []).find((o) => String(o.order_id) === orderId)?.status || cancelStatus).toUpperCase();
+                cancelStatus = String(((_c = ((latest === null || latest === void 0 ? void 0 : latest.data) || []).find((o) => String(o.order_id) === orderId)) === null || _c === void 0 ? void 0 : _c.status) || cancelStatus).toUpperCase();
             }
             if (cancellable.has(cancelStatus))
                 throw new Error(`Open order ${orderId} cancellation was not confirmed; emergency market exits were not submitted`);
@@ -7791,7 +8162,7 @@ app.post("/api/tradeops/emergency-stop", requireAdmin, async (req, res) => {
         }
         // A stop may have filled while it was being cancelled. Refresh quantities to avoid reversing exposure.
         const refreshedPositions = await tradeOpsKiteJSON("/portfolio/positions");
-        positions = (refreshedPositions?.data?.net || []).filter((p) => tradeOpsNum(p.quantity) !== 0);
+        positions = (((_e = refreshedPositions === null || refreshedPositions === void 0 ? void 0 : refreshedPositions.data) === null || _e === void 0 ? void 0 : _e.net) || []).filter((p) => tradeOpsNum(p.quantity) !== 0);
         const submitted = [];
         const failures = [];
         for (const p of positions) {
@@ -7812,30 +8183,30 @@ app.post("/api/tradeops/emergency-stop", requireAdmin, async (req, res) => {
                     headers: { "Content-Type": "application/x-www-form-urlencoded" },
                     body,
                 });
-                const orderId = String(order?.data?.order_id || "");
+                const orderId = String(((_f = order === null || order === void 0 ? void 0 : order.data) === null || _f === void 0 ? void 0 : _f.order_id) || "");
                 if (!orderId)
                     throw new Error("Broker did not return an emergency exit order ID");
                 submitted.push({ symbol: p.tradingsymbol, qty, transaction, orderId });
             }
             catch (e) {
-                failures.push({ symbol: p.tradingsymbol, error: e?.message || "Exit submission failed" });
+                failures.push({ symbol: p.tradingsymbol, error: (e === null || e === void 0 ? void 0 : e.message) || "Exit submission failed" });
             }
         }
         let finalOrders = [];
         for (let attempt = 0; attempt < 12 && submitted.length; attempt++) {
             await new Promise(resolve => setTimeout(resolve, 1000));
             const latest = await tradeOpsKiteJSON("/orders");
-            finalOrders = latest?.data || [];
+            finalOrders = (latest === null || latest === void 0 ? void 0 : latest.data) || [];
             const terminal = submitted.every(row => {
                 const brokerOrder = finalOrders.find((o) => String(o.order_id) === String(row.orderId));
-                return ["COMPLETE", "REJECTED", "CANCELLED"].includes(String(brokerOrder?.status || "").toUpperCase());
+                return ["COMPLETE", "REJECTED", "CANCELLED"].includes(String((brokerOrder === null || brokerOrder === void 0 ? void 0 : brokerOrder.status) || "").toUpperCase());
             });
             if (terminal)
                 break;
         }
         const verified = submitted.map(row => {
             const brokerOrder = finalOrders.find((o) => String(o.order_id) === String(row.orderId));
-            return { ...row, status: String(brokerOrder?.status || "UNKNOWN"), filledQty: tradeOpsNum(brokerOrder?.filled_quantity) };
+            return { ...row, status: String((brokerOrder === null || brokerOrder === void 0 ? void 0 : brokerOrder.status) || "UNKNOWN"), filledQty: tradeOpsNum(brokerOrder === null || brokerOrder === void 0 ? void 0 : brokerOrder.filled_quantity) };
         });
         for (const row of verified) {
             if (row.status !== "COMPLETE" || row.filledQty < row.qty)
@@ -7844,7 +8215,7 @@ app.post("/api/tradeops/emergency-stop", requireAdmin, async (req, res) => {
         let remaining = [];
         for (let attempt = 0; attempt < 15; attempt++) {
             const verifyPositions = await tradeOpsKiteJSON("/portfolio/positions");
-            remaining = (verifyPositions?.data?.net || []).filter((p) => tradeOpsNum(p.quantity) !== 0)
+            remaining = (((_g = verifyPositions === null || verifyPositions === void 0 ? void 0 : verifyPositions.data) === null || _g === void 0 ? void 0 : _g.net) || []).filter((p) => tradeOpsNum(p.quantity) !== 0)
                 .map((p) => ({ symbol: p.tradingsymbol, quantity: tradeOpsNum(p.quantity), product: p.product }));
             if (!remaining.length)
                 break;
@@ -7860,27 +8231,28 @@ app.post("/api/tradeops/emergency-stop", requireAdmin, async (req, res) => {
         res.json({ ok: true, message: `Verified ${verified.length} position(s) closed. LIVE mode disarmed.`, closed: verified, cancelledProtection, remaining, disarmed });
     }
     catch (e) {
-        audit({ action: "emergency_stop", ok: false, message: e?.message || "Close failed" });
-        res.status(500).json({ ok: false, message: e?.message || "Close-all failed. No success was assumed." });
+        audit({ action: "emergency_stop", ok: false, message: (e === null || e === void 0 ? void 0 : e.message) || "Close failed" });
+        res.status(500).json({ ok: false, message: (e === null || e === void 0 ? void 0 : e.message) || "Close-all failed. No success was assumed." });
     }
 });
 function tradeOpsInitialWorkspaceHTML(page, status) {
+    var _a, _b, _c, _e;
     const cap = (s) => String(s || "").replace(/-/g, " ").replace(/\b\w/g, (m) => m.toUpperCase());
-    const h = (v) => String(v ?? "").replace(/[&<>\"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;" }[c] || c));
-    const ok = !!status?.ok;
+    const h = (v) => String(v !== null && v !== void 0 ? v : "").replace(/[&<>\"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;" }[c] || c));
+    const ok = !!(status === null || status === void 0 ? void 0 : status.ok);
     const rs = (n) => new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 0 }).format(Number(n || 0));
-    const trades = Array.isArray(status?.trades) ? status.trades : [];
-    const positions = Array.isArray(status?.positions) ? status.positions : [];
-    const candles = Array.isArray(status?.candles) ? status.candles : [];
-    const logs = Array.isArray(status?.logs) ? status.logs : [];
-    const pnl = status?.pnl || {};
-    const broker = status?.broker || {};
+    const trades = Array.isArray(status === null || status === void 0 ? void 0 : status.trades) ? status.trades : [];
+    const positions = Array.isArray(status === null || status === void 0 ? void 0 : status.positions) ? status.positions : [];
+    const candles = Array.isArray(status === null || status === void 0 ? void 0 : status.candles) ? status.candles : [];
+    const logs = Array.isArray(status === null || status === void 0 ? void 0 : status.logs) ? status.logs : [];
+    const pnl = (status === null || status === void 0 ? void 0 : status.pnl) || {};
+    const broker = (status === null || status === void 0 ? void 0 : status.broker) || {};
     const title = cap(page);
     const top = `<section class="workspace-page"><div class="workspace-head"><div><h1>${h(title)}</h1><p>Live TradeOps workspace data. Auto-refresh will update this page when the browser script is ready.</p></div><div class="workspace-actions"><a class="btn" href="/tradeops">Back to Dashboard</a><button class="btn" onclick="location.reload()">Reload</button></div></div>`;
     if (!status)
         return `${top}<section class="ws-card"><div class="ws-card-h"><span>${h(title)}</span></div><div class="ws-card-b"><b>Loading ${h(title)}...</b><p class="muted">Fetching latest 10:30 futures records.</p></div></section></section>`;
     if (!ok)
-        return `${top}<section class="ws-card"><div class="ws-card-h"><span>${h(title)}</span></div><div class="ws-card-b"><b class="bad">Status unavailable</b><p class="muted">${h(status?.error || "Could not load TradeOps status")}</p></div></section></section>`;
+        return `${top}<section class="ws-card"><div class="ws-card-h"><span>${h(title)}</span></div><div class="ws-card-b"><b class="bad">Status unavailable</b><p class="muted">${h((status === null || status === void 0 ? void 0 : status.error) || "Could not load TradeOps status")}</p></div></section></section>`;
     const kpis = `<div class="ws-summary"><section class="ws-card ws-kpi"><div><label>Net P&L</label><b>${h(rs(Number(pnl.net || 0)))}</b></div></section><section class="ws-card ws-kpi"><div><label>Broker</label><b>${broker.connected ? "Connected" : "Not synced"}</b></div></section><section class="ws-card ws-kpi"><div><label>Token</label><b>${broker.tokenOK ? "Valid" : "Required"}</b></div></section><section class="ws-card ws-kpi"><div><label>Trades</label><b>${trades.length}</b></div></section><section class="ws-card ws-kpi"><div><label>Positions</label><b>${positions.length}</b></div></section></div>`;
     const simpleRows = (rows, cols, mapper) => `<section class="ws-card" style="grid-column:1/-1"><div class="ws-card-h"><span>${h(title)}</span><span class="muted">Server rendered</span></div><div class="ws-card-b"><div class="ws-table-wrap"><table class="ws-table"><thead><tr>${cols.map(c => `<th>${h(c)}</th>`).join("")}</tr></thead><tbody>${rows.length ? rows.slice(0, 40).map(mapper).join("") : `<tr><td colspan="${cols.length}" class="muted" style="text-align:center;padding:18px">No records available.</td></tr>`}</tbody></table></div></div></section>`;
     if (page === "account") {
@@ -7888,12 +8260,12 @@ function tradeOpsInitialWorkspaceHTML(page, status) {
         const balance = synced ? h(rs(pnl.balance || 0)) : "Not synced";
         const available = synced ? h(rs(pnl.availableMargin || 0)) : "Not synced";
         const used = synced ? h(rs(pnl.usedMargin || 0)) : "Not synced";
-        const buying = synced ? h(rs(pnl.buyingPower ?? pnl.availableMargin ?? 0)) : "Not synced";
+        const buying = synced ? h(rs((_b = (_a = pnl.buyingPower) !== null && _a !== void 0 ? _a : pnl.availableMargin) !== null && _b !== void 0 ? _b : 0)) : "Not synced";
         const syncChip = synced ? '<span class="ws-pill ok">Synced</span>' : '<span class="ws-pill warn">Not synced</span>';
         const accountId = h(broker.accountId || "Not synced");
         const holder = h(broker.accountName || "Not synced");
         const brokerName = broker.connected ? "Zerodha" : "Not synced";
-        const lastSync = h(status?.updatedAt || status?.lastUpdated || "Not synced");
+        const lastSync = h((status === null || status === void 0 ? void 0 : status.updatedAt) || (status === null || status === void 0 ? void 0 : status.lastUpdated) || "Not synced");
         const rows = `<tr><td colspan="10" class="muted" style="text-align:center;padding:24px"><b>No account ledger records available</b><br>Broker account statement has not been synced yet. Trade P&L records are available separately in Trade History.<div style="margin-top:12px;display:flex;gap:8px;justify-content:center"><button id="syncAccountBtnEmpty" class="btn">Sync Account</button><a class="btn" href="/tradeops/trade-history">View Trade History</a></div></td></tr>`;
         return `<section class="workspace-page account-workspace"><div class="workspace-head"><div><h1>Account</h1><p>Monitor broker balance, margins, ledger, and reconciliation.</p></div><div class="workspace-actions"><button id="syncAccountBtn" class="btn">Sync Account</button><button class="btn tokenRefreshAction" type="button">Refresh Token</button><button class="btn disabled-action" disabled>Export Statement</button><a class="btn" href="/tradeops">Back to Dashboard</a></div></div><div class="ws-summary account-summary"><section class="ws-card ws-kpi"><div class="ws-kpi-icon">&#8377;</div><div><label>Account Balance</label><b>${balance}</b>${syncChip}</div></section><section class="ws-card ws-kpi"><div class="ws-kpi-icon">&#8377;</div><div><label>Available Margin</label><b>${available}</b>${synced ? '<span class="ws-pill ok">Broker value</span>' : '<span class="ws-pill warn">Not synced</span>'}</div></section><section class="ws-card ws-kpi"><div class="ws-kpi-icon">&#8377;</div><div><label>Used Margin</label><b>${used}</b><span class="ws-pill warn">Live risk</span></div></section><section class="ws-card ws-kpi"><div class="ws-kpi-icon">&#8377;</div><div><label>Buying Power</label><b>${buying}</b>${syncChip}</div></section><section class="ws-card ws-kpi"><div class="ws-kpi-icon">&#8377;</div><div><label>Reconciliation</label><b>${synced ? "Not checked" : "Not synced"}</b><span class="ws-pill ${synced ? "warn" : "warn"}">${synced ? "Pending" : "Not synced"}</span></div></section></div><div class="ws-grid account-layout"><div class="ws-main"><section class="ws-card"><div class="ws-card-h"><span>Account Identity</span></div><div class="ws-card-b"><div class="identity-grid"><div class="identity-cell"><label>Account ID</label><b>${accountId}</b></div><div class="identity-cell"><label>Account Holder</label><b>${holder}</b></div><div class="identity-cell"><label>Broker</label><b>${h(brokerName)}</b></div><div class="identity-cell"><label>Account Type</label><b>Live</b></div><div class="identity-cell"><label>Token Status</label><b>${broker.tokenOK ? "Valid" : "Required"}</b></div><div class="identity-cell"><label>Last Broker Sync</label><b>${lastSync}</b></div></div></div></section><section class="ws-card"><div class="ws-card-b"><div class="filter-bar"><button class="seg active">Today</button><button class="seg">Weekly</button><button class="seg">Monthly</button><button class="seg">Yearly</button><button class="seg">Custom</button><select><option>All Types</option><option>Money In</option><option>Money Out</option><option>Charges</option><option>P&L</option></select><input placeholder="Search by broker ref / order ID / notes..."><button class="btn primary">Apply Filter</button><button class="btn">Reset</button></div></div></section><section class="ws-card account-statement"><div class="ws-card-h"><span>Account Statement</span><span class="muted">0 ledger records</span></div><div class="ws-card-b"><div class="ws-table-wrap"><table class="ws-table"><thead><tr><th>Date / Time</th><th>Type</th><th class="right">Money In</th><th class="right">Money Out</th><th class="right">Charges</th><th class="right">Realized P&L</th><th class="right">Running Balance</th><th>Broker Ref ID</th><th>Status</th><th>Notes</th></tr></thead><tbody>${rows}</tbody></table></div><div class="statement-pagination"><span>Rows per page 10</span><span>Showing 0 ledger records</span><button class="btn">1</button></div></div></section></div><aside class="ws-side"><section class="ws-card"><div class="ws-card-h"><span>Reconciliation</span></div><div class="ws-card-b side-list"><div class="side-row"><label>Broker Reported Balance</label><b>${balance}</b></div><div class="side-row"><label>App Ledger Balance</label><b>${synced ? "Not checked" : "Not synced"}</b></div><div class="side-row"><label>Difference</label><b>${synced ? "Not checked" : "Not synced"}</b></div><div class="side-row"><label>Last Reconciled</label><b>${synced ? "Pending" : "Not synced"}</b></div><div class="side-row"><label>Status</label><b>${synced ? "Not checked" : "Not synced"}</b></div><button class="btn primary disabled-action" disabled title="Ledger data required">Reconcile Now</button></div></section><section class="ws-card"><div class="ws-card-h"><span>Charges Breakdown</span><span class="muted">Today</span></div><div class="ws-card-b side-list"><div class="side-row"><label>Brokerage</label><b>Pending</b></div><div class="side-row"><label>Exchange Fees</label><b>Pending</b></div><div class="side-row"><label>GST</label><b>Pending</b></div><div class="side-row"><label>STT</label><b>Pending</b></div><div class="side-row"><label>Total Charges</label><b class="bad">${pnl.charges == null ? "Pending" : h(rs(pnl.charges))}</b></div></div></section><section class="ws-card"><div class="ws-card-h"><span>Quick Actions</span></div><div class="ws-card-b quick-actions"><button id="syncAccountBtn2" class="btn">Sync Account</button><a class="btn" href="/tradeops/trade-history">View Trade History</a><button class="btn disabled-action" disabled title="Ledger data required">Download CSV</button><button class="btn disabled-action" disabled title="Ledger data required">Download PDF</button></div></section></aside></div></section>`;
     }
@@ -7905,7 +8277,7 @@ function tradeOpsInitialWorkspaceHTML(page, status) {
         return `${top}${kpis}${simpleRows(candles, ["Time", "Open", "High", "Low", "Close", "Volume"], (c) => `<tr><td>${h(c.time)}</td><td>${h(c.open)}</td><td>${h(c.high)}</td><td>${h(c.low)}</td><td>${h(c.close)}</td><td>${h(c.volume || "Not available")}</td></tr>`)}</section>`;
     if (page === "server-logs")
         return `${top}${kpis}${simpleRows(logs, ["Time", "Level", "Message"], (l) => `<tr><td>${h(l.time)}</td><td>${h(l.level)}</td><td>${h(l.message)}</td></tr>`)}</section>`;
-    return `${top}${kpis}<section class="ws-card"><div class="ws-card-h"><span>${h(title)}</span></div><div class="ws-card-b"><p class="muted">Status: ${h(status?.execution?.status || "Unknown")}. Broker: ${broker.connected ? "Connected" : "Not synced"}. Bot: ${h(status?.bot?.state || "Unknown")}.</p></div></section></section>`;
+    return `${top}${kpis}<section class="ws-card"><div class="ws-card-h"><span>${h(title)}</span></div><div class="ws-card-b"><p class="muted">Status: ${h(((_c = status === null || status === void 0 ? void 0 : status.execution) === null || _c === void 0 ? void 0 : _c.status) || "Unknown")}. Broker: ${broker.connected ? "Connected" : "Not synced"}. Bot: ${h(((_e = status === null || status === void 0 ? void 0 : status.bot) === null || _e === void 0 ? void 0 : _e.state) || "Unknown")}.</p></div></section></section>`;
 }
 function renderTradeOpsApp(activePage, initialStatus = null) {
     const safePage = ["dashboard", "account", "orders", "positions", "executions", "trade-history", "candle-logs", "server-logs", "health", "alerts", "audit", "admin-config", "bot-config", "settings"].includes(activePage) ? activePage : "dashboard";
@@ -8875,16 +9247,17 @@ async function load(){const ctrl=new AbortController();const timer=setTimeout(()
 }
 app.get("/tradeops", requireAdmin, async (req, res) => {
     res.setHeader("Cache-Control", "no-store");
-    const initialStatus = await buildTradeOpsStatus(String(req.query.strategy || "")).catch((e) => ({ ok: false, error: e?.message || "Status unavailable" }));
+    const initialStatus = await buildTradeOpsStatus(String(req.query.strategy || "")).catch((e) => ({ ok: false, error: (e === null || e === void 0 ? void 0 : e.message) || "Status unavailable" }));
     res.send(renderTradeOpsApp("dashboard", initialStatus));
 });
 app.get("/tradeops/:section", requireAdmin, async (req, res) => {
     res.setHeader("Cache-Control", "no-store");
-    const initialStatus = await buildTradeOpsStatus(String(req.query.strategy || "")).catch((e) => ({ ok: false, error: e?.message || "Status unavailable" }));
+    const initialStatus = await buildTradeOpsStatus(String(req.query.strategy || "")).catch((e) => ({ ok: false, error: (e === null || e === void 0 ? void 0 : e.message) || "Status unavailable" }));
     res.send(renderTradeOpsApp(req.params.section || "dashboard", initialStatus));
 });
 // -- POST /internal/bot-update -- bot pushes state + completed trades here ------
 app.post("/internal/bot-update", async (req, res) => {
+    var _a, _b, _c, _e, _f, _g, _h, _j, _k, _l, _m, _o;
     const secret = req.headers["x-bot-secret"];
     const expected = process.env.INTERNAL_BOT_SECRET || "";
     if (!expected || secret !== expected) {
@@ -8897,15 +9270,15 @@ app.post("/internal/bot-update", async (req, res) => {
     }
     if (trade && typeof trade === "object") {
         await (0, db_1.saveBotTrade)({
-            symbol: trade.symbol ?? null,
-            direction: trade.direction ?? null,
-            entry_price: trade.entry_price ?? trade.entry ?? null,
-            exit_price: trade.exit_price ?? trade.exit ?? null,
-            qty: trade.qty ?? null,
-            pnl: trade.pnl ?? null,
-            exit_reason: trade.exit_reason ?? trade.reason ?? null,
-            trade_date: trade.date ?? new Date().toISOString().slice(0, 10),
-            duration: trade.duration ?? null,
+            symbol: (_a = trade.symbol) !== null && _a !== void 0 ? _a : null,
+            direction: (_b = trade.direction) !== null && _b !== void 0 ? _b : null,
+            entry_price: (_e = (_c = trade.entry_price) !== null && _c !== void 0 ? _c : trade.entry) !== null && _e !== void 0 ? _e : null,
+            exit_price: (_g = (_f = trade.exit_price) !== null && _f !== void 0 ? _f : trade.exit) !== null && _g !== void 0 ? _g : null,
+            qty: (_h = trade.qty) !== null && _h !== void 0 ? _h : null,
+            pnl: (_j = trade.pnl) !== null && _j !== void 0 ? _j : null,
+            exit_reason: (_l = (_k = trade.exit_reason) !== null && _k !== void 0 ? _k : trade.reason) !== null && _l !== void 0 ? _l : null,
+            trade_date: (_m = trade.date) !== null && _m !== void 0 ? _m : new Date().toISOString().slice(0, 10),
+            duration: (_o = trade.duration) !== null && _o !== void 0 ? _o : null,
             raw_json: JSON.stringify(trade),
         }).catch(() => { });
     }
@@ -8929,6 +9302,7 @@ app.get("/internal/kite-token", async (req, res) => {
 });
 // -- GET /paper-trade -----------------------------------------------------------
 app.get("/paper-trade", featureGate("feature_paper_trade_bot", "Paper Trade"), async (req, res) => {
+    var _a, _b, _c, _e, _f, _g, _h, _j, _k, _l, _m, _o, _p, _q, _r, _s, _t, _u;
     const PAPER_DIR = "/home/ubuntu/trading-bot";
     function readPaperJSON(file, fallback = null) {
         try {
@@ -8937,20 +9311,20 @@ app.get("/paper-trade", featureGate("feature_paper_trade_bot", "Paper Trade"), a
                 return fallback;
             return JSON.parse(fs_1.default.readFileSync(p, "utf-8"));
         }
-        catch {
+        catch (_a) {
             return fallback;
         }
     }
     // -- Bot performance stats (always shown for social proof) ------------------
     const botTrades = readPaperJSON("paper-trades.json", []);
     const closed = botTrades.filter((t) => t.status !== "OPEN");
-    const wins = closed.filter((t) => (t.pnl ?? 0) > 0).length;
-    const totalPnl = closed.reduce((s, t) => s + (t.pnl ?? 0), 0);
+    const wins = closed.filter((t) => { var _a; return ((_a = t.pnl) !== null && _a !== void 0 ? _a : 0) > 0; }).length;
+    const totalPnl = closed.reduce((s, t) => { var _a; return s + ((_a = t.pnl) !== null && _a !== void 0 ? _a : 0); }, 0);
     const winRate = closed.length > 0 ? ((wins / closed.length) * 100).toFixed(1) : "—";
     const avgPnl = closed.length > 0 ? (totalPnl / closed.length).toFixed(1) : "—";
     const openCount = botTrades.filter((t) => t.status === "OPEN").length;
     // -- User-specific data (only when logged in) -------------------------------
-    const userId = req.session?.userId;
+    const userId = (_a = req.session) === null || _a === void 0 ? void 0 : _a.userId;
     const isLoggedIn = !!userId;
     let port = { balance: 100000 }, tradeCount = 0, ptConfig = { trade_type: "INTRADAY", default_qty: 1 };
     let isPremiumUser = false, creditsOut = false, tradesLeft = null, freeLimit = 10;
@@ -8980,30 +9354,31 @@ app.get("/paper-trade", featureGate("feature_paper_trade_bot", "Paper Trade"), a
             if (r.price != null)
                 priceMap[r.symbol] = r.price;
         userPositions = userPositions.map(p => {
-            const livePrice = priceMap[p.symbol] ?? p.avg_price;
+            var _a;
+            const livePrice = (_a = priceMap[p.symbol]) !== null && _a !== void 0 ? _a : p.avg_price;
             const pnl = parseFloat(((livePrice - p.avg_price) * p.qty).toFixed(2));
             return { ...p, livePrice, pnl };
         });
     }
     const marketOpen = isMarketHours();
-    const isAdmin = req.session?.userRole === 'admin';
+    const isAdmin = ((_b = req.session) === null || _b === void 0 ? void 0 : _b.userRole) === 'admin';
     const BOT_DIR = "/home/ubuntu/trading-bot";
     const botSettings = (() => { try {
         return JSON.parse(fs_1.default.readFileSync(`${BOT_DIR}/user-settings.json`, "utf-8"));
     }
-    catch {
+    catch (_a) {
         return {};
     } })();
     const bs = {
-        mode: botSettings.mode ?? "PAPER",
-        quantity: botSettings.quantity ?? 30,
-        maxDailyLossPoints: botSettings.risk?.maxDailyLossPoints ?? 100,
-        maxTradesPerDay: botSettings.risk?.maxTradesPerDay ?? 5,
-        dailyLossCap: botSettings.risk?.dailyLossCap ?? 200,
-        stopLossPoints: botSettings.tradeManagement?.stopLossPoints ?? 100,
-        targetPoints: botSettings.tradeManagement?.targetPoints ?? 0,
-        minPremium: botSettings.optionSelection?.minPremium ?? 450,
-        maxPremium: botSettings.optionSelection?.maxPremium ?? 600,
+        mode: (_c = botSettings.mode) !== null && _c !== void 0 ? _c : "PAPER",
+        quantity: (_e = botSettings.quantity) !== null && _e !== void 0 ? _e : 30,
+        maxDailyLossPoints: (_g = (_f = botSettings.risk) === null || _f === void 0 ? void 0 : _f.maxDailyLossPoints) !== null && _g !== void 0 ? _g : 100,
+        maxTradesPerDay: (_j = (_h = botSettings.risk) === null || _h === void 0 ? void 0 : _h.maxTradesPerDay) !== null && _j !== void 0 ? _j : 5,
+        dailyLossCap: (_l = (_k = botSettings.risk) === null || _k === void 0 ? void 0 : _k.dailyLossCap) !== null && _l !== void 0 ? _l : 200,
+        stopLossPoints: (_o = (_m = botSettings.tradeManagement) === null || _m === void 0 ? void 0 : _m.stopLossPoints) !== null && _o !== void 0 ? _o : 100,
+        targetPoints: (_q = (_p = botSettings.tradeManagement) === null || _p === void 0 ? void 0 : _p.targetPoints) !== null && _q !== void 0 ? _q : 0,
+        minPremium: (_s = (_r = botSettings.optionSelection) === null || _r === void 0 ? void 0 : _r.minPremium) !== null && _s !== void 0 ? _s : 450,
+        maxPremium: (_u = (_t = botSettings.optionSelection) === null || _t === void 0 ? void 0 : _t.maxPremium) !== null && _u !== void 0 ? _u : 600,
     };
     // Active picks for Daily Pick trigger
     const activePicks = await (0, db_1.dbAll)(`SELECT id, stock_symbol, direction, entry_low, entry_high, target, stop_loss, pick_type FROM picks WHERE status IN ('active','entry_triggered') ORDER BY id DESC LIMIT 50`);
@@ -9606,8 +9981,10 @@ app.get("/paper-trade", featureGate("feature_paper_trade_bot", "Paper Trade"), a
             <div style="font-size:0.8rem;color:var(--text-muted);margin-bottom:12px">Select one of today's active picks — SL &amp; target auto-filled from pick data. Bot trades the equity when entry range is hit.</div>
             ${activePicks.length === 0 ? `<div style="padding:20px;text-align:center;color:var(--text-muted);background:var(--bg2);border-radius:8px">No active picks right now</div>` : `
             <div style="display:flex;flex-direction:column;gap:8px;margin-bottom:14px">
-              ${activePicks.map((p) => `
-              <label style="display:flex;align-items:center;justify-content:space-between;background:var(--bg2);border-radius:9px;padding:10px 14px;gap:12px;cursor:pointer;flex-wrap:wrap" onclick="schPickSelect(${p.id}, '${p.stock_symbol}', '${p.direction}', ${p.entry_low}, ${p.entry_high}, ${p.stop_loss ?? 0}, ${p.target ?? 0})">
+              ${activePicks.map((p) => {
+        var _a, _b;
+        return `
+              <label style="display:flex;align-items:center;justify-content:space-between;background:var(--bg2);border-radius:9px;padding:10px 14px;gap:12px;cursor:pointer;flex-wrap:wrap" onclick="schPickSelect(${p.id}, '${p.stock_symbol}', '${p.direction}', ${p.entry_low}, ${p.entry_high}, ${(_a = p.stop_loss) !== null && _a !== void 0 ? _a : 0}, ${(_b = p.target) !== null && _b !== void 0 ? _b : 0})">
                 <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
                   <input type="radio" name="pickId" value="${p.id}" style="accent-color:#7c3aed">
                   <span style="font-weight:800;font-size:0.88rem">${p.stock_symbol}</span>
@@ -9617,7 +9994,8 @@ app.get("/paper-trade", featureGate("feature_paper_trade_bot", "Paper Trade"), a
                   ${p.target ? `<span style="font-size:0.72rem;color:#34d399">TGT ?${p.target}</span>` : ""}
                   <span style="font-size:0.7rem;color:var(--text-muted);background:var(--card-bg);border-radius:4px;padding:1px 5px">${p.pick_type}</span>
                 </div>
-              </label>`).join("")}
+              </label>`;
+    }).join("")}
             </div>
             <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px;margin-bottom:14px">
               <div style="display:flex;flex-direction:column;gap:5px">
@@ -9761,7 +10139,7 @@ app.get("/paper-trade", featureGate("feature_paper_trade_bot", "Paper Trade"), a
         try {
             schList = JSON.parse(fs_1.default.readFileSync(schPath, "utf-8"));
         }
-        catch { }
+        catch (_a) { }
         const active = schList.filter((s) => s.status === "pending");
         if (active.length === 0)
             return `<div style="margin-top:16px;padding:12px 16px;background:var(--bg2);border-radius:8px;font-size:0.82rem;color:var(--text-muted);text-align:center">No scheduled trades pending</div>`;
@@ -9806,14 +10184,17 @@ app.get("/paper-trade", featureGate("feature_paper_trade_bot", "Paper Trade"), a
             <th style="padding:6px 10px;text-align:left;font-weight:700">Status</th>
           </tr></thead>
           <tbody>
-            ${[...botTrades].reverse().slice(0, 20).map((t) => `
+            ${[...botTrades].reverse().slice(0, 20).map((t) => {
+        var _a, _b, _c;
+        return `
             <tr style="border-top:1px solid var(--border)">
               <td style="padding:7px 10px;color:var(--text-muted);font-size:0.78rem">${t.entryTime ? new Date(t.entryTime).toLocaleDateString("en-IN", { timeZone: "Asia/Kolkata", day: "2-digit", month: "short" }) : "—"}</td>
               <td style="padding:7px 10px;font-weight:700;font-size:0.78rem">${t.symbol || "—"}</td>
               <td style="padding:7px 10px"><span style="font-size:.72rem;font-weight:700;padding:2px 7px;border-radius:4px;background:${(t.direction || '') === 'CE' ? 'rgba(59,130,246,.15)' : 'rgba(239,68,68,.15)'};color:${(t.direction || '') === 'CE' ? '#60a5fa' : '#f87171'}">${t.direction || "—"}</span></td>
-              <td style="padding:7px 10px;text-align:right;font-weight:700" class="${(t.pnl ?? 0) >= 0 ? 'mpt-green' : 'mpt-red'}">${(t.pnl ?? 0) >= 0 ? "+" : ""}?${(t.pnl ?? 0).toFixed(0)}</td>
+              <td style="padding:7px 10px;text-align:right;font-weight:700" class="${((_a = t.pnl) !== null && _a !== void 0 ? _a : 0) >= 0 ? 'mpt-green' : 'mpt-red'}">${((_b = t.pnl) !== null && _b !== void 0 ? _b : 0) >= 0 ? "+" : ""}?${((_c = t.pnl) !== null && _c !== void 0 ? _c : 0).toFixed(0)}</td>
               <td style="padding:7px 10px;font-size:0.76rem;color:var(--text-muted)">${t.status || "CLOSED"}</td>
-            </tr>`).join("")}
+            </tr>`;
+    }).join("")}
           </tbody>
         </table>
       </div>` : `<div style="text-align:center;padding:40px 20px;color:var(--text-muted)">No bot trades yet</div>`}
@@ -10171,13 +10552,14 @@ app.get("/paper-trade", featureGate("feature_paper_trade_bot", "Paper Trade"), a
 });
 // -- GET /my-paper-trade + /my-portfolio — Paper trading portfolio dashboard ---
 async function paperPortfolioPage(req, res) {
+    var _a, _b, _c, _e;
     const userId = req.session.userId;
     const userName = req.session.userName || "Trader";
     // -- Mobile verification gate ------------------------------------------------
     const otpRequired = (await (0, db_1.getSetting)("otp_required")) !== "false";
     if (otpRequired) {
         const uInfo = await (0, db_1.dbAll)("SELECT mobile_verified FROM users WHERE id=?", [userId]);
-        if (!uInfo[0]?.mobile_verified) {
+        if (!((_a = uInfo[0]) === null || _a === void 0 ? void 0 : _a.mobile_verified)) {
             res.redirect("/verify-mobile?next=/my-paper-trade");
             return;
         }
@@ -10197,20 +10579,20 @@ async function paperPortfolioPage(req, res) {
     const adminBotTrades = isAdmin ? (() => { try {
         return JSON.parse(fs_1.default.readFileSync(`${BOT_DIR}/trades.json`, "utf-8"));
     }
-    catch {
+    catch (_a) {
         return [];
     } })() : [];
-    const adminBotClosed = adminBotTrades.filter((t) => (t.exitPrice ?? 0) > 0);
+    const adminBotClosed = adminBotTrades.filter((t) => { var _a; return ((_a = t.exitPrice) !== null && _a !== void 0 ? _a : 0) > 0; });
     const adminScheduled = isAdmin ? (() => { try {
         return JSON.parse(fs_1.default.readFileSync(`${BOT_DIR}/scheduled-trades.json`, "utf-8"));
     }
-    catch {
+    catch (_a) {
         return [];
     } })() : [];
     const adminSchPending = adminScheduled.filter((s) => s.status === "pending");
     const adminSchTriggered = adminScheduled.filter((s) => s.status === "triggered");
-    const adminBotPnl = parseFloat(adminBotClosed.reduce((s, t) => s + (t.pnl ?? 0), 0).toFixed(2));
-    const adminBotWins = adminBotClosed.filter((t) => (t.pnl ?? 0) > 0).length;
+    const adminBotPnl = parseFloat(adminBotClosed.reduce((s, t) => { var _a; return s + ((_a = t.pnl) !== null && _a !== void 0 ? _a : 0); }, 0).toFixed(2));
+    const adminBotWins = adminBotClosed.filter((t) => { var _a; return ((_a = t.pnl) !== null && _a !== void 0 ? _a : 0) > 0; }).length;
     // -- Credits -----------------------------------------------------------------
     const freeLimit = parseInt(await (0, db_1.getSetting)("paper_free_limit") || "10", 10);
     const isPremium = !!activeSub || req.session.userRole === "premium" || req.session.userRole === "admin";
@@ -10241,17 +10623,17 @@ async function paperPortfolioPage(req, res) {
         ...positions.map(p => p.symbol.toUpperCase()),
     ]);
     const inPosition = allPicksForTrade.filter(p => p.result === 'entry_triggered');
-    const latestPendingDate = allPicksForTrade
+    const latestPendingDate = (_c = (_b = allPicksForTrade
         .filter(p => !p.result)
-        .sort((a, b) => (b.published_at || '').localeCompare(a.published_at || ''))[0]
-        ?.published_at?.slice(0, 10);
+        .sort((a, b) => (b.published_at || '').localeCompare(a.published_at || ''))[0]) === null || _b === void 0 ? void 0 : _b.published_at) === null || _c === void 0 ? void 0 : _c.slice(0, 10);
     const pendingOrders = latestPendingDate
         ? allPicksForTrade.filter(p => !p.result && (p.published_at || '').slice(0, 10) === latestPendingDate)
         : [];
     const pendingNonDupe = pendingOrders.filter(p => !inPositionSymbols.has(p.stock_symbol.toUpperCase()));
     const resolved = allPicksForTrade.filter(p => p.result === 'target_hit' || p.result === 'sl_hit');
     const posRows = positions.map(p => {
-        const livePrice = priceMap[p.symbol] ?? p.avg_price;
+        var _a;
+        const livePrice = (_a = priceMap[p.symbol]) !== null && _a !== void 0 ? _a : p.avg_price;
         const curVal = parseFloat((livePrice * p.qty).toFixed(2));
         const pnl = parseFloat((curVal - p.invested).toFixed(2));
         const pnlPct = parseFloat(((pnl / p.invested) * 100).toFixed(2));
@@ -10263,15 +10645,15 @@ async function paperPortfolioPage(req, res) {
     const totalPnl = parseFloat((portfolioValue - 100000).toFixed(2));
     const totalPnlPct = parseFloat(((totalPnl / 100000) * 100).toFixed(2));
     const sellTrades = trades.filter(t => t.action === "SELL");
-    const realizedPnl = parseFloat(sellTrades.reduce((s, t) => s + (t.pnl ?? 0), 0).toFixed(2));
-    const wins = sellTrades.filter(t => (t.pnl ?? 0) > 0).length;
-    const losses = sellTrades.filter(t => (t.pnl ?? 0) <= 0).length;
+    const realizedPnl = parseFloat(sellTrades.reduce((s, t) => { var _a; return s + ((_a = t.pnl) !== null && _a !== void 0 ? _a : 0); }, 0).toFixed(2));
+    const wins = sellTrades.filter(t => { var _a; return ((_a = t.pnl) !== null && _a !== void 0 ? _a : 0) > 0; }).length;
+    const losses = sellTrades.filter(t => { var _a; return ((_a = t.pnl) !== null && _a !== void 0 ? _a : 0) <= 0; }).length;
     const winRate = sellTrades.length > 0 ? ((wins / sellTrades.length) * 100).toFixed(1) : "—";
     // Monthly P&L rollup (last 6 months)
     const monthPnlMap = {};
     for (const t of sellTrades) {
         const mo = t.traded_at.slice(0, 7);
-        monthPnlMap[mo] = (monthPnlMap[mo] || 0) + (t.pnl ?? 0);
+        monthPnlMap[mo] = (monthPnlMap[mo] || 0) + ((_e = t.pnl) !== null && _e !== void 0 ? _e : 0);
     }
     const monthKeys = Object.keys(monthPnlMap).sort().slice(-6);
     const monthValues = monthKeys.map(k => parseFloat(monthPnlMap[k].toFixed(2)));
@@ -10281,7 +10663,7 @@ async function paperPortfolioPage(req, res) {
     });
     // Equity curve from sell trades
     let eq = 0;
-    const eqData = sellTrades.slice().reverse().map(t => { eq += t.pnl ?? 0; return parseFloat(eq.toFixed(2)); });
+    const eqData = sellTrades.slice().reverse().map(t => { var _a; eq += (_a = t.pnl) !== null && _a !== void 0 ? _a : 0; return parseFloat(eq.toFixed(2)); });
     const eqLabels = sellTrades.slice().reverse().map(t => t.traded_at.slice(5, 10));
     const pageTitle = req.session.userRole === "admin" ? "My Paper Trade" : "My Portfolio";
     // -- Admin-only: pre-build HTML for scheduled + bot trade sections ----------
@@ -10329,19 +10711,20 @@ async function paperPortfolioPage(req, res) {
         }
         else {
             const rows = [...adminBotClosed].reverse().slice(0, 150).map((t) => {
+                var _a, _b, _c, _e, _f, _g;
                 const dStr = t.exitTime ? new Date(t.exitTime).toLocaleDateString("en-IN", { timeZone: "Asia/Kolkata", day: "2-digit", month: "short", year: "2-digit" }) : "—";
                 const durMs = t.exitTime && t.entryTime ? new Date(t.exitTime).getTime() - new Date(t.entryTime).getTime() : 0;
                 const durStr = durMs > 0 ? (durMs < 3600000 ? Math.round(durMs / 60000) + "m" : (durMs / 3600000).toFixed(1) + "h") : "—";
-                const isPos = (t.pnl ?? 0) >= 0;
+                const isPos = ((_a = t.pnl) !== null && _a !== void 0 ? _a : 0) >= 0;
                 const dirCE = t.direction === "CE";
                 return `<tr>
           <td style="font-size:.8rem;color:var(--text-muted)">${dStr}</td>
           <td style="font-weight:700">${esc(t.symbol || "—")}</td>
           <td><span style="background:${dirCE ? "#3b82f622" : "#ef444422"};color:${dirCE ? "#3b82f6" : "#ef4444"};border:1px solid ${dirCE ? "#3b82f655" : "#ef444455"};border-radius:4px;padding:2px 8px;font-size:.73rem;font-weight:700">${esc(t.direction || "—")}</span></td>
-          <td>${(t.entryPrice ?? 0) > 0 ? "?" + (t.entryPrice ?? 0).toFixed(1) : "—"}</td>
-          <td>${(t.exitPrice ?? 0) > 0 ? "?" + (t.exitPrice ?? 0).toFixed(1) : "—"}</td>
+          <td>${((_b = t.entryPrice) !== null && _b !== void 0 ? _b : 0) > 0 ? "?" + ((_c = t.entryPrice) !== null && _c !== void 0 ? _c : 0).toFixed(1) : "—"}</td>
+          <td>${((_e = t.exitPrice) !== null && _e !== void 0 ? _e : 0) > 0 ? "?" + ((_f = t.exitPrice) !== null && _f !== void 0 ? _f : 0).toFixed(1) : "—"}</td>
           <td>${t.qty || "—"}</td>
-          <td class="${isPos ? "mpt-green" : "mpt-red"}" style="font-weight:700">${isPos ? "+" : ""}?${(t.pnl ?? 0).toLocaleString("en-IN", { maximumFractionDigits: 0 })}</td>
+          <td class="${isPos ? "mpt-green" : "mpt-red"}" style="font-weight:700">${isPos ? "+" : ""}?${((_g = t.pnl) !== null && _g !== void 0 ? _g : 0).toLocaleString("en-IN", { maximumFractionDigits: 0 })}</td>
           <td style="font-size:.78rem;color:var(--text-muted)">${durStr}</td>
           <td style="font-size:.76rem;color:var(--text-muted)">${esc(t.exitReason || "—")}</td>
         </tr>`;
@@ -10522,8 +10905,9 @@ async function paperPortfolioPage(req, res) {
           <thead><tr><th>Symbol</th><th>Direction</th><th>Qty</th><th>Entry Price</th><th>Target</th><th>SL</th><th>CMP</th><th>P&amp;L</th><th>Entry At</th></tr></thead>
           <tbody id="mpt-inpos-body">
             ${inPosition.map(p => {
+            var _a;
             const lp = priceMap[p.stock_symbol];
-            const ep = p.entry_price ?? ((p.entry_low + p.entry_high) / 2);
+            const ep = (_a = p.entry_price) !== null && _a !== void 0 ? _a : ((p.entry_low + p.entry_high) / 2);
             const mult = (p.direction === 'BULLISH' || p.direction === 'LONG') ? 1 : -1;
             const pnlAmt = lp && ep ? parseFloat(((lp - ep) * mult).toFixed(2)) : null;
             const pnlPct = lp && ep ? parseFloat((((lp - ep) / ep) * 100 * mult).toFixed(2)) : null;
@@ -10647,9 +11031,11 @@ async function paperPortfolioPage(req, res) {
             <th>Cur. Value</th><th>P&L</th><th>P&L%</th><th>Action</th>
           </tr></thead>
           <tbody>
-            ${posRows.map(p => `<tr>
+            ${posRows.map(p => {
+            var _a;
+            return `<tr>
               <td><a href="/stock/${p.symbol}" class="mpt-sym">${p.symbol}</a></td>
-              <td style="font-size:0.83rem; max-width:140px; overflow:hidden; white-space:nowrap; text-overflow:ellipsis">${p.company_name ?? "—"}</td>
+              <td style="font-size:0.83rem; max-width:140px; overflow:hidden; white-space:nowrap; text-overflow:ellipsis">${(_a = p.company_name) !== null && _a !== void 0 ? _a : "—"}</td>
               <td><span class="${p.trade_type === 'HOLDING' ? 'mpt-type-hold' : 'mpt-type-intra'}">${p.trade_type === 'HOLDING' ? 'HOLD' : 'INTRA'}</span></td>
               <td>${p.qty}</td>
               <td>?${p.avg_price.toFixed(2)}</td>
@@ -10666,7 +11052,8 @@ async function paperPortfolioPage(req, res) {
                   <button type="submit" class="mpt-sell-btn">Sell</button>
                 </form>
               </td>
-            </tr>`).join("")}
+            </tr>`;
+        }).join("")}
           </tbody>
         </table>
       </div>`}
@@ -10689,7 +11076,8 @@ async function paperPortfolioPage(req, res) {
           </tr></thead>
           <tbody>
             ${trades.map(t => {
-            const isPos = (t.pnl ?? 0) >= 0;
+            var _a, _b, _c;
+            const isPos = ((_a = t.pnl) !== null && _a !== void 0 ? _a : 0) >= 0;
             return `<tr>
                 <td style="font-size:0.82rem;color:var(--text-muted)">${t.traded_at.slice(0, 16).replace("T", " ")}</td>
                 <td><a href="/stock/${t.symbol}" class="mpt-sym">${t.symbol}</a></td>
@@ -10699,7 +11087,7 @@ async function paperPortfolioPage(req, res) {
                 <td>?${t.price.toFixed(2)}</td>
                 <td>?${t.total.toLocaleString("en-IN", { maximumFractionDigits: 0 })}</td>
                 <td class="${t.pnl != null ? (isPos ? "mpt-green" : "mpt-red") : ""}" style="font-weight:${t.pnl != null ? "700" : "400"}">${t.pnl != null ? (isPos ? "+" : "") + "?" + t.pnl.toLocaleString("en-IN", { maximumFractionDigits: 0 }) : "—"}</td>
-                <td class="${t.pnl_pct != null ? ((t.pnl_pct ?? 0) >= 0 ? "mpt-green" : "mpt-red") : ""}">${t.pnl_pct != null ? ((t.pnl_pct ?? 0) >= 0 ? "+" : "") + t.pnl_pct + "%" : "—"}</td>
+                <td class="${t.pnl_pct != null ? (((_b = t.pnl_pct) !== null && _b !== void 0 ? _b : 0) >= 0 ? "mpt-green" : "mpt-red") : ""}">${t.pnl_pct != null ? (((_c = t.pnl_pct) !== null && _c !== void 0 ? _c : 0) >= 0 ? "+" : "") + t.pnl_pct + "%" : "—"}</td>
                 <td>?${t.balance_after.toLocaleString("en-IN", { maximumFractionDigits: 0 })}</td>
               </tr>`;
         }).join("")}
@@ -10807,7 +11195,7 @@ app.post("/paper-trade/bot-config", requireAdmin, async (req, res) => {
         try {
             existing = JSON.parse(fs_1.default.readFileSync(settingsPath, "utf-8"));
         }
-        catch { }
+        catch (_a) { }
         const q = req.body;
         existing.mode = q.mode === "LIVE" ? "LIVE" : "PAPER";
         existing.quantity = Math.max(1, parseInt(q.quantity) || 30);
@@ -10836,6 +11224,7 @@ app.post("/paper-trade/bot-config", requireAdmin, async (req, res) => {
 });
 // -- POST /paper-trade/schedule-trade — admin adds a scheduled/conditional trade -
 app.post("/paper-trade/schedule-trade", requireAuth, async (req, res) => {
+    var _a, _b, _c;
     try {
         const BOT_DIR = "/home/ubuntu/trading-bot";
         const schPath = `${BOT_DIR}/scheduled-trades.json`;
@@ -10843,7 +11232,7 @@ app.post("/paper-trade/schedule-trade", requireAuth, async (req, res) => {
         try {
             list = JSON.parse(fs_1.default.readFileSync(schPath, "utf-8"));
         }
-        catch { }
+        catch (_e) { }
         const q = req.body;
         const mode = q.triggerMode || "price";
         const id = Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
@@ -10865,7 +11254,7 @@ app.post("/paper-trade/schedule-trade", requireAuth, async (req, res) => {
             });
             if (q.expiryDate)
                 entry.expiryDate = q.expiryDate;
-            if (q.note?.trim())
+            if ((_a = q.note) === null || _a === void 0 ? void 0 : _a.trim())
                 entry.note = q.note.trim().slice(0, 80);
         }
         else if (mode === "pick") {
@@ -10883,7 +11272,7 @@ app.post("/paper-trade/schedule-trade", requireAuth, async (req, res) => {
                 targetPrice: parseFloat(q.pickTarget) || 0,
                 quantity: Math.max(0, parseInt(q.pickQty) || 0),
             });
-            if (q.pickNote?.trim())
+            if ((_b = q.pickNote) === null || _b === void 0 ? void 0 : _b.trim())
                 entry.note = q.pickNote.trim().slice(0, 80);
         }
         else if (mode === "indicator") {
@@ -10906,7 +11295,7 @@ app.post("/paper-trade/schedule-trade", requireAuth, async (req, res) => {
                 maxTriggers: Math.max(0, parseInt(q.indMaxTriggers) || 1),
                 triggeredCount: 0,
             });
-            if (q.indNote?.trim())
+            if ((_c = q.indNote) === null || _c === void 0 ? void 0 : _c.trim())
                 entry.note = q.indNote.trim().slice(0, 80);
         }
         list.push(entry);
@@ -10926,7 +11315,7 @@ app.post("/paper-trade/cancel-schedule", requireAuth, async (req, res) => {
         try {
             list = JSON.parse(fs_1.default.readFileSync(schPath, "utf-8"));
         }
-        catch { }
+        catch (_a) { }
         const id = (req.body.id || "").toString().trim();
         list = list.map((s) => s.id === id ? { ...s, status: "cancelled", cancelledAt: new Date().toISOString() } : s);
         fs_1.default.writeFileSync(schPath, JSON.stringify(list, null, 2));
@@ -10941,17 +11330,19 @@ app.get("/my-paper-trade", requireAdmin, paperPortfolioPage);
 app.get("/my-portfolio", requireAuth, (_req, res) => res.redirect("/dashboard"));
 // -- GET /dashboard — unified trading dashboard (manual + bot trades) -----------
 app.get("/dashboard", requireAuth, async (req, res) => {
+    var _a, _b, _c, _e, _f, _g, _h, _j, _k, _l, _m;
     try {
         const userId = req.session.userId;
         const userName = req.session.userName || "Trader";
         const isAdmin = req.session.userRole === "admin";
         // Manual paper trade data
-        const [port, positions, trades, activeSub, allPicks] = await Promise.all([
+        const [port, positions, trades, activeSub, allPicks, newsShadowTrades] = await Promise.all([
             (0, db_1.getPaperPortfolio)(userId),
             (0, db_1.getPaperPositions)(userId),
             (0, db_1.getPaperTrades)(userId, 200),
             (0, db_1.getActiveSubscription)(userId),
             (0, db_1.getAllPicks)(),
+            getNewsShadowTrades(150),
         ]);
         const isPremium = !!activeSub || req.session.userRole === "premium" || isAdmin;
         // Live prices for open positions
@@ -10970,49 +11361,67 @@ app.get("/dashboard", requireAuth, async (req, res) => {
                 if (r.price != null)
                     priceMap[r.symbol] = r.price;
         }
+        const newsShadowSymbolsNeeded = [...new Set(newsShadowTrades.map((t) => t.symbol))].filter((s) => !priceMap[s]);
+        if (newsShadowSymbolsNeeded.length > 0) {
+            const np = await (0, db_1.dbAll)(`SELECT symbol, price FROM prices WHERE symbol IN (${newsShadowSymbolsNeeded.map(() => "?").join(",")})`, newsShadowSymbolsNeeded);
+            for (const r of np)
+                if (r.price != null)
+                    priceMap[r.symbol] = r.price;
+        }
         // Picks data
         const inPositionSymbols = new Set([
             ...allPicks.filter((p) => p.result === "entry_triggered").map((p) => p.stock_symbol.toUpperCase()),
             ...positions.map((p) => p.symbol.toUpperCase()),
         ]);
         const picksInPosition = allPicks.filter((p) => p.result === "entry_triggered");
-        const latestPendingDate = allPicks
+        const latestPendingDate = (_b = (_a = allPicks
             .filter((p) => !p.result)
-            .sort((a, b) => (b.published_at || "").localeCompare(a.published_at || ""))[0]
-            ?.published_at?.slice(0, 10);
+            .sort((a, b) => (b.published_at || "").localeCompare(a.published_at || ""))[0]) === null || _a === void 0 ? void 0 : _a.published_at) === null || _b === void 0 ? void 0 : _b.slice(0, 10);
         const pendingOrders = latestPendingDate
             ? allPicks.filter((p) => !p.result && (p.published_at || "").slice(0, 10) === latestPendingDate)
             : [];
         const pendingNonDupe = pendingOrders.filter((p) => !inPositionSymbols.has(p.stock_symbol.toUpperCase()));
         const resolvedPicks = allPicks.filter((p) => p.result === "target_hit" || p.result === "sl_hit");
         const posRows = positions.map((p) => {
-            const livePrice = priceMap[p.symbol] ?? p.avg_price;
+            var _a;
+            const livePrice = (_a = priceMap[p.symbol]) !== null && _a !== void 0 ? _a : p.avg_price;
             const pnl = parseFloat(((livePrice - p.avg_price) * p.qty).toFixed(2));
             const pnlPct = parseFloat(((pnl / p.invested) * 100).toFixed(2));
             return { ...p, livePrice, pnl, pnlPct };
         });
         const sellTrades = trades.filter((t) => t.action === "SELL");
-        const realizedPnl = parseFloat(sellTrades.reduce((s, t) => s + (t.pnl ?? 0), 0).toFixed(2));
-        const wins = sellTrades.filter((t) => (t.pnl ?? 0) > 0).length;
-        const losses = sellTrades.filter((t) => (t.pnl ?? 0) <= 0).length;
+        const realizedPnl = parseFloat(sellTrades.reduce((s, t) => { var _a; return s + ((_a = t.pnl) !== null && _a !== void 0 ? _a : 0); }, 0).toFixed(2));
+        const wins = sellTrades.filter((t) => { var _a; return ((_a = t.pnl) !== null && _a !== void 0 ? _a : 0) > 0; }).length;
+        const losses = sellTrades.filter((t) => { var _a; return ((_a = t.pnl) !== null && _a !== void 0 ? _a : 0) <= 0; }).length;
         const winRate = sellTrades.length > 0 ? ((wins / sellTrades.length) * 100).toFixed(1) : "—";
         const investedTotal = posRows.reduce((s, p) => s + p.invested, 0);
         const curValTotal = posRows.reduce((s, p) => s + (p.livePrice * p.qty), 0);
         const portfolioValue = parseFloat((port.balance + curValTotal).toFixed(2));
         const totalPnl = parseFloat((portfolioValue - 100000).toFixed(2));
+        const newsShadowOpen = newsShadowTrades.filter((t) => t.status === "OPEN");
+        const newsShadowClosed = newsShadowTrades.filter((t) => t.status !== "OPEN");
+        const newsShadowRealized = parseFloat(newsShadowClosed.reduce((s, t) => s + Number(t.pnl || 0), 0).toFixed(2));
+        const newsShadowWins = newsShadowClosed.filter((t) => Number(t.pnl || 0) > 0).length;
+        const newsShadowOpenRows = newsShadowOpen.map((t) => {
+            var _a;
+            const livePrice = (_a = priceMap[t.symbol]) !== null && _a !== void 0 ? _a : t.entry_price;
+            const live = newsShadowPnl(t, livePrice);
+            return { ...t, livePrice, livePnl: live.pnl, livePnlPct: live.pnlPct };
+        });
+        const newsShadowOpenPnl = parseFloat(newsShadowOpenRows.reduce((s, t) => s + Number(t.livePnl || 0), 0).toFixed(2));
         // Weekly P&L (last 7 days)
         const _7dAgo = new Date(Date.now() - 7 * 86400000).toISOString().slice(0, 10);
         const weekTrades = sellTrades.filter((t) => t.traded_at >= _7dAgo);
-        const weekPnl = parseFloat(weekTrades.reduce((s, t) => s + (t.pnl ?? 0), 0).toFixed(2));
+        const weekPnl = parseFloat(weekTrades.reduce((s, t) => { var _a; return s + ((_a = t.pnl) !== null && _a !== void 0 ? _a : 0); }, 0).toFixed(2));
         // Monthly P&L grouping (last 6 months)
         const monthMap = {};
         for (const t of sellTrades) {
             const mo = t.traded_at.slice(0, 7);
             if (!monthMap[mo])
                 monthMap[mo] = { pnl: 0, trades: 0, wins: 0 };
-            monthMap[mo].pnl += t.pnl ?? 0;
+            monthMap[mo].pnl += (_c = t.pnl) !== null && _c !== void 0 ? _c : 0;
             monthMap[mo].trades += 1;
-            if ((t.pnl ?? 0) > 0)
+            if (((_e = t.pnl) !== null && _e !== void 0 ? _e : 0) > 0)
                 monthMap[mo].wins += 1;
         }
         const monthKeys = Object.keys(monthMap).sort().slice(-6);
@@ -11031,7 +11440,7 @@ app.get("/dashboard", requireAuth, async (req, res) => {
             try {
                 return mon.toISOString().slice(0, 10);
             }
-            catch {
+            catch (_a) {
                 return "";
             }
         }
@@ -11042,9 +11451,9 @@ app.get("/dashboard", requireAuth, async (req, res) => {
                 continue;
             if (!weekMap[wk])
                 weekMap[wk] = { pnl: 0, trades: 0, wins: 0 };
-            weekMap[wk].pnl += t.pnl ?? 0;
+            weekMap[wk].pnl += (_f = t.pnl) !== null && _f !== void 0 ? _f : 0;
             weekMap[wk].trades += 1;
-            if ((t.pnl ?? 0) > 0)
+            if (((_g = t.pnl) !== null && _g !== void 0 ? _g : 0) > 0)
                 weekMap[wk].wins += 1;
         }
         const weekKeys = Object.keys(weekMap).sort().slice(-8);
@@ -11052,20 +11461,20 @@ app.get("/dashboard", requireAuth, async (req, res) => {
         const BOT_DIR = "/home/ubuntu/trading-bot";
         const botClosed = isAdmin ? (() => {
             try {
-                return JSON.parse(fs_1.default.readFileSync(`${BOT_DIR}/trades.json`, "utf-8")).filter((t) => (t.exitPrice ?? 0) > 0);
+                return JSON.parse(fs_1.default.readFileSync(`${BOT_DIR}/trades.json`, "utf-8")).filter((t) => { var _a; return ((_a = t.exitPrice) !== null && _a !== void 0 ? _a : 0) > 0; });
             }
-            catch {
+            catch (_a) {
                 return [];
             }
         })() : [];
-        const botWins = botClosed.filter((t) => (t.pnl ?? 0) > 0).length;
-        const botTotalPnl = parseFloat(botClosed.reduce((s, t) => s + (t.pnl ?? 0), 0).toFixed(2));
+        const botWins = botClosed.filter((t) => { var _a; return ((_a = t.pnl) !== null && _a !== void 0 ? _a : 0) > 0; }).length;
+        const botTotalPnl = parseFloat(botClosed.reduce((s, t) => { var _a; return s + ((_a = t.pnl) !== null && _a !== void 0 ? _a : 0); }, 0).toFixed(2));
         const botWinRate = botClosed.length > 0 ? ((botWins / botClosed.length) * 100).toFixed(1) : "—";
         const botWeekTrades = botClosed.filter((t) => {
             const d = t.exitTime ? new Date(t.exitTime) : null;
             return d && !isNaN(d.getTime()) && d.toISOString().slice(0, 10) >= _7dAgo;
         });
-        const botWeekPnl = parseFloat(botWeekTrades.reduce((s, t) => s + (t.pnl ?? 0), 0).toFixed(2));
+        const botWeekPnl = parseFloat(botWeekTrades.reduce((s, t) => { var _a; return s + ((_a = t.pnl) !== null && _a !== void 0 ? _a : 0); }, 0).toFixed(2));
         // Bot monthly grouping
         const botMonthMap = {};
         for (const t of botClosed) {
@@ -11075,9 +11484,9 @@ app.get("/dashboard", requireAuth, async (req, res) => {
                 continue;
             if (!botMonthMap[mo])
                 botMonthMap[mo] = { pnl: 0, trades: 0, wins: 0 };
-            botMonthMap[mo].pnl += t.pnl ?? 0;
+            botMonthMap[mo].pnl += (_h = t.pnl) !== null && _h !== void 0 ? _h : 0;
             botMonthMap[mo].trades += 1;
-            if ((t.pnl ?? 0) > 0)
+            if (((_j = t.pnl) !== null && _j !== void 0 ? _j : 0) > 0)
                 botMonthMap[mo].wins += 1;
         }
         const botMonthKeys = Object.keys(botMonthMap).sort().slice(-6);
@@ -11092,9 +11501,9 @@ app.get("/dashboard", requireAuth, async (req, res) => {
             const day = dayNames[new Date(t.traded_at).getDay()];
             if (!dayMap[day])
                 dayMap[day] = { pnl: 0, trades: 0, wins: 0 };
-            dayMap[day].pnl += t.pnl ?? 0;
+            dayMap[day].pnl += (_k = t.pnl) !== null && _k !== void 0 ? _k : 0;
             dayMap[day].trades += 1;
-            if ((t.pnl ?? 0) > 0)
+            if (((_l = t.pnl) !== null && _l !== void 0 ? _l : 0) > 0)
                 dayMap[day].wins += 1;
         }
         const tradingDays = ["Mon", "Tue", "Wed", "Thu", "Fri"].filter(d => dayMap[d]);
@@ -11122,6 +11531,7 @@ app.get("/dashboard", requireAuth, async (req, res) => {
             }
         }
         function pickConfidence(p) {
+            var _a;
             let score = 30; // base
             if (p.stop_loss)
                 score += 20;
@@ -11131,7 +11541,7 @@ app.get("/dashboard", requireAuth, async (req, res) => {
                 score += 20;
             else if (p.risk_level === "Medium")
                 score += 10;
-            const hist = resolvedBySymbol[p.stock_symbol?.toUpperCase()];
+            const hist = resolvedBySymbol[(_a = p.stock_symbol) === null || _a === void 0 ? void 0 : _a.toUpperCase()];
             if (hist && hist.total >= 2)
                 score += Math.round((hist.wins / hist.total) * 15);
             return Math.min(score, 100);
@@ -11141,7 +11551,7 @@ app.get("/dashboard", requireAuth, async (req, res) => {
         // 3. Over-trading Detector
         const tradesByDay = {};
         for (const t of sellTrades) {
-            const d = t.traded_at?.slice(0, 10);
+            const d = (_m = t.traded_at) === null || _m === void 0 ? void 0 : _m.slice(0, 10);
             if (d)
                 tradesByDay[d] = (tradesByDay[d] || 0) + 1;
         }
@@ -11154,7 +11564,8 @@ app.get("/dashboard", requireAuth, async (req, res) => {
             : { warn: false, todayCount: todayTradeCount, avg: parseFloat(avgTradesPerDay.toFixed(1)) };
         // 4. Drawdown Predictor
         const drawdownRows = posRows.map((p) => {
-            const slPrice = p.sl_price ?? null;
+            var _a;
+            const slPrice = (_a = p.sl_price) !== null && _a !== void 0 ? _a : null;
             const maxLoss = slPrice && slPrice < p.avg_price
                 ? parseFloat(((p.avg_price - slPrice) * p.qty).toFixed(2))
                 : parseFloat((p.avg_price * 0.05 * p.qty).toFixed(2));
@@ -11168,7 +11579,7 @@ app.get("/dashboard", requireAuth, async (req, res) => {
         try {
             const mktData = await fetchNseMarkets();
             const vixEntry = mktData.find((m) => m.symbol === "INDIA VIX" || m.label === "INDIA VIX");
-            if (vixEntry?.price)
+            if (vixEntry === null || vixEntry === void 0 ? void 0 : vixEntry.price)
                 vixValue = parseFloat(vixEntry.price);
         }
         catch (_) { }
@@ -11287,11 +11698,56 @@ app.get("/dashboard", requireAuth, async (req, res) => {
     <!-- Tabs -->
     <div class="db-tabs">
       ${isAdmin ? `<button class="db-tab active" onclick="dbTab('picks')" id="dbt-picks">Picks Tracker <span style="background:#a78bfa22;color:#a78bfa;border-radius:10px;padding:1px 7px;font-size:.72rem;margin-left:3px">${picksInPosition.length + pendingNonDupe.length}</span></button>` : ""}
+      <button class="db-tab" onclick="dbTab('news-shadow')" id="dbt-news-shadow">News Shadow <span style="background:#f59e0b22;color:#f59e0b;border-radius:10px;padding:1px 7px;font-size:.72rem;margin-left:3px">${newsShadowOpen.length}</span></button>
       <button class="db-tab${isAdmin ? '' : ' active'}" onclick="dbTab('positions')" id="dbt-positions">?? Positions (${posRows.length})</button>
       <button class="db-tab" onclick="dbTab('manual')" id="dbt-manual">My Trades (${sellTrades.length})</button>
       <button class="db-tab" onclick="dbTab('weekly')" id="dbt-weekly">?? Weekly</button>
       <button class="db-tab" onclick="dbTab('monthly')" id="dbt-monthly">?? Monthly</button>
       <button class="db-tab" onclick="dbTab('ai')" id="dbt-ai">?? AI Insights${pickAnomalies.length > 0 || overtradingAlert.warn || vixAlert === "extreme" || vixAlert === "high" ? ` <span style="background:#ef444422;color:#ef4444;border:1px solid #ef444444;border-radius:10px;padding:1px 7px;font-size:.7rem;margin-left:3px">!</span>` : ""}</button>
+    </div>
+
+    <!-- -- PANEL: NEWS SHADOW -- -->
+    <div class="db-panel" id="dbp-news-shadow">
+      <div class="db-kpi-grid">
+        <div class="db-kpi"><div class="db-kpi-lbl">Open News Shadow</div><div class="db-kpi-val" style="color:#f59e0b">${newsShadowOpen.length}</div></div>
+        <div class="db-kpi"><div class="db-kpi-lbl">Open MTM</div><div class="db-kpi-val ${newsShadowOpenPnl >= 0 ? 'db-green' : 'db-red'}">${newsShadowOpenPnl >= 0 ? "+" : ""}&#8377;${Math.abs(newsShadowOpenPnl).toLocaleString("en-IN", { maximumFractionDigits: 0 })}</div></div>
+        <div class="db-kpi"><div class="db-kpi-lbl">Closed P&L</div><div class="db-kpi-val ${newsShadowRealized >= 0 ? 'db-green' : 'db-red'}">${newsShadowRealized >= 0 ? "+" : ""}&#8377;${Math.abs(newsShadowRealized).toLocaleString("en-IN", { maximumFractionDigits: 0 })}</div></div>
+        <div class="db-kpi"><div class="db-kpi-lbl">Closed Wins</div><div class="db-kpi-val">${newsShadowWins}/${newsShadowClosed.length}</div></div>
+      </div>
+      <div class="db-section">Open News Shadow Trades</div>
+      ${newsShadowOpenRows.length === 0
+            ? `<div class="db-empty">No active news shadow trades. The scanner will create one only when live price touches a strict news setup that can target at least &#8377;10,000.</div>`
+            : `<div class="db-tbl-wrap"><table class="db-tbl">
+          <thead><tr><th>Symbol</th><th>Side</th><th>Qty</th><th>Entry</th><th>Live</th><th>SL</th><th>T1</th><th>T2</th><th>MTM</th><th>News</th></tr></thead>
+          <tbody>${newsShadowOpenRows.map((t) => `
+            <tr>
+              <td><a href="/stock/${encodeURIComponent(t.symbol)}?newsTrade=1" style="font-weight:800;color:var(--accent);text-decoration:none">${esc(t.symbol)}</a>${t.company_name ? `<br><span class="db-muted" style="font-size:.7rem">${esc(t.company_name)}</span>` : ""}</td>
+              <td><span class="${t.side === "BUY" ? "db-badge-buy" : "db-badge-sell"}">${t.side}</span></td>
+              <td>${t.qty}</td>
+              <td>&#8377;${Number(t.entry_price).toFixed(2)}</td>
+              <td style="font-weight:700">&#8377;${Number(t.livePrice).toFixed(2)}</td>
+              <td class="db-red">&#8377;${Number(t.stop_loss).toFixed(2)}</td>
+              <td class="db-green">&#8377;${Number(t.target1).toFixed(2)}</td>
+              <td class="db-green">&#8377;${Number(t.target2).toFixed(2)}</td>
+              <td class="${t.livePnl >= 0 ? 'db-green' : 'db-red'}">${t.livePnl >= 0 ? "+" : ""}&#8377;${Math.abs(t.livePnl).toLocaleString("en-IN", { maximumFractionDigits: 0 })}<br><span style="font-size:.72rem">${t.livePnlPct >= 0 ? "+" : ""}${t.livePnlPct}%</span></td>
+              <td style="max-width:260px;white-space:normal;font-size:.76rem"><a href="${esc(t.news_link)}" target="_blank" rel="noopener" style="color:var(--accent);text-decoration:none">${esc(t.news_title)}</a></td>
+            </tr>`).join("")}</tbody></table></div>`}
+      <div class="db-section">Recent News Shadow Exits</div>
+      ${newsShadowClosed.length === 0
+            ? `<div class="db-empty">No closed news shadow trades yet.</div>`
+            : `<div class="db-tbl-wrap"><table class="db-tbl">
+          <thead><tr><th>Date</th><th>Symbol</th><th>Side</th><th>Qty</th><th>Entry</th><th>Exit</th><th>Status</th><th>P&L</th></tr></thead>
+          <tbody>${newsShadowClosed.slice(0, 80).map((t) => `
+            <tr>
+              <td class="db-muted">${(t.exit_at || t.entry_at || "").slice(0, 16)}</td>
+              <td><a href="/stock/${encodeURIComponent(t.symbol)}?newsTrade=1" style="font-weight:800;color:var(--accent);text-decoration:none">${esc(t.symbol)}</a></td>
+              <td><span class="${t.side === "BUY" ? "db-badge-buy" : "db-badge-sell"}">${t.side}</span></td>
+              <td>${t.qty}</td>
+              <td>&#8377;${Number(t.entry_price).toFixed(2)}</td>
+              <td>&#8377;${Number(t.exit_price || 0).toFixed(2)}</td>
+              <td><span class="${t.status === "SL_HIT" ? "db-badge-sell" : "db-badge-buy"}">${esc(t.status)}</span></td>
+              <td class="${Number(t.pnl || 0) >= 0 ? 'db-green' : 'db-red'}">${Number(t.pnl || 0) >= 0 ? "+" : ""}&#8377;${Math.abs(Number(t.pnl || 0)).toLocaleString("en-IN", { maximumFractionDigits: 0 })}<br><span style="font-size:.72rem">${Number(t.pnl_pct || 0) >= 0 ? "+" : ""}${Number(t.pnl_pct || 0).toFixed(2)}%</span></td>
+            </tr>`).join("")}</tbody></table></div>`}
     </div>
 
     <!-- -- PANEL: POSITIONS -- -->
@@ -11328,8 +11784,9 @@ app.get("/dashboard", requireAuth, async (req, res) => {
             : `<div class="db-tbl-wrap"><table class="db-tbl">
             <thead><tr><th>Date</th><th>Symbol</th><th>Type</th><th>Qty</th><th>Buy ?</th><th>Sell ?</th><th>P&L</th><th>P&L%</th></tr></thead>
             <tbody>${sellTrades.slice(0, 100).map((t) => {
+                var _a, _b, _c, _e, _f;
                 const buyTrade = trades.find((b) => b.action === 'BUY' && b.symbol === t.symbol && b.traded_at <= t.traded_at);
-                const buyPrice = buyTrade?.price ?? 0;
+                const buyPrice = (_a = buyTrade === null || buyTrade === void 0 ? void 0 : buyTrade.price) !== null && _a !== void 0 ? _a : 0;
                 const pnlPct = buyPrice > 0 ? (((t.price - buyPrice) / buyPrice) * 100).toFixed(1) : "—";
                 return `<tr>
                 <td class="db-muted" style="font-size:.78rem">${t.traded_at.slice(0, 10)}</td>
@@ -11338,8 +11795,8 @@ app.get("/dashboard", requireAuth, async (req, res) => {
                 <td>${t.qty}</td>
                 <td>${buyPrice > 0 ? "?" + buyPrice.toFixed(2) : "—"}</td>
                 <td>?${t.price.toFixed(2)}</td>
-                <td class="${(t.pnl ?? 0) >= 0 ? 'db-green' : 'db-red'}">${(t.pnl ?? 0) >= 0 ? "+" : ""}?${(t.pnl ?? 0).toLocaleString("en-IN", { maximumFractionDigits: 0 })}</td>
-                <td class="${(t.pnl ?? 0) >= 0 ? 'db-green' : 'db-red'}">${pnlPct !== "—" ? (parseFloat(pnlPct) >= 0 ? "+" : "") + pnlPct + "%" : "—"}</td>
+                <td class="${((_b = t.pnl) !== null && _b !== void 0 ? _b : 0) >= 0 ? 'db-green' : 'db-red'}">${((_c = t.pnl) !== null && _c !== void 0 ? _c : 0) >= 0 ? "+" : ""}?${((_e = t.pnl) !== null && _e !== void 0 ? _e : 0).toLocaleString("en-IN", { maximumFractionDigits: 0 })}</td>
+                <td class="${((_f = t.pnl) !== null && _f !== void 0 ? _f : 0) >= 0 ? 'db-green' : 'db-red'}">${pnlPct !== "—" ? (parseFloat(pnlPct) >= 0 ? "+" : "") + pnlPct + "%" : "—"}</td>
               </tr>`;
             }).join("")}
             </tbody></table></div>`}
@@ -11359,6 +11816,7 @@ app.get("/dashboard", requireAuth, async (req, res) => {
             : `<div class="db-tbl-wrap"><table class="db-tbl">
             <thead><tr><th>Date</th><th>Symbol</th><th>Dir</th><th>Entry ?</th><th>Exit ?</th><th>P&L</th><th>Duration</th><th>Reason</th></tr></thead>
             <tbody>${[...botClosed].reverse().slice(0, 100).map((t) => {
+                var _a, _b, _c, _e, _f, _g, _h;
                 const dStr = t.exitTime ? new Date(t.exitTime).toLocaleDateString("en-IN", { timeZone: "Asia/Kolkata", day: "2-digit", month: "short" }) : "—";
                 const durMs = t.exitTime && t.entryTime ? new Date(t.exitTime).getTime() - new Date(t.entryTime).getTime() : 0;
                 const durStr = durMs > 0 ? (durMs < 3600000 ? Math.round(durMs / 60000) + "m" : (durMs / 3600000).toFixed(1) + "h") : "—";
@@ -11366,9 +11824,9 @@ app.get("/dashboard", requireAuth, async (req, res) => {
                 <td class="db-muted" style="font-size:.78rem">${dStr}</td>
                 <td style="font-weight:700">${t.symbol || "—"}</td>
                 <td><span class="${(t.direction || '') === 'CE' ? 'db-badge-ce' : 'db-badge-pe'}">${t.direction || "—"}</span></td>
-                <td>${(t.entryPrice ?? 0) > 0 ? "?" + (t.entryPrice ?? 0).toFixed(1) : "—"}</td>
-                <td>${(t.exitPrice ?? 0) > 0 ? "?" + (t.exitPrice ?? 0).toFixed(1) : "—"}</td>
-                <td class="${(t.pnl ?? 0) >= 0 ? 'db-green' : 'db-red'}">${(t.pnl ?? 0) >= 0 ? "+" : ""}?${(t.pnl ?? 0).toLocaleString("en-IN", { maximumFractionDigits: 0 })}</td>
+                <td>${((_a = t.entryPrice) !== null && _a !== void 0 ? _a : 0) > 0 ? "?" + ((_b = t.entryPrice) !== null && _b !== void 0 ? _b : 0).toFixed(1) : "—"}</td>
+                <td>${((_c = t.exitPrice) !== null && _c !== void 0 ? _c : 0) > 0 ? "?" + ((_e = t.exitPrice) !== null && _e !== void 0 ? _e : 0).toFixed(1) : "—"}</td>
+                <td class="${((_f = t.pnl) !== null && _f !== void 0 ? _f : 0) >= 0 ? 'db-green' : 'db-red'}">${((_g = t.pnl) !== null && _g !== void 0 ? _g : 0) >= 0 ? "+" : ""}?${((_h = t.pnl) !== null && _h !== void 0 ? _h : 0).toLocaleString("en-IN", { maximumFractionDigits: 0 })}</td>
                 <td class="db-muted">${durStr}</td>
                 <td class="db-muted" style="font-size:.75rem">${t.exitReason || "—"}</td>
               </tr>`;
@@ -11392,6 +11850,7 @@ app.get("/dashboard", requireAuth, async (req, res) => {
             </div>`;
             }).join("")}</div>`}
       ${isAdmin ? (() => {
+            var _a, _b;
             const botWeekMap = {};
             for (const t of botClosed) {
                 const exitD = t.exitTime ? new Date(t.exitTime) : null;
@@ -11400,9 +11859,9 @@ app.get("/dashboard", requireAuth, async (req, res) => {
                     continue;
                 if (!botWeekMap[wk])
                     botWeekMap[wk] = { pnl: 0, trades: 0, wins: 0 };
-                botWeekMap[wk].pnl += t.pnl ?? 0;
+                botWeekMap[wk].pnl += (_a = t.pnl) !== null && _a !== void 0 ? _a : 0;
                 botWeekMap[wk].trades += 1;
-                if ((t.pnl ?? 0) > 0)
+                if (((_b = t.pnl) !== null && _b !== void 0 ? _b : 0) > 0)
                     botWeekMap[wk].wins += 1;
             }
             const bwk = Object.keys(botWeekMap).sort().slice(-8);
@@ -11651,8 +12110,9 @@ app.get("/dashboard", requireAuth, async (req, res) => {
                 // compute per-row P&L and totals
                 let totalPnlPct = 0, countWithCmp = 0;
                 const rows = picksInPosition.map((p) => {
+                    var _a;
                     const lp = priceMap[p.stock_symbol];
-                    const ep = p.entry_price ?? ((p.entry_low + p.entry_high) / 2);
+                    const ep = (_a = p.entry_price) !== null && _a !== void 0 ? _a : ((p.entry_low + p.entry_high) / 2);
                     const mult = (p.direction === "BULLISH" || p.direction === "LONG") ? 1 : -1;
                     const pnlPct = lp && ep ? parseFloat((((lp - ep) / ep) * 100 * mult).toFixed(2)) : null;
                     if (pnlPct !== null) {
@@ -11784,22 +12244,24 @@ app.get("/dashboard", requireAuth, async (req, res) => {
     }
     catch (err) {
         console.error("[/dashboard] Error:", err);
-        res.status(500).send(`<!DOCTYPE html><html><head><title>Error</title><link rel="stylesheet" href="/public/css/style.css"></head><body>${nav("dashboard", req)}<div class="container" style="padding:40px 0;text-align:center"><h2 style="color:#ef4444">?? Dashboard Error</h2><p style="color:var(--text-muted)">${err?.message || "Unknown error"}</p><a href="/" class="btn-primary" style="margin-top:16px;display:inline-block">Back to Screener</a></div></body></html>`);
+        res.status(500).send(`<!DOCTYPE html><html><head><title>Error</title><link rel="stylesheet" href="/public/css/style.css"></head><body>${nav("dashboard", req)}<div class="container" style="padding:40px 0;text-align:center"><h2 style="color:#ef4444">?? Dashboard Error</h2><p style="color:var(--text-muted)">${(err === null || err === void 0 ? void 0 : err.message) || "Unknown error"}</p><a href="/" class="btn-primary" style="margin-top:16px;display:inline-block">Back to Screener</a></div></body></html>`);
     }
 });
 // Redirect old bot-stats and portfolio URLs to unified dashboard
 app.get("/paper-trade/bot-stats", requireAuth, (_req, res) => res.redirect("/dashboard"));
 // -- GET /api/picks/live — quick counts for JS refresh -------------------------
 app.get("/api/picks/live", requireAuth, async (_req, res) => {
+    var _a, _b;
     const all = await (0, db_1.getAllPicks)();
     const inPos = all.filter(p => p.result === 'entry_triggered').length;
-    const latestDate = all.filter(p => !p.result).sort((a, b) => (b.published_at || '').localeCompare(a.published_at || ''))[0]?.published_at?.slice(0, 10);
+    const latestDate = (_b = (_a = all.filter(p => !p.result).sort((a, b) => (b.published_at || '').localeCompare(a.published_at || ''))[0]) === null || _a === void 0 ? void 0 : _a.published_at) === null || _b === void 0 ? void 0 : _b.slice(0, 10);
     const pend = latestDate ? all.filter(p => !p.result && (p.published_at || '').slice(0, 10) === latestDate).length : 0;
     const exec = all.filter(p => p.result === 'target_hit' || p.result === 'sl_hit').length;
     res.json({ inPosition: inPos, pending: pend, executed: exec });
 });
 // -- POST /my-paper-trade/buy --------------------------------------------------
 app.post("/my-paper-trade/buy", requireAuth, async (req, res) => {
+    var _a, _b, _c;
     const userId = req.session.userId;
     if (!isMarketHours()) {
         res.redirect("/paper-trade?err=" + encodeURIComponent("Paper trading only available during market hours (Mon–Fri 9:15 AM – 3:30 PM IST)"));
@@ -11808,7 +12270,7 @@ app.post("/my-paper-trade/buy", requireAuth, async (req, res) => {
     const otpReq = (await (0, db_1.getSetting)("otp_required")) !== "false";
     if (otpReq) {
         const uInfo = await (0, db_1.dbAll)("SELECT mobile_verified FROM users WHERE id=?", [userId]);
-        if (!uInfo[0]?.mobile_verified) {
+        if (!((_a = uInfo[0]) === null || _a === void 0 ? void 0 : _a.mobile_verified)) {
             res.redirect("/verify-mobile?next=/my-paper-trade");
             return;
         }
@@ -11834,7 +12296,7 @@ app.post("/my-paper-trade/buy", requireAuth, async (req, res) => {
     const slPrice = (!isNaN(slPct) && slPct > 0) ? parseFloat((price * (1 - slPct / 100)).toFixed(2)) : null;
     const targetPrice = (!isNaN(tgtPct) && tgtPct > 0) ? parseFloat((price * (1 + tgtPct / 100)).toFixed(2)) : null;
     const stock = await (0, db_1.dbAll)("SELECT company_name FROM stocks WHERE symbol=?", [symbol]);
-    const companyName = stock[0]?.company_name ?? null;
+    const companyName = (_c = (_b = stock[0]) === null || _b === void 0 ? void 0 : _b.company_name) !== null && _c !== void 0 ? _c : null;
     const result = await (0, db_1.paperBuy)(userId, symbol, companyName, qty, price, tradeType, slPrice, targetPrice, orderType);
     res.redirect(`/my-paper-trade?${result.ok ? "msg" : "err"}=${encodeURIComponent(result.msg)}`);
 });
@@ -12026,24 +12488,26 @@ app.get("/my-paper-trade/upgrade", requireAuth, async (req, res) => {
 });
 // -- GET /api/price/:symbol - live price for paper trade buy form --------------
 app.get("/api/price/:symbol", async (req, res) => {
+    var _a, _b;
     const symbol = req.params.symbol.toUpperCase().trim();
     const row = await (0, db_1.dbAll)("SELECT price FROM prices WHERE symbol=?", [symbol]);
-    res.json({ price: row[0]?.price ?? null });
+    res.json({ price: (_b = (_a = row[0]) === null || _a === void 0 ? void 0 : _a.price) !== null && _b !== void 0 ? _b : null });
 });
 // -- GET /strategies ------------------------------------------------------------
 app.get("/strategies", featureGate("feature_strategies", "Strategies"), (req, res) => {
+    var _a, _b, _c, _e, _f, _g;
     const backtest = readBotJSON("5year-backtest-result.json", {});
     const monthly = backtest.monthly || {};
     const mKeys = Object.keys(monthly).sort();
     // Derive key stats
-    const allBbTrades = mKeys.reduce((s, k) => s + (monthly[k].bbTrades ?? 0), 0);
-    const allBbWins = mKeys.reduce((s, k) => s + (monthly[k].bbWins ?? 0), 0);
-    const allRcTrades = mKeys.reduce((s, k) => s + (monthly[k].rcTrades ?? 0), 0);
-    const allRcWins = mKeys.reduce((s, k) => s + (monthly[k].rcWins ?? 0), 0);
+    const allBbTrades = mKeys.reduce((s, k) => { var _a; return s + ((_a = monthly[k].bbTrades) !== null && _a !== void 0 ? _a : 0); }, 0);
+    const allBbWins = mKeys.reduce((s, k) => { var _a; return s + ((_a = monthly[k].bbWins) !== null && _a !== void 0 ? _a : 0); }, 0);
+    const allRcTrades = mKeys.reduce((s, k) => { var _a; return s + ((_a = monthly[k].rcTrades) !== null && _a !== void 0 ? _a : 0); }, 0);
+    const allRcWins = mKeys.reduce((s, k) => { var _a; return s + ((_a = monthly[k].rcWins) !== null && _a !== void 0 ? _a : 0); }, 0);
     const bbWR = allBbTrades > 0 ? ((allBbWins / allBbTrades) * 100).toFixed(1) : "—";
     const rcWR = allRcTrades > 0 ? ((allRcWins / allRcTrades) * 100).toFixed(1) : "—";
-    const bbPnl = backtest.totals?.bodyBreakout ?? 0;
-    const rcPnl = backtest.totals?.rcConfirm ?? 0;
+    const bbPnl = (_b = (_a = backtest.totals) === null || _a === void 0 ? void 0 : _a.bodyBreakout) !== null && _b !== void 0 ? _b : 0;
+    const rcPnl = (_e = (_c = backtest.totals) === null || _c === void 0 ? void 0 : _c.rcConfirm) !== null && _e !== void 0 ? _e : 0;
     const totalPnl = bbPnl + rcPnl;
     const profitMonths = mKeys.filter(k => (monthly[k].bbTotal + monthly[k].rcTotal) > 0).length;
     const monthPct = mKeys.length > 0 ? ((profitMonths / mKeys.length) * 100).toFixed(0) : "—";
@@ -12078,7 +12542,7 @@ app.get("/strategies", featureGate("feature_strategies", "Strategies"), (req, re
         <div class="strat-hero-stat"><span class="strat-hs-val">+${parseFloat(totalPnl.toFixed(0)).toLocaleString("en-IN")}</span><span class="strat-hs-label">5-Year PnL (pts)</span></div>
         <div class="strat-hero-stat"><span class="strat-hs-val">${mKeys.length}</span><span class="strat-hs-label">Months Backtested</span></div>
         <div class="strat-hero-stat"><span class="strat-hs-val">${monthPct}%</span><span class="strat-hs-label">Profitable Months</span></div>
-        <div class="strat-hero-stat"><span class="strat-hs-val">${backtest.tradingDays ?? "—"}</span><span class="strat-hs-label">Trading Days</span></div>
+        <div class="strat-hero-stat"><span class="strat-hs-val">${(_f = backtest.tradingDays) !== null && _f !== void 0 ? _f : "—"}</span><span class="strat-hs-label">Trading Days</span></div>
       </div>
     </div>
 
@@ -12101,7 +12565,7 @@ app.get("/strategies", featureGate("feature_strategies", "Strategies"), (req, re
         <div class="strat-mode-stats">
           <div class="strat-ms"><span class="strat-ms-val strat-green">+${parseFloat(totalPnl.toFixed(0)).toLocaleString("en-IN")} pts</span><span class="strat-ms-label">5-Year PnL</span></div>
           <div class="strat-ms"><span class="strat-ms-val">${profitMonths} / ${mKeys.length}</span><span class="strat-ms-label">Profitable Months</span></div>
-          <div class="strat-ms"><span class="strat-ms-val">${backtest.tradingDays ?? "—"}</span><span class="strat-ms-label">Days Tested</span></div>
+          <div class="strat-ms"><span class="strat-ms-val">${(_g = backtest.tradingDays) !== null && _g !== void 0 ? _g : "—"}</span><span class="strat-ms-label">Days Tested</span></div>
         </div>
       </div>
 
@@ -12186,6 +12650,7 @@ app.get("/strategies", featureGate("feature_strategies", "Strategies"), (req, re
 });
 // -- GET /dashboard -------------------------------------------------------------
 app.get("/dashboard", featureGate("feature_dashboard", "Dashboard"), async (req, res) => {
+    var _a, _b, _c, _e, _f, _g, _h, _j, _k, _l, _m, _o, _p, _q, _r, _s, _t, _u, _w, _x, _y, _z, _0;
     const trades = readBotJSON("trades.json", []);
     const backtest = readBotJSON("5year-backtest-result.json", {});
     const analytics = computeAnalytics(trades);
@@ -12200,27 +12665,27 @@ app.get("/dashboard", featureGate("feature_dashboard", "Dashboard"), async (req,
         const d = new Date(parseInt(y), parseInt(m) - 1, 1);
         return d.toLocaleString("en-IN", { month: "short", year: "2-digit" });
     });
-    const bbData = mKeys.map(k => parseFloat((monthly[k].bbTotal ?? 0).toFixed(1)));
-    const rcData = mKeys.map(k => parseFloat((monthly[k].rcTotal ?? 0).toFixed(1)));
-    const combData = mKeys.map(k => parseFloat(((monthly[k].bbTotal ?? 0) + (monthly[k].rcTotal ?? 0)).toFixed(1)));
+    const bbData = mKeys.map(k => { var _a; return parseFloat(((_a = monthly[k].bbTotal) !== null && _a !== void 0 ? _a : 0).toFixed(1)); });
+    const rcData = mKeys.map(k => { var _a; return parseFloat(((_a = monthly[k].rcTotal) !== null && _a !== void 0 ? _a : 0).toFixed(1)); });
+    const combData = mKeys.map(k => { var _a, _b; return parseFloat((((_a = monthly[k].bbTotal) !== null && _a !== void 0 ? _a : 0) + ((_b = monthly[k].rcTotal) !== null && _b !== void 0 ? _b : 0)).toFixed(1)); });
     const combColors = combData.map((v) => v >= 0 ? "rgba(16,185,129,0.7)" : "rgba(239,68,68,0.7)");
     // Backtest totals
-    const btTotal = (backtest.totals?.bodyBreakout ?? 0) + (backtest.totals?.rcConfirm ?? 0);
-    const btDays = backtest.tradingDays ?? 0;
-    const btLiveRs = backtest.liveEstimate?.totalPnlRs ?? 0;
-    const btMaxRs = backtest.totals?.totalPnlRs ?? 0;
-    const btDayWR = backtest.totals?.dayWinRate ?? backtest.totals?.winRate ?? 0;
-    const btTradeWR = backtest.totals?.tradeWinRate ?? 0;
-    const btMaxDD = backtest.totals?.maxDDRs ?? 0;
-    const btPF = backtest.totals?.profitFactor ?? 0;
-    const btFrom = backtest.period?.from ?? "";
-    const btTo = backtest.period?.to ?? "";
+    const btTotal = ((_b = (_a = backtest.totals) === null || _a === void 0 ? void 0 : _a.bodyBreakout) !== null && _b !== void 0 ? _b : 0) + ((_e = (_c = backtest.totals) === null || _c === void 0 ? void 0 : _c.rcConfirm) !== null && _e !== void 0 ? _e : 0);
+    const btDays = (_f = backtest.tradingDays) !== null && _f !== void 0 ? _f : 0;
+    const btLiveRs = (_h = (_g = backtest.liveEstimate) === null || _g === void 0 ? void 0 : _g.totalPnlRs) !== null && _h !== void 0 ? _h : 0;
+    const btMaxRs = (_k = (_j = backtest.totals) === null || _j === void 0 ? void 0 : _j.totalPnlRs) !== null && _k !== void 0 ? _k : 0;
+    const btDayWR = (_p = (_m = (_l = backtest.totals) === null || _l === void 0 ? void 0 : _l.dayWinRate) !== null && _m !== void 0 ? _m : (_o = backtest.totals) === null || _o === void 0 ? void 0 : _o.winRate) !== null && _p !== void 0 ? _p : 0;
+    const btTradeWR = (_r = (_q = backtest.totals) === null || _q === void 0 ? void 0 : _q.tradeWinRate) !== null && _r !== void 0 ? _r : 0;
+    const btMaxDD = (_t = (_s = backtest.totals) === null || _s === void 0 ? void 0 : _s.maxDDRs) !== null && _t !== void 0 ? _t : 0;
+    const btPF = (_w = (_u = backtest.totals) === null || _u === void 0 ? void 0 : _u.profitFactor) !== null && _w !== void 0 ? _w : 0;
+    const btFrom = (_y = (_x = backtest.period) === null || _x === void 0 ? void 0 : _x.from) !== null && _y !== void 0 ? _y : "";
+    const btTo = (_0 = (_z = backtest.period) === null || _z === void 0 ? void 0 : _z.to) !== null && _0 !== void 0 ? _0 : "";
     const btYearly = backtest.yearly || {};
     // All monthly win rates
-    const allBbTrades = mKeys.reduce((s, k) => s + (monthly[k].bbTrades ?? 0), 0);
-    const allBbWins = mKeys.reduce((s, k) => s + (monthly[k].bbWins ?? 0), 0);
-    const allRcTrades = mKeys.reduce((s, k) => s + (monthly[k].rcTrades ?? 0), 0);
-    const allRcWins = mKeys.reduce((s, k) => s + (monthly[k].rcWins ?? 0), 0);
+    const allBbTrades = mKeys.reduce((s, k) => { var _a; return s + ((_a = monthly[k].bbTrades) !== null && _a !== void 0 ? _a : 0); }, 0);
+    const allBbWins = mKeys.reduce((s, k) => { var _a; return s + ((_a = monthly[k].bbWins) !== null && _a !== void 0 ? _a : 0); }, 0);
+    const allRcTrades = mKeys.reduce((s, k) => { var _a; return s + ((_a = monthly[k].rcTrades) !== null && _a !== void 0 ? _a : 0); }, 0);
+    const allRcWins = mKeys.reduce((s, k) => { var _a; return s + ((_a = monthly[k].rcWins) !== null && _a !== void 0 ? _a : 0); }, 0);
     const bbWinRate = allBbTrades > 0 ? ((allBbWins / allBbTrades) * 100).toFixed(1) : "—";
     const rcWinRate = allRcTrades > 0 ? ((allRcWins / allRcTrades) * 100).toFixed(1) : "—";
     // -- DASHBOARD (full view for everyone) -------------------------------------
@@ -12438,18 +12903,19 @@ app.get("/dashboard", featureGate("feature_dashboard", "Dashboard"), async (req,
         </thead>
         <tbody>
           ${mKeys.slice().reverse().map(k => {
+        var _a, _b, _c, _e, _f, _g, _h, _j, _k, _l, _m, _o, _p, _q, _r, _s, _t;
         const m = monthly[k];
-        const comb = (m.bbTotal ?? 0) + (m.rcTotal ?? 0);
+        const comb = ((_a = m.bbTotal) !== null && _a !== void 0 ? _a : 0) + ((_b = m.rcTotal) !== null && _b !== void 0 ? _b : 0);
         const isPos = comb >= 0;
         return `<tr class="${isPos ? "dash-row-win" : "dash-row-loss"}">
               <td class="dash-td-month">${k}</td>
-              <td>${m.days ?? "—"}</td>
-              <td class="${(m.bbTotal ?? 0) >= 0 ? "dash-green" : "dash-red"}">${(m.bbTotal ?? 0) >= 0 ? "+" : ""}${(m.bbTotal ?? 0).toFixed(1)}</td>
-              <td>${m.bbTrades ?? "—"}</td>
-              <td>${m.bbWins ?? 0}/${(m.bbTrades ?? 0) - (m.bbWins ?? 0)}</td>
-              <td class="${(m.rcTotal ?? 0) >= 0 ? "dash-green" : "dash-red"}">${(m.rcTotal ?? 0) >= 0 ? "+" : ""}${(m.rcTotal ?? 0).toFixed(1)}</td>
-              <td>${m.rcTrades ?? "—"}</td>
-              <td>${m.rcWins ?? 0}/${(m.rcTrades ?? 0) - (m.rcWins ?? 0)}</td>
+              <td>${(_c = m.days) !== null && _c !== void 0 ? _c : "—"}</td>
+              <td class="${((_e = m.bbTotal) !== null && _e !== void 0 ? _e : 0) >= 0 ? "dash-green" : "dash-red"}">${((_f = m.bbTotal) !== null && _f !== void 0 ? _f : 0) >= 0 ? "+" : ""}${((_g = m.bbTotal) !== null && _g !== void 0 ? _g : 0).toFixed(1)}</td>
+              <td>${(_h = m.bbTrades) !== null && _h !== void 0 ? _h : "—"}</td>
+              <td>${(_j = m.bbWins) !== null && _j !== void 0 ? _j : 0}/${((_k = m.bbTrades) !== null && _k !== void 0 ? _k : 0) - ((_l = m.bbWins) !== null && _l !== void 0 ? _l : 0)}</td>
+              <td class="${((_m = m.rcTotal) !== null && _m !== void 0 ? _m : 0) >= 0 ? "dash-green" : "dash-red"}">${((_o = m.rcTotal) !== null && _o !== void 0 ? _o : 0) >= 0 ? "+" : ""}${((_p = m.rcTotal) !== null && _p !== void 0 ? _p : 0).toFixed(1)}</td>
+              <td>${(_q = m.rcTrades) !== null && _q !== void 0 ? _q : "—"}</td>
+              <td>${(_r = m.rcWins) !== null && _r !== void 0 ? _r : 0}/${((_s = m.rcTrades) !== null && _s !== void 0 ? _s : 0) - ((_t = m.rcWins) !== null && _t !== void 0 ? _t : 0)}</td>
               <td class="${isPos ? "dash-green dash-td-bold" : "dash-red dash-td-bold"}">${isPos ? "+" : ""}${comb.toFixed(1)}</td>
             </tr>`;
     }).join("")}
@@ -12557,6 +13023,7 @@ app.get("/dashboard", featureGate("feature_dashboard", "Dashboard"), async (req,
 });
 // -- GET /signals ----------------------------------------------------------------
 app.get("/signals", featureGate("feature_signals", "Signals"), async (req, res) => {
+    var _a, _b, _c, _e, _f, _g, _h, _j, _k, _l, _m, _o, _p, _q, _r, _s, _t, _u, _w, _x, _y, _z, _0, _1, _2, _3, _4, _5, _6, _7;
     res.setHeader("Cache-Control", "no-store");
     res.send((0, shadowMonitor_1.renderShadowStrategyMonitorPage)(nav("signals", req)));
     return;
@@ -12564,11 +13031,12 @@ app.get("/signals", featureGate("feature_signals", "Signals"), async (req, res) 
     const _rawTrades = readBotJSON("trades.json", []);
     const _premMap = {};
     for (const t of _rawTrades)
-        if ((t.exitPrice ?? 0) === 0 && t.premiumEntry > 0)
-            _premMap[`${t.direction}|${(t.entryPrice ?? 0).toFixed(1)}`] = t.premiumEntry;
+        if (((_a = t.exitPrice) !== null && _a !== void 0 ? _a : 0) === 0 && t.premiumEntry > 0)
+            _premMap[`${t.direction}|${((_b = t.entryPrice) !== null && _b !== void 0 ? _b : 0).toFixed(1)}`] = t.premiumEntry;
     const trades = _rawTrades.map((t) => {
+        var _a;
         if (!(t.premiumEntry > 0)) {
-            const k = `${t.direction}|${(t.entryPrice ?? 0).toFixed(1)}`;
+            const k = `${t.direction}|${((_a = t.entryPrice) !== null && _a !== void 0 ? _a : 0).toFixed(1)}`;
             if (_premMap[k])
                 return { ...t, premiumEntry: _premMap[k] };
         }
@@ -12577,8 +13045,8 @@ app.get("/signals", featureGate("feature_signals", "Signals"), async (req, res) 
     const hbGuest = readBotJSON("bot-heartbeat.json", null);
     const analytics = computeAnalytics(trades);
     const hasPosition = !!(state && (state.activeTrade || state.mainEntryDone));
-    const isAliveGuest = hbGuest?.at ? (Date.now() - new Date(hbGuest.at).getTime()) < 3 * 60 * 1000 : false;
-    const hbStatusGuest = (hbGuest?.status || "").toUpperCase();
+    const isAliveGuest = (hbGuest === null || hbGuest === void 0 ? void 0 : hbGuest.at) ? (Date.now() - new Date(hbGuest.at).getTime()) < 3 * 60 * 1000 : false;
+    const hbStatusGuest = ((hbGuest === null || hbGuest === void 0 ? void 0 : hbGuest.status) || "").toUpperCase();
     const _nowIST = new Date(new Date().toLocaleString("en-US", { timeZone: "Asia/Kolkata" }));
     const _istH = _nowIST.getHours(), _istM = _nowIST.getMinutes();
     const _isMarketHours = (_istH > 9 || (_istH === 9 && _istM >= 15)) && (_istH < 15 || (_istH === 15 && _istM <= 30));
@@ -12620,7 +13088,7 @@ app.get("/signals", featureGate("feature_signals", "Signals"), async (req, res) 
         return "scanning-col";
     }
     const premium = userIsPremium(req);
-    const loggedIn = !!req.session?.userId;
+    const loggedIn = !!((_c = req.session) === null || _c === void 0 ? void 0 : _c.userId);
     const backtest = readBotJSON("5year-backtest-result.json", {});
     const monthly = backtest.monthly || {};
     // Build last 4 months summary (no strategy names exposed)
@@ -12630,39 +13098,40 @@ app.get("/signals", featureGate("feature_signals", "Signals"), async (req, res) 
     }
     const recentMonthKeys = Object.keys(monthly).sort().slice(-4);
     const recentMonthData = recentMonthKeys.map(k => {
+        var _a, _b, _c, _e, _f, _g, _h;
         const d = monthly[k];
-        const combined = (d.bbTotal ?? 0) + (d.rcTotal ?? 0);
-        const totalTrades = (d.bbTrades ?? 0) + (d.rcTrades ?? 0);
-        const totalWins = (d.bbWins ?? 0) + (d.rcWins ?? 0);
+        const combined = ((_a = d.bbTotal) !== null && _a !== void 0 ? _a : 0) + ((_b = d.rcTotal) !== null && _b !== void 0 ? _b : 0);
+        const totalTrades = ((_c = d.bbTrades) !== null && _c !== void 0 ? _c : 0) + ((_e = d.rcTrades) !== null && _e !== void 0 ? _e : 0);
+        const totalWins = ((_f = d.bbWins) !== null && _f !== void 0 ? _f : 0) + ((_g = d.rcWins) !== null && _g !== void 0 ? _g : 0);
         const winRate = totalTrades > 0 ? ((totalWins / totalTrades) * 100).toFixed(0) : "—";
-        return { label: monthLabel(k), combined: combined.toFixed(0), winRate, days: d.days ?? 0, profit: combined > 0 };
+        return { label: monthLabel(k), combined: combined.toFixed(0), winRate, days: (_h = d.days) !== null && _h !== void 0 ? _h : 0, profit: combined > 0 };
     });
     // -- PREMIUM VIEW (full details) --------------------------------------------
-    const isAdmin = req.session?.userRole === 'admin';
+    const isAdmin = ((_e = req.session) === null || _e === void 0 ? void 0 : _e.userRole) === 'admin';
     if (premium) {
         const an2 = computeAnalytics(trades);
         const hb2 = readBotJSON("bot-heartbeat.json", {});
-        const _qty2ssr = hb2?.qty ?? 30;
-        const _slPts2ssr = hb2?.slPts ?? 100;
+        const _qty2ssr = (_f = hb2 === null || hb2 === void 0 ? void 0 : hb2.qty) !== null && _f !== void 0 ? _f : 30;
+        const _slPts2ssr = (_g = hb2 === null || hb2 === void 0 ? void 0 : hb2.slPts) !== null && _g !== void 0 ? _g : 100;
         const _slRs2ssr = Math.round(_slPts2ssr * _qty2ssr * 0.5).toLocaleString("en-IN");
-        const isAlive2 = hb2?.at ? (Date.now() - new Date(hb2.at).getTime()) < 3 * 60 * 1000 : false;
+        const isAlive2 = (hb2 === null || hb2 === void 0 ? void 0 : hb2.at) ? (Date.now() - new Date(hb2.at).getTime()) < 3 * 60 * 1000 : false;
         const _nowIST2 = new Date(new Date().toLocaleString("en-US", { timeZone: "Asia/Kolkata" }));
         const _istH2 = _nowIST2.getHours(), _istM2 = _nowIST2.getMinutes();
         const _isMarket2 = (_istH2 > 9 || (_istH2 === 9 && _istM2 >= 15)) && (_istH2 < 15 || (_istH2 === 15 && _istM2 <= 30));
         const _sleeping2ssr = !isAlive2 && !_isMarket2;
-        const ep2 = state.entryPrice ?? hb2.entryPrice ?? 0;
-        const dir2 = state.tradeDirection ?? hb2.direction ?? null;
-        const live2 = hb2.livePrice ?? 0;
-        const unreal2 = hb2.unrealisedPnL ?? 0;
+        const ep2 = (_j = (_h = state.entryPrice) !== null && _h !== void 0 ? _h : hb2.entryPrice) !== null && _j !== void 0 ? _j : 0;
+        const dir2 = (_l = (_k = state.tradeDirection) !== null && _k !== void 0 ? _k : hb2.direction) !== null && _l !== void 0 ? _l : null;
+        const live2 = (_m = hb2.livePrice) !== null && _m !== void 0 ? _m : 0;
+        const unreal2 = (_o = hb2.unrealisedPnL) !== null && _o !== void 0 ? _o : 0;
         const sl2 = ep2 > 0 && dir2 ? (dir2 === "CE" ? ep2 - 100 : ep2 + 100) : 0;
-        const sym2 = state.tradeSymbol ?? "";
-        const qty2 = state.mainQty ?? state.earlyQty ?? 0;
-        const entryMs2 = state.entryTime ?? 0;
+        const sym2 = (_p = state.tradeSymbol) !== null && _p !== void 0 ? _p : "";
+        const qty2 = (_r = (_q = state.mainQty) !== null && _q !== void 0 ? _q : state.earlyQty) !== null && _r !== void 0 ? _r : 0;
+        const entryMs2 = (_s = state.entryTime) !== null && _s !== void 0 ? _s : 0;
         const inTrade2 = !!(hb2.inTrade || state.activeTrade || state.mainEntryDone);
         const durMin2 = entryMs2 > 0 ? Math.floor((Date.now() - entryMs2) / 60000) : 0;
         const durStr2 = durMin2 >= 60 ? `${Math.floor(durMin2 / 60)}h ${durMin2 % 60}m` : durMin2 > 0 ? `${durMin2}m` : "";
         const entryIST2 = entryMs2 > 0 ? new Date(entryMs2).toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata", hour: "2-digit", minute: "2-digit" }) : "";
-        const mode2 = hb2.mode ?? state.mode ?? "PAPER";
+        const mode2 = (_u = (_t = hb2.mode) !== null && _t !== void 0 ? _t : state.mode) !== null && _u !== void 0 ? _u : "PAPER";
         const kiteToken2 = await (0, db_1.getSetting)("kite_access_token").catch(() => "");
         const kiteTokenAt2 = await (0, db_1.getSetting)("kite_token_set_at").catch(() => "");
         const tokenMasked2 = kiteToken2 ? kiteToken2.slice(0, 6) + "\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022" + kiteToken2.slice(-4) : "";
@@ -12670,8 +13139,8 @@ app.get("/signals", featureGate("feature_signals", "Signals"), async (req, res) 
         let kiteToken2Valid = false;
         try {
             const _botEnv2 = fs_1.default.readFileSync('/home/ubuntu/trading-bot/.env', 'utf-8');
-            const _ak2 = (_botEnv2.match(/^API_KEY=(.+)$/m)?.[1] ?? "").trim();
-            const _at2 = (_botEnv2.match(/^ACCESS_TOKEN=(.+)$/m)?.[1] ?? "").trim();
+            const _ak2 = ((_x = (_w = _botEnv2.match(/^API_KEY=(.+)$/m)) === null || _w === void 0 ? void 0 : _w[1]) !== null && _x !== void 0 ? _x : "").trim();
+            const _at2 = ((_z = (_y = _botEnv2.match(/^ACCESS_TOKEN=(.+)$/m)) === null || _y === void 0 ? void 0 : _y[1]) !== null && _z !== void 0 ? _z : "").trim();
             if (_ak2 && _at2) {
                 const _vResp = await fetch("https://api.kite.trade/user/profile", { headers: { "X-Kite-Version": "3", "Authorization": `token ${_ak2}:${_at2}` }, signal: AbortSignal.timeout(4000) });
                 kiteToken2Valid = _vResp.status === 200;
@@ -12680,14 +13149,16 @@ app.get("/signals", featureGate("feature_signals", "Signals"), async (req, res) 
         catch (_) { }
         const todayStr2 = getTodayIST();
         const todayTradesAll2 = (() => {
+            var _a, _b;
             const raw = readBotJSON("trades.json", []);
             const pMap = {};
             for (const t of raw)
-                if ((t.exitPrice ?? 0) === 0 && t.premiumEntry > 0)
-                    pMap[`${t.direction}|${(t.entryPrice ?? 0).toFixed(1)}`] = t.premiumEntry;
+                if (((_a = t.exitPrice) !== null && _a !== void 0 ? _a : 0) === 0 && t.premiumEntry > 0)
+                    pMap[`${t.direction}|${((_b = t.entryPrice) !== null && _b !== void 0 ? _b : 0).toFixed(1)}`] = t.premiumEntry;
             return raw.map((t) => {
+                var _a;
                 if (!(t.premiumEntry > 0)) {
-                    const k = `${t.direction}|${(t.entryPrice ?? 0).toFixed(1)}`;
+                    const k = `${t.direction}|${((_a = t.entryPrice) !== null && _a !== void 0 ? _a : 0).toFixed(1)}`;
                     if (pMap[k])
                         return { ...t, premiumEntry: pMap[k] };
                 }
@@ -12724,24 +13195,30 @@ app.get("/signals", featureGate("feature_signals", "Signals"), async (req, res) 
                 return "rc-early";
             return "rc-eod";
         }
-        const todayRows2 = [...closedToday2].reverse().map((t) => `
+        const todayRows2 = [...closedToday2].reverse().map((t) => {
+            var _a, _b, _c, _e;
+            return `
       <tr>
         <td class="td-t">${fmtTime2(t.date)}</td>
         <td><span class="d-b d-${(t.direction || "").toLowerCase()}">${t.direction || "—"}</span></td>
-        <td class="td-m">${(t.entryPrice ?? 0) > 0 ? (t.entryPrice ?? 0).toFixed(1) : "--"} &rarr; ${(t.exitPrice ?? 0) > 0 ? (t.exitPrice ?? 0).toFixed(1) : "--"}</td>
+        <td class="td-m">${((_a = t.entryPrice) !== null && _a !== void 0 ? _a : 0) > 0 ? ((_b = t.entryPrice) !== null && _b !== void 0 ? _b : 0).toFixed(1) : "--"} &rarr; ${((_c = t.exitPrice) !== null && _c !== void 0 ? _c : 0) > 0 ? ((_e = t.exitPrice) !== null && _e !== void 0 ? _e : 0).toFixed(1) : "--"}</td>
         <td class="td-m ${pnlCls2(tradeRealRs2(t))}" style="font-weight:700">${fmtBoth2(tradeRealRs2(t))}</td>
         <td>${t.reasonExit ? `<span class="rc-b ${rcCls(t.reasonExit)}">${t.reasonExit}</span>` : "—"}</td>
         <td class="td-t">${t.duration ? (t.duration < 60 ? t.duration + "s" : Math.round(t.duration / 60) + "m") : "—"}</td>
-      </tr>`).join("");
+      </tr>`;
+        }).join("");
         const todayEmpty2 = !todayRows2 && !inTrade2 ? `<tr><td colspan="6" class="td-e">No closed trades today</td></tr>` : "";
-        const recentRows2 = an2.recentTrades.map((t) => `
+        const recentRows2 = an2.recentTrades.map((t) => {
+            var _a, _b, _c, _e;
+            return `
       <tr>
         <td class="td-t">${t.date ? fmtDate2(t.date) : "—"}</td>
         <td><span class="d-b d-${(t.direction || "").toLowerCase()}">${t.direction || "—"}</span></td>
-        <td class="td-m">${(t.entryPrice ?? 0) > 0 ? (t.entryPrice ?? 0).toFixed(0) : "--"} &rarr; ${(t.exitPrice ?? 0) > 0 ? (t.exitPrice ?? 0).toFixed(0) : "--"}</td>
+        <td class="td-m">${((_a = t.entryPrice) !== null && _a !== void 0 ? _a : 0) > 0 ? ((_b = t.entryPrice) !== null && _b !== void 0 ? _b : 0).toFixed(0) : "--"} &rarr; ${((_c = t.exitPrice) !== null && _c !== void 0 ? _c : 0) > 0 ? ((_e = t.exitPrice) !== null && _e !== void 0 ? _e : 0).toFixed(0) : "--"}</td>
         <td class="td-m ${pnlCls2(tradeRealRs2(t))}" style="font-weight:700">${fmtBoth2(tradeRealRs2(t))}</td>
         <td>${t.reasonExit ? `<span class="rc-b ${rcCls(t.reasonExit)}">${t.reasonExit}</span>` : "—"}</td>
-      </tr>`).join("");
+      </tr>`;
+        }).join("");
         const monthRows2 = an2.monthly.map((m) => {
             const [y, mo] = m.month.split("-");
             const mLabel = new Date(parseInt(y), parseInt(mo) - 1, 1).toLocaleString("en-IN", { month: "short", year: "2-digit" });
@@ -12902,11 +13379,11 @@ app.get("/signals", featureGate("feature_signals", "Signals"), async (req, res) 
     </div>
     <!-- Bot Status Bar (same as guest view) -->
     <div class="gv-status" id="sig3-bot-status" style="margin-bottom:1rem;padding:10px 16px;border-radius:10px;background:var(--card-bg,#1e293b);border:1px solid var(--border);display:flex;align-items:center;gap:10px">
-      <span class="gv-status-dot ${!isAlive2 ? (_sleeping2ssr ? 'waiting' : 'offline') : inTrade2 ? 'active' : (hb2?.status?.toUpperCase().includes('WAIT') || hb2?.status?.toUpperCase().includes('9:25') ? 'waiting' : 'scanning')}" id="sig3-status-dot"></span>
-      <span style="font-size:.82rem;color:var(--text-muted)" id="sig3-status-lbl">${!isAlive2 ? (_sleeping2ssr ? 'Bot sleeping \u2014 market closed' : 'Bot offline \u2014 not responding') : inTrade2 ? 'Bot is running a trade' : hb2?.status?.toUpperCase().includes('WAIT') ? 'Bot alive \u2014 waiting for market to open (9:15 IST)' : 'Bot alive \u2014 monitoring the options market'}</span>
+      <span class="gv-status-dot ${!isAlive2 ? (_sleeping2ssr ? 'waiting' : 'offline') : inTrade2 ? 'active' : (((_0 = hb2 === null || hb2 === void 0 ? void 0 : hb2.status) === null || _0 === void 0 ? void 0 : _0.toUpperCase().includes('WAIT')) || ((_1 = hb2 === null || hb2 === void 0 ? void 0 : hb2.status) === null || _1 === void 0 ? void 0 : _1.toUpperCase().includes('9:25')) ? 'waiting' : 'scanning')}" id="sig3-status-dot"></span>
+      <span style="font-size:.82rem;color:var(--text-muted)" id="sig3-status-lbl">${!isAlive2 ? (_sleeping2ssr ? 'Bot sleeping \u2014 market closed' : 'Bot offline \u2014 not responding') : inTrade2 ? 'Bot is running a trade' : ((_2 = hb2 === null || hb2 === void 0 ? void 0 : hb2.status) === null || _2 === void 0 ? void 0 : _2.toUpperCase().includes('WAIT')) ? 'Bot alive \u2014 waiting for market to open (9:15 IST)' : 'Bot alive \u2014 monitoring the options market'}</span>
       <span style="font-size:.75rem;margin-left:12px;padding:2px 8px;border-radius:4px;font-weight:600;${kiteToken2Valid ? 'background:rgba(16,185,129,.15);color:#10b981' : 'background:rgba(239,68,68,.15);color:#ef4444'}" id="sig3-token-status">${kiteToken2Valid ? '&#10003; Token OK' : '&#10007; Token Expired'}</span>
       <a href="https://139-59-18-52.nip.io/login" target="_blank" id="sig3-token-link" style="font-size:.72rem;margin-left:6px;padding:2px 8px;border-radius:4px;font-weight:700;text-decoration:none;background:rgba(251,191,36,.12);border:1px solid #fbbf24;color:#fbbf24;${kiteToken2Valid ? 'display:none' : ''}" title="Submit Zerodha token">&#8594; Refresh Token</a>
-      <span style="font-size:.82rem;font-weight:700;margin-left:auto" class="${!isAlive2 ? (_sleeping2ssr ? 'sig3-d' : 'sig3-r') : inTrade2 ? 'sig3-g' : 'sig3-d'}" id="sig3-status-val">${!isAlive2 ? (_sleeping2ssr ? 'Sleeping' : 'Offline') : inTrade2 ? '&#x25CF;&nbsp;ACTIVE' : hb2?.status?.toUpperCase().includes('WAIT') ? 'Waiting' : 'Monitoring'}</span>
+      <span style="font-size:.82rem;font-weight:700;margin-left:auto" class="${!isAlive2 ? (_sleeping2ssr ? 'sig3-d' : 'sig3-r') : inTrade2 ? 'sig3-g' : 'sig3-d'}" id="sig3-status-val">${!isAlive2 ? (_sleeping2ssr ? 'Sleeping' : 'Offline') : inTrade2 ? '&#x25CF;&nbsp;ACTIVE' : ((_3 = hb2 === null || hb2 === void 0 ? void 0 : hb2.status) === null || _3 === void 0 ? void 0 : _3.toUpperCase().includes('WAIT')) ? 'Waiting' : 'Monitoring'}</span>
       <div style="position:relative;margin-left:10px" id="bot-ctl-wrap">
         <button onclick="_toggleBotMenu(event)" style="padding:3px 10px;border-radius:5px;font-size:.72rem;font-weight:700;cursor:pointer;background:rgba(99,102,241,.12);border:1px solid #6366f1;color:#a5b4fc" id="bot-ctl-btn">&#9881; Bot &#9660;</button>
         <div id="bot-ctl-menu" style="display:none;position:absolute;right:0;top:110%;background:#1e293b;border:1px solid #334155;border-radius:8px;min-width:150px;z-index:999;box-shadow:0 8px 24px rgba(0,0,0,.5);overflow:hidden">
@@ -12966,8 +13443,8 @@ app.get("/signals", featureGate("feature_signals", "Signals"), async (req, res) 
       </div>
       <div class="sig3-kpi">
         <div class="sig3-kl">Daily Loss Cap</div>
-        <div class="sig3-kv sig3-r">&#8722;&#8377;${Math.round((hb2?.dailyCapPts ?? 350) * _qty2ssr * 0.5).toLocaleString("en-IN")}</div>
-        <div class="sig3-ks sig3-d">${hb2?.dailyCapPts ?? 350} pts max per day</div>
+        <div class="sig3-kv sig3-r">&#8722;&#8377;${Math.round(((_4 = hb2 === null || hb2 === void 0 ? void 0 : hb2.dailyCapPts) !== null && _4 !== void 0 ? _4 : 350) * _qty2ssr * 0.5).toLocaleString("en-IN")}</div>
+        <div class="sig3-ks sig3-d">${(_5 = hb2 === null || hb2 === void 0 ? void 0 : hb2.dailyCapPts) !== null && _5 !== void 0 ? _5 : 350} pts max per day</div>
       </div>
     </div>
 
@@ -13047,19 +13524,22 @@ app.get("/signals", featureGate("feature_signals", "Signals"), async (req, res) 
           <th>P&amp;L (&#8377;)</th>${isAdmin ? `<th>Reason</th>` : ``}<th>Duration</th>
         </tr></thead>
         <tbody id="sig3-today-body">
-          ${[...closedToday2].reverse().map((t) => `<tr>
+          ${[...closedToday2].reverse().map((t) => {
+            var _a, _b, _c, _e;
+            return `<tr>
             <td class="sig3-ct">${fmtTime2(t.date)}</td>
             <td><span class="sig3-db ${(t.direction || "").toLowerCase()}">${t.direction || "--"}</span></td>
             ${isAdmin ? `<td class="sig3-mono" style="font-size:.72rem;color:var(--text-muted)">${t.symbol || "--"}</td>
             <td class="sig3-mono">${t.premiumEntry > 0 ? `<span style="font-size:.61rem;background:rgba(16,185,129,.15);color:#34d399;border-radius:3px;padding:1px 4px;margin-right:3px">BUY</span>${t.premiumEntry.toFixed(1)}` : ""} ${t.premiumExit > 0 ? `<span style="font-size:.61rem;background:rgba(239,68,68,.15);color:#f87171;border-radius:3px;padding:1px 4px;margin-right:3px;margin-left:4px">SELL</span>${t.premiumExit.toFixed(1)}` : ""}</td>
-            <td class="sig3-mono">${(t.entryPrice ?? 0) > 0 ? (t.entryPrice ?? 0).toFixed(1) : "--"} &#8594; ${(t.exitPrice ?? 0) > 0 ? (t.exitPrice ?? 0).toFixed(1) : "--"}</td>` : ``}
+            <td class="sig3-mono">${((_a = t.entryPrice) !== null && _a !== void 0 ? _a : 0) > 0 ? ((_b = t.entryPrice) !== null && _b !== void 0 ? _b : 0).toFixed(1) : "--"} &#8594; ${((_c = t.exitPrice) !== null && _c !== void 0 ? _c : 0) > 0 ? ((_e = t.exitPrice) !== null && _e !== void 0 ? _e : 0).toFixed(1) : "--"}</td>` : ``}
             <td>
               <span class="sig3-pnl-rs ${pnlCls2(tradeRealRs2(t))}">${fmtRs2(tradeRealRs2(t))}</span>
               <span class="sig3-pnl-spt">real trade value</span>
             </td>
             ${isAdmin ? `<td>${t.reasonExit ? `<span class="sig3-rc ${rcCls(t.reasonExit).replace("rc-", "sig3-rc-")}">${t.reasonExit}</span>` : "--"}</td>` : ``}
             <td class="sig3-ct">${t.duration ? (t.duration < 60 ? t.duration + "s" : Math.round(t.duration / 60) + "m") : "--"}</td>
-          </tr>`).join("") || `<tr><td colspan="${isAdmin ? 8 : 4}" class="sig3-te">No closed trades today${inTrade2 ? " &mdash; 1 live position active" : ""}</td></tr>`}
+          </tr>`;
+        }).join("") || `<tr><td colspan="${isAdmin ? 8 : 4}" class="sig3-te">No closed trades today${inTrade2 ? " &mdash; 1 live position active" : ""}</td></tr>`}
         </tbody>
       </table>
     </div>
@@ -13083,18 +13563,21 @@ app.get("/signals", featureGate("feature_signals", "Signals"), async (req, res) 
             const _wk = an2.recentTrades.filter((t) => t.date && new Date(t.date) >= _wAgo);
             if (!_wk.length)
                 return `<tr><td colspan="${isAdmin ? 7 : 3}" class="sig3-te">No trades in the past 7 days</td></tr>`;
-            return _wk.map((t) => `<tr>
+            return _wk.map((t) => {
+                var _a, _b, _c, _e;
+                return `<tr>
               <td class="sig3-ct">${fmtDate2(t.date)}</td>
               <td><span class="sig3-db ${(t.direction || "").toLowerCase()}">${t.direction || "--"}</span></td>
               ${isAdmin ? `<td class="sig3-mono" style="font-size:.72rem;color:var(--text-muted)">${t.symbol || "--"}</td>
               <td class="sig3-mono">${t.premiumEntry > 0 ? `<span style="font-size:.61rem;background:rgba(16,185,129,.15);color:#34d399;border-radius:3px;padding:1px 4px;margin-right:3px">BUY</span>${t.premiumEntry.toFixed(1)}` : ""} ${t.premiumExit > 0 ? `<span style="font-size:.61rem;background:rgba(239,68,68,.15);color:#f87171;border-radius:3px;padding:1px 4px;margin-right:3px;margin-left:4px">SELL</span>${t.premiumExit.toFixed(1)}` : ""}</td>
-              <td class="sig3-mono">${(t.entryPrice ?? 0) > 0 ? (t.entryPrice ?? 0).toFixed(0) : "--"} &#8594; ${(t.exitPrice ?? 0) > 0 ? (t.exitPrice ?? 0).toFixed(0) : "--"}</td>` : ``}
+              <td class="sig3-mono">${((_a = t.entryPrice) !== null && _a !== void 0 ? _a : 0) > 0 ? ((_b = t.entryPrice) !== null && _b !== void 0 ? _b : 0).toFixed(0) : "--"} &#8594; ${((_c = t.exitPrice) !== null && _c !== void 0 ? _c : 0) > 0 ? ((_e = t.exitPrice) !== null && _e !== void 0 ? _e : 0).toFixed(0) : "--"}</td>` : ``}
               <td>
                 <span class="sig3-pnl-rs ${pnlCls2(tradeRealRs2(t))}">${fmtRs2(tradeRealRs2(t))}</span>
                 <span class="sig3-pnl-spt">real trade value</span>
               </td>
               ${isAdmin ? `<td>${t.reasonExit ? `<span class="sig3-rc ${rcCls(t.reasonExit).replace("rc-", "sig3-rc-")}">${t.reasonExit}</span>` : "--"}</td>` : ``}
-            </tr>`).join("");
+            </tr>`;
+            }).join("");
         })()}
         </tbody>
       </table>
@@ -13139,12 +13622,12 @@ app.get("/signals", featureGate("feature_signals", "Signals"), async (req, res) 
       <div class="sig3-kpis">
         <div class="sig3-kpi">
           <div class="sig3-kl">Session P&amp;L</div>
-          <div class="sig3-kv" id="tt1030-pnl-rs" style="color:#818cf8">${fmtRs2(hb2?.tt1030PnL ?? 0)}</div>
+          <div class="sig3-kv" id="tt1030-pnl-rs" style="color:#818cf8">${fmtRs2((_6 = hb2 === null || hb2 === void 0 ? void 0 : hb2.tt1030PnL) !== null && _6 !== void 0 ? _6 : 0)}</div>
           <div class="sig3-ks" id="tt1030-pnl-pts" style="color:#818cf8">10:30 shadow paper P&amp;L</div>
         </div>
         <div class="sig3-kpi">
           <div class="sig3-kl">Today Trades</div>
-          <div class="sig3-kv" id="tt1030-tc">${hb2?.tt1030Trades ?? 0}</div>
+          <div class="sig3-kv" id="tt1030-tc">${(_7 = hb2 === null || hb2 === void 0 ? void 0 : hb2.tt1030Trades) !== null && _7 !== void 0 ? _7 : 0}</div>
           <div class="sig3-ks sig3-d" id="tt1030-wl"><span class="sig3-g" id="tt1030-w">0W</span> / <span class="sig3-r" id="tt1030-l">0L</span></div>
         </div>
         <div class="sig3-kpi">
@@ -13154,7 +13637,7 @@ app.get("/signals", featureGate("feature_signals", "Signals"), async (req, res) 
         </div>
         <div class="sig3-kpi">
           <div class="sig3-kl">Range</div>
-          <div class="sig3-kv sig3-d" id="tt1030-range" style="font-size:1rem">${(hb2?.tt1030High && hb2?.tt1030Low) ? `${Number(hb2.tt1030High).toFixed(1)} / ${Number(hb2.tt1030Low).toFixed(1)}` : 'Waiting'}</div>
+          <div class="sig3-kv sig3-d" id="tt1030-range" style="font-size:1rem">${((hb2 === null || hb2 === void 0 ? void 0 : hb2.tt1030High) && (hb2 === null || hb2 === void 0 ? void 0 : hb2.tt1030Low)) ? `${Number(hb2.tt1030High).toFixed(1)} / ${Number(hb2.tt1030Low).toFixed(1)}` : 'Waiting'}</div>
           <div class="sig3-ks sig3-d">10:30 6th candle</div>
         </div>
         <div class="sig3-kpi">
@@ -13546,7 +14029,7 @@ app.get("/signals", featureGate("feature_signals", "Signals"), async (req, res) 
     function fmtPtsG(_v) { return "real money P&L"; }
     const tierLabel = loggedIn ? "\uD83D\uDD14 Member" : "\uD83D\uDC64 Guest";
     const tierClass = loggedIn ? "sig-tier-free" : "sig-tier-guest";
-    const dirG = (hbGuest?.direction || "").toUpperCase();
+    const dirG = ((hbGuest === null || hbGuest === void 0 ? void 0 : hbGuest.direction) || "").toUpperCase();
     res.send(`<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -13993,7 +14476,7 @@ function readKiteCredentials() {
         }
         return { apiKey, token };
     }
-    catch {
+    catch (_a) {
         return { apiKey: "", token: "" };
     }
 }
@@ -14008,6 +14491,7 @@ function fetchKitePricesForHoldings(symbols) {
             let raw = "";
             res.on("data", c => raw += c);
             res.on("end", () => {
+                var _a, _b, _c;
                 try {
                     const json = JSON.parse(raw);
                     if (json.status === "error")
@@ -14015,9 +14499,9 @@ function fetchKitePricesForHoldings(symbols) {
                     const result = new Map();
                     for (const [sym, q] of Object.entries(json.data)) {
                         const price = q.last_price;
-                        const prevClose = q.ohlc?.close || price;
+                        const prevClose = ((_a = q.ohlc) === null || _a === void 0 ? void 0 : _a.close) || price;
                         result.set(sym, { price, changePct: prevClose ? (price - prevClose) / prevClose * 100 : 0,
-                            dayHigh: q.ohlc?.high || price, dayLow: q.ohlc?.low || price, prevClose });
+                            dayHigh: ((_b = q.ohlc) === null || _b === void 0 ? void 0 : _b.high) || price, dayLow: ((_c = q.ohlc) === null || _c === void 0 ? void 0 : _c.low) || price, prevClose });
                     }
                     resolve(result);
                 }
@@ -14032,7 +14516,8 @@ function fetchKitePricesForHoldings(symbols) {
 }
 // GET /api/holdings/prices — live prices + baseline + alert state (admin only)
 app.get("/api/holdings/prices", (req, res) => {
-    if (!req.session?.userId || req.session?.userRole !== "admin") {
+    var _a, _b;
+    if (!((_a = req.session) === null || _a === void 0 ? void 0 : _a.userId) || ((_b = req.session) === null || _b === void 0 ? void 0 : _b.userRole) !== "admin") {
         res.status(403).json({ ok: false, error: "Admin only" });
         return;
     }
@@ -14042,14 +14527,15 @@ app.get("/api/holdings/prices", (req, res) => {
     try {
         baseline = JSON.parse(fs_1.default.readFileSync(path_1.default.join(STOCK_ALERTS_DIR, "baseline.json"), "utf8"));
     }
-    catch { }
+    catch (_c) { }
     try {
         alertState = JSON.parse(fs_1.default.readFileSync(path_1.default.join(STOCK_ALERTS_DIR, "alert-state.json"), "utf8"));
     }
-    catch { }
+    catch (_e) { }
     fetchKitePricesForHoldings(symbols)
         .then(prices => {
         const data = HOLDINGS.map(stock => {
+            var _a, _b, _c, _e;
             const q = prices.get(stock.symbol);
             const base = baseline[stock.symbol] || null;
             // Find last fired alert for this stock
@@ -14071,8 +14557,8 @@ app.get("/api/holdings/prices", (req, res) => {
                     }
                 }
             }
-            return { ...stock, price: q?.price ?? null, changePct: q?.changePct ?? null,
-                dayHigh: q?.dayHigh ?? null, dayLow: q?.dayLow ?? null,
+            return { ...stock, price: (_a = q === null || q === void 0 ? void 0 : q.price) !== null && _a !== void 0 ? _a : null, changePct: (_b = q === null || q === void 0 ? void 0 : q.changePct) !== null && _b !== void 0 ? _b : null,
+                dayHigh: (_c = q === null || q === void 0 ? void 0 : q.dayHigh) !== null && _c !== void 0 ? _c : null, dayLow: (_e = q === null || q === void 0 ? void 0 : q.dayLow) !== null && _e !== void 0 ? _e : null,
                 baseline: base, lastDip, opportunities: opps };
         });
         const totInvested = HOLDINGS.reduce((s, h) => s + h.invested, 0);
@@ -14520,7 +15006,277 @@ app.get("/holdings", requireAdmin, (_req, res) => {
 </body>
 </html>`);
 });
+const NEWS_TRADE_ALERT_POLL_MS = Math.max(10000, Number(process.env.NEWS_TRADE_ALERT_POLL_MS || 30000));
+const NEWS_TRADE_ALERT_MIN_PROFIT_RS = Math.max(1000, Number(process.env.NEWS_TRADE_ALERT_MIN_PROFIT_RS || 10000));
+const NEWS_TRADE_ALERT_MAX_RISK_RS = Math.max(1000, Number(process.env.NEWS_TRADE_ALERT_MAX_RISK_RS || 5000));
+const NEWS_TRADE_ALERT_CAPITAL_RS = Math.max(10000, Number(process.env.NEWS_TRADE_ALERT_CAPITAL_RS || 500000));
+const NEWS_TRADE_ALERT_MIN_RR = Math.max(1, Number(process.env.NEWS_TRADE_ALERT_MIN_RR || 1.8));
+const NEWS_SHADOW_SCAN_LIMIT = Math.max(8, Number(process.env.NEWS_SHADOW_SCAN_LIMIT || 30));
+const NEWS_TRADE_ALERTS_ENABLED = process.env.NEWS_TRADE_ALERTS_ENABLED !== "0";
+const NEWS_TRADE_ALERT_USE_DB_FALLBACK = process.env.NEWS_TRADE_ALERT_USE_DB_FALLBACK === "1";
+let _newsTradeAlertRunning = false;
+async function ensureNewsShadowTradesTable() {
+    await (0, db_1.dbRun)(`CREATE TABLE IF NOT EXISTS news_shadow_trades (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    symbol TEXT NOT NULL,
+    company_name TEXT,
+    side TEXT NOT NULL,
+    qty INTEGER NOT NULL,
+    entry_price REAL NOT NULL,
+    stop_loss REAL NOT NULL,
+    target1 REAL NOT NULL,
+    target2 REAL NOT NULL,
+    status TEXT NOT NULL DEFAULT 'OPEN',
+    entry_at TEXT DEFAULT (datetime('now','localtime')),
+    exit_price REAL,
+    exit_at TEXT,
+    pnl REAL,
+    pnl_pct REAL,
+    news_title TEXT NOT NULL,
+    news_link TEXT NOT NULL,
+    source TEXT NOT NULL,
+    score INTEGER NOT NULL DEFAULT 0,
+    quote_source TEXT,
+    raw_json TEXT,
+    created_at TEXT DEFAULT (datetime('now','localtime'))
+  )`);
+    await (0, db_1.dbRun)("CREATE INDEX IF NOT EXISTS idx_news_shadow_status ON news_shadow_trades(status, entry_at)");
+    await (0, db_1.dbRun)("CREATE INDEX IF NOT EXISTS idx_news_shadow_symbol ON news_shadow_trades(symbol, side, entry_at)");
+}
+async function getNewsShadowTrades(limit = 100) {
+    await ensureNewsShadowTradesTable();
+    return (0, db_1.dbAll)("SELECT * FROM news_shadow_trades ORDER BY id DESC LIMIT ?", [limit]);
+}
+async function hasOpenNewsShadowTrade(symbol, side) {
+    var _a;
+    await ensureNewsShadowTradesTable();
+    const row = await (0, db_1.dbAll)("SELECT COUNT(*) AS c FROM news_shadow_trades WHERE symbol=? AND side=? AND status='OPEN'", [symbol, side]);
+    return (((_a = row[0]) === null || _a === void 0 ? void 0 : _a.c) || 0) > 0;
+}
+async function createNewsShadowTrade(idea, side, livePrice, quoteSource, qtyPlan) {
+    var _a;
+    if (await hasOpenNewsShadowTrade(idea.symbol, side))
+        return null;
+    const stop = side === "BUY" ? idea.stopLoss : idea.sellStopLoss;
+    const target1 = side === "BUY" ? idea.target1 : idea.sellTarget1;
+    const target2 = side === "BUY" ? idea.target2 : idea.sellTarget2;
+    const existingToday = await (0, db_1.dbAll)(`SELECT id FROM news_shadow_trades
+     WHERE symbol=? AND side=? AND date(entry_at)=date('now','localtime') LIMIT 1`, [idea.symbol, side]);
+    if (existingToday.length)
+        return null;
+    await (0, db_1.dbRun)(`INSERT INTO news_shadow_trades
+      (symbol,company_name,side,qty,entry_price,stop_loss,target1,target2,status,entry_at,
+       news_title,news_link,source,score,quote_source,raw_json)
+     VALUES (?,?,?,?,?,?,?,?, 'OPEN', datetime('now','localtime'), ?,?,?,?,?,?)`, [
+        idea.symbol, idea.companyName, side, qtyPlan.qty, livePrice, stop, target1, target2,
+        idea.newsTitle, idea.newsLink, idea.source, idea.score, quoteSource,
+        JSON.stringify({ plannedEntry: side === "BUY" ? idea.entryLow : idea.sellEntryHigh, rr: qtyPlan.rr, capital: qtyPlan.capital }),
+    ]);
+    const row = await (0, db_1.dbAll)("SELECT last_insert_rowid() AS id");
+    return ((_a = row[0]) === null || _a === void 0 ? void 0 : _a.id) || null;
+}
+function newsShadowPnl(t, exitPrice) {
+    const mult = t.side === "BUY" ? 1 : -1;
+    const pnl = Number(((exitPrice - t.entry_price) * mult * t.qty).toFixed(2));
+    const basis = Math.max(t.entry_price * t.qty, 1);
+    const pnlPct = Number((pnl / basis * 100).toFixed(2));
+    return { pnl, pnlPct };
+}
+async function closeNewsShadowTrade(t, status, exitPrice) {
+    const result = newsShadowPnl(t, exitPrice);
+    await (0, db_1.dbRun)(`UPDATE news_shadow_trades
+     SET status=?, exit_price=?, exit_at=datetime('now','localtime'), pnl=?, pnl_pct=?
+     WHERE id=? AND status='OPEN'`, [status, exitPrice, result.pnl, result.pnlPct, t.id]);
+    notifyTelegram([
+        `NEWS SHADOW EXIT - ${status}`,
+        `${t.symbol} ${t.side} | Qty ${t.qty}`,
+        `Entry Rs ${t.entry_price.toFixed(2)} | Exit Rs ${exitPrice.toFixed(2)}`,
+        `P&L: ${result.pnl >= 0 ? "+" : ""}Rs ${result.pnl.toFixed(0)} (${result.pnlPct.toFixed(2)}%)`,
+        `Chart: http://139.59.18.52/stock/${encodeURIComponent(t.symbol)}?newsTrade=1`,
+    ].join("\n"));
+}
+async function updateNewsShadowTradeExits() {
+    const open = (await getNewsShadowTrades(200)).filter(t => t.status === "OPEN");
+    if (!open.length)
+        return;
+    const quotes = await getNewsTradeLiveQuotes(open.map(t => t.symbol));
+    for (const t of open) {
+        const q = quotes.get(t.symbol);
+        if (!(q === null || q === void 0 ? void 0 : q.price))
+            continue;
+        if (t.side === "BUY") {
+            if (q.price <= t.stop_loss)
+                await closeNewsShadowTrade(t, "SL_HIT", q.price);
+            else if (q.price >= t.target1)
+                await closeNewsShadowTrade(t, "TARGET1_HIT", q.price);
+        }
+        else {
+            if (q.price >= t.stop_loss)
+                await closeNewsShadowTrade(t, "SL_HIT", q.price);
+            else if (q.price <= t.target1)
+                await closeNewsShadowTrade(t, "TARGET1_HIT", q.price);
+        }
+    }
+}
+async function getNewsTradeLiveQuotes(symbols) {
+    const clean = [...new Set(symbols.map(s => s.toUpperCase().replace(/[^A-Z0-9]/g, "")).filter(Boolean))];
+    const out = new Map();
+    if (!clean.length)
+        return out;
+    try {
+        const kite = await fetchKitePricesForHoldings(clean.map(s => `NSE:${s}`));
+        for (const symbol of clean) {
+            const q = kite.get(`NSE:${symbol}`);
+            if (q === null || q === void 0 ? void 0 : q.price)
+                out.set(symbol, { price: Number(q.price), changePct: Number(q.changePct || 0), source: "kite" });
+        }
+        if (out.size)
+            return out;
+    }
+    catch (e) {
+        console.warn("[NewsTradeAlerts] Kite quote unavailable:", (e === null || e === void 0 ? void 0 : e.message) || e);
+    }
+    if (!NEWS_TRADE_ALERT_USE_DB_FALLBACK)
+        return out;
+    const rows = await (0, db_1.dbAll)(`SELECT symbol, price, change_pct FROM prices WHERE symbol IN (${clean.map(() => "?").join(",")})`, clean);
+    for (const row of rows) {
+        if (row.price)
+            out.set(row.symbol, { price: Number(row.price), changePct: Number(row.change_pct || 0), source: "db" });
+    }
+    return out;
+}
+function newsTradeQty(side, entry, stopLoss, target1, target2) {
+    const riskPerShare = Math.max(Math.abs(entry - stopLoss), Math.max(0.05, entry * 0.005));
+    const validDirection = side === "BUY" ? target1 > entry && stopLoss < entry : target1 < entry && stopLoss > entry;
+    const rewardPerShare = validDirection ? Math.abs(target1 - entry) : 0;
+    const rr = rewardPerShare > 0 ? rewardPerShare / riskPerShare : 0;
+    const qty = rewardPerShare > 0 ? Math.ceil(NEWS_TRADE_ALERT_MIN_PROFIT_RS / rewardPerShare) : 0;
+    const capital = Number((qty * entry).toFixed(2));
+    const maxLoss = Number((qty * riskPerShare).toFixed(2));
+    const target1Profit = Number((qty * rewardPerShare).toFixed(2));
+    const target2Profit = Number((qty * Math.abs(target2 - entry)).toFixed(2));
+    const rejectReason = !validDirection ? "invalid target/SL direction"
+        : rr < NEWS_TRADE_ALERT_MIN_RR ? `RR ${rr.toFixed(2)} below ${NEWS_TRADE_ALERT_MIN_RR}`
+            : capital > NEWS_TRADE_ALERT_CAPITAL_RS ? `capital Rs ${capital.toFixed(0)} above cap Rs ${NEWS_TRADE_ALERT_CAPITAL_RS.toFixed(0)}`
+                : maxLoss > NEWS_TRADE_ALERT_MAX_RISK_RS ? `risk Rs ${maxLoss.toFixed(0)} above cap Rs ${NEWS_TRADE_ALERT_MAX_RISK_RS.toFixed(0)}`
+                    : target1Profit < NEWS_TRADE_ALERT_MIN_PROFIT_RS ? `T1 profit Rs ${target1Profit.toFixed(0)} below Rs ${NEWS_TRADE_ALERT_MIN_PROFIT_RS.toFixed(0)}`
+                        : "";
+    return {
+        eligible: !rejectReason,
+        rejectReason,
+        qty,
+        riskPerShare: Number(riskPerShare.toFixed(2)),
+        rewardPerShare: Number(rewardPerShare.toFixed(2)),
+        rr: Number(rr.toFixed(2)),
+        capital,
+        maxLoss,
+        target1Profit,
+        target2Profit,
+    };
+}
+function newsTradeAlertMessage(idea, side, livePrice, quoteSource) {
+    const entry = side === "BUY" ? idea.entryLow : idea.sellEntryHigh;
+    const entryBand = side === "BUY"
+        ? `${idea.entryLow.toFixed(2)}-${idea.entryHigh.toFixed(2)}`
+        : `${idea.sellEntryLow.toFixed(2)}-${idea.sellEntryHigh.toFixed(2)}`;
+    const stop = side === "BUY" ? idea.stopLoss : idea.sellStopLoss;
+    const t1 = side === "BUY" ? idea.target1 : idea.sellTarget1;
+    const t2 = side === "BUY" ? idea.target2 : idea.sellTarget2;
+    const qty = newsTradeQty(side, entry, stop, t1, t2);
+    const chartUrl = `http://139.59.18.52/stock/${encodeURIComponent(idea.symbol)}?newsTrade=1`;
+    return [
+        `NEWS TRADE ALERT - ${side}`,
+        `${idea.symbol}${idea.companyName ? ` (${idea.companyName})` : ""}`,
+        `LTP: Rs ${livePrice.toFixed(2)} | Entry touched: Rs ${entry.toFixed(2)} | Feed: ${quoteSource}`,
+        `Qty suggestion: ${qty.qty} shares | Capital approx: Rs ${qty.capital.toFixed(0)} | Max risk approx: Rs ${qty.maxLoss.toFixed(0)}`,
+        `Profit plan: T1 approx Rs ${qty.target1Profit.toFixed(0)} | T2 approx Rs ${qty.target2Profit.toFixed(0)} | RR ${qty.rr.toFixed(2)}`,
+        `Entry zone: Rs ${entryBand}`,
+        `Stop loss: Rs ${stop.toFixed(2)} | Targets: Rs ${t1.toFixed(2)}, Rs ${t2.toFixed(2)}`,
+        `Reason: ${idea.newsTitle}`,
+        `Chart: ${chartUrl}`,
+    ].join("\n");
+}
+async function getSentNewsTradeAlertKeys(today) {
+    const raw = await (0, db_1.getSetting)(`news_trade_alerts_sent_${today}`).catch(() => "");
+    try {
+        const parsed = JSON.parse(raw || "[]");
+        return new Set(Array.isArray(parsed) ? parsed.map(String) : []);
+    }
+    catch (_a) {
+        return new Set();
+    }
+}
+async function saveSentNewsTradeAlertKeys(today, keys) {
+    await (0, db_1.setSetting)(`news_trade_alerts_sent_${today}`, JSON.stringify([...keys].slice(-200))).catch(() => { });
+}
+async function checkNewsTradeEntryAlerts() {
+    if (!NEWS_TRADE_ALERTS_ENABLED || _newsTradeAlertRunning || !isMarketHours())
+        return;
+    _newsTradeAlertRunning = true;
+    try {
+        await updateNewsShadowTradeExits();
+        const ideas = await buildNewsTradeIdeas(NEWS_SHADOW_SCAN_LIMIT);
+        if (!ideas.length)
+            return;
+        const quotes = await getNewsTradeLiveQuotes(ideas.map(i => i.symbol));
+        if (!quotes.size)
+            return;
+        const today = new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" });
+        const sent = await getSentNewsTradeAlertKeys(today);
+        let changed = false;
+        for (const idea of ideas) {
+            const quote = quotes.get(idea.symbol);
+            if (!(quote === null || quote === void 0 ? void 0 : quote.price))
+                continue;
+            const checks = [
+                { side: "BUY", hit: quote.price >= idea.entryLow, trigger: idea.entryLow },
+                { side: "SELL", hit: quote.price <= idea.sellEntryHigh, trigger: idea.sellEntryHigh },
+            ];
+            for (const c of checks) {
+                if (!c.hit || !c.trigger)
+                    continue;
+                const stop = c.side === "BUY" ? idea.stopLoss : idea.sellStopLoss;
+                const t1 = c.side === "BUY" ? idea.target1 : idea.sellTarget1;
+                const t2 = c.side === "BUY" ? idea.target2 : idea.sellTarget2;
+                const qtyPlan = newsTradeQty(c.side, c.trigger, stop, t1, t2);
+                if (!qtyPlan.eligible) {
+                    console.log(`[NewsTradeAlerts] Skipped ${c.side} ${idea.symbol}: ${qtyPlan.rejectReason}`);
+                    continue;
+                }
+                const key = `${today}:${idea.symbol}:${c.side}:${c.trigger.toFixed(2)}`;
+                if (sent.has(key))
+                    continue;
+                const shadowId = await createNewsShadowTrade(idea, c.side, quote.price, quote.source, qtyPlan);
+                notifyTelegram(newsTradeAlertMessage(idea, c.side, quote.price, quote.source));
+                if (shadowId) {
+                    notifyTelegram(`NEWS SHADOW TRADE CREATED\n#${shadowId} ${idea.symbol} ${c.side} ${qtyPlan.qty} qty @ Rs ${quote.price.toFixed(2)}\nVisible in My Trade > News Shadow.`);
+                }
+                sent.add(key);
+                changed = true;
+                console.log(`[NewsTradeAlerts] ${c.side} ${idea.symbol} touched ${c.trigger} at ${quote.price}; shadow=${shadowId || "existing"}`);
+            }
+        }
+        if (changed)
+            await saveSentNewsTradeAlertKeys(today, sent);
+    }
+    catch (e) {
+        console.warn("[NewsTradeAlerts]", (e === null || e === void 0 ? void 0 : e.message) || e);
+    }
+    finally {
+        _newsTradeAlertRunning = false;
+    }
+}
+function startNewsTradeEntryAlerts() {
+    if (!NEWS_TRADE_ALERTS_ENABLED) {
+        console.log("[NewsTradeAlerts] Disabled");
+        return;
+    }
+    setTimeout(() => { checkNewsTradeEntryAlerts().catch(() => { }); }, 15000);
+    setInterval(() => { checkNewsTradeEntryAlerts().catch(() => { }); }, NEWS_TRADE_ALERT_POLL_MS);
+    console.log(`[NewsTradeAlerts] Watching news trade entries every ${Math.round(NEWS_TRADE_ALERT_POLL_MS / 1000)}s`);
+}
 (0, db_1.initDb)().then(async () => {
+    await ensureNewsShadowTradesTable();
     await ensureAdminEmail();
     // Run subscription expiry check on startup
     (0, db_1.expireOldSubscriptions)().catch(() => { });
@@ -14530,5 +15286,6 @@ app.get("/holdings", requireAdmin, (_req, res) => {
         console.log(`   Watchlists: http://localhost:${PORT}/watchlists`);
         console.log(`   API stats : http://localhost:${PORT}/api/stats\n`);
         (0, scheduler_1.startScheduler)();
+        startNewsTradeEntryAlerts();
     });
 }).catch(err => { console.error("DB init failed:", err); process.exit(1); });
