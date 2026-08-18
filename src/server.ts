@@ -2804,6 +2804,10 @@ app.get("/stock/:symbol", async (req: Request, res: Response) => {
       <div class="sdp-hero-right">
         <div class="sdp-price-main">?${fmt(s.price, 2)}</div>
         <div class="sdp-change" style="color:${changeColor(s.change_pct)}">${s.change_pct != null ? (s.change_pct >= 0 ? "? +" : "? ") + fmt(s.change_pct, 2) + "%" : "—"}</div>
+        <div class="sdp-quick-actions" style="display:flex;gap:8px;margin-top:10px;justify-content:flex-end;flex-wrap:wrap">
+          <a href="/paper-trade?symbol=${encodeURIComponent(symbol)}" class="btn-sm" style="display:inline-flex;align-items:center;gap:5px;text-decoration:none;padding:6px 12px;border-radius:8px;font-size:12px;font-weight:750;background:linear-gradient(135deg,#10b981,#059669);color:#fff;box-shadow:0 2px 8px rgba(16,185,129,0.3)"><span>📝 Paper Trade</span></a>
+          <a href="/today" class="btn-sm" style="display:inline-flex;align-items:center;gap:5px;text-decoration:none;padding:6px 12px;border-radius:8px;font-size:12px;font-weight:750;background:var(--bg2,#f4f7fe);border:1px solid var(--border);color:var(--text)"><span>🎯 Today's Picks</span></a>
+        </div>
         <div class="sdp-ohlc">
           <span>O ?${fmt(s.prev_close,2)}</span>
           <span>H ?${fmt(s.day_high,2)}</span>
@@ -9530,7 +9534,7 @@ app.get("/paper-trade", featureGate("feature_paper_trade_bot", "Paper Trade"), a
             <label style="font-size:0.7rem;font-weight:700;text-transform:uppercase;letter-spacing:.07em;color:var(--text-muted);display:block;margin-bottom:5px">Stock / Symbol</label>
             <div class="pt2-sym-inp-wrap">
               <div style="position:relative;flex:1;min-width:160px">
-                <input type="text" id="pt2-stock-search" class="pt2-sym-inp" placeholder="Search symbol or company name…" autocomplete="off">
+                <input type="text" id="pt2-stock-search" class="pt2-sym-inp" placeholder="Search symbol or company name…" autocomplete="off" value="${querySymbol}">
                 <div class="pt2-search-drop" id="pt2-search-drop" style="display:none"></div>
               </div>
               <div class="pt2-lpb" id="pt2-lpb">
