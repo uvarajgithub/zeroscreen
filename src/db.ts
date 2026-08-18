@@ -102,6 +102,9 @@ export async function initDb(): Promise<void> {
       db.run("CREATE INDEX IF NOT EXISTS idx_stocks_roce ON stocks(roce)");
       db.run("CREATE INDEX IF NOT EXISTS idx_stocks_de ON stocks(de_ratio)");
       db.run("CREATE INDEX IF NOT EXISTS idx_prices_volume ON prices(volume)");
+      db.run("CREATE INDEX IF NOT EXISTS idx_prices_change_pct ON prices(change_pct)");
+      db.run("CREATE INDEX IF NOT EXISTS idx_stocks_pe ON stocks(pe_ratio)");
+      db.run("CREATE INDEX IF NOT EXISTS idx_stocks_mcap ON stocks(market_cap)");
       db.run("CREATE INDEX IF NOT EXISTS idx_users_email ON users(email)");
       // Migrations (safe — errors ignored if column already exists)
       db.run("ALTER TABLE watchlists ADD COLUMN user_id INTEGER REFERENCES users(id) ON DELETE SET NULL", () => {});
