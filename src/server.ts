@@ -6072,7 +6072,7 @@ app.get("/today", async (req: Request, res: Response) => {
     return `<div class="pick-card pick-card-${p.direction.toLowerCase()}">
       <div class="pick-card-top">
         <div>
-          <span class="pick-symbol">${esc(p.stock_symbol)}</span>
+          <a href="/stock/${encodeURIComponent(p.stock_symbol)}" class="pick-symbol" style="color:inherit;text-decoration:none;transition:color .2s ease" title="View details on Screener">${esc(p.stock_symbol)}</a>
           ${p.company_name ? `<span class="pick-company">${esc(p.company_name)}</span>` : ""}
         </div>
         <div style="display:flex;gap:6px;align-items:center">
@@ -6089,6 +6089,10 @@ app.get("/today", async (req: Request, res: Response) => {
       ${p.target   ? `<div class="pick-tp"><span class="pick-tp-label">?? Target</span><span class="pick-tp-val">?${p.target}</span></div>` : ""}
       ${p.stop_loss? `<div class="pick-sl"><span class="pick-sl-label">??? Stop Loss</span><span class="pick-sl-val">?${p.stop_loss}</span></div>` : ""}
       <div class="pick-reason">${esc(displayReason)}</div>
+      <div class="pick-quick-links" style="display:flex;gap:6px;margin:8px 0 6px">
+        <a href="/stock/${encodeURIComponent(p.stock_symbol)}" class="btn-sm" style="flex:1;text-align:center;font-size:11px;font-weight:700;padding:5px 8px;border-radius:6px;background:rgba(59,130,246,0.12);border:1px solid rgba(59,130,246,0.25);color:#60a5fa;text-decoration:none">View Chart</a>
+        <a href="/paper-trade" class="btn-sm" style="flex:1;text-align:center;font-size:11px;font-weight:700;padding:5px 8px;border-radius:6px;background:rgba(16,185,129,0.12);border:1px solid rgba(16,185,129,0.25);color:#34d399;text-decoration:none">Paper Trade</a>
+      </div>
       <div class="pick-footer">
         <span class="pick-risk-badge ${riskClass[p.risk_level] ?? "risk-medium"}">${riskIcon[p.risk_level] ?? "??"} ${p.risk_level} Risk</span>
         <span class="pick-date">${p.published_at?.slice(0, 10) ?? ""}</span>
@@ -12508,6 +12512,148 @@ app.get("/strategies", featureGate("feature_strategies", "Strategies"), (req: Re
         </div>
       </div>
 
+    </div>
+
+    
+    <!-- 6 CORE AUTOMATED BOT STRATEGIES (LIVE LINKED) -->
+    <div class="strat-section-label" style="display:flex;align-items:center;justify-content:space-between;margin-top:28px">
+      <span>🚀 Core Automated Strategies (Live Tracks)</span>
+      <a href="/signals" style="font-size:0.8rem;color:#60a5fa;text-decoration:none;font-weight:700">View Live Engine &rarr;</a>
+    </div>
+    <p class="strat-preset-intro">Six distinct rule-based breakout engines executing intraday on BANKNIFTY. Click any strategy to view its real-time shadow execution.</p>
+
+    <div class="strat-core-grid">
+      <!-- 10:00 Baseline -->
+      <div class="strat-card-v3">
+        <div>
+          <div class="strat-v3-header">
+            <div class="strat-v3-title">10:00 Baseline</div>
+            <span class="strat-v3-badge">Max 2 Trades</span>
+          </div>
+          <div class="strat-v3-desc">
+            Enters on the first 15-minute candle breakout post-10:00 AM. Uses candle-based trailing SL for risk containment.
+          </div>
+          <div class="strat-v3-specs">
+            <div class="strat-v3-spec-item"><span>Entry Time</span><b>10:00 AM</b></div>
+            <div class="strat-v3-spec-item"><span>Max Trades</span><b>2 / Day</b></div>
+            <div class="strat-v3-spec-item"><span>Exit Rule</span><b>EOD 15:15</b></div>
+            <div class="strat-v3-spec-item"><span>SL Type</span><b>V2 Trail</b></div>
+          </div>
+        </div>
+        <a href="/signals?strategy=tt1000&instrument=FUTURES&underlying=BANKNIFTY" class="strat-v3-btn">
+          <span>⚡ View Live Bot</span> &rarr;
+        </a>
+      </div>
+
+      <!-- 10:00 Quality -->
+      <div class="strat-card-v3 quality-badge">
+        <div>
+          <div class="strat-v3-header">
+            <div class="strat-v3-title">10:00 Quality Breakout</div>
+            <span class="strat-v3-badge quality">Max 3 Trades</span>
+          </div>
+          <div class="strat-v3-desc">
+            High-conviction 10:00 AM setup filtered for trend strength with a strict 14:15 cutoff and maximum 3 trades.
+          </div>
+          <div class="strat-v3-specs">
+            <div class="strat-v3-spec-item"><span>Entry Time</span><b>10:00 AM</b></div>
+            <div class="strat-v3-spec-item"><span>Max Trades</span><b>3 / Day</b></div>
+            <div class="strat-v3-spec-item"><span>Cutoff</span><b>14:15 IST</b></div>
+            <div class="strat-v3-spec-item"><span>SL Type</span><b>V2 Trail</b></div>
+          </div>
+        </div>
+        <a href="/signals?strategy=tt1000-quality-breakout&instrument=FUTURES&underlying=BANKNIFTY" class="strat-v3-btn">
+          <span>⚡ View Live Bot</span> &rarr;
+        </a>
+      </div>
+
+      <!-- 10:00 Unlimited -->
+      <div class="strat-card-v3 unlimited-badge">
+        <div>
+          <div class="strat-v3-header">
+            <div class="strat-v3-title">10:00 Unlimited</div>
+            <span class="strat-v3-badge unlimited">No Trade Cap</span>
+          </div>
+          <div class="strat-v3-desc">
+            Captures all breakout signals following the 10:00 AM benchmark until session cutoff without daily trade limit.
+          </div>
+          <div class="strat-v3-specs">
+            <div class="strat-v3-spec-item"><span>Entry Time</span><b>10:00 AM</b></div>
+            <div class="strat-v3-spec-item"><span>Max Trades</span><b>Unlimited</b></div>
+            <div class="strat-v3-spec-item"><span>Cutoff</span><b>14:15 IST</b></div>
+            <div class="strat-v3-spec-item"><span>SL Type</span><b>V2 Trail</b></div>
+          </div>
+        </div>
+        <a href="/signals?strategy=tt1000-unlimited&instrument=FUTURES&underlying=BANKNIFTY" class="strat-v3-btn">
+          <span>⚡ View Live Bot</span> &rarr;
+        </a>
+      </div>
+
+      <!-- 10:30 Baseline -->
+      <div class="strat-card-v3">
+        <div>
+          <div class="strat-v3-header">
+            <div class="strat-v3-title">10:30 Baseline</div>
+            <span class="strat-v3-badge">Max 2 Trades</span>
+          </div>
+          <div class="strat-v3-desc">
+            Waits for initial morning volatility to settle. Takes clean breakout setups off the 10:30 AM candle range.
+          </div>
+          <div class="strat-v3-specs">
+            <div class="strat-v3-spec-item"><span>Entry Time</span><b>10:30 AM</b></div>
+            <div class="strat-v3-spec-item"><span>Max Trades</span><b>2 / Day</b></div>
+            <div class="strat-v3-spec-item"><span>Exit Rule</span><b>EOD 15:15</b></div>
+            <div class="strat-v3-spec-item"><span>SL Type</span><b>V2 Trail</b></div>
+          </div>
+        </div>
+        <a href="/signals?strategy=tt1030&instrument=FUTURES&underlying=BANKNIFTY" class="strat-v3-btn">
+          <span>⚡ View Live Bot</span> &rarr;
+        </a>
+      </div>
+
+      <!-- 10:30 Quality Reversal -->
+      <div class="strat-card-v3 quality-badge">
+        <div>
+          <div class="strat-v3-header">
+            <div class="strat-v3-title">10:30 Quality Reversal</div>
+            <span class="strat-v3-badge quality">Max 3 Trades</span>
+          </div>
+          <div class="strat-v3-desc">
+            Engineered with profit locking and reversal protection to lock in gains on explosive mid-morning moves.
+          </div>
+          <div class="strat-v3-specs">
+            <div class="strat-v3-spec-item"><span>Entry Time</span><b>10:30 AM</b></div>
+            <div class="strat-v3-spec-item"><span>Max Trades</span><b>3 / Day</b></div>
+            <div class="strat-v3-spec-item"><span>Exit Rule</span><b>Lock + Trail</b></div>
+            <div class="strat-v3-spec-item"><span>SL Type</span><b>Dynamic</b></div>
+          </div>
+        </div>
+        <a href="/signals?strategy=tt1030-quality-reversal&instrument=FUTURES&underlying=BANKNIFTY" class="strat-v3-btn">
+          <span>⚡ View Live Bot</span> &rarr;
+        </a>
+      </div>
+
+      <!-- 10:30 Unlimited -->
+      <div class="strat-card-v3 unlimited-badge">
+        <div>
+          <div class="strat-v3-header">
+            <div class="strat-v3-title">10:30 Unlimited</div>
+            <span class="strat-v3-badge unlimited">No Trade Cap</span>
+          </div>
+          <div class="strat-v3-desc">
+            Continuous 10:30 AM strategy variant with unrestricted trade execution up to 14:15 PM session cutoff.
+          </div>
+          <div class="strat-v3-specs">
+            <div class="strat-v3-spec-item"><span>Entry Time</span><b>10:30 AM</b></div>
+            <div class="strat-v3-spec-item"><span>Max Trades</span><b>Unlimited</b></div>
+            <div class="strat-v3-spec-item"><span>Cutoff</span><b>14:15 IST</b></div>
+            <div class="strat-v3-spec-item"><span>SL Type</span><b>V2 Trail</b></div>
+          </div>
+        </div>
+        <a href="/signals?strategy=tt1030-unlimited&instrument=FUTURES&underlying=BANKNIFTY" class="strat-v3-btn">
+          <span>⚡ View Live Bot</span> &rarr;
+        </a>
+      </div>
     </div>
 
     <!-- SCREENER STRATEGIES -->

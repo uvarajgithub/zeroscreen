@@ -2651,6 +2651,8 @@ export function renderShadowStrategyMonitorPage(navHtml: string): string {
         <div class="sm-head-actions">
           <div class="sm-market closed" id="marketStatus"><span class="sm-dot"></span><span>Checking market</span></div>
           <div class="sm-refresh-meta" id="refreshMeta">Last refreshed: connecting...</div>
+          <a href="/strategies" class="sm-link-btn" style="text-decoration:none" title="Strategy Guide"><svg class="sm-icon" viewBox="0 0 24 24"><path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H20v20H6.5a2.5 2.5 0 0 1-2.5-2.5Z"/><path d="M6 6h10"/><path d="M6 10h10"/></svg><span>Strategies</span></a>
+          <a href="/today" class="sm-link-btn" style="text-decoration:none" title="Today's Stock Picks"><svg class="sm-icon" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg><span>Picks</span></a>
           <button class="sm-consolidated-toggle" id="consolidatedToggle" type="button"><svg class="sm-icon" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg><span>Consolidated P&amp;L</span></button>
           <button class="sm-refresh" id="refreshAll" type="button"><svg class="sm-icon" viewBox="0 0 24 24"><path d="M20 12a8 8 0 1 1-2.3-5.7"/><path d="M20 4v6h-6"/></svg>Refresh</button>
         </div>
