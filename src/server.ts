@@ -9259,6 +9259,7 @@ app.get("/internal/kite-token", async (req: Request, res: Response) => {
 
 // -- GET /paper-trade -----------------------------------------------------------
 app.get("/paper-trade", featureGate("feature_paper_trade_bot", "Paper Trade"), async (req: Request, res: Response) => {
+  const querySymbol = esc(String(req.query.symbol || "").toUpperCase().trim());
   const PAPER_DIR = "/home/ubuntu/trading-bot";
   function readPaperJSON(file: string, fallback: any = null) {
     try {

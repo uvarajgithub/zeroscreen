@@ -854,12 +854,12 @@ async function sendEODSummary() {
 }
 // ── Pick result tracker — check if picks hit SL or target ────────────────────
 async function trackPickResults() {
-    // Get active picks that have entry_price set (entry_triggered) but no result yet
-    const activePicks = await (0, db_1.dbAll)(`SELECT id, stock_symbol, direction, target, stop_loss, entry_price FROM picks
-     WHERE status='active' AND result IS NULL AND entry_price IS NOT NULL AND entry_price > 0`);
+    // 1. Get all active picks (both pending entry and active in position)
+    const activePicks = await (0, db_1.dbAll)(`SELECT id, stock_symbol, direction, entry_low, entry_high, target, stop_loss, entry_price, result, pick_type, published_at FROM picks
+     WHERE status='active' AND (result IS NULL OR result='entry_triggered')`);
     if (activePicks.length === 0)
         return;
-    // Get current prices
+    // Get current prices for all active pick symbols
     const symbols = [...new Set(activePicks.map((p) => p.stock_symbol))];
     const priceRows = await (0, db_1.dbAll)(`SELECT symbol, price FROM prices WHERE symbol IN (${symbols.map(() => "?").join(",")})`, symbols);
     const priceMap = {};
@@ -867,18 +867,32 @@ async function trackPickResults() {
         priceMap[r.symbol] = r.price;
     for (const pick of activePicks) {
         const livePrice = priceMap[pick.stock_symbol];
-        if (!livePrice)
+        if (!livePrice || livePrice <= 0)
             continue;
         const isLong = pick.direction === "LONG";
-        const targetHit = pick.target && (isLong ? livePrice >= pick.target : livePrice <= pick.target);
-        const slHit = pick.stop_loss && (isLong ? livePrice <= pick.stop_loss : livePrice >= pick.stop_loss);
-        if (targetHit) {
-            await (0, db_1.updatePickResult)(pick.id, "target_hit", livePrice);
-            console.log(`[PickTracker] TARGET HIT — ${pick.stock_symbol} @ ₹${livePrice}`);
+        // A. Check Entry Zone trigger (if not triggered yet)
+        if (!pick.entry_price || pick.entry_price <= 0) {
+            const inZone = livePrice >= pick.entry_low && livePrice <= pick.entry_high;
+            const breakoutLong = isLong && livePrice >= pick.entry_high;
+            const breakoutShort = !isLong && livePrice <= pick.entry_low;
+            if (inZone || breakoutLong || breakoutShort) {
+                await (0, db_1.updatePickEntry)(pick.id, livePrice).catch(() => { });
+                pick.entry_price = livePrice;
+                console.log(`[PickTracker] 🚀 ENTRY TRIGGERED — ${pick.stock_symbol} @ ₹${livePrice} (Zone: ₹${pick.entry_low}–₹${pick.entry_high})`);
+            }
         }
-        else if (slHit) {
-            await (0, db_1.updatePickResult)(pick.id, "sl_hit", livePrice);
-            console.log(`[PickTracker] SL HIT — ${pick.stock_symbol} @ ₹${livePrice}`);
+        // B. Check Target and Stop-Loss (for triggered picks)
+        if (pick.entry_price && pick.entry_price > 0 && pick.result !== 'target_hit' && pick.result !== 'sl_hit') {
+            const targetHit = pick.target && (isLong ? livePrice >= pick.target : livePrice <= pick.target);
+            const slHit = pick.stop_loss && (isLong ? livePrice <= pick.stop_loss : livePrice >= pick.stop_loss);
+            if (targetHit) {
+                await (0, db_1.updatePickResult)(pick.id, "target_hit", livePrice);
+                console.log(`[PickTracker] 🎯 TARGET HIT — ${pick.stock_symbol} @ ₹${livePrice} (Target: ₹${pick.target})`);
+            }
+            else if (slHit) {
+                await (0, db_1.updatePickResult)(pick.id, "sl_hit", livePrice);
+                console.log(`[PickTracker] 🛑 SL HIT — ${pick.stock_symbol} @ ₹${livePrice} (SL: ₹${pick.stop_loss})`);
+            }
         }
     }
 }
