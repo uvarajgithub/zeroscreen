@@ -97,8 +97,7 @@ async function refreshPrices() {
 }
 // ── Fundamentals refresh ──────────────────────────────────────────────────────
 async function refreshFundamentals(symbols) {
-    var _a, _b, _c, _d, _e, _f;
-    const targets = symbols !== null && symbols !== void 0 ? symbols : (await (0, db_1.getStaleSymbols)(168));
+    const targets = symbols ?? (await (0, db_1.getStaleSymbols)(168));
     if (targets.length === 0) {
         console.log("[Scheduler] All fundamentals fresh");
         return;
@@ -127,12 +126,12 @@ async function refreshFundamentals(symbols) {
                     book_value: f.bookValue,
                     dividend_yield: f.dividendYield,
                     current_ratio: f.currentRatio,
-                    net_profit_1: (_a = f.netProfits[f.netProfits.length - 3]) !== null && _a !== void 0 ? _a : null,
-                    net_profit_2: (_b = f.netProfits[f.netProfits.length - 2]) !== null && _b !== void 0 ? _b : null,
-                    net_profit_3: (_c = f.netProfits[f.netProfits.length - 1]) !== null && _c !== void 0 ? _c : null,
-                    revenue_1: (_d = f.revenues[f.revenues.length - 3]) !== null && _d !== void 0 ? _d : null,
-                    revenue_2: (_e = f.revenues[f.revenues.length - 2]) !== null && _e !== void 0 ? _e : null,
-                    revenue_3: (_f = f.revenues[f.revenues.length - 1]) !== null && _f !== void 0 ? _f : null,
+                    net_profit_1: f.netProfits[f.netProfits.length - 3] ?? null,
+                    net_profit_2: f.netProfits[f.netProfits.length - 2] ?? null,
+                    net_profit_3: f.netProfits[f.netProfits.length - 1] ?? null,
+                    revenue_1: f.revenues[f.revenues.length - 3] ?? null,
+                    revenue_2: f.revenues[f.revenues.length - 2] ?? null,
+                    revenue_3: f.revenues[f.revenues.length - 1] ?? null,
                     all_profitable: f.allProfitable ? 1 : 0,
                     profit_uptrend: f.profitUptrend ? 1 : 0,
                     week52_high: f.week52High,
@@ -158,12 +157,11 @@ async function refreshFundamentals(symbols) {
 }
 // ── Alert digest ────────────────────────────────────────────────────────────────────
 async function checkAlerts() {
-    var _a;
     const alerts = await (0, db_1.getAllActiveAlerts)();
     const today = new Date().toISOString().slice(0, 10);
     let sent = 0;
     for (const alert of alerts) {
-        if (((_a = alert.last_sent) === null || _a === void 0 ? void 0 : _a.slice(0, 10)) === today)
+        if (alert.last_sent?.slice(0, 10) === today)
             continue; // already sent today
         try {
             const filters = JSON.parse(alert.filters_json);
@@ -222,7 +220,6 @@ async function seedSymbols() {
 }
 // ── Auto-pick generation ───────────────────────────────────────────────────────
 async function generateDailyPicks() {
-    var _a, _b, _c, _d, _e, _f, _g, _h, _j, _k;
     console.log("[Picks] Generating daily auto-picks from last market close...");
     const today = new Date().toISOString().slice(0, 10);
     // Expire all previous auto-picks (created_by IS NULL = auto-generated)
@@ -254,8 +251,7 @@ async function generateDailyPicks() {
     // Where did the stock close within today's candle? 0 = at day low, 1 = at day high
     // This is the single best intraday signal — "buyers controlled the close" or "sellers did"
     function closePosition(s) {
-        var _a, _b;
-        const hi = (_a = s.day_high) !== null && _a !== void 0 ? _a : 0, lo = (_b = s.day_low) !== null && _b !== void 0 ? _b : 0;
+        const hi = s.day_high ?? 0, lo = s.day_low ?? 0;
         const range = hi - lo;
         if (range <= 0)
             return 0.5;
@@ -263,15 +259,13 @@ async function generateDailyPicks() {
     }
     // Day range as % of price — measures volatility/opportunity
     function dayRangePct(s) {
-        var _a, _b;
         if (!s.price || s.price === 0)
             return 0;
-        return (((_a = s.day_high) !== null && _a !== void 0 ? _a : s.price) - ((_b = s.day_low) !== null && _b !== void 0 ? _b : s.price)) / s.price * 100;
+        return ((s.day_high ?? s.price) - (s.day_low ?? s.price)) / s.price * 100;
     }
     // Where is price in its 52-week range? 0 = at 52W low, 1 = at 52W high
     function week52Pos(s) {
-        var _a, _b;
-        const hi = (_a = s.week52_high) !== null && _a !== void 0 ? _a : 0, lo = (_b = s.week52_low) !== null && _b !== void 0 ? _b : 0;
+        const hi = s.week52_high ?? 0, lo = s.week52_low ?? 0;
         const range = hi - lo;
         if (range <= 0)
             return 0.5;
@@ -279,24 +273,22 @@ async function generateDailyPicks() {
     }
     // Did the stock gap up from previous close? (opening already gapped — late entry risk)
     function gapPct(s) {
-        var _a;
         if (!s.prev_close || s.prev_close === 0)
             return 0;
-        return (((_a = s.day_low) !== null && _a !== void 0 ? _a : s.price) - s.prev_close) / s.prev_close * 100;
+        return ((s.day_low ?? s.price) - s.prev_close) / s.prev_close * 100;
     }
     // Sector strength: % of stocks in the same sector that closed positive today
     const sectorMap = {};
     for (const s of stocks) {
-        const sec = (_a = s.sector) !== null && _a !== void 0 ? _a : "Other";
+        const sec = s.sector ?? "Other";
         if (!sectorMap[sec])
             sectorMap[sec] = { up: 0, total: 0 };
         sectorMap[sec].total++;
-        if (((_b = s.change_pct) !== null && _b !== void 0 ? _b : 0) > 0)
+        if ((s.change_pct ?? 0) > 0)
             sectorMap[sec].up++;
     }
     function sectorBullishPct(s) {
-        var _a;
-        const sec = sectorMap[(_a = s.sector) !== null && _a !== void 0 ? _a : "Other"];
+        const sec = sectorMap[s.sector ?? "Other"];
         if (!sec || sec.total < 3)
             return 0.5;
         return sec.up / sec.total;
@@ -308,10 +300,9 @@ async function generateDailyPicks() {
     }
     // Select best picks: sector-diverse, above median quality, no duplicates
     function selectBest(pool, maxPicks, maxPerSector, usedSymbols) {
-        var _a, _b, _c, _d, _e;
         if (pool.length === 0)
             return [];
-        const medianScore = (_b = (_a = pool[Math.floor(pool.length / 2)]) === null || _a === void 0 ? void 0 : _a.score) !== null && _b !== void 0 ? _b : 0;
+        const medianScore = pool[Math.floor(pool.length / 2)]?.score ?? 0;
         const sectorCount = {};
         const result = [];
         for (const s of pool) {
@@ -321,12 +312,12 @@ async function generateDailyPicks() {
                 break;
             if (usedSymbols.has(s.symbol))
                 continue;
-            const sector = (_c = s.sector) !== null && _c !== void 0 ? _c : "Other";
-            if (((_d = sectorCount[sector]) !== null && _d !== void 0 ? _d : 0) >= maxPerSector)
+            const sector = s.sector ?? "Other";
+            if ((sectorCount[sector] ?? 0) >= maxPerSector)
                 continue;
             result.push(s);
             usedSymbols.add(s.symbol);
-            sectorCount[sector] = ((_e = sectorCount[sector]) !== null && _e !== void 0 ? _e : 0) + 1;
+            sectorCount[sector] = (sectorCount[sector] ?? 0) + 1;
         }
         return result;
     }
@@ -360,10 +351,9 @@ async function generateDailyPicks() {
     // Target: 1.5× the previous day's range (range expansion is the standard intraday target)
     const intradayPool = stocks
         .filter(s => {
-        var _a;
         const cp = closePosition(s);
         const drP = dayRangePct(s);
-        const vol = (_a = s.volume) !== null && _a !== void 0 ? _a : 0;
+        const vol = s.volume ?? 0;
         const gap = gapPct(s);
         return (s.price >= 80 && s.price <= 6000 &&
             vol > 750000 && // institutional volume
@@ -373,19 +363,18 @@ async function generateDailyPicks() {
         );
     })
         .map(s => {
-        var _a, _b, _c;
         const cp = closePosition(s);
         const isLong = cp >= 0.70;
         const secBull = sectorBullishPct(s);
         const secAlign = isLong ? secBull > 0.55 : secBull < 0.45;
-        const vol = (_a = s.volume) !== null && _a !== void 0 ? _a : 0;
+        const vol = s.volume ?? 0;
         const drP = dayRangePct(s);
         // Score components (all real signals):
         const closeStrength = isLong ? (cp - 0.70) * 30 : (0.30 - cp) * 30; // how extreme the close was
         const volScore = Math.min(vol / 1000000, 8); // volume up to 8M = max
         const sectorScore = secAlign ? 6 : -3; // sector agrees = +6, opposes = -3
-        const qualBonus = ((_b = s.roce) !== null && _b !== void 0 ? _b : 0) > 12 ? 2 : 0; // fundamentally sound = small bonus
-        const breakoutBonus = isLong && ((_c = s.week52_high) !== null && _c !== void 0 ? _c : 0) > 0 && s.price >= s.week52_high * 0.98 ? 4 : 0;
+        const qualBonus = (s.roce ?? 0) > 12 ? 2 : 0; // fundamentally sound = small bonus
+        const breakoutBonus = isLong && (s.week52_high ?? 0) > 0 && s.price >= s.week52_high * 0.98 ? 4 : 0;
         // Confidence signals
         const confidence = calcConfidence([
             cp >= 0.70 || cp <= 0.30, // strong directional close
@@ -402,8 +391,8 @@ async function generateDailyPicks() {
         .sort((a, b) => b.score - a.score);
     for (const s of selectBest(intradayPool, 5, 2, usedSymbols)) {
         const price = s.price;
-        const dayLo = (_c = s.day_low) !== null && _c !== void 0 ? _c : price * 0.99;
-        const dayHi = (_d = s.day_high) !== null && _d !== void 0 ? _d : price * 1.01;
+        const dayLo = s.day_low ?? price * 0.99;
+        const dayHi = s.day_high ?? price * 1.01;
         const dayRange = dayHi - dayLo;
         const dir = s.isLong ? "LONG" : "SHORT";
         // Entry zone: pullback to support (LONG) or bounce to resistance (SHORT)
@@ -427,11 +416,11 @@ async function generateDailyPicks() {
         const parts = [];
         parts.push(`Closed at ${(cp * 100).toFixed(0)}% of day range — ${dir === "LONG" ? "strong buying at close" : "strong selling at close"}`);
         parts.push(`Sector ${secPct}% stocks ${dir === "LONG" ? "bullish" : "bearish"} — aligned`);
-        if (((_e = s.volume) !== null && _e !== void 0 ? _e : 0) > 1000000)
+        if ((s.volume ?? 0) > 1000000)
             parts.push(`Volume ${(s.volume / 1e6).toFixed(1)}M — institutional activity`);
         else
             parts.push(`Volume ${(s.volume / 1000).toFixed(0)}K`);
-        if (s.breakoutBonus > 0 || (((_f = s.week52_high) !== null && _f !== void 0 ? _f : 0) > 0 && price >= s.week52_high * 0.98))
+        if (s.breakoutBonus > 0 || ((s.week52_high ?? 0) > 0 && price >= s.week52_high * 0.98))
             parts.push("Near 52W breakout zone");
         parts.push(`Confidence ${s.confidence}%`);
         const reason = parts.slice(0, 3).join(" · ");
@@ -462,23 +451,21 @@ async function generateDailyPicks() {
     // Target: 52W high as natural target (stocks in uptrend aim for prior highs)
     const swingPool = stocks
         .filter(s => {
-        var _a, _b, _c;
         const cp = closePosition(s);
         const w52p = week52Pos(s);
         const secB = sectorBullishPct(s);
-        const chg = (_a = s.change_pct) !== null && _a !== void 0 ? _a : 0;
+        const chg = s.change_pct ?? 0;
         return (s.price >= 100 && s.price <= 15000 &&
-            ((_b = s.roce) !== null && _b !== void 0 ? _b : 0) > 12 && // quality filter — must be a real business
+            (s.roce ?? 0) > 12 && // quality filter — must be a real business
             (s.de_ratio == null || s.de_ratio < 1.8) && // not over-leveraged
             cp >= 0.60 && // closed strong — buyers in control
             w52p >= 0.35 && w52p <= 0.90 && // in uptrend, not overextended
             secB > 0.55 && // sector is bullish
             chg > 0.2 && chg < 6.0 && // positive momentum, not already chased
-            ((_c = s.volume) !== null && _c !== void 0 ? _c : 0) > 200000 // minimum liquidity
+            (s.volume ?? 0) > 200000 // minimum liquidity
         );
     })
         .map(s => {
-        var _a, _b, _c, _d, _e, _f, _g;
         const cp = closePosition(s);
         const w52p = week52Pos(s);
         const secB = sectorBullishPct(s);
@@ -489,20 +476,20 @@ async function generateDailyPicks() {
             secB > 0.65, // strongly bullish sector
             (s.all_profitable === 1), // all years profitable
             (s.profit_uptrend === 1), // profits growing
-            ((_a = s.roce) !== null && _a !== void 0 ? _a : 0) > 18, // excellent capital efficiency
-            ((_b = s.promoter_pct) !== null && _b !== void 0 ? _b : 0) > 50, // promoter conviction (skin in game)
-            ((_c = s.volume) !== null && _c !== void 0 ? _c : 0) > 500000, // good volume confirmation
+            (s.roce ?? 0) > 18, // excellent capital efficiency
+            (s.promoter_pct ?? 0) > 50, // promoter conviction (skin in game)
+            (s.volume ?? 0) > 500000, // good volume confirmation
         ]);
         // Score: blend of technical quality + fundamental quality
         const closeScore = (cp - 0.60) * 25; // how strong the close was
         const w52Score = (w52p - 0.35) * 15; // how far into the uptrend
         const secScore = (secB - 0.55) * 20; // sector strength
-        const fundScore = ((_d = s.roce) !== null && _d !== void 0 ? _d : 0) * 0.4 +
-            ((_e = s.roe) !== null && _e !== void 0 ? _e : 0) * 0.25 +
-            ((_f = s.promoter_pct) !== null && _f !== void 0 ? _f : 0) * 0.05 +
+        const fundScore = (s.roce ?? 0) * 0.4 +
+            (s.roe ?? 0) * 0.25 +
+            (s.promoter_pct ?? 0) * 0.05 +
             (s.all_profitable ? 8 : 0) +
             (s.profit_uptrend ? 5 : 0);
-        const volBonus = ((_g = s.volume) !== null && _g !== void 0 ? _g : 0) > 500000 ? 3 : 0;
+        const volBonus = (s.volume ?? 0) > 500000 ? 3 : 0;
         return { ...s, confidence, w52p, secB, cp,
             score: closeScore + w52Score + secScore + fundScore + volBonus,
         };
@@ -510,9 +497,9 @@ async function generateDailyPicks() {
         .sort((a, b) => b.score - a.score);
     for (const s of selectBest(swingPool, 5, 2, usedSymbols)) {
         const price = s.price;
-        const dayLo = (_g = s.day_low) !== null && _g !== void 0 ? _g : price * 0.98;
-        const dayHi = (_h = s.day_high) !== null && _h !== void 0 ? _h : price * 1.02;
-        const w52hi = (_j = s.week52_high) !== null && _j !== void 0 ? _j : price * 1.15;
+        const dayLo = s.day_low ?? price * 0.98;
+        const dayHi = s.day_high ?? price * 1.02;
+        const w52hi = s.week52_high ?? price * 1.15;
         // Entry: wait for a small dip tomorrow (buy the pullback, not the gap)
         const entryLow = parseFloat((price * 0.992).toFixed(2)); // -0.8% from close
         const entryHigh = parseFloat((price * 1.002).toFixed(2)); // at close or slight up
@@ -528,7 +515,7 @@ async function generateDailyPicks() {
         const parts = [];
         parts.push(`Closed at ${(cp * 100).toFixed(0)}% of day's range — buyers in control`);
         parts.push(`In ${(w52p * 100).toFixed(0)}% of 52W range — uptrend, room to grow`);
-        parts.push(`Sector ${secPct}% bullish · ROCE ${((_k = s.roce) !== null && _k !== void 0 ? _k : 0).toFixed(0)}%${s.profit_uptrend ? " · Profit uptrend" : ""}${s.all_profitable ? " · All years profitable" : ""}`);
+        parts.push(`Sector ${secPct}% bullish · ROCE ${(s.roce ?? 0).toFixed(0)}%${s.profit_uptrend ? " · Profit uptrend" : ""}${s.all_profitable ? " · All years profitable" : ""}`);
         parts.push(`Confidence ${s.confidence}%`);
         const reason = parts.slice(0, 3).join(" · ");
         await (0, db_1.createPick)({
@@ -558,11 +545,10 @@ async function generateDailyPicks() {
     // Hold time: 15–60 minutes max — NOT for overnight holding
     const scalperPool = stocks
         .filter(s => {
-        var _a, _b;
         const cp = closePosition(s);
         const drP = dayRangePct(s);
-        const vol = (_a = s.volume) !== null && _a !== void 0 ? _a : 0;
-        const chg = Math.abs((_b = s.change_pct) !== null && _b !== void 0 ? _b : 0);
+        const vol = s.volume ?? 0;
+        const chg = Math.abs(s.change_pct ?? 0);
         return (s.price >= 80 && s.price <= 3000 &&
             vol > 1500000 && // high liquidity — tight spreads
             drP >= 1.5 && drP <= 7.0 && // volatile enough to scalp
@@ -572,10 +558,9 @@ async function generateDailyPicks() {
         );
     })
         .map(s => {
-        var _a, _b;
         const cp = closePosition(s);
         const isLong = cp >= 0.68;
-        const vol = (_a = s.volume) !== null && _a !== void 0 ? _a : 0;
+        const vol = s.volume ?? 0;
         const drP = dayRangePct(s);
         const secBull = sectorBullishPct(s);
         const secAlign = isLong ? secBull > 0.50 : secBull < 0.50;
@@ -585,7 +570,7 @@ async function generateDailyPicks() {
             drP >= 2.0 && drP <= 5.0, // ideal scalping range
             secAlign, // sector agrees direction
             Math.abs(gapPct(s)) < 0.5, // clean open (no gap)
-            Math.abs((_b = s.change_pct) !== null && _b !== void 0 ? _b : 0) < 5.0, // not already overextended
+            Math.abs(s.change_pct ?? 0) < 5.0, // not already overextended
         ]);
         const closeStr = isLong ? (cp - 0.68) * 30 : (0.32 - cp) * 30;
         const volScore = Math.min(vol / 2000000, 6);
@@ -636,7 +621,6 @@ async function generateDailyPicks() {
 }
 // ── Auto paper trade from today's picks ───────────────────────────────────────
 async function autoPaperTradeFromPicks() {
-    var _a, _b, _c, _d, _e;
     const users = await (0, db_1.getUsersWithAutoPicks)();
     if (users.length === 0) {
         console.log("[AutoPaper] No users opted in");
@@ -664,7 +648,7 @@ async function autoPaperTradeFromPicks() {
             }
             const qty = 1;
             const priceRow = await (0, db_1.dbAll)("SELECT price FROM prices WHERE symbol = ?", [pick.stock_symbol]);
-            const livePrice = (_b = (_a = priceRow[0]) === null || _a === void 0 ? void 0 : _a.price) !== null && _b !== void 0 ? _b : 0;
+            const livePrice = priceRow[0]?.price ?? 0;
             const entryMid = parseFloat(((pick.entry_low + pick.entry_high) / 2).toFixed(2));
             const tradeType = (pick.pick_type === "intraday" || pick.pick_type === "scalper") ? "INTRADAY" : "HOLDING";
             // Swing: only enter if live price is within entry zone (limit order — wait for pullback)
@@ -680,7 +664,7 @@ async function autoPaperTradeFromPicks() {
             else {
                 price = entryMid > 0 ? entryMid : (livePrice > 0 ? livePrice : pick.entry_low);
             }
-            const result = await (0, db_1.paperBuy)(user.id, pick.stock_symbol, (_c = pick.company_name) !== null && _c !== void 0 ? _c : null, qty, price, tradeType, (_d = pick.stop_loss) !== null && _d !== void 0 ? _d : null, (_e = pick.target) !== null && _e !== void 0 ? _e : null, "LIMIT");
+            const result = await (0, db_1.paperBuy)(user.id, pick.stock_symbol, pick.company_name ?? null, qty, price, tradeType, pick.stop_loss ?? null, pick.target ?? null, "LIMIT");
             if (result.ok) {
                 bought++;
                 console.log(`[AutoPaper] ✅ ${user.email} bought ${pick.stock_symbol} @ ₹${price} (${tradeType})`);
@@ -699,7 +683,6 @@ async function autoPaperTradeFromPicks() {
 }
 // ── Monitor open auto-paper positions for SL / target hits ────────────────────
 async function monitorAutoPaperPositions() {
-    var _a, _b, _c, _d, _e, _f;
     const users = await (0, db_1.getUsersWithAutoPicks)();
     if (users.length === 0)
         return;
@@ -714,10 +697,10 @@ async function monitorAutoPaperPositions() {
             if (openSymbols.has(pick.stock_symbol.toUpperCase()))
                 continue;
             const priceRow = await (0, db_1.dbAll)("SELECT price FROM prices WHERE symbol = ?", [pick.stock_symbol]);
-            const livePrice = (_b = (_a = priceRow[0]) === null || _a === void 0 ? void 0 : _a.price) !== null && _b !== void 0 ? _b : 0;
+            const livePrice = priceRow[0]?.price ?? 0;
             if (livePrice <= 0 || livePrice < pick.entry_low || livePrice > pick.entry_high)
                 continue;
-            const result = await (0, db_1.paperBuy)(user.id, pick.stock_symbol, (_c = pick.company_name) !== null && _c !== void 0 ? _c : null, 1, livePrice, 'HOLDING', (_d = pick.stop_loss) !== null && _d !== void 0 ? _d : null, (_e = pick.target) !== null && _e !== void 0 ? _e : null, 'LIMIT');
+            const result = await (0, db_1.paperBuy)(user.id, pick.stock_symbol, pick.company_name ?? null, 1, livePrice, 'HOLDING', pick.stop_loss ?? null, pick.target ?? null, 'LIMIT');
             if (result.ok) {
                 await (0, db_1.updatePickEntry)(pick.id, livePrice).catch(() => { });
                 openSymbols.add(pick.stock_symbol.toUpperCase());
@@ -729,7 +712,7 @@ async function monitorAutoPaperPositions() {
             continue;
         for (const pos of positions) {
             const priceRow = await (0, db_1.dbAll)("SELECT price FROM prices WHERE symbol = ?", [pos.symbol]);
-            const livePrice = (_f = priceRow[0]) === null || _f === void 0 ? void 0 : _f.price;
+            const livePrice = priceRow[0]?.price;
             if (!livePrice || livePrice <= 0)
                 continue;
             const hit = (pos.target_price && livePrice >= pos.target_price) ? "TARGET" :
@@ -744,7 +727,6 @@ async function monitorAutoPaperPositions() {
 }
 // ── Intraday forced square-off at 3:15 PM IST ─────────────────────────────────
 async function squareOffIntradayPositions() {
-    var _a, _b;
     const users = await (0, db_1.getUsersWithAutoPicks)();
     if (users.length === 0)
         return;
@@ -756,7 +738,7 @@ async function squareOffIntradayPositions() {
         let closed = 0;
         for (const pos of intradayPos) {
             const priceRow = await (0, db_1.dbAll)("SELECT price FROM prices WHERE symbol = ?", [pos.symbol]);
-            const exitPrice = (_b = (_a = priceRow[0]) === null || _a === void 0 ? void 0 : _a.price) !== null && _b !== void 0 ? _b : pos.avg_price;
+            const exitPrice = priceRow[0]?.price ?? pos.avg_price;
             if (!exitPrice || exitPrice <= 0)
                 continue;
             const result = await (0, db_1.paperSell)(user.id, pos.symbol, pos.qty, exitPrice);
@@ -815,7 +797,7 @@ async function sendMorningReminder() {
     // Get yesterday's bot P&L from bot_trades table
     const yesterday = new Date(Date.now() - 86400000).toISOString().slice(0, 10);
     const ytrades = await (0, db_1.dbAll)(`SELECT pnl FROM bot_trades WHERE trade_date = ?`, [yesterday]);
-    const yPnL = ytrades.reduce((s, t) => { var _a; return s + ((_a = t.pnl) !== null && _a !== void 0 ? _a : 0); }, 0);
+    const yPnL = ytrades.reduce((s, t) => s + (t.pnl ?? 0), 0);
     const yLine = ytrades.length > 0
         ? `Yesterday: ${yPnL >= 0 ? "+" : ""}${yPnL.toFixed(0)} pts (${ytrades.length} trade${ytrades.length !== 1 ? "s" : ""})`
         : "Yesterday: No trades recorded";
@@ -840,14 +822,14 @@ async function sendEODSummary() {
     const today = new Date().toISOString().slice(0, 10);
     // Bot trades today
     const botTrades = await (0, db_1.dbAll)(`SELECT pnl, direction, exit_reason FROM bot_trades WHERE trade_date = ?`, [today]);
-    const botPnL = botTrades.reduce((s, t) => { var _a; return s + ((_a = t.pnl) !== null && _a !== void 0 ? _a : 0); }, 0);
-    const botWins = botTrades.filter(t => { var _a; return ((_a = t.pnl) !== null && _a !== void 0 ? _a : 0) > 0; }).length;
+    const botPnL = botTrades.reduce((s, t) => s + (t.pnl ?? 0), 0);
+    const botWins = botTrades.filter(t => (t.pnl ?? 0) > 0).length;
     const botLine = botTrades.length > 0
         ? `BANKNIFTY Bot: ${botPnL >= 0 ? "+" : ""}${botPnL.toFixed(0)} pts | ${botWins}W/${botTrades.length - botWins}L`
         : "BANKNIFTY Bot: No trades today";
     // Paper trade PnL today (all users)
     const paperToday = await (0, db_1.dbAll)(`SELECT pnl FROM paper_trades WHERE date(traded_at)=? AND action='SELL' AND pnl IS NOT NULL`, [today]);
-    const paperPnL = paperToday.reduce((s, t) => { var _a; return s + ((_a = t.pnl) !== null && _a !== void 0 ? _a : 0); }, 0);
+    const paperPnL = paperToday.reduce((s, t) => s + (t.pnl ?? 0), 0);
     const paperLine = paperToday.length > 0
         ? `Paper Trades: ₹${paperPnL >= 0 ? "+" : ""}${paperPnL.toFixed(0)} (${paperToday.length} closed)`
         : "Paper Trades: None closed today";
@@ -902,7 +884,6 @@ async function trackPickResults() {
 }
 // ── Weekly P&L email to admin ─────────────────────────────────────────────────
 async function sendWeeklyAdminSummary() {
-    var _a, _b;
     const adminEmail = process.env.ADMIN_EMAIL;
     if (!adminEmail)
         return;
@@ -910,11 +891,11 @@ async function sendWeeklyAdminSummary() {
     const today = new Date().toISOString().slice(0, 10);
     // Bot trades this week
     const botTrades = await (0, db_1.dbAll)(`SELECT pnl, trade_date FROM bot_trades WHERE trade_date >= ? ORDER BY trade_date`, [weekAgo]);
-    const botPnL = botTrades.reduce((s, t) => { var _a; return s + ((_a = t.pnl) !== null && _a !== void 0 ? _a : 0); }, 0);
-    const botWins = botTrades.filter(t => { var _a; return ((_a = t.pnl) !== null && _a !== void 0 ? _a : 0) > 0; }).length;
+    const botPnL = botTrades.reduce((s, t) => s + (t.pnl ?? 0), 0);
+    const botWins = botTrades.filter(t => (t.pnl ?? 0) > 0).length;
     // Paper trades this week
     const paperTrades = await (0, db_1.dbAll)(`SELECT pnl, user_id FROM paper_trades WHERE date(traded_at) >= ? AND action='SELL' AND pnl IS NOT NULL`, [weekAgo]);
-    const paperPnL = paperTrades.reduce((s, t) => { var _a; return s + ((_a = t.pnl) !== null && _a !== void 0 ? _a : 0); }, 0);
+    const paperPnL = paperTrades.reduce((s, t) => s + (t.pnl ?? 0), 0);
     // Pick accuracy this week
     const picksThisWeek = await (0, db_1.dbAll)(`SELECT result FROM picks WHERE date(published_at) >= ? AND result IS NOT NULL`, [weekAgo]);
     const pickWins = picksThisWeek.filter(p => p.result === "target_hit").length;
@@ -924,7 +905,7 @@ async function sendWeeklyAdminSummary() {
         : "N/A";
     // Users
     const userCount = await (0, db_1.dbAll)("SELECT COUNT(*) as c FROM users");
-    const totalUsers = (_b = (_a = userCount[0]) === null || _a === void 0 ? void 0 : _a.c) !== null && _b !== void 0 ? _b : 0;
+    const totalUsers = userCount[0]?.c ?? 0;
     const { sendWeeklyAdminEmail } = await Promise.resolve().then(() => __importStar(require("./mailer")));
     await sendWeeklyAdminEmail(adminEmail, {
         weekStart: weekAgo, weekEnd: today,

@@ -483,20 +483,32 @@ function requireAuth(req, res, next) {
     next();
 }
 function requireAdmin(req, res, next) {
+    const isApi = req.path.startsWith("/api/") || req.path.startsWith("/internal/");
     if (!req.session.userId) {
+        if (isApi) { res.status(401).json({ ok: false, error: "Unauthorized. Please log in as admin." }); return; }
         res.redirect("/login?next=" + encodeURIComponent(req.path));
         return;
     }
     if (req.session.userRole !== "admin") {
+        if (isApi) { res.status(403).json({ ok: false, error: "Forbidden. Admin access required." }); return; }
         res.status(403).send(`<!DOCTYPE html><html><head><title>Access Denied</title><link rel="stylesheet" href="/public/css/style.css"></head><body>${nav("", req)}<div class="container"><div class="admin-denied"><h2>?? Admin Only</h2><p>You don't have permission to view this page.</p><a href="/" class="btn-primary">Back to Screener</a></div></div></body></html>`);
         return;
     }
     next();
 }
 /** Middleware: blocks access when app_setting[key] === 'false' */
+const _featureGateCache = new Map();
 function featureGate(settingKey, featureName) {
     return async (req, res, next) => {
-        const enabled = (await (0, db_1.getSetting)(settingKey)) !== "false";
+        // Cache DB lookup for 30 seconds per setting key
+        const cached = _featureGateCache.get(settingKey);
+        let enabled;
+        if (cached && Date.now() - cached.t < 30000) {
+            enabled = cached.v;
+        } else {
+            enabled = (await (0, db_1.getSetting)(settingKey)) !== "false";
+            _featureGateCache.set(settingKey, { v: enabled, t: Date.now() });
+        }
         if (!enabled) {
             res.status(404).send(`<!DOCTYPE html>
 <html lang="en"><head>
@@ -741,6 +753,7 @@ function nav(active, req) {
       <a href="/paper-trade" class="${active === "paper-trade" ? "active" : ""}">Paper Trade</a>
       <a href="${isLoggedIn ? '/dashboard' : '/paper-trade'}" class="nav-hot-link${active === 'dashboard' || active === 'my-paper-trade' || active === 'my-portfolio' ? ' active' : ''}">My Trade <span class="nav-hot-badge">HOT</span></a>
       ${isAdmin ? `<a href="/holdings" class="nav-hot-link${active === 'holdings' ? ' active' : ''}" style="background:linear-gradient(90deg,rgba(16,185,129,.18),rgba(6,182,212,.12));border:1px solid rgba(16,185,129,.3)">Holdings</a>` : ''}
+      ${isAdmin ? `<a href='/tradeops' class='nav-hot-link${active === 'tradeops' ? ' active' : ''}' style='background:linear-gradient(90deg,rgba(99,102,241,.18),rgba(139,92,246,.12));border:1px solid rgba(99,102,241,.3);color:#a5b4fc'>TradeOps</a>` : ''}
       ${exploreDropHtml}
     </div>
     <div class="nav-links" id="nav-links">
@@ -754,6 +767,7 @@ function nav(active, req) {
       <a href="/paper-trade" class="${active === "paper-trade" ? "active" : ""}">Paper Trade</a>
       <a href="${isLoggedIn ? '/dashboard' : '/paper-trade'}" class="nav-hot-link${active === 'dashboard' || active === 'my-paper-trade' || active === 'my-portfolio' ? ' active' : ''}">My Trade <span class="nav-hot-badge">HOT</span></a>
       ${isAdmin ? `<a href="/holdings" class="${active === 'holdings' ? 'active' : ''}">My Holdings</a>` : ''}
+      ${isAdmin ? `<a href='/tradeops' class='${active === 'tradeops' ? 'active' : ''}'>TradeOps</a>` : ''}
       ${exploreDropHtml}
       ${mobileMobFooter}
         <input type="text" id="nav-search" class="nav-search-input" placeholder="Search stocks…" autocomplete="off" aria-label="Search stocks">
@@ -6692,9 +6706,29 @@ app.get("/api/bot/status", async (_req, res) => {
 });
 // Shadow-only ZeroScreen monitor. This endpoint never places broker orders.
 let shadowExternalHealthCache = { checkedAt: 0, value: null };
+let _shadowHealthRefreshInFlight = false;
+async function _refreshShadowExternalHealth() {
+    if (_shadowHealthRefreshInFlight) return;
+    _shadowHealthRefreshInFlight = true;
+    try {
+        await shadowExternalHealth();
+    } catch(e) { /* silently retain old cache */ }
+    finally { _shadowHealthRefreshInFlight = false; }
+}
+// Warm up immediately on boot, then refresh every 60 s in background
+_refreshShadowExternalHealth();
+setInterval(_refreshShadowExternalHealth, 60000);
 async function shadowExternalHealth() {
-    var _a, _b, _c, _e, _f;
-    if (shadowExternalHealthCache.value && Date.now() - shadowExternalHealthCache.checkedAt < 45000) {
+    // Always return from in-memory cache (refreshed every 60s by background task)
+    return shadowExternalHealthCache.value || {
+        checkedAt: new Date().toISOString(),
+        apiLatencyMs: 0,
+        database: { ok: false, error: "Health check initializing..." },
+        token: { valid: false, userId: null, error: "Initializing...", source: "boot",
+            autoRefreshImplemented: false, autoRefreshVerified: false, autoRefreshFailed: false, lastAutoRefreshLogAt: null },
+    };
+    /* old async code below - now handled by background _refreshShadowExternalHealth() */
+    if (false && shadowExternalHealthCache.value && Date.now() - shadowExternalHealthCache.checkedAt < 45000) {
         return shadowExternalHealthCache.value;
     }
     const checkedAt = new Date().toISOString();
@@ -6737,10 +6771,10 @@ async function shadowExternalHealth() {
     shadowExternalHealthCache = { checkedAt: Date.now(), value };
     return value;
 }
-app.get("/api/shadow-monitor", featureGate("feature_signals", "Signals"), async (_req, res) => {
+app.get("/api/shadow-monitor", featureGate("feature_signals", "Signals"), (_req, res) => {
     res.setHeader("Cache-Control", "no-store");
     try {
-        const externalHealth = await shadowExternalHealth();
+        const externalHealth = shadowExternalHealth();
         res.json((0, shadowMonitor_1.buildShadowMonitorPayload)(String(_req.query.strategy || ""), String(_req.query.instrument || ""), externalHealth, String(_req.query.underlying || "BANKNIFTY")));
     }
     catch (error) {
@@ -6777,24 +6811,111 @@ const TRADEOPS_AUTO_TOKEN_SCRIPT = `${TRADEOPS_BOT_DIR}/auto_token.js`;
 const TRADEOPS_AUTO_TOKEN_LOG = `${TRADEOPS_BOT_DIR}/logs/auto_token_manual.log`;
 const TRADEOPS_STRATEGY_CONFIG_FILE = path_1.default.join(process.cwd(), "tradeops-strategies.json");
 const TRADEOPS_DEFAULT_STRATEGIES = [
+    // 10:00 AM Breakout Suite
     {
-        id: "tt1030-futures",
-        name: "10:30 Futures",
+        id: "tt1000-baseline",
+        name: "10:00 Baseline (Max 2)",
         enabled: true,
         mode: "SHADOW",
         instrument: "BANKNIFTY",
-        product: "Futures",
+        product: "Futures/Index",
+        entryTime: "10:00",
+        quantity: 30,
+        sl: "V2 Candle Trail",
+        target: "EOD 15:15",
+        maxDailyLoss: "Max 2 Trades",
+        status: "Running",
+        liveCapable: true,
+        source: "tt1030",
+        config: { strategyCode: "TEN_O_CLOCK_BASELINE", timeframe: "15m" },
+    },
+    {
+        id: "tt1000-quality-breakout",
+        name: "10:00 Quality (Max 3)",
+        enabled: true,
+        mode: "SHADOW",
+        instrument: "BANKNIFTY",
+        product: "Futures/Index",
+        entryTime: "10:00",
+        quantity: 30,
+        sl: "V2 Candle Trail",
+        target: "EOD 15:15",
+        maxDailyLoss: "Max 3 Trades",
+        status: "Running",
+        liveCapable: true,
+        source: "tt1030",
+        config: { strategyCode: "TEN_O_CLOCK_QUALITY_INDEX", timeframe: "15m" },
+    },
+    {
+        id: "tt1000-unlimited",
+        name: "10:00 Unlimited (No Cap)",
+        enabled: true,
+        mode: "SHADOW",
+        instrument: "BANKNIFTY",
+        product: "Futures/Index",
+        entryTime: "10:00",
+        quantity: 30,
+        sl: "V2 Candle Trail",
+        target: "EOD 14:15 cutoff",
+        maxDailyLoss: "Unlimited Trades",
+        status: "Running",
+        liveCapable: false,
+        source: "tt1030",
+        config: { strategyCode: "TEN_O_CLOCK_UNLIMITED_INDEX", timeframe: "15m" },
+    },
+    // 10:30 AM Breakout Suite
+    {
+        id: "tt1030-futures",
+        name: "10:30 Baseline (Max 2)",
+        enabled: true,
+        mode: "SHADOW",
+        instrument: "BANKNIFTY",
+        product: "Futures/Index",
         entryTime: "10:30",
         quantity: 30,
-        sl: "Breakout candle / strategy SL",
-        target: "EOD / strategy exit",
-        maxDailyLoss: "Broker/risk gate",
+        sl: "V2 Candle Trail",
+        target: "EOD 15:15",
+        maxDailyLoss: "Max 2 Trades",
         status: "Running",
         liveCapable: true,
         source: "tt1030",
         config: { strategyCode: "TEN_THIRTY_INDEX_FUTURES", timeframe: "15m" },
     },
-];
+    {
+        id: "tt1030-quality-reversal",
+        name: "10:30 Quality (Max 3)",
+        enabled: true,
+        mode: "SHADOW",
+        instrument: "BANKNIFTY",
+        product: "Futures/Index",
+        entryTime: "10:30",
+        quantity: 30,
+        sl: "Profit Lock + Candle Trail",
+        target: "EOD 15:15",
+        maxDailyLoss: "Max 3 Trades",
+        status: "Running",
+        liveCapable: true,
+        source: "tt1030",
+        config: { strategyCode: "TEN_THIRTY_QUALITY_INDEX", timeframe: "15m" },
+    },
+    {
+        id: "tt1030-unlimited",
+        name: "10:30 Unlimited (No Cap)",
+        enabled: true,
+        mode: "SHADOW",
+        instrument: "BANKNIFTY",
+        product: "Futures/Index",
+        entryTime: "10:30",
+        quantity: 30,
+        sl: "V2 Candle Trail",
+        target: "EOD 14:15 cutoff",
+        maxDailyLoss: "Unlimited Trades",
+        status: "Running",
+        liveCapable: false,
+        source: "tt1030",
+        config: { strategyCode: "TEN_THIRTY_UNLIMITED_INDEX", timeframe: "15m" },
+    },
+]
 function tradeOpsReadStrategyOverrides() {
     try {
         const parsed = JSON.parse(fs_1.default.readFileSync(TRADEOPS_STRATEGY_CONFIG_FILE, "utf8"));
@@ -7237,8 +7358,21 @@ function tradeOpsDedupeRejections(rows) {
 }
 function buildTradeOpsLogPreview() {
     const hb = readBotJSON("bot-heartbeat.json", {}) || {};
-    const tt1030State = readBotJSON("tt1030-state.json", {}) || {};
-    const tt1030CandleFile = readBotJSON("tt1030-candle-log.json", {}) || {};
+    const stratSource = String(selectedStrategy.source || "tt1030");
+    const stateFileName = stratSource === "tt1000" ? "tt1000-state.json"
+        : stratSource === "tt1000Quality" ? "tt1000-quality-state.json"
+        : stratSource === "tt1000Unlimited" ? "tt1000-unlimited-state.json"
+        : stratSource === "tt1030Quality" ? "tt1030-quality-state.json"
+        : stratSource === "tt1030Unlimited" ? "tt1030-unlimited-state.json"
+        : "tt1030-state.json";
+    const candleFileName = stratSource === "tt1000" ? "tt1000-candle-log.json"
+        : stratSource === "tt1000Quality" ? "tt1000-quality-candle-log.json"
+        : stratSource === "tt1000Unlimited" ? "tt1000-unlimited-candle-log.json"
+        : stratSource === "tt1030Quality" ? "tt1030-quality-candle-log.json"
+        : stratSource === "tt1030Unlimited" ? "tt1030-unlimited-candle-log.json"
+        : "tt1030-candle-log.json";
+    const tt1030State = readBotJSON(stateFileName, {}) || {};
+    const tt1030CandleFile = readBotJSON(candleFileName, {}) || {};
     const today = getTodayIST();
     const hbAt = (hb === null || hb === void 0 ? void 0 : hb.at) ? new Date(hb.at).getTime() : 0;
     const heartbeatAgeSec = hbAt ? Math.max(0, Math.round((Date.now() - hbAt) / 1000)) : null;
@@ -7305,8 +7439,21 @@ async function buildTradeOpsStatus(strategyId = "") {
     const selectedStrategy = strategies.find((s) => s.id === String(strategyId || "").trim()) || strategies.find((s) => s.enabled) || strategies[0];
     const hb = readBotJSON("bot-heartbeat.json", {}) || {};
     const state = readBotJSON("trade-state.json", {}) || {};
-    const tt1030State = readBotJSON("tt1030-state.json", {}) || {};
-    const tt1030CandleFile = readBotJSON("tt1030-candle-log.json", {}) || {};
+    const stratSource = String(selectedStrategy.source || "tt1030");
+    const stateFileName = stratSource === "tt1000" ? "tt1000-state.json"
+        : stratSource === "tt1000Quality" ? "tt1000-quality-state.json"
+        : stratSource === "tt1000Unlimited" ? "tt1000-unlimited-state.json"
+        : stratSource === "tt1030Quality" ? "tt1030-quality-state.json"
+        : stratSource === "tt1030Unlimited" ? "tt1030-unlimited-state.json"
+        : "tt1030-state.json";
+    const candleFileName = stratSource === "tt1000" ? "tt1000-candle-log.json"
+        : stratSource === "tt1000Quality" ? "tt1000-quality-candle-log.json"
+        : stratSource === "tt1000Unlimited" ? "tt1000-unlimited-candle-log.json"
+        : stratSource === "tt1030Quality" ? "tt1030-quality-candle-log.json"
+        : stratSource === "tt1030Unlimited" ? "tt1030-unlimited-candle-log.json"
+        : "tt1030-candle-log.json";
+    const tt1030State = readBotJSON(stateFileName, {}) || {};
+    const tt1030CandleFile = readBotJSON(candleFileName, {}) || {};
     const rawTrades = readBotJSON("trades.json", []) || [];
     const hbAt = (hb === null || hb === void 0 ? void 0 : hb.at) ? new Date(hb.at).getTime() : 0;
     const heartbeatAgeSec = hbAt ? Math.max(0, Math.round((Date.now() - hbAt) / 1000)) : null;

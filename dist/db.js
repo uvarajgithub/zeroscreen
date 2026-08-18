@@ -576,7 +576,6 @@ async function upsertPrice(p) {
   `, [p.symbol, p.price, p.volume, p.day_high, p.day_low, p.prev_close, p.change_pct, p.updated_at]);
 }
 async function screenStocks(f) {
-    var _a, _b, _c;
     const wheres = ["s.fetched_at IS NOT NULL", "(s.fetch_error IS NULL OR s.fetch_error = '')"];
     const params = [];
     const add = (w, v) => { wheres.push(w); params.push(v); };
@@ -641,10 +640,10 @@ async function screenStocks(f) {
         market_cap: "s.market_cap", change_pct: "p.change_pct", dividend: "s.dividend_yield",
         eps: "s.eps", book_value: "s.book_value", current_ratio: "s.current_ratio",
     };
-    const sortCol = (_a = allowedSort[f.sortBy || "roce"]) !== null && _a !== void 0 ? _a : "s.roce";
+    const sortCol = allowedSort[f.sortBy || "roce"] ?? "s.roce";
     const sortDir = f.sortDir === "asc" ? "ASC" : "DESC";
-    const limit = Math.min((_b = f.limit) !== null && _b !== void 0 ? _b : 100, 500);
-    const offset = (_c = f.offset) !== null && _c !== void 0 ? _c : 0;
+    const limit = Math.min(f.limit ?? 100, 500);
+    const offset = f.offset ?? 0;
     return dbAll(`
     SELECT s.*, p.price, p.volume, p.day_high, p.day_low, p.prev_close, p.change_pct, p.updated_at
     FROM stocks s LEFT JOIN prices p ON p.symbol = s.symbol
@@ -694,8 +693,8 @@ async function getDbStats() {
         dbGet("SELECT MAX(updated_at) as d FROM prices"),
     ]);
     return {
-        total: (total === null || total === void 0 ? void 0 : total.c) || 0, fetched: (fetched === null || fetched === void 0 ? void 0 : fetched.c) || 0,
-        priced: (priced === null || priced === void 0 ? void 0 : priced.c) || 0, lastPriceUpdate: (priceRow === null || priceRow === void 0 ? void 0 : priceRow.d) || null,
+        total: total?.c || 0, fetched: fetched?.c || 0,
+        priced: priced?.c || 0, lastPriceUpdate: priceRow?.d || null,
     };
 }
 // ── Watchlists ────────────────────────────────────────────────────────────────
@@ -733,7 +732,7 @@ async function getWatchlist(id, userId) {
 }
 async function createWatchlist(name, description = "", userId) {
     return new Promise((resolve, reject) => {
-        getDb().run("INSERT INTO watchlists (name, description, user_id) VALUES (?, ?, ?)", [name, description, userId !== null && userId !== void 0 ? userId : null], function (err) { if (err)
+        getDb().run("INSERT INTO watchlists (name, description, user_id) VALUES (?, ?, ?)", [name, description, userId ?? null], function (err) { if (err)
             reject(err);
         else
             resolve(this.lastID); });
@@ -767,9 +766,8 @@ async function getUserById(id) {
     return dbGet("SELECT * FROM users WHERE id = ?", [id]);
 }
 async function countUsers() {
-    var _a;
     const row = await dbGet("SELECT COUNT(*) as c FROM users");
-    return (_a = row === null || row === void 0 ? void 0 : row.c) !== null && _a !== void 0 ? _a : 0;
+    return row?.c ?? 0;
 }
 async function getAllUsers() {
     return dbAll("SELECT id, name, email, role, created_at FROM users ORDER BY created_at DESC");
@@ -789,7 +787,7 @@ async function getTelegramSubscribers() {
 // ── Referral helpers ──────────────────────────────────────────────────────────
 async function getOrCreateReferralCode(userId) {
     const row = await dbGet("SELECT referral_code FROM users WHERE id=?", [userId]);
-    if (row === null || row === void 0 ? void 0 : row.referral_code)
+    if (row?.referral_code)
         return row.referral_code;
     const code = require("crypto").randomBytes(4).toString("hex").toUpperCase(); // 8-char
     await dbRun("UPDATE users SET referral_code=? WHERE id=?", [code, userId]);
@@ -889,9 +887,9 @@ async function getAllPicks() {
     return dbAll("SELECT * FROM picks WHERE pick_type != 'longterm' ORDER BY published_at DESC LIMIT 100");
 }
 async function createPick(p) {
-    var _a, _b, _c, _d, _e;
     await dbRun(`INSERT INTO picks (stock_symbol,company_name,direction,pick_type,entry_low,entry_high,target,stop_loss,reason,risk_level,status,created_by)
-     VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`, [p.stock_symbol, (_a = p.company_name) !== null && _a !== void 0 ? _a : null, p.direction, (_b = p.pick_type) !== null && _b !== void 0 ? _b : 'intraday', p.entry_low, p.entry_high, (_c = p.target) !== null && _c !== void 0 ? _c : null, (_d = p.stop_loss) !== null && _d !== void 0 ? _d : null, p.reason, p.risk_level, p.status, (_e = p.created_by) !== null && _e !== void 0 ? _e : null]);
+     VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`, [p.stock_symbol, p.company_name ?? null, p.direction, p.pick_type ?? 'intraday', p.entry_low, p.entry_high,
+        p.target ?? null, p.stop_loss ?? null, p.reason, p.risk_level, p.status, p.created_by ?? null]);
 }
 async function updatePickStatus(id, status) {
     await dbRun("UPDATE picks SET status=? WHERE id=?", [status, id]);
@@ -913,9 +911,8 @@ async function deletePick(id) {
 }
 // ── App Settings ──────────────────────────────────────────────────────────────
 async function getSetting(key) {
-    var _a;
     const r = await dbGet("SELECT value FROM app_settings WHERE key=?", [key]);
-    return (_a = r === null || r === void 0 ? void 0 : r.value) !== null && _a !== void 0 ? _a : "";
+    return r?.value ?? "";
 }
 async function setSetting(key, value) {
     await dbRun("INSERT OR REPLACE INTO app_settings (key,value) VALUES (?,?)", [key, value]);
@@ -988,20 +985,19 @@ async function paperBuy(userId, symbol, companyName, qty, price, tradeType = 'IN
         const newQty = existing.qty + qty;
         const newAvg = parseFloat(((existing.avg_price * existing.qty + price * qty) / newQty).toFixed(4));
         const newInv = parseFloat((existing.invested + total).toFixed(2));
-        await dbRun("UPDATE paper_positions SET qty=?,avg_price=?,invested=?,sl_price=?,target_price=?,order_type=? WHERE user_id=? AND symbol=?", [newQty, newAvg, newInv, slPrice !== null && slPrice !== void 0 ? slPrice : null, targetPrice !== null && targetPrice !== void 0 ? targetPrice : null, orderType, userId, symbol]);
+        await dbRun("UPDATE paper_positions SET qty=?,avg_price=?,invested=?,sl_price=?,target_price=?,order_type=? WHERE user_id=? AND symbol=?", [newQty, newAvg, newInv, slPrice ?? null, targetPrice ?? null, orderType, userId, symbol]);
     }
     else {
-        await dbRun("INSERT INTO paper_positions (user_id,symbol,company_name,qty,avg_price,invested,trade_type,sl_price,target_price,order_type) VALUES (?,?,?,?,?,?,?,?,?,?)", [userId, symbol, companyName, qty, price, total, tradeType, slPrice !== null && slPrice !== void 0 ? slPrice : null, targetPrice !== null && targetPrice !== void 0 ? targetPrice : null, orderType]);
+        await dbRun("INSERT INTO paper_positions (user_id,symbol,company_name,qty,avg_price,invested,trade_type,sl_price,target_price,order_type) VALUES (?,?,?,?,?,?,?,?,?,?)", [userId, symbol, companyName, qty, price, total, tradeType, slPrice ?? null, targetPrice ?? null, orderType]);
     }
     await dbRun("UPDATE paper_portfolio SET balance=? WHERE user_id=?", [newBal, userId]);
     await dbRun("INSERT INTO paper_trades (user_id,symbol,company_name,action,qty,price,total,balance_after,trade_type) VALUES (?,?,?,?,?,?,?,?,?)", [userId, symbol, companyName, "BUY", qty, price, total, newBal, tradeType]);
     return { ok: true, msg: `Bought ${qty} × ${symbol} @ ₹${price}`, balance: newBal };
 }
 async function paperSell(userId, symbol, qty, price) {
-    var _a;
     const pos = await dbGet("SELECT * FROM paper_positions WHERE user_id=? AND symbol=?", [userId, symbol]);
     if (!pos || pos.qty < qty)
-        return { ok: false, msg: `Not enough shares. You hold ${(_a = pos === null || pos === void 0 ? void 0 : pos.qty) !== null && _a !== void 0 ? _a : 0} of ${symbol}`, balance: (await getPaperPortfolio(userId)).balance };
+        return { ok: false, msg: `Not enough shares. You hold ${pos?.qty ?? 0} of ${symbol}`, balance: (await getPaperPortfolio(userId)).balance };
     const total = parseFloat((qty * price).toFixed(2));
     const costBasis = parseFloat((pos.avg_price * qty).toFixed(2));
     const pnl = parseFloat((total - costBasis).toFixed(2));
@@ -1045,25 +1041,22 @@ async function getUserByMobile(mobile) {
     return dbGet("SELECT * FROM users WHERE mobile=?", [mobile]);
 }
 async function countPaperTrades(userId) {
-    var _a;
     const r = await dbGet("SELECT COUNT(*) as c FROM paper_trades WHERE user_id=?", [userId]);
-    return (_a = r === null || r === void 0 ? void 0 : r.c) !== null && _a !== void 0 ? _a : 0;
+    return r?.c ?? 0;
 }
 async function countTodayPaperBuys(userId) {
-    var _a;
     const today = new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" }); // YYYY-MM-DD in IST
     const r = await dbGet("SELECT COUNT(*) as c FROM paper_trades WHERE user_id=? AND action='BUY' AND DATE(traded_at)=?", [userId, today]);
-    return (_a = r === null || r === void 0 ? void 0 : r.c) !== null && _a !== void 0 ? _a : 0;
+    return r?.c ?? 0;
 }
 async function getPaperTradeStats(userId) {
-    var _a, _b, _c;
     const r = await dbGet(`SELECT COUNT(*) as total,
             SUM(CASE WHEN action='SELL' AND pnl > 0 THEN 1 ELSE 0 END) as wins
      FROM paper_trades WHERE user_id=?`, [userId]);
-    const total = (_a = r === null || r === void 0 ? void 0 : r.total) !== null && _a !== void 0 ? _a : 0;
+    const total = r?.total ?? 0;
     const sells = await dbGet("SELECT COUNT(*) as c FROM paper_trades WHERE user_id=? AND action='SELL'", [userId]);
-    const sellCount = (_b = sells === null || sells === void 0 ? void 0 : sells.c) !== null && _b !== void 0 ? _b : 0;
-    const wins = (_c = r === null || r === void 0 ? void 0 : r.wins) !== null && _c !== void 0 ? _c : 0;
+    const sellCount = sells?.c ?? 0;
+    const wins = r?.wins ?? 0;
     const losses = sellCount - wins;
     const winRate = sellCount > 0 ? parseFloat(((wins / sellCount) * 100).toFixed(1)) : 0;
     return { total, wins, losses, winRate };
@@ -1081,11 +1074,10 @@ async function getPaperTradeConfig(userId) {
     return row;
 }
 async function savePaperTradeConfig(userId, config) {
-    var _a, _b;
     const cur = await getPaperTradeConfig(userId);
     const m = { ...cur, ...config };
     await dbRun(`INSERT OR REPLACE INTO paper_trade_config (user_id,trade_type,default_qty,default_sl_pct,default_tgt_pct,max_positions,auto_paper_mode,auto_paper_stocks,updated_at)
-     VALUES (?,?,?,?,?,?,?,?,datetime('now','localtime'))`, [userId, m.trade_type, m.default_qty, m.default_sl_pct, m.default_tgt_pct, m.max_positions, (_a = m.auto_paper_mode) !== null && _a !== void 0 ? _a : 'picks', (_b = m.auto_paper_stocks) !== null && _b !== void 0 ? _b : '[]']);
+     VALUES (?,?,?,?,?,?,?,?,datetime('now','localtime'))`, [userId, m.trade_type, m.default_qty, m.default_sl_pct, m.default_tgt_pct, m.max_positions, m.auto_paper_mode ?? 'picks', m.auto_paper_stocks ?? '[]']);
 }
 async function saveBotState(data) {
     await dbRun(`UPDATE bot_state SET data_json=?, updated_at=datetime('now','localtime') WHERE id=1`, [JSON.stringify(data)]);
@@ -1097,7 +1089,7 @@ async function getBotState() {
     try {
         return { ...JSON.parse(row.data_json), _db_updated_at: row.updated_at };
     }
-    catch (_a) {
+    catch {
         return null;
     }
 }
@@ -1117,7 +1109,7 @@ async function setAutoPaperPicks(userId, enabled) {
 }
 async function getAutoPaperPicks(userId) {
     const row = await dbGet("SELECT auto_paper_picks FROM users WHERE id = ?", [userId]);
-    return (row === null || row === void 0 ? void 0 : row.auto_paper_picks) === 1;
+    return row?.auto_paper_picks === 1;
 }
 async function getPublishedPosts(limit = 20) {
     return dbAll("SELECT * FROM blog_posts WHERE published=1 ORDER BY published_at DESC LIMIT ?", [limit]);
@@ -1129,8 +1121,7 @@ async function getBlogPost(slug) {
     return dbGet("SELECT * FROM blog_posts WHERE slug=?", [slug]);
 }
 async function createBlogPost(p) {
-    var _a, _b;
-    await dbRun("INSERT INTO blog_posts (slug,title,excerpt,content,author_id) VALUES (?,?,?,?,?)", [p.slug, p.title, (_a = p.excerpt) !== null && _a !== void 0 ? _a : null, p.content, (_b = p.author_id) !== null && _b !== void 0 ? _b : null]);
+    await dbRun("INSERT INTO blog_posts (slug,title,excerpt,content,author_id) VALUES (?,?,?,?,?)", [p.slug, p.title, p.excerpt ?? null, p.content, p.author_id ?? null]);
 }
 async function updateBlogPost(id, p) {
     const fields = [];
@@ -1180,9 +1171,10 @@ async function getAllPremiumPicks() {
     return dbAll("SELECT * FROM premium_picks ORDER BY created_at DESC LIMIT 100");
 }
 async function createPremiumPick(p) {
-    var _a, _b, _c, _d, _e, _f;
     await dbRun(`INSERT INTO premium_picks (symbol,company_name,strategy,entry_low,entry_high,target,stop_loss,timeframe,thesis,created_by)
-     VALUES (?,?,?,?,?,?,?,?,?,?)`, [p.symbol, (_a = p.company_name) !== null && _a !== void 0 ? _a : null, (_b = p.strategy) !== null && _b !== void 0 ? _b : "Swing", p.entry_low, p.entry_high, (_c = p.target) !== null && _c !== void 0 ? _c : null, (_d = p.stop_loss) !== null && _d !== void 0 ? _d : null, (_e = p.timeframe) !== null && _e !== void 0 ? _e : "Short-term", p.thesis, (_f = p.created_by) !== null && _f !== void 0 ? _f : null]);
+     VALUES (?,?,?,?,?,?,?,?,?,?)`, [p.symbol, p.company_name ?? null, p.strategy ?? "Swing",
+        p.entry_low, p.entry_high, p.target ?? null, p.stop_loss ?? null,
+        p.timeframe ?? "Short-term", p.thesis, p.created_by ?? null]);
 }
 async function updatePremiumPick(id, p) {
     const fields = [];
@@ -1237,7 +1229,6 @@ async function getPaperLeaderboard(limit = 20) {
     LIMIT ?
   `, [limit]);
     return rows.map((r, i) => {
-        var _a;
         // Anonymise: show first name + last initial
         const parts = (r.name || "Member").trim().split(/\s+/);
         const first = parts[0] || "Member";
@@ -1253,7 +1244,7 @@ async function getPaperLeaderboard(limit = 20) {
             net_pnl: netPnl,
             net_pct: netPct,
             trade_count: r.trade_count,
-            win_count: (_a = r.win_count) !== null && _a !== void 0 ? _a : 0,
+            win_count: r.win_count ?? 0,
         };
     });
 }
@@ -1261,7 +1252,7 @@ async function getUserPriceAlerts(userId) {
     return dbAll("SELECT * FROM price_alerts WHERE user_id = ? ORDER BY active DESC, created_at DESC LIMIT 50", [userId]);
 }
 async function createPriceAlert(userId, symbol, targetPrice, direction, note) {
-    await dbRun("INSERT INTO price_alerts (user_id, symbol, target_price, direction, note) VALUES (?,?,?,?,?)", [userId, symbol.toUpperCase(), targetPrice, direction, note !== null && note !== void 0 ? note : null]);
+    await dbRun("INSERT INTO price_alerts (user_id, symbol, target_price, direction, note) VALUES (?,?,?,?,?)", [userId, symbol.toUpperCase(), targetPrice, direction, note ?? null]);
 }
 async function deletePriceAlert(id, userId) {
     await dbRun("DELETE FROM price_alerts WHERE id = ? AND user_id = ?", [id, userId]);
@@ -1279,9 +1270,8 @@ async function getAllActivePriceAlerts() {
   `);
 }
 async function getStockNote(userId, symbol) {
-    var _a;
     const rows = await dbAll("SELECT * FROM stock_notes WHERE user_id = ? AND symbol = ?", [userId, symbol.toUpperCase()]);
-    return (_a = rows[0]) !== null && _a !== void 0 ? _a : null;
+    return rows[0] ?? null;
 }
 async function saveStockNote(userId, symbol, content) {
     await dbRun(`

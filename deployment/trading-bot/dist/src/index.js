@@ -380,6 +380,12 @@ let tt1030ExecutionContext = "LIVE";
 const TT1000_EMPTY = () => ({ day: '', inTrade: false, dir: null, entry: 0, entryTime: '', sl: 0, optSym: '', optEntryPrem: 0, optLivePrem: 0, refHigh: 0, refLow: 0, rangeHigh: 0, rangeLow: 0, rangeTime: '', trades: 0, wins: 0, losses: 0, dayPts: 0, dayRs: 0, optDayPts: 0, optDayRs: 0, log: [], candleLog: [], seen: new Set() });
 let tt1000 = TT1000_EMPTY();
 const TT1000_QUALITY_EMPTY = () => ({ day: '', inTrade: false, dir: null, entry: 0, entryTime: '', sl: 0, optSym: '', optEntryPrem: 0, optLivePrem: 0, refHigh: 0, refLow: 0, rangeHigh: 0, rangeLow: 0, rangeTime: '', trades: 0, wins: 0, losses: 0, optWins: 0, optLosses: 0, dayPts: 0, dayRs: 0, optDayPts: 0, optDayRs: 0, log: [], candleLog: [], seen: new Set() });
+
+const TT1000_UNLIMITED_EMPTY = () => ({ day: '', inTrade: false, dir: null, entry: 0, entryTime: '', sl: 0, optSym: '', optEntryPrem: 0, optLivePrem: 0, refHigh: 0, refLow: 0, rangeHigh: 0, rangeLow: 0, rangeTime: '', trades: 0, wins: 0, losses: 0, dayPts: 0, dayRs: 0, optDayPts: 0, optDayRs: 0, log: [], candleLog: [], seen: new Set() });
+let tt1000Unlimited = TT1000_UNLIMITED_EMPTY();
+const TT1030_UNLIMITED_EMPTY = () => ({ day: '', inTrade: false, dir: null, entry: 0, entryTime: '', sl: 0, optSym: '', optEntryPrem: 0, optLivePrem: 0, refHigh: 0, refLow: 0, rangeHigh: 0, rangeLow: 0, rangeTime: '', trades: 0, wins: 0, losses: 0, dayPts: 0, dayRs: 0, optDayPts: 0, optDayRs: 0, log: [], candleLog: [], seen: new Set() });
+let tt1030Unlimited = TT1030_UNLIMITED_EMPTY();
+
 let tt1000Quality = TT1000_QUALITY_EMPTY();
 const TT1030_QUALITY_EMPTY = () => ({ day: '', inTrade: false, dir: null, entry: 0, entryTime: '', sl: 0, optSym: '', optEntryPrem: 0, optLivePrem: 0, refHigh: 0, refLow: 0, rangeHigh: 0, rangeLow: 0, rangeTime: '', trades: 0, wins: 0, losses: 0, optWins: 0, optLosses: 0, dayPts: 0, dayRs: 0, optDayPts: 0, optDayRs: 0, log: [], candleLog: [], seen: new Set(), maxFavPts: 0, profitLockActive: false, profitLockSL: 0 });
 let tt1030Quality = TT1030_QUALITY_EMPTY();
@@ -3941,6 +3947,595 @@ async function enterTT1000Trade(dir, entry, sl, candle) {
     log("TT1000_ENTRY", { dir, entry, sl, time: tt1000.entryTime, optSym, optPrem });
     persistTT1000State();
 }
+
+// ============================================================================
+// 10:00 UNLIMITED STRATEGY RUNNER (NO TRADE LIMIT CAP, 14:15 CUTOFF)
+// ============================================================================
+const TT1000_UNLIMITED_STATE_FILE = 'tt1000-unlimited-state.json';
+const TT1000_UNLIMITED_CANDLE_LOG_FILE = 'tt1000-unlimited-candle-log.json';
+let tt1000UnlimitedRunInFlight = false;
+function loadTT1000UnlimitedState(day) {
+    try {
+        const saved = JSON.parse(fs_1.default.readFileSync(TT1000_UNLIMITED_STATE_FILE, 'utf-8'));
+        return saved.date === day ? saved : null;
+    } catch (_e) { return null; }
+}
+function persistTT1000UnlimitedState() {
+    try {
+        const clean = { ...tt1000Unlimited, seen: undefined, date: tt1000Unlimited.day || tt1030ISTParts().ymd, savedAt: new Date().toISOString() };
+        fs_1.default.writeFileSync(TT1000_UNLIMITED_STATE_FILE, JSON.stringify(clean, null, 2));
+        fs_1.default.writeFileSync(TT1000_UNLIMITED_CANDLE_LOG_FILE, JSON.stringify({ date: clean.date, log: tt1000Unlimited.candleLog }, null, 2));
+        persistStrategyMonthlyHistory('TEN_O_CLOCK_UNLIMITED', clean.date, {
+            summary: {
+                futuresPts: parseFloat(Number(tt1000Unlimited.dayPts || 0).toFixed(1)),
+                futuresRs: Math.round(tt1000Unlimited.dayRs || 0),
+                trades: tt1000Unlimited.trades || 0,
+                wins: tt1000Unlimited.wins || 0,
+                losses: tt1000Unlimited.losses || 0,
+            },
+            trades: tt1000Unlimited.log,
+            candles: tt1000Unlimited.candleLog,
+        });
+    } catch (e) {}
+}
+function resetTT1000UnlimitedIfNewDay() {
+    const day = tt1030ISTParts().ymd;
+    if (tt1000Unlimited.day === day) return;
+    const saved = loadTT1000UnlimitedState(day);
+    tt1000Unlimited = TT1000_UNLIMITED_EMPTY();
+    tt1000Unlimited.day = day;
+    if (saved) {
+        Object.assign(tt1000Unlimited, saved);
+        tt1000Unlimited.seen = new Set((tt1000Unlimited.candleLog || []).filter(r => r && r.time).map(r => day + "|" + r.time));
+    }
+    persistTT1000UnlimitedState();
+}
+function upsertTT1000UnlimitedCandle(row) {
+    const idx = tt1000Unlimited.candleLog.findIndex(item => item.idx === row.idx);
+    if (idx >= 0) tt1000Unlimited.candleLog[idx] = { ...tt1000Unlimited.candleLog[idx], ...row };
+    else tt1000Unlimited.candleLog.push(row);
+    tt1000Unlimited.candleLog.sort((a, b) => Number(a.idx || 0) - Number(b.idx || 0));
+    persistTT1000UnlimitedState();
+}
+async function closeTT1000UnlimitedTrade(c, exit, reason) {
+    if (!tt1000Unlimited.inTrade || !tt1000Unlimited.dir) return null;
+    const dir = tt1000Unlimited.dir;
+    const entry = tt1000Unlimited.entry;
+    const qty = Number(config_1.config.quantity || 30);
+    const pts = dir === "CE" ? exit - entry : entry - exit;
+    const pnlRs = Math.round(pts * qty);
+    tt1000Unlimited.dayPts = parseFloat((tt1000Unlimited.dayPts + pts).toFixed(1));
+    tt1000Unlimited.dayRs += pnlRs;
+    tt1000Unlimited.trades += 1;
+    if (pts > 0) tt1000Unlimited.wins += 1; else tt1000Unlimited.losses += 1;
+    tt1000Unlimited.log.push({ time: tt1030CandleTime(c), dir, entry, exit, pts: parseFloat(pts.toFixed(1)), pnlRs, reason });
+    tt1000Unlimited.log = tt1000Unlimited.log.slice(-40);
+    tt1000Unlimited.inTrade = false;
+    tt1000Unlimited.dir = null;
+    tt1000Unlimited.entry = 0;
+    tt1000Unlimited.entryTime = "";
+    tt1000Unlimited.sl = 0;
+    persistTT1000UnlimitedState();
+    return { dir, entry, exit, pts, pnlRs };
+}
+async function enterTT1000UnlimitedTrade(dir, entry, sl, candle) {
+    tt1000Unlimited.inTrade = true;
+    tt1000Unlimited.dir = dir;
+    tt1000Unlimited.entry = entry;
+    tt1000Unlimited.entryTime = tt1030CandleTime(candle);
+    tt1000Unlimited.sl = sl;
+    tt1000Unlimited.refHigh = candle.high;
+    tt1000Unlimited.refLow = candle.low;
+    persistTT1000UnlimitedState();
+}
+async function runTenOCLockUnlimitedShadow(isEOD) {
+    if (tt1000UnlimitedRunInFlight) return;
+    tt1000UnlimitedRunInFlight = true;
+    try {
+        resetTT1000UnlimitedIfNewDay();
+        const candles = await getTodayIndex15mCandles();
+        if (!candles.length) return;
+        for (let i = 0; i < candles.length; i++) {
+            const c = candles[i];
+            const candleStartMs = new Date(c.date).getTime();
+            if (Number.isFinite(candleStartMs) && Date.now() < candleStartMs + 15 * 60 * 1000) continue;
+            const num = i + 1;
+            const time = tt1030CandleTime(c);
+            const key = tt1000Unlimited.day + "|" + time;
+            if (tt1000Unlimited.seen.has(key)) continue;
+            tt1000Unlimited.seen.add(key);
+            const row = { idx: num, time, open: c.open, high: c.high, low: c.low, close: c.close, status: "watching", dir: tt1000Unlimited.dir, entry: tt1000Unlimited.entry || null, sl: tt1000Unlimited.sl || null, note: "" };
+            if (num === 4 && !tt1000Unlimited.rangeHigh) {
+                tt1000Unlimited.rangeHigh = c.high;
+                tt1000Unlimited.rangeLow = c.low;
+                tt1000Unlimited.rangeTime = time;
+                row.status = "marked_1000_unlimited";
+                row.note = "10:00 Unlimited range " + c.high.toFixed(1) + " / " + c.low.toFixed(1);
+                upsertTT1000UnlimitedCandle(row);
+                continue;
+            }
+            if (!tt1000Unlimited.rangeHigh) {
+                row.status = "pre_1000_unlimited";
+                row.note = "waiting for 10:00 candle";
+                upsertTT1000UnlimitedCandle(row);
+                continue;
+            }
+            const eodCandle = time >= "15:15" || isEOD;
+            if (tt1000Unlimited.inTrade && tt1000Unlimited.dir) {
+                const openPts = tt1000Unlimited.dir === "CE" ? c.close - tt1000Unlimited.entry : tt1000Unlimited.entry - c.close;
+                row.pnlPts = parseFloat(openPts.toFixed(1));
+                row.pnlRs = Math.round(openPts * Number(config_1.config.quantity || 30));
+                const slHit = tt1000Unlimited.dir === "CE" ? c.close <= tt1000Unlimited.sl : c.close >= tt1000Unlimited.sl;
+                if (slHit || eodCandle) {
+                    const exit = slHit ? tt1000Unlimited.sl : c.close;
+                    const closed = await closeTT1000UnlimitedTrade(c, exit, slHit ? "sl_hit" : "exit_eod");
+                    row.status = slHit ? "sl_hit" : "exit_eod";
+                    row.dir = closed.dir;
+                    row.entry = closed.entry;
+                    row.exit = exit;
+                    row.sl = slHit ? exit : row.sl;
+                    row.pnlPts = parseFloat(closed.pts.toFixed(1));
+                    row.pnlRs = closed.pnlRs;
+                    row.note = slHit ? "SL hit at " + exit.toFixed(1) : "EOD exit " + exit.toFixed(1);
+                    upsertTT1000UnlimitedCandle(row);
+                    continue;
+                }
+                if (tt1000Unlimited.dir === "CE" && c.close > tt1000Unlimited.refHigh) {
+                    tt1000Unlimited.sl = Math.max(tt1000Unlimited.sl, c.low);
+                    tt1000Unlimited.refHigh = c.high;
+                    tt1000Unlimited.refLow = c.low;
+                    row.status = "trail";
+                    row.sl = tt1000Unlimited.sl;
+                    row.note = "Unlimited trail active; SL -> " + tt1000Unlimited.sl.toFixed(1);
+                } else if (tt1000Unlimited.dir === "PE" && c.close < tt1000Unlimited.refLow) {
+                    tt1000Unlimited.sl = Math.min(tt1000Unlimited.sl, c.high);
+                    tt1000Unlimited.refHigh = c.high;
+                    tt1000Unlimited.refLow = c.low;
+                    row.status = "trail";
+                    row.sl = tt1000Unlimited.sl;
+                    row.note = "Unlimited trail active; SL -> " + tt1000Unlimited.sl.toFixed(1);
+                } else {
+                    row.status = "hold";
+                    row.note = "Unlimited trail waiting";
+                }
+                upsertTT1000UnlimitedCandle(row);
+                continue;
+            }
+            if (!eodCandle && num > 4 && time < "14:15") {
+                const dir = c.close > tt1000Unlimited.rangeHigh ? "CE" : c.close < tt1000Unlimited.rangeLow ? "PE" : null;
+                if (dir && isCandleSignalStale(c)) {
+                    row.status = "stale_signal_skip";
+                    row.dir = dir;
+                    row.note = "restart replay guard: skipped stale 10:00 unlimited signal";
+                } else if (dir) {
+                    const entry = dir === "CE" ? tt1000Unlimited.rangeHigh : tt1000Unlimited.rangeLow;
+                    const sl = dir === "CE" ? c.low : c.high;
+                    await enterTT1000UnlimitedTrade(dir, entry, sl, c);
+                    row.status = "entry";
+                    row.dir = dir;
+                    row.entry = entry;
+                    row.sl = sl;
+                    row.pnlPts = parseFloat((dir === "CE" ? c.close - entry : entry - c.close).toFixed(1));
+                    row.pnlRs = Math.round(row.pnlPts * Number(config_1.config.quantity || 30));
+                    row.note = "close broke 10:00 Unlimited " + (dir === "CE" ? "high " : "low ") + entry.toFixed(1);
+                } else {
+                    row.note = c.high > tt1000Unlimited.rangeHigh || c.low < tt1000Unlimited.rangeLow ? "wick crossed 10:00 Unlimited range; waiting for close" : "inside 10:00 Unlimited range";
+                }
+            } else {
+                row.status = eodCandle ? "eod_no_trade" : "done";
+                row.note = eodCandle ? "EOD/no new entry" : "time cutoff reached";
+            }
+            upsertTT1000UnlimitedCandle(row);
+        }
+    } finally {
+        tt1000UnlimitedRunInFlight = false;
+    }
+}
+
+// ============================================================================
+// 10:30 UNLIMITED STRATEGY RUNNER (NO TRADE LIMIT CAP, 14:15 CUTOFF)
+// ============================================================================
+const TT1030_UNLIMITED_STATE_FILE = 'tt1030-unlimited-state.json';
+const TT1030_UNLIMITED_CANDLE_LOG_FILE = 'tt1030-unlimited-candle-log.json';
+let tt1030UnlimitedRunInFlight = false;
+function loadTT1030UnlimitedState(day) {
+    try {
+        const saved = JSON.parse(fs_1.default.readFileSync(TT1030_UNLIMITED_STATE_FILE, 'utf-8'));
+        return saved.date === day ? saved : null;
+    } catch (_e) { return null; }
+}
+function persistTT1030UnlimitedState() {
+    try {
+        const clean = { ...tt1030Unlimited, seen: undefined, date: tt1030Unlimited.day || tt1030ISTParts().ymd, savedAt: new Date().toISOString() };
+        fs_1.default.writeFileSync(TT1030_UNLIMITED_STATE_FILE, JSON.stringify(clean, null, 2));
+        fs_1.default.writeFileSync(TT1030_UNLIMITED_CANDLE_LOG_FILE, JSON.stringify({ date: clean.date, log: tt1030Unlimited.candleLog }, null, 2));
+        persistStrategyMonthlyHistory('TEN_THIRTY_UNLIMITED', clean.date, {
+            summary: {
+                futuresPts: parseFloat(Number(tt1030Unlimited.dayPts || 0).toFixed(1)),
+                futuresRs: Math.round(tt1030Unlimited.dayRs || 0),
+                trades: tt1030Unlimited.trades || 0,
+                wins: tt1030Unlimited.wins || 0,
+                losses: tt1030Unlimited.losses || 0,
+            },
+            trades: tt1030Unlimited.log,
+            candles: tt1030Unlimited.candleLog,
+        });
+    } catch (e) {}
+}
+function resetTT1030UnlimitedIfNewDay() {
+    const day = tt1030ISTParts().ymd;
+    if (tt1030Unlimited.day === day) return;
+    const saved = loadTT1030UnlimitedState(day);
+    tt1030Unlimited = TT1030_UNLIMITED_EMPTY();
+    tt1030Unlimited.day = day;
+    if (saved) {
+        Object.assign(tt1030Unlimited, saved);
+        tt1030Unlimited.seen = new Set((tt1030Unlimited.candleLog || []).filter(r => r && r.time).map(r => day + "|" + r.time));
+    }
+    persistTT1030UnlimitedState();
+}
+function upsertTT1030UnlimitedCandle(row) {
+    const idx = tt1030Unlimited.candleLog.findIndex(item => item.idx === row.idx);
+    if (idx >= 0) tt1030Unlimited.candleLog[idx] = { ...tt1030Unlimited.candleLog[idx], ...row };
+    else tt1030Unlimited.candleLog.push(row);
+    tt1030Unlimited.candleLog.sort((a, b) => Number(a.idx || 0) - Number(b.idx || 0));
+    persistTT1030UnlimitedState();
+}
+async function closeTT1030UnlimitedTrade(c, exit, reason) {
+    if (!tt1030Unlimited.inTrade || !tt1030Unlimited.dir) return null;
+    const dir = tt1030Unlimited.dir;
+    const entry = tt1030Unlimited.entry;
+    const qty = Number(config_1.config.quantity || 30);
+    const pts = dir === "CE" ? exit - entry : entry - exit;
+    const pnlRs = Math.round(pts * qty);
+    tt1030Unlimited.dayPts = parseFloat((tt1030Unlimited.dayPts + pts).toFixed(1));
+    tt1030Unlimited.dayRs += pnlRs;
+    tt1030Unlimited.trades += 1;
+    if (pts > 0) tt1030Unlimited.wins += 1; else tt1030Unlimited.losses += 1;
+    tt1030Unlimited.log.push({ time: tt1030CandleTime(c), dir, entry, exit, pts: parseFloat(pts.toFixed(1)), pnlRs, reason });
+    tt1030Unlimited.log = tt1030Unlimited.log.slice(-40);
+    tt1030Unlimited.inTrade = false;
+    tt1030Unlimited.dir = null;
+    tt1030Unlimited.entry = 0;
+    tt1030Unlimited.entryTime = "";
+    tt1030Unlimited.sl = 0;
+    persistTT1030UnlimitedState();
+    return { dir, entry, exit, pts, pnlRs };
+}
+async function enterTT1030UnlimitedTrade(dir, entry, sl, candle) {
+    tt1030Unlimited.inTrade = true;
+    tt1030Unlimited.dir = dir;
+    tt1030Unlimited.entry = entry;
+    tt1030Unlimited.entryTime = tt1030CandleTime(candle);
+    tt1030Unlimited.sl = sl;
+    tt1030Unlimited.refHigh = candle.high;
+    tt1030Unlimited.refLow = candle.low;
+    persistTT1030UnlimitedState();
+}
+async function runTenThirtyUnlimitedShadow(isEOD) {
+    if (tt1030UnlimitedRunInFlight) return;
+    tt1030UnlimitedRunInFlight = true;
+    try {
+        resetTT1030UnlimitedIfNewDay();
+        const candles = await getTodayIndex15mCandles();
+        if (!candles.length) return;
+        for (let i = 0; i < candles.length; i++) {
+            const c = candles[i];
+            const candleStartMs = new Date(c.date).getTime();
+            if (Number.isFinite(candleStartMs) && Date.now() < candleStartMs + 15 * 60 * 1000) continue;
+            const num = i + 1;
+            const time = tt1030CandleTime(c);
+            const key = tt1030Unlimited.day + "|" + time;
+            if (tt1030Unlimited.seen.has(key)) continue;
+            tt1030Unlimited.seen.add(key);
+            const row = { idx: num, time, open: c.open, high: c.high, low: c.low, close: c.close, status: "watching", dir: tt1030Unlimited.dir, entry: tt1030Unlimited.entry || null, sl: tt1030Unlimited.sl || null, note: "" };
+            if (num === 6 && !tt1030Unlimited.rangeHigh) {
+                tt1030Unlimited.rangeHigh = c.high;
+                tt1030Unlimited.rangeLow = c.low;
+                tt1030Unlimited.rangeTime = time;
+                row.status = "marked_1030_unlimited";
+                row.note = "10:30 Unlimited range " + c.high.toFixed(1) + " / " + c.low.toFixed(1);
+                upsertTT1030UnlimitedCandle(row);
+                continue;
+            }
+            if (!tt1030Unlimited.rangeHigh) {
+                row.status = "pre_1030_unlimited";
+                row.note = "waiting for 10:30 candle";
+                upsertTT1030UnlimitedCandle(row);
+                continue;
+            }
+            const eodCandle = time >= "15:15" || isEOD;
+            if (tt1030Unlimited.inTrade && tt1030Unlimited.dir) {
+                const openPts = tt1030Unlimited.dir === "CE" ? c.close - tt1030Unlimited.entry : tt1030Unlimited.entry - c.close;
+                row.pnlPts = parseFloat(openPts.toFixed(1));
+                row.pnlRs = Math.round(openPts * Number(config_1.config.quantity || 30));
+                const slHit = tt1030Unlimited.dir === "CE" ? c.close <= tt1030Unlimited.sl : c.close >= tt1030Unlimited.sl;
+                if (slHit || eodCandle) {
+                    const exit = slHit ? tt1030Unlimited.sl : c.close;
+                    const closed = await closeTT1030UnlimitedTrade(c, exit, slHit ? "sl_hit" : "exit_eod");
+                    row.status = slHit ? "sl_hit" : "exit_eod";
+                    row.dir = closed.dir;
+                    row.entry = closed.entry;
+                    row.exit = exit;
+                    row.sl = slHit ? exit : row.sl;
+                    row.pnlPts = parseFloat(closed.pts.toFixed(1));
+                    row.pnlRs = closed.pnlRs;
+                    row.note = slHit ? "SL hit at " + exit.toFixed(1) : "EOD exit " + exit.toFixed(1);
+                    upsertTT1030UnlimitedCandle(row);
+                    continue;
+                }
+                if (tt1030Unlimited.dir === "CE" && c.close > tt1030Unlimited.refHigh) {
+                    tt1030Unlimited.sl = Math.max(tt1030Unlimited.sl, c.low);
+                    tt1030Unlimited.refHigh = c.high;
+                    tt1030Unlimited.refLow = c.low;
+                    row.status = "trail";
+                    row.sl = tt1030Unlimited.sl;
+                    row.note = "Unlimited trail active; SL -> " + tt1030Unlimited.sl.toFixed(1);
+                } else if (tt1030Unlimited.dir === "PE" && c.close < tt1030Unlimited.refLow) {
+                    tt1030Unlimited.sl = Math.min(tt1030Unlimited.sl, c.high);
+                    tt1030Unlimited.refHigh = c.high;
+                    tt1030Unlimited.refLow = c.low;
+                    row.status = "trail";
+                    row.sl = tt1030Unlimited.sl;
+                    row.note = "Unlimited trail active; SL -> " + tt1030Unlimited.sl.toFixed(1);
+                } else {
+                    row.status = "hold";
+                    row.note = "Unlimited trail waiting";
+                }
+                upsertTT1030UnlimitedCandle(row);
+                continue;
+            }
+            if (!eodCandle && num > 6 && time < "14:15") {
+                const dir = c.close > tt1030Unlimited.rangeHigh ? "CE" : c.close < tt1030Unlimited.rangeLow ? "PE" : null;
+                if (dir && isCandleSignalStale(c)) {
+                    row.status = "stale_signal_skip";
+                    row.dir = dir;
+                    row.note = "restart replay guard: skipped stale 10:30 unlimited signal";
+                } else if (dir) {
+                    const entry = dir === "CE" ? tt1030Unlimited.rangeHigh : tt1030Unlimited.rangeLow;
+                    const sl = dir === "CE" ? c.low : c.high;
+                    await enterTT1030UnlimitedTrade(dir, entry, sl, c);
+                    row.status = "entry";
+                    row.dir = dir;
+                    row.entry = entry;
+                    row.sl = sl;
+                    row.pnlPts = parseFloat((dir === "CE" ? c.close - entry : entry - c.close).toFixed(1));
+                    row.pnlRs = Math.round(row.pnlPts * Number(config_1.config.quantity || 30));
+                    row.note = "close broke 10:30 Unlimited " + (dir === "CE" ? "high " : "low ") + entry.toFixed(1);
+                } else {
+                    row.note = c.high > tt1030Unlimited.rangeHigh || c.low < tt1030Unlimited.rangeLow ? "wick crossed 10:30 Unlimited range; waiting for close" : "inside 10:30 Unlimited range";
+                }
+            } else {
+                row.status = eodCandle ? "eod_no_trade" : "done";
+                row.note = eodCandle ? "EOD/no new entry" : "time cutoff reached";
+            }
+            upsertTT1030UnlimitedCandle(row);
+        }
+    } finally {
+        tt1030UnlimitedRunInFlight = false;
+    }
+}
+
+
+// ============================================================================
+// 10:00 QUALITY STRATEGY RUNNER (MAX 3 TRADES, 14:15 CUTOFF)
+// ============================================================================
+const TT1000_QUALITY_STATE_FILE = 'tt1000-quality-state.json';
+const TT1000_QUALITY_CANDLE_LOG_FILE = 'tt1000-quality-candle-log.json';
+let tt1000QualityRunInFlight = false;
+
+function loadTT1000QualityState(day) {
+    try {
+        const saved = JSON.parse(fs_1.default.readFileSync(TT1000_QUALITY_STATE_FILE, 'utf-8'));
+        return saved.date === day ? saved : null;
+    } catch (_e) { return null; }
+}
+
+function persistTT1000QualityState() {
+    try {
+        const clean = { ...tt1000Quality, seen: undefined, date: tt1000Quality.day || tt1030ISTParts().ymd, savedAt: new Date().toISOString() };
+        fs_1.default.writeFileSync(TT1000_QUALITY_STATE_FILE, JSON.stringify(clean, null, 2));
+        fs_1.default.writeFileSync(TT1000_QUALITY_CANDLE_LOG_FILE, JSON.stringify({ date: clean.date, log: tt1000Quality.candleLog }, null, 2));
+        persistStrategyMonthlyHistory('TEN_O_CLOCK_QUALITY', clean.date, {
+            summary: {
+                futuresPts: parseFloat(Number(tt1000Quality.dayPts || 0).toFixed(1)),
+                futuresRs: Math.round(tt1000Quality.dayRs || 0),
+                trades: tt1000Quality.trades || 0,
+                wins: tt1000Quality.wins || 0,
+                losses: tt1000Quality.losses || 0,
+            },
+            trades: tt1000Quality.log,
+        });
+    } catch (e) {
+        console.error('persistTT1000QualityState error:', e.message);
+    }
+}
+
+function resetTT1000QualityIfNewDay() {
+    const today = tt1030ISTParts().ymd;
+    if (tt1000Quality.day === today) return;
+    const loaded = loadTT1000QualityState(today);
+    if (loaded) {
+        tt1000Quality = {
+            ...TT1000_QUALITY_EMPTY(),
+            ...loaded,
+            seen: new Set((loaded.candleLog || []).map((row) => today + '|' + row.time)),
+        };
+        return;
+    }
+    tt1000Quality = TT1000_QUALITY_EMPTY();
+    tt1000Quality.day = today;
+    persistTT1000QualityState();
+}
+
+function upsertTT1000QualityCandle(row) {
+    const idx = tt1000Quality.candleLog.findIndex(c => c.time === row.time);
+    if (idx >= 0) tt1000Quality.candleLog[idx] = { ...tt1000Quality.candleLog[idx], ...row };
+    else tt1000Quality.candleLog.push(row);
+    persistTT1000QualityState();
+}
+
+async function enterTT1000QualityTrade(dir, entry, sl, candle) {
+    const qty = Number(config_1.config.quantity || 30);
+    tt1000Quality.inTrade = true;
+    tt1000Quality.dir = dir;
+    tt1000Quality.entry = entry;
+    tt1000Quality.entryTime = tt1030CandleTime(candle);
+    tt1000Quality.sl = sl;
+    tt1000Quality.refHigh = candle.high;
+    tt1000Quality.refLow = candle.low;
+    persistTT1000QualityState();
+}
+
+async function closeTT1000QualityTrade(candle, exit, reason) {
+    const qty = Number(config_1.config.quantity || 30);
+    const entry = tt1000Quality.entry;
+    const dir = tt1000Quality.dir;
+    const pts = dir === 'CE' ? exit - entry : entry - exit;
+    const pnlRs = Math.round(pts * qty);
+    tt1000Quality.dayPts = parseFloat((tt1000Quality.dayPts + pts).toFixed(1));
+    tt1000Quality.dayRs = Math.round(tt1000Quality.dayRs + pnlRs);
+    tt1000Quality.trades += 1;
+    if (pts > 0) tt1000Quality.wins += 1;
+    else tt1000Quality.losses += 1;
+    tt1000Quality.log.push({
+        time: tt1030CandleTime(candle),
+        dir,
+        entry,
+        exit,
+        pts: parseFloat(pts.toFixed(1)),
+        pnlRs,
+        reason,
+    });
+    (0, logger_1.logTrade)({
+        date: new Date().toISOString(),
+        type: "TEN_O_CLOCK_QUALITY_INDEX",
+        direction: dir,
+        symbol: "BANKNIFTY_INDEX_SHADOW",
+        entryPrice: entry,
+        exitPrice: exit,
+        pnl: parseFloat(pts.toFixed(1)),
+        pnlRs,
+        reasonEntry: "ten_o_clock_quality_breakout",
+        reasonExit: reason,
+        aiScore: 1,
+        slippage: 0,
+        duration: 0,
+        qty
+    });
+    tt1000Quality.inTrade = false;
+    tt1000Quality.dir = null;
+    tt1000Quality.entry = 0;
+    tt1000Quality.entryTime = '';
+    tt1000Quality.sl = 0;
+    persistTT1000QualityState();
+    return { dir, entry, exit, pts, pnlRs };
+}
+
+async function runTenOCLockQualityShadow(isEOD) {
+    if (tt1000QualityRunInFlight) return;
+    tt1000QualityRunInFlight = true;
+    try {
+        resetTT1000QualityIfNewDay();
+        const candles = await getTodayIndex15mCandles();
+        if (!candles.length) return;
+        for (let i = 0; i < candles.length; i++) {
+            const c = candles[i];
+            const candleStartMs = new Date(c.date).getTime();
+            if (Number.isFinite(candleStartMs) && Date.now() < candleStartMs + 15 * 60 * 1000) continue;
+            const num = i + 1;
+            const time = tt1030CandleTime(c);
+            const key = tt1000Quality.day + "|" + time;
+            if (tt1000Quality.seen.has(key)) continue;
+            tt1000Quality.seen.add(key);
+            const row = { idx: num, time, open: c.open, high: c.high, low: c.low, close: c.close, status: "watching", dir: tt1000Quality.dir, entry: tt1000Quality.entry || null, sl: tt1000Quality.sl || null, note: "" };
+            if (num === 4 && !tt1000Quality.rangeHigh) {
+                tt1000Quality.rangeHigh = c.high;
+                tt1000Quality.rangeLow = c.low;
+                tt1000Quality.rangeTime = time;
+                row.status = "marked_1000_quality";
+                row.note = "10:00 Quality range " + c.high.toFixed(1) + " / " + c.low.toFixed(1);
+                upsertTT1000QualityCandle(row);
+                continue;
+            }
+            if (!tt1000Quality.rangeHigh) {
+                row.status = "pre_1000_quality";
+                row.note = "waiting for 10:00 candle";
+                upsertTT1000QualityCandle(row);
+                continue;
+            }
+            const eodCandle = time >= "15:15" || isEOD;
+            if (tt1000Quality.inTrade && tt1000Quality.dir) {
+                const openPts = tt1000Quality.dir === "CE" ? c.close - tt1000Quality.entry : tt1000Quality.entry - c.close;
+                row.pnlPts = parseFloat(openPts.toFixed(1));
+                row.pnlRs = Math.round(openPts * Number(config_1.config.quantity || 30));
+                const slHit = tt1000Quality.dir === "CE" ? c.close <= tt1000Quality.sl : c.close >= tt1000Quality.sl;
+                if (slHit || eodCandle) {
+                    const exit = slHit ? tt1000Quality.sl : c.close;
+                    const closed = await closeTT1000QualityTrade(c, exit, slHit ? "sl_hit" : "exit_eod");
+                    row.status = slHit ? "sl_hit" : "exit_eod";
+                    row.dir = closed.dir;
+                    row.entry = closed.entry;
+                    row.exit = exit;
+                    row.sl = slHit ? exit : row.sl;
+                    row.pnlPts = parseFloat(closed.pts.toFixed(1));
+                    row.pnlRs = closed.pnlRs;
+                    row.note = slHit ? "SL hit at " + exit.toFixed(1) : "EOD exit " + exit.toFixed(1);
+                    upsertTT1000QualityCandle(row);
+                    continue;
+                }
+                if (tt1000Quality.dir === "CE" && c.close > tt1000Quality.refHigh) {
+                    tt1000Quality.sl = Math.max(tt1000Quality.sl, c.low);
+                    tt1000Quality.refHigh = c.high;
+                    tt1000Quality.refLow = c.low;
+                    row.status = "trail";
+                    row.sl = tt1000Quality.sl;
+                    row.note = "Quality trail active; SL -> " + tt1000Quality.sl.toFixed(1);
+                } else if (tt1000Quality.dir === "PE" && c.close < tt1000Quality.refLow) {
+                    tt1000Quality.sl = Math.min(tt1000Quality.sl, c.high);
+                    tt1000Quality.refHigh = c.high;
+                    tt1000Quality.refLow = c.low;
+                    row.status = "trail";
+                    row.sl = tt1000Quality.sl;
+                    row.note = "Quality trail active; SL -> " + tt1000Quality.sl.toFixed(1);
+                } else {
+                    row.status = "hold";
+                    row.note = "Quality trail waiting";
+                }
+                upsertTT1000QualityCandle(row);
+                continue;
+            }
+            if (tt1000Quality.trades < 3 && !eodCandle && num > 4 && time < "14:15") {
+                const dir = c.close > tt1000Quality.rangeHigh ? "CE" : c.close < tt1000Quality.rangeLow ? "PE" : null;
+                if (dir && isCandleSignalStale(c)) {
+                    row.status = "stale_signal_skip";
+                    row.dir = dir;
+                    row.note = "restart replay guard: skipped stale 10:00 quality signal";
+                } else if (dir) {
+                    const entry = dir === "CE" ? tt1000Quality.rangeHigh : tt1000Quality.rangeLow;
+                    const sl = dir === "CE" ? c.low : c.high;
+                    await enterTT1000QualityTrade(dir, entry, sl, c);
+                    row.status = "entry";
+                    row.dir = dir;
+                    row.entry = entry;
+                    row.sl = sl;
+                    row.pnlPts = parseFloat((dir === "CE" ? c.close - entry : entry - c.close).toFixed(1));
+                    row.pnlRs = Math.round(row.pnlPts * Number(config_1.config.quantity || 30));
+                    row.note = "close broke 10:00 Quality " + (dir === "CE" ? "high " : "low ") + entry.toFixed(1);
+                } else {
+                    row.note = c.high > tt1000Quality.rangeHigh || c.low < tt1000Quality.rangeLow ? "wick crossed 10:00 Quality range; waiting for close" : "inside 10:00 Quality range";
+                }
+            } else {
+                row.status = eodCandle ? "eod_no_trade" : "done";
+                row.note = eodCandle ? "EOD/no new entry" : (tt1000Quality.trades >= 3 ? "max 3 trades reached" : "time cutoff reached");
+            }
+            upsertTT1000QualityCandle(row);
+        }
+    } finally {
+        tt1000QualityRunInFlight = false;
+    }
+}
+
 async function runTenOCLockShadow(isEOD) {
     if (tt1000RunInFlight)
         return;
@@ -4359,7 +4954,7 @@ async function runTenThirtyQualityShadow(isEOD) {
                 upsertTT1030QualityCandle(row);
                 continue;
             }
-            if (tt1030Quality.trades < 2 && !eodCandle && num > 6) {
+            if (tt1030Quality.trades < 3 && !eodCandle && num > 6 && time < "14:15") {
                 const signal = tt1030QualityBreakSignal(c);
                 const dir = signal?.dir || null;
                 if (dir && isCandleSignalStale(c)) {
@@ -5669,8 +6264,11 @@ async function runDrishtiBot() {
     const shadowRuns = await Promise.allSettled([
         runNineFortyFiveShadow(shadowIsEOD),
         runTenOCLockShadow(shadowIsEOD),
+        runTenOCLockQualityShadow(shadowIsEOD),
         runTenThirtyTradeOps(shadowIsEOD),
         runTenThirtyQualityShadow(shadowIsEOD),
+        runTenOCLockUnlimitedShadow(shadowIsEOD),
+        runTenThirtyUnlimitedShadow(shadowIsEOD),
         runShadowEngineOnce('HYBRID_BODY', () => runHybridBodyShadow(shadowIsEOD)),
         runShadowEngineOnce('NORMAL_BREAKOUT', () => runNormalBreakoutShadow(shadowIsEOD)),
         runShadowEngineOnce('BODY_HOLD', () => runBodyHoldHistory(shadowIsEOD)),
@@ -6194,7 +6792,10 @@ async function runBot() {
             runNineFortyFiveShadow(shadowIsEOD),
             runTenThirtyTradeOps(shadowIsEOD),
             runTenOCLockShadow(shadowIsEOD),
+            runTenOCLockQualityShadow(shadowIsEOD),
             runTenThirtyQualityShadow(shadowIsEOD),
+        runTenOCLockUnlimitedShadow(shadowIsEOD),
+        runTenThirtyUnlimitedShadow(shadowIsEOD),
             runShadowEngineOnce('HYBRID_BODY', () => runHybridBodyShadow(shadowIsEOD)),
             runShadowEngineOnce('NORMAL_BREAKOUT', () => runNormalBreakoutShadow(shadowIsEOD)),
             runShadowEngineOnce('BODY_HOLD', () => runBodyHoldHistory(shadowIsEOD)),
