@@ -544,7 +544,6 @@ function strategyFields(strategy: StrategyDefinition, hb: any, state: any, instr
   const unrealized = inTrade ? (total - realized) : 0;
   const optionSymbol = text(hb[`${fieldPrefix}OptionSymbol`] ?? persisted.optSym);
   const futuresSymbol = text(hb[`${fieldPrefix}FuturesSymbol`] ?? persisted.futSym);
-  const direction = text(hb[`${fieldPrefix}Dir`] ?? persisted.dir);
   const optionWins = num(persisted.optWins);
   const optionLosses = num(persisted.optLosses);
   const inferredOptionWins = persistedTrades.filter((row: any) => {
@@ -557,8 +556,6 @@ function strategyFields(strategy: StrategyDefinition, hb: any, state: any, instr
     const exit = num(row?.premOut ?? row?.premiumExit);
     return entry !== null && exit !== null && exit < entry;
   }).length;
-  const storedQuantity = num(hb[`${fieldPrefix}LiveQty`] ?? persisted.liveQty ?? hb.qty);
-  const quantity = storedQuantity !== null && storedQuantity > 0 ? storedQuantity : 30;
   return {
     inTrade,
     realized,

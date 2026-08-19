@@ -497,8 +497,8 @@ function strategyFields(strategy, hb, state, instrument, underlying = "BANKNIFTY
         ? (hb[`${fieldPrefix}OptionEntry`] ?? persisted.optEntryPrem)
         : (hb[`${fieldPrefix}FuturesEntry`] ?? persisted.entry));
     const direction = text(hb[`${fieldPrefix}Dir`] ?? persisted.dir);
-    const storedQuantity = num(hb[`${fieldPrefix}LiveQty`] ?? persisted.liveQty ?? hb.qty);
-    const quantity = storedQuantity !== null && storedQuantity > 0 ? storedQuantity : 30;
+    const storedQty = num(hb[`${fieldPrefix}LiveQty`] ?? persisted.liveQty ?? hb.qty);
+    const quantity = storedQty !== null && storedQty > 0 ? storedQty : 30;
     let computedUnrealized = 0;
     if (inTrade && livePrice !== null && entryPrice !== null && entryPrice > 0) {
         if (isOptions) {
@@ -515,7 +515,6 @@ function strategyFields(strategy, hb, state, instrument, underlying = "BANKNIFTY
     const unrealized = inTrade ? (total - realized) : 0;
     const optionSymbol = text(hb[`${fieldPrefix}OptionSymbol`] ?? persisted.optSym);
     const futuresSymbol = text(hb[`${fieldPrefix}FuturesSymbol`] ?? persisted.futSym);
-    const direction = text(hb[`${fieldPrefix}Dir`] ?? persisted.dir);
     const optionWins = num(persisted.optWins);
     const optionLosses = num(persisted.optLosses);
     const inferredOptionWins = persistedTrades.filter((row) => {
@@ -524,12 +523,10 @@ function strategyFields(strategy, hb, state, instrument, underlying = "BANKNIFTY
         return entry !== null && exit !== null && exit > entry;
     }).length;
     const inferredOptionLosses = persistedTrades.filter((row) => {
-        const entry = num(row?.premIn ?? row?.premiumEntry);
-        const exit = num(row?.premOut ?? row?.premiumExit);
-        return entry !== null && exit !== null && exit < entry;
-    }).length;
-    const storedQuantity = num(hb[`${fieldPrefix}LiveQty`] ?? persisted.liveQty ?? hb.qty);
-    const quantity = storedQuantity !== null && storedQuantity > 0 ? storedQuantity : 30;
+    const entry = num(row?.premIn ?? row?.premiumEntry);
+    const exit = num(row?.premOut ?? row?.premiumExit);
+    return entry !== null && exit !== null && exit < entry;
+  }).length;
     return {
         inTrade,
         realized,
