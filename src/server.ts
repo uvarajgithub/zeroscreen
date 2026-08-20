@@ -7368,6 +7368,38 @@ function buildTradeOpsLogPreview() {
   ].slice(-30).reverse();
 }
 
+let lastTradeOpsBrokerCacheTime = 0;
+let lastTradeOpsBrokerCacheData: any = null;
+
+async function tradeOpsGetBrokerData(forceFresh = false) {
+  const now = Date.now();
+  if (!forceFresh && lastTradeOpsBrokerCacheData && (now - lastTradeOpsBrokerCacheTime) < 10000) {
+    return lastTradeOpsBrokerCacheData;
+  }
+  let broker: any = { ok: false, tokenOK: false, profile: null, margins: null, positions: [], error: "Unavailable" };
+  try {
+    const [profile, margins, positions] = await Promise.all([
+      tradeOpsKiteJSON("/user/profile").catch(() => null),
+      tradeOpsKiteJSON("/user/margins").catch(() => null),
+      tradeOpsKiteJSON("/portfolio/positions").catch(() => null),
+    ]);
+    const hasProfile = !!profile?.data;
+    broker = {
+      ok: hasProfile,
+      tokenOK: hasProfile,
+      profile: profile?.data || null,
+      margins: margins?.data || null,
+      positions: positions?.data?.net || [],
+      error: hasProfile ? "" : "Broker profile unavailable",
+    };
+  } catch (e: any) {
+    broker.error = e?.message || "Broker unavailable";
+  }
+  lastTradeOpsBrokerCacheData = broker;
+  lastTradeOpsBrokerCacheTime = now;
+  return broker;
+}
+
 async function buildTradeOpsStatus(strategyId = "") {
   const strategies = tradeOpsStrategyList();
   const selectedStrategy = strategies.find((s) => s.id === String(strategyId || "").trim()) || strategies.find((s) => s.enabled) || strategies[0];
@@ -7489,25 +7521,7 @@ async function buildTradeOpsStatus(strategyId = "") {
   }, []);
   if (pnls.length === 0 && Number.isFinite(netPnl)) pnls.push(0, netPnl);
 
-  let broker: any = { ok: false, tokenOK: false, profile: null, margins: null, positions: [], error: "Unavailable" };
-  try {
-    const [profile, margins, positions] = await Promise.all([
-      tradeOpsKiteJSON("/user/profile").catch(() => null),
-      tradeOpsKiteJSON("/user/margins").catch(() => null),
-      tradeOpsKiteJSON("/portfolio/positions").catch(() => null),
-    ]);
-    const hasProfile = !!profile?.data;
-    broker = {
-      ok: hasProfile,
-      tokenOK: hasProfile,
-      profile: profile?.data || null,
-      margins: margins?.data || null,
-      positions: positions?.data?.net || [],
-      error: hasProfile ? "" : "Broker profile unavailable",
-    };
-  } catch (e: any) {
-    broker.error = e?.message || "Broker unavailable";
-  }
+  const broker = await tradeOpsGetBrokerData();
 
   const openPositions = openTrade ? (broker.positions || [])
     .filter((p: any) => tradeOpsNum(p.quantity) !== 0)
@@ -9329,7 +9343,7 @@ async function load(){
   }finally{
     clearTimeout(timer);
   }
-}setupSidebar();const strategySelect=document.getElementById('strategySelect');if(strategySelect)strategySelect.onchange=()=>{selectedTradeOpsStrategy=strategySelect.value||DEFAULT_STRATEGY;try{localStorage.setItem('tradeopsSelectedStrategy',selectedTradeOpsStrategy)}catch(e){}load();loadLogs()};const emergencyBtn=document.getElementById('emergencyBtn');if(emergencyBtn)emergencyBtn.onclick=()=>{const out=document.getElementById('emergencyResult');if(out)out.textContent='';document.getElementById('modal')?.classList.add('open')};const cancelStop=document.getElementById('cancelStop');if(cancelStop)cancelStop.onclick=()=>document.getElementById('modal')?.classList.remove('open');const sendStop=document.getElementById('sendStop');if(sendStop)sendStop.onclick=async()=>{const out=document.getElementById('emergencyResult');sendStop.disabled=true;if(out)out.textContent='Checking live broker positions and submitting exits...';try{const r=await fetch('/api/tradeops/emergency-stop',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({confirm:true})});const j=await r.json();if(out)out.innerHTML=(j.ok?'Closed positions count: '+(j.closed?j.closed.length:0)+'<br>':'Exit request failed<br>')+(j.message||j.error||'Done');await load()}catch(e){if(out)out.textContent=e.message||'Request failed'}finally{sendStop.disabled=false}};const pauseLogs=document.getElementById('pauseLogs');if(pauseLogs)pauseLogs.onclick=()=>{paused=!paused;pauseLogs.textContent=paused?'Resume':'Pause'};const clearLogs=document.getElementById('clearLogs');if(clearLogs)clearLogs.onclick=()=>{const logsEl=document.getElementById('logs');if(logsEl)logsEl.innerHTML='<div class="muted">Preview cleared. New logs will appear on next tick.</div>'};const refreshTokenBtn=document.getElementById('refreshTokenBtn');if(refreshTokenBtn)refreshTokenBtn.onclick=async()=>{const old=refreshTokenBtn.textContent;refreshTokenBtn.textContent='Refreshing...';refreshTokenBtn.disabled=true;try{const r=await fetch('/api/tradeops/token-refresh',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({source:'dashboard'})});const j=await r.json();if(!r.ok||!j.ok)throw new Error(j.error||'Token refresh failed to start');refreshTokenBtn.textContent='Refresh Started';const logsEl=document.getElementById('logs');if(logsEl)logsEl.innerHTML='<div><span class="info">[INFO]</span> '+txt(j.message||'Auto token refresh started')+'</div>'+logsEl.innerHTML;setTimeout(load,8000);setTimeout(load,25000);setTimeout(load,60000)}catch(e){refreshTokenBtn.textContent='Refresh Failed';alert((e&&e.message)||'Token refresh failed')}finally{setTimeout(()=>{refreshTokenBtn.textContent=old;refreshTokenBtn.disabled=false},5000)}};const syncAccountBtn=document.getElementById('syncAccountBtn');if(syncAccountBtn)syncAccountBtn.onclick=async()=>{const old=syncAccountBtn.textContent;syncAccountBtn.textContent='Syncing...';syncAccountBtn.disabled=true;await load();syncAccountBtn.textContent=(lastStatus&&lastStatus.broker&&lastStatus.broker.tokenOK)?'Synced':'Token Required';setTimeout(()=>{syncAccountBtn.textContent=old;syncAccountBtn.disabled=false},1600)};document.querySelectorAll('#chartTabs button[data-tf]').forEach(btn=>{btn.onclick=()=>{chartTf=btn.dataset.tf||'15m';document.querySelectorAll('#chartTabs button[data-tf]').forEach(b=>b.classList.toggle('active',b===btn));if(lastStatus)render(lastStatus);}});if(INITIAL_STATUS&&INITIAL_STATUS.ok){try{render(INITIAL_STATUS)}catch(e){console.error(e);showLoadError(e&&e.message?e.message:"Initial render failed")}}load();loadLogs();if(PAGE==='dashboard'||PAGE==='account')setInterval(load,5000);setInterval(loadLogs,1000);
+}setupSidebar();const strategySelect=document.getElementById('strategySelect');if(strategySelect)strategySelect.onchange=()=>{selectedTradeOpsStrategy=strategySelect.value||DEFAULT_STRATEGY;try{localStorage.setItem('tradeopsSelectedStrategy',selectedTradeOpsStrategy)}catch(e){}load();loadLogs()};const emergencyBtn=document.getElementById('emergencyBtn');if(emergencyBtn)emergencyBtn.onclick=()=>{const out=document.getElementById('emergencyResult');if(out)out.textContent='';document.getElementById('modal')?.classList.add('open')};const cancelStop=document.getElementById('cancelStop');if(cancelStop)cancelStop.onclick=()=>document.getElementById('modal')?.classList.remove('open');const sendStop=document.getElementById('sendStop');if(sendStop)sendStop.onclick=async()=>{const out=document.getElementById('emergencyResult');sendStop.disabled=true;if(out)out.textContent='Checking live broker positions and submitting exits...';try{const r=await fetch('/api/tradeops/emergency-stop',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({confirm:true})});const j=await r.json();if(out)out.innerHTML=(j.ok?'Closed positions count: '+(j.closed?j.closed.length:0)+'<br>':'Exit request failed<br>')+(j.message||j.error||'Done');await load()}catch(e){if(out)out.textContent=e.message||'Request failed'}finally{sendStop.disabled=false}};const pauseLogs=document.getElementById('pauseLogs');if(pauseLogs)pauseLogs.onclick=()=>{paused=!paused;pauseLogs.textContent=paused?'Resume':'Pause'};const clearLogs=document.getElementById('clearLogs');if(clearLogs)clearLogs.onclick=()=>{const logsEl=document.getElementById('logs');if(logsEl)logsEl.innerHTML='<div class="muted">Preview cleared. New logs will appear on next tick.</div>'};const refreshTokenBtn=document.getElementById('refreshTokenBtn');if(refreshTokenBtn)refreshTokenBtn.onclick=async()=>{const old=refreshTokenBtn.textContent;refreshTokenBtn.textContent='Refreshing...';refreshTokenBtn.disabled=true;try{const r=await fetch('/api/tradeops/token-refresh',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({source:'dashboard'})});const j=await r.json();if(!r.ok||!j.ok)throw new Error(j.error||'Token refresh failed to start');refreshTokenBtn.textContent='Refresh Started';const logsEl=document.getElementById('logs');if(logsEl)logsEl.innerHTML='<div><span class="info">[INFO]</span> '+txt(j.message||'Auto token refresh started')+'</div>'+logsEl.innerHTML;setTimeout(load,8000);setTimeout(load,25000);setTimeout(load,60000)}catch(e){refreshTokenBtn.textContent='Refresh Failed';alert((e&&e.message)||'Token refresh failed')}finally{setTimeout(()=>{refreshTokenBtn.textContent=old;refreshTokenBtn.disabled=false},5000)}};const syncAccountBtn=document.getElementById('syncAccountBtn');if(syncAccountBtn)syncAccountBtn.onclick=async()=>{const old=syncAccountBtn.textContent;syncAccountBtn.textContent='Syncing...';syncAccountBtn.disabled=true;await load();syncAccountBtn.textContent=(lastStatus&&lastStatus.broker&&lastStatus.broker.tokenOK)?'Synced':'Token Required';setTimeout(()=>{syncAccountBtn.textContent=old;syncAccountBtn.disabled=false},1600)};document.querySelectorAll('#chartTabs button[data-tf]').forEach(btn=>{btn.onclick=()=>{chartTf=btn.dataset.tf||'15m';document.querySelectorAll('#chartTabs button[data-tf]').forEach(b=>b.classList.toggle('active',b===btn));if(lastStatus)render(lastStatus);}});if(INITIAL_STATUS&&INITIAL_STATUS.ok){try{render(INITIAL_STATUS)}catch(e){console.error(e);showLoadError(e&&e.message?e.message:"Initial render failed")}}hideLoader();load();loadLogs();if(PAGE==='dashboard'||PAGE==='account')setInterval(load,5000);setInterval(loadLogs,1000);
 </script>
 </body></html>`;
 }
