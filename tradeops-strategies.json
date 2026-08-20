@@ -1,0 +1,79 @@
+{
+  "tt1030-quality-futures": {
+    "enabled": true,
+    "mode": "LIVE",
+    "instrument": "BANKNIFTY",
+    "product": "Futures",
+    "entryTime": "10:30",
+    "quantity": 30,
+    "sl": "Breakout candle low/high + 50pt lock",
+    "target": "14:15 Session Cutoff / EOD Exit",
+    "maxDailyLoss": "Max 3 Trades / Broker Gate",
+    "status": "Running",
+    "liveCapable": true,
+    "source": "tt1030-quality",
+    "config": {
+      "strategyCode": "TEN_THIRTY_QUALITY",
+      "maxTrades": 3,
+      "profitLockPts": 50,
+      "cutoffTime": "14:15"
+    }
+  },
+  "tt1030-futures": {
+    "enabled": true,
+    "mode": "SHADOW",
+    "instrument": "BANKNIFTY",
+    "product": "Futures",
+    "entryTime": "10:30",
+    "quantity": 30,
+    "sl": "Breakout candle / strategy SL",
+    "target": "15:15 Session Cutoff / EOD Exit",
+    "maxDailyLoss": "Max 2 Trades / Broker Gate",
+    "status": "Running",
+    "liveCapable": true,
+    "source": "tt1030",
+    "config": {
+      "strategyCode": "TEN_THIRTY_INDEX_FUTURES",
+      "maxTrades": 2,
+      "cutoffTime": "15:15"
+    }
+  },
+  "tt1000-quality-futures": {
+    "enabled": true,
+    "mode": "SHADOW",
+    "instrument": "BANKNIFTY",
+    "product": "Futures",
+    "entryTime": "10:00",
+    "quantity": 30,
+    "sl": "Breakout candle low/high SL",
+    "target": "14:15 Session Cutoff / EOD Exit",
+    "maxDailyLoss": "Max 3 Trades / Broker Gate",
+    "status": "Running",
+    "liveCapable": true,
+    "source": "tt1000-quality",
+    "config": {
+      "strategyCode": "TEN_O_CLOCK_QUALITY",
+      "maxTrades": 3,
+      "cutoffTime": "14:15"
+    }
+  },
+  "tt1000-futures": {
+    "enabled": true,
+    "mode": "SHADOW",
+    "instrument": "BANKNIFTY",
+    "product": "Futures",
+    "entryTime": "10:00",
+    "quantity": 30,
+    "sl": "Breakout candle / strategy SL",
+    "target": "15:15 Session Cutoff / EOD Exit",
+    "maxDailyLoss": "Max 2 Trades / Broker Gate",
+    "status": "Running",
+    "liveCapable": true,
+    "source": "tt1000",
+    "config": {
+      "strategyCode": "TEN_O_CLOCK_INDEX_FUTURES",
+      "maxTrades": 2,
+      "cutoffTime": "15:15"
+    }
+  }
+}
