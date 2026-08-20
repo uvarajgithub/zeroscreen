@@ -8411,7 +8411,35 @@ body.tradeops-collapsed .help,body.tradeops-collapsed .collapse-btn{justify-cont
 .content{padding:16px 20px 24px!important}
 .dashboard{display:grid!important;grid-template-columns:minmax(320px,1fr) minmax(360px,1.05fr) minmax(320px,.96fr)!important;grid-template-areas:"workflow workflow workflow" "pnl chart account" "ready orders quick" "positions recent quick" "logs logs logs"!important;gap:14px!important;align-items:start!important;grid-auto-rows:auto!important}
 .dashboard>.card{width:100%!important}
-.workflow{grid-area:workflow!important}
+.workflow{grid-area:workflow!important;min-height:74px!important;padding:10px 14px!important;background:#fff!important;border:1px solid #d8e6f5!important;border-radius:14px!important;box-shadow:0 8px 24px rgba(15,23,42,.035)!important;display:flex!important;align-items:center!important;justify-content:space-between!important;gap:10px!important}
+.flow-pipeline{flex:1 1 0!important;display:flex!important;align-items:center!important;gap:5px!important;min-width:0!important}
+.flow-step{flex:1 1 0!important;min-width:0!important;height:52px!important;border-radius:12px!important;border:1px solid #dce8f5!important;background:linear-gradient(180deg,#fff,#f8fbff)!important;padding:0 10px 0 8px!important;display:flex!important;align-items:center!important;gap:8px!important;text-decoration:none!important;color:#0f172a!important;position:relative!important;transition:all .18s ease!important;cursor:pointer!important}
+.flow-step:hover{border-color:#93c5fd!important;background:#f0f7ff!important;transform:translateY(-1px)!important;box-shadow:0 6px 16px rgba(37,99,235,.08)!important}
+.flow-step:active{transform:translateY(0)!important}
+.flow-step.blocked{border-color:#fecdd3!important;background:linear-gradient(180deg,#fff,#fff5f6)!important;color:#991b1b!important}
+.flow-step.blocked:hover{border-color:#fda4af!important;background:#ffe4e6!important}
+.flow-icon{width:32px!important;height:32px!important;border-radius:50%!important;background:#ecfdf5!important;color:#16a34a!important;display:grid!important;place-items:center!important;flex:0 0 32px!important;border:1px solid #bbf7d0!important}
+.flow-icon svg{width:16px!important;height:16px!important;stroke-width:2!important}
+.flow-step.blocked .flow-icon{background:#fee2e2!important;color:#ef4444!important;border-color:#fca5a5!important}
+.flow-text{min-width:0!important;flex:1 1 auto!important;line-height:1.2!important;overflow:hidden!important}
+.flow-text b{display:block!important;font-size:12px!important;font-weight:750!important;white-space:nowrap!important;overflow:hidden!important;text-overflow:ellipsis!important;color:#0f172a!important}
+.flow-text span{display:block!important;font-size:10.5px!important;color:#64748b!important;white-space:nowrap!important;overflow:hidden!important;text-overflow:ellipsis!important;margin-top:1px!important}
+.flow-ok{position:static!important;width:17px!important;height:17px!important;border-radius:50%!important;background:#10b981!important;color:#fff!important;display:grid!important;place-items:center!important;font-size:10px!important;font-weight:800!important;flex:0 0 17px!important;margin-left:auto!important}
+.flow-step.blocked .flow-ok{background:#ef4444!important}
+.flow-ok:before{content:"✓"!important;font-size:10.5px!important}
+.flow-step.blocked .flow-ok:before{content:"!"!important;font-size:11.5px!important;font-weight:800!important}
+.flow-arrow{flex:0 0 12px!important;display:grid!important;place-items:center!important;color:#94a3b8!important;opacity:.65!important}
+.flow-arrow svg{width:13px!important;height:13px!important;stroke-width:2.4!important}
+.flow-actions{display:flex!important;flex-direction:row!important;gap:8px!important;flex:0 0 auto!important;margin-left:6px!important}
+.flow-btn{height:36px!important;padding:0 14px!important;border-radius:999px!important;font-size:12px!important;font-weight:700!important;display:inline-flex!important;align-items:center!important;gap:7px!important;border:1px solid #bfdbfe!important;background:linear-gradient(180deg,#fff,#f4f8ff)!important;color:#1d4ed8!important;box-shadow:0 4px 12px rgba(37,99,235,.06)!important;transition:all .18s ease!important;cursor:pointer!important}
+.flow-btn svg{width:14px!important;height:14px!important}
+.flow-btn:hover{background:#e0edff!important;border-color:#93c5fd!important;transform:translateY(-1px)!important;box-shadow:0 6px 16px rgba(37,99,235,.12)!important}
+.flow-btn:active{transform:translateY(0)!important}
+.flow-btn:disabled{opacity:.65!important;cursor:not-allowed!important;transform:none!important}
+.spin{animation:spin 1s linear infinite}
+@keyframes spin{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}
+@media(max-width:1366px){.flow-pipeline{gap:3px!important}.flow-step{height:48px!important;padding:0 7px!important;gap:6px!important}.flow-icon{width:28px!important;height:28px!important;flex:0 0 28px!important}.flow-icon svg{width:14px!important;height:14px!important}.flow-text b{font-size:11.5px!important}.flow-text span{font-size:10px!important}.flow-arrow{flex:0 0 8px!important}.flow-arrow svg{width:11px!important;height:11px!important}.flow-btn{height:34px!important;padding:0 11px!important;font-size:11.5px!important}}
+@media(max-width:1100px){.workflow{flex-direction:column!important;align-items:stretch!important;gap:10px!important}.flow-pipeline{flex-wrap:wrap!important}.flow-arrow{display:none!important}.flow-actions{justify-content:flex-end!important}}
 .pnl{grid-area:pnl!important;min-height:360px!important}
 .chart{grid-area:chart!important;min-height:360px!important}
 .account{grid-area:account!important;min-height:360px!important}
@@ -8820,13 +8848,42 @@ body.tradeops-collapsed .help,body.tradeops-collapsed .collapse-btn{justify-cont
     </header>
     <section class="content">
       <div id="dashboard" class="dashboard${safePage !== "dashboard" ? " hidden" : ""}">
-        <section class="card workflow">
-          <div class="flow-step"><div class="flow-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M3 21h18"/><path d="M5 21V9l7-5 7 5v12"/><path d="M9 21v-6h6v6"/></svg></div><div class="flow-text"><b id="flowBrokerTitle">Broker</b><span id="flowBrokerSub">Checking</span></div><span class="flow-ok" id="flowBrokerBadge">?</span></div>
-          <div class="flow-step"><div class="flow-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10Z"/><path d="m9 12 2 2 4-5"/></svg></div><div class="flow-text"><b id="flowTokenTitle">Token</b><span id="flowTokenSub">Checking</span></div><span class="flow-ok" id="flowTokenBadge">?</span></div>
-          <div class="flow-step"><div class="flow-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><rect x="6" y="7" width="12" height="10" rx="2"/><path d="M12 3v4M8 21h8M9 11h.01M15 11h.01"/></svg></div><div class="flow-text"><b id="flowBotTitle">Bot</b><span id="flowBotSub">Checking</span></div><span class="flow-ok" id="flowBotBadge">?</span></div>
-          <div class="flow-step"><div class="flow-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M4 12h3l2-5 4 10 2-5h5"/></svg></div><div class="flow-text"><b id="flowFeedTitle">Feed</b><span id="flowFeedSub">Checking</span></div><span class="flow-ok" id="flowFeedBadge">?</span></div>
-          <div class="flow-step"><div class="flow-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M5 19 19 5"/><path d="m14 5 5 5"/><path d="M5 19l5-1 8-8"/></svg></div><div class="flow-text"><b id="flowExecTitle">Execution</b><span id="flowExecSub">Checking</span></div><span class="flow-ok" id="flowExecBadge">?</span></div>
-          <div class="flow-actions"><button class="btn" id="refreshTokenBtn" title="Start automatic token refresh">Refresh Token</button><button class="btn" id="syncAccountBtn">Sync Account</button></div>
+        <section class="card workflow" id="workflowSection">
+          <div class="flow-pipeline">
+            <a class="flow-step" id="flowStepBroker" href="/tradeops/account" title="Broker Status: Click to view Account & Broker details">
+              <div class="flow-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M3 21h18"/><path d="M5 21V9l7-5 7 5v12"/><path d="M9 21v-6h6v6"/></svg></div>
+              <div class="flow-text"><b id="flowBrokerTitle">Broker</b><span id="flowBrokerSub">Checking</span></div>
+              <span class="flow-ok" id="flowBrokerBadge"></span>
+            </a>
+            <div class="flow-arrow"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="m9 18 6-6-6-6"/></svg></div>
+            <a class="flow-step" id="flowStepToken" href="/tradeops/account" title="Token Status: Click to manage Kite Token">
+              <div class="flow-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10Z"/><path d="m9 12 2 2 4-5"/></svg></div>
+              <div class="flow-text"><b id="flowTokenTitle">Token</b><span id="flowTokenSub">Checking</span></div>
+              <span class="flow-ok" id="flowTokenBadge"></span>
+            </a>
+            <div class="flow-arrow"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="m9 18 6-6-6-6"/></svg></div>
+            <a class="flow-step" id="flowStepBot" href="/tradeops/health" title="Trading Bot: Click to view Heartbeat & Process Health">
+              <div class="flow-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><rect x="6" y="7" width="12" height="10" rx="2"/><path d="M12 3v4M8 21h8M9 11h.01M15 11h.01"/></svg></div>
+              <div class="flow-text"><b id="flowBotTitle">Bot</b><span id="flowBotSub">Checking</span></div>
+              <span class="flow-ok" id="flowBotBadge"></span>
+            </a>
+            <div class="flow-arrow"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="m9 18 6-6-6-6"/></svg></div>
+            <a class="flow-step" id="flowStepFeed" href="/tradeops/candle-logs" title="Market Feed: Click to view Live Candle Logs">
+              <div class="flow-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M4 12h3l2-5 4 10 2-5h5"/></svg></div>
+              <div class="flow-text"><b id="flowFeedTitle">Feed</b><span id="flowFeedSub">Checking</span></div>
+              <span class="flow-ok" id="flowFeedBadge"></span>
+            </a>
+            <div class="flow-arrow"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="m9 18 6-6-6-6"/></svg></div>
+            <a class="flow-step" id="flowStepExec" href="/tradeops/executions" title="Execution Gate: Click to view Gate status & Safeguards">
+              <div class="flow-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M5 19 19 5"/><path d="m14 5 5 5"/><path d="M5 19l5-1 8-8"/></svg></div>
+              <div class="flow-text"><b id="flowExecTitle">Execution</b><span id="flowExecSub">Checking</span></div>
+              <span class="flow-ok" id="flowExecBadge"></span>
+            </a>
+          </div>
+          <div class="flow-actions">
+            <button class="flow-btn" id="refreshTokenBtn" title="Start automatic token refresh" type="button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M21 12a9 9 0 0 1-15.5 6.2"/><path d="M3 12A9 9 0 0 1 18.5 5.8"/><path d="M18 2v4h-4"/><path d="M6 22v-4h4"/></svg><span>Refresh Token</span></button>
+            <button class="flow-btn" id="syncAccountBtn" title="Sync broker account balance & margin" type="button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg><span>Sync Account</span></button>
+          </div>
         </section>
         <section class="card pnl"><div class="card-h"><span class="pnl-head"><span id="pnlCardTitle">Trade P&amp;L</span> <span class="dot ok"></span><span class="ok" id="pnlLiveLabel">Live data</span></span><a class="pnl-link" href="/tradeops/trade-history">View details &rsaquo;</a></div><div class="card-b"><div id="pnlMetricLabel" class="pnl-label">Net P&amp;L</div><div class="pnl-main"><div><div id="netPnl" class="pnl-value">Not synced</div><div id="pnlSupport" class="pnl-support">Strategy P&amp;L</div></div><span id="profitChip" class="profit-pill">--</span></div><div class="metric-grid"><div class="metric"><label>Realized P&amp;L</label><b id="realized">--</b></div><div class="metric emphasis"><label>Unrealized P&amp;L</label><b id="unrealized">--</b></div><div class="metric"><label>Charges</label><b id="charges">Unavailable</b></div><div class="metric emphasis"><label>Net After Charges</label><b id="netAfterCharges">Unavailable</b></div><div class="metric"><label>Day High</label><b id="dayHigh">Not available</b></div><div class="metric"><label>Day Low</label><b id="dayLow">Not available</b></div><div class="metric emphasis"><label>Open P&amp;L</label><b id="openPnl">--</b></div><div class="metric"><label>Closed P&amp;L</label><b id="closedPnl">--</b></div></div><div class="pnl-foot"><span>Last updated: <b id="pnlUpdated">--</b></span><span>Source: <b id="pnlSource">Broker</b></span><span>Mode: <b id="pnlMode">Live</b></span></div></div></section>
         <section class="card chart"><div class="card-h"><span>BANKNIFTY &middot; <span id="chartTfLabel">15m</span> <span id="chartMode" class="chart-mode">Checking</span></span><a class="chart-link" href="/tradeops/candle-logs">View chart &rsaquo;</a></div><div class="card-b"><div class="chart-top"><div><div id="ohlc" class="ohlc">OHLC unavailable</div><div><span id="ltp" class="ltp">LTP unavailable</span> <span id="change" class="ok"></span></div></div><button class="btn" id="chartTfTop">15m</button></div><div class="chart-box" id="chartBox"></div><div class="tabs" id="chartTabs"><button type="button" data-tf="15m" class="active">15m</button><span style="margin-left:auto" class="muted chart-footer"><span id="feedStateDot" class="dot"></span> <span id="feedState">Checking</span> | Last candle: <b id="lastCandle">--</b> | <b id="candleCount">0 candles</b></span></div></div></section>
@@ -9305,7 +9362,39 @@ async function setTradeOpsTelegram(enabled){
     if(toggle)toggle.checked=!enabled;
   }
 }
+function wireWorkflowButtons(){
+  const refreshBtn=document.getElementById('refreshTokenBtn');
+  if(refreshBtn&&!refreshBtn._wired){
+    refreshBtn._wired=true;
+    refreshBtn.onclick=async function(e){
+      e.preventDefault();
+      await startTradeOpsTokenRefresh(refreshBtn);
+    };
+  }
+  const syncBtn=document.getElementById('syncAccountBtn');
+  if(syncBtn&&!syncBtn._wired){
+    syncBtn._wired=true;
+    syncBtn.onclick=async function(e){
+      e.preventDefault();
+      const oldHtml=syncBtn.innerHTML;
+      syncBtn.innerHTML='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" class="spin"><path d="M21 12a9 9 0 0 1-15.5 6.2"/><path d="M3 12A9 9 0 0 1 18.5 5.8"/></svg><span>Syncing...</span>';
+      syncBtn.disabled=true;
+      try{
+        await load();
+        syncBtn.innerHTML='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="m5 12 5 5L20 7"/></svg><span>Synced!</span>';
+      }catch(err){
+        syncBtn.innerHTML='<span>Sync Failed</span>';
+      }
+      setTimeout(function(){
+        syncBtn.innerHTML=oldHtml;
+        syncBtn.disabled=false;
+      },1500);
+    };
+  }
+}
 if(INITIAL_STATUS&&INITIAL_STATUS.ok){try{render(INITIAL_STATUS)}catch(e){console.error(e);showLoadError(e&&e.message?e.message:"Initial render failed")}}
+wireWorkflowButtons();
+setupSidebar();
 hideLoader();
 let _statusPollTimer=null;function scheduleStatusPoll(){clearTimeout(_statusPollTimer);_statusPollTimer=setTimeout(async()=>{if(PAGE==='dashboard'||PAGE==='account'){await load().catch(()=>{});}scheduleStatusPoll();},5000);}
 let _logsPollTimer=null;function scheduleLogsPoll(){clearTimeout(_logsPollTimer);_logsPollTimer=setTimeout(async()=>{if(!paused){await loadLogs().catch(()=>{});}scheduleLogsPoll();},4000);}
