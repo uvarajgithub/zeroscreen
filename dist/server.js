@@ -8785,6 +8785,28 @@ body.tradeops-collapsed .help,body.tradeops-collapsed .collapse-btn{justify-cont
   .candle-note{min-width:190px}
 }
 
+/* TradeOps Hero Header Card */
+.tradeops-hero{grid-area:workflow!important;background:linear-gradient(135deg,#0a192f 0%,#06152a 50%,#041021 100%)!important;border:1px solid rgba(56,189,248,0.32)!important;border-radius:14px!important;box-shadow:0 12px 32px rgba(2,10,25,0.25),inset 0 1px 0 rgba(255,255,255,0.12)!important;padding:14px 20px!important;color:#fff!important;display:flex!important;align-items:center!important;justify-content:space-between!important;gap:16px!important;flex-wrap:wrap!important;min-height:74px!important}
+.tradeops-hero-left{display:flex;align-items:center;gap:14px;min-width:280px;flex:1 1 auto}
+.tradeops-hero-icon{width:42px;height:42px;border-radius:12px;background:linear-gradient(135deg,#059669 0%,#10b981 100%);display:grid;place-items:center;font-size:20px;color:#fff;box-shadow:0 8px 20px rgba(16,185,129,0.35),inset 0 1px 0 rgba(255,255,255,0.3);flex:0 0 auto}
+.tradeops-hero-info{display:grid;gap:4px}
+.tradeops-hero-badge{display:inline-flex;align-items:center;gap:6px;font-size:11px;font-weight:800;color:#7dd3fc;text-transform:uppercase;letter-spacing:0.06em}
+.tradeops-hero-badge .pulse-dot{width:7px;height:7px;border-radius:50%;background:#10b981;box-shadow:0 0 0 3px rgba(16,185,129,0.3);animation:pulseGlow 1.5s infinite}
+.tradeops-hero-select-wrap{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.tradeops-hero-select{height:36px;padding:0 34px 0 14px;border-radius:9px;border:1px solid rgba(96,165,250,0.45);background:#0f243d url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='%2393c5fd' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'%3E%3C/polyline%3E%3C/svg%3E") no-repeat right 10px center;background-size:14px;color:#f8fafc;font-size:13.5px;font-weight:750;cursor:pointer;appearance:none;outline:none;transition:all .2s ease;box-shadow:0 4px 12px rgba(0,0,0,0.25)}
+.tradeops-hero-select:hover{border-color:#38bdf8;background-color:#142f50}
+.tradeops-hero-tags{display:flex;gap:6px;flex-wrap:wrap}
+.tradeops-hero-tag{height:24px;border-radius:999px;padding:0 9px;background:rgba(255,255,255,0.08);border:1px solid rgba(255,255,255,0.14);color:#cbd5e1;font-size:11px;font-weight:650;display:inline-flex;align-items:center}
+.tradeops-hero-right{display:flex;align-items:center;gap:14px;flex-wrap:wrap}
+.tradeops-mode-segment{display:inline-flex;padding:3px;border-radius:10px;background:rgba(2,8,18,0.75);border:1px solid rgba(148,163,184,0.25);box-shadow:inset 0 2px 4px rgba(0,0,0,0.4)}
+.tradeops-mode-btn{height:32px;padding:0 14px;border-radius:7px;border:none;background:transparent;color:#94a3b8;font-size:12px;font-weight:750;cursor:pointer;display:inline-flex;align-items:center;gap:6px;transition:all .2s ease}
+.tradeops-mode-btn:hover{color:#f8fafc}
+.tradeops-mode-btn.active.shadow-active{background:linear-gradient(135deg,#2563eb 0%,#1d4ed8 100%);color:#fff;box-shadow:0 4px 14px rgba(37,99,235,0.45)}
+.tradeops-mode-btn.active.live-active{background:linear-gradient(135deg,#10b981 0%,#059669 100%);color:#fff;box-shadow:0 4px 14px rgba(16,185,129,0.45);animation:pulseGlow 2s infinite}
+.tradeops-hero-actions{display:flex;gap:8px;align-items:center}
+.tradeops-hero-btn{height:36px;padding:0 14px;border-radius:9px;border:1px solid rgba(96,165,250,0.35);background:rgba(15,36,61,0.8);color:#e2e8f0;font-size:12px;font-weight:700;cursor:pointer;display:inline-flex;align-items:center;gap:6px;transition:all .2s ease}
+.tradeops-hero-btn:hover{background:rgba(30,64,105,0.9);border-color:#60a5fa;color:#fff;transform:translateY(-1px)}
+@keyframes pulseGlow{0%,100%{transform:scale(1);opacity:1}50%{transform:scale(1.08);opacity:.85}}
 </style>
 </head>
 <body>
@@ -8824,27 +8846,43 @@ body.tradeops-collapsed .help,body.tradeops-collapsed .collapse-btn{justify-cont
     <section class="content">
       <div id="loadErrorBanner" style="display:none"></div>
       <div id="dashboard" class="dashboard${safePage !== "dashboard" ? " hidden" : ""}">
-        <section class="card workflow" style="background:linear-gradient(135deg,rgba(11,20,38,.98),rgba(15,28,54,.98));border:1px solid rgba(56,189,248,.25)">
-          <div style="display:flex;align-items:center;justify-content:space-between;width:100%;gap:16px;flex-wrap:wrap;padding:4px 0">
-            <div style="display:flex;align-items:center;gap:12px;min-width:260px">
-              <span style="display:inline-flex;align-items:center;justify-content:center;width:36px;height:36px;border-radius:9px;background:linear-gradient(135deg,#059669,#10b981);color:#fff;font-size:18px">⚡</span>
-              <div>
-                <div style="font-size:11px;font-weight:800;color:#93c5fd;text-transform:uppercase;letter-spacing:.05em">Active Real-Money Strategy</div>
-                <div style="display:flex;align-items:center;gap:8px;margin-top:2px">
-                  <select id="strategySelect" style="height:32px;padding:0 10px;border-radius:6px;border:1px solid rgba(148,163,184,.3);background:#071426;color:#f8fafc;font-size:13px;font-weight:800;cursor:pointer"></select>
+        <section class="tradeops-hero">
+          <div class="tradeops-hero-left">
+            <div class="tradeops-hero-icon">⚡</div>
+            <div class="tradeops-hero-info">
+              <div class="tradeops-hero-badge"><span class="pulse-dot"></span> Active Strategy Engine</div>
+              <div class="tradeops-hero-select-wrap">
+                <select id="strategySelect" class="tradeops-hero-select"></select>
+                <div class="tradeops-hero-tags">
+                  <span class="tradeops-hero-tag">BANKNIFTY FUT</span>
+                  <span class="tradeops-hero-tag">1 Lot (30 Qty)</span>
+                  <span class="tradeops-hero-tag">Max 3 Trades</span>
+                  <span class="tradeops-hero-tag" style="border-color:rgba(52,211,153,.35);color:#34d399">+50pt Lock Guard</span>
                 </div>
               </div>
             </div>
-            <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap">
-              <div style="display:flex;align-items:center;gap:8px;padding:6px 12px;border-radius:8px;background:rgba(4,10,22,.6);border:1px solid rgba(148,163,184,.2)">
-                <span style="font-size:11.5px;color:#94a3b8;font-weight:700">Execution Mode:</span>
-                <label class="tradeops-switch" style="margin:0"><input type="checkbox" id="tt1030ModeToggle" onchange="setTradeOpsMode(this.checked?'LIVE':'SHADOW')"><span class="switch-track"><i></i></span></label>
-                <b id="tt1030ModeLabel" style="font-size:12px;color:#34d399;font-weight:800">LIVE</b>
+          </div>
+          <div class="tradeops-hero-right">
+            <div style="display:grid;gap:3px;text-align:right">
+              <div style="font-size:10.5px;font-weight:800;color:#94a3b8;text-transform:uppercase;letter-spacing:.05em">Execution Mode</div>
+              <div class="tradeops-mode-segment">
+                <button type="button" class="tradeops-mode-btn" id="modeBtnShadow" onclick="setTradeOpsMode('SHADOW')">
+                  <span>●</span> SHADOW (Paper)
+                </button>
+                <button type="button" class="tradeops-mode-btn" id="modeBtnLive" onclick="setTradeOpsMode('LIVE')">
+                  <span>⚡</span> LIVE (Real Money)
+                </button>
               </div>
-              <div style="display:flex;align-items:center;gap:8px">
-                <button class="btn" id="refreshTokenBtn" style="height:34px;font-size:12px" title="Start automatic token refresh">Refresh Token</button>
-                <button class="btn" id="syncAccountBtn" style="height:34px;font-size:12px">Sync Account</button>
-              </div>
+            </div>
+            <div class="tradeops-hero-actions">
+              <button class="tradeops-hero-btn" id="refreshTokenBtn" title="Start automatic token refresh">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" style="width:14px;height:14px"><path d="M21 12a9 9 0 0 1-15.5 6.2"/><path d="M3 12A9 9 0 0 1 18.5 5.8"/><path d="M18 2v4h-4"/><path d="M6 22v-4h4"/></svg>
+                <span>Refresh Token</span>
+              </button>
+              <button class="tradeops-hero-btn" id="syncAccountBtn" title="Sync broker capital and margin">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" style="width:14px;height:14px"><path d="M13 2 3 14h9l-1 8 10-12h-9l1-8z"/></svg>
+                <span>Sync Broker</span>
+              </button>
             </div>
           </div>
         </section>
@@ -8960,6 +8998,17 @@ function render(d){
       profitChip.className='profit-pill '+(net>=0?'':'loss');
     }
     const stMode=String((d.strategy&&d.strategy.mode)||'SHADOW').toUpperCase();
+    const btnShadow=document.getElementById('modeBtnShadow');
+    const btnLive=document.getElementById('modeBtnLive');
+    if(btnShadow&&btnLive){
+      if(stMode==='LIVE'){
+        btnLive.className='tradeops-mode-btn active live-active';
+        btnShadow.className='tradeops-mode-btn';
+      }else{
+        btnShadow.className='tradeops-mode-btn active shadow-active';
+        btnLive.className='tradeops-mode-btn';
+      }
+    }
     const toggle=document.getElementById('tt1030ModeToggle');
     const toggleLabel=document.getElementById('tt1030ModeLabel');
     if(toggle){toggle.checked=stMode==='LIVE';toggle.disabled=false;}
@@ -9297,10 +9346,14 @@ async function startTradeOpsTokenRefresh(button){
 async function setTradeOpsMode(mode){
   const out=document.getElementById('modeResult');
   const toggle=document.getElementById('tt1030ModeToggle');
+  const btnShadow=document.getElementById('modeBtnShadow');
+  const btnLive=document.getElementById('modeBtnLive');
   const body={mode:mode,restartBot:true,confirm:true};
   if(mode==='LIVE'){
-    if(!confirm('Enable LIVE mode? Future signals can place real Zerodha orders.')){if(toggle)toggle.checked=false;return;}
+    if(!confirm('Enable LIVE mode? Future signals will place real Zerodha futures orders.')){return;}
   }
+  if(btnShadow)btnShadow.disabled=true;
+  if(btnLive)btnLive.disabled=true;
   if(toggle)toggle.disabled=true;
   if(out){out.style.display='block';out.className='account-warn';out.textContent='Applying '+mode+' mode and reloading the trading process...';}
   try{
@@ -9310,9 +9363,11 @@ async function setTradeOpsMode(mode){
     if(out){out.className='account-warn success';out.textContent='Mode changed to '+mode+'. The running process was reloaded successfully.'}
     await load();
   }catch(e){
+    alert((e&&e.message)||'Mode change failed');
     if(out){out.className='account-warn error';out.textContent=(e&&e.message)||'Mode change failed'}
-    if(toggle)toggle.checked=mode!=='LIVE';
   }finally{
+    if(btnShadow)btnShadow.disabled=false;
+    if(btnLive)btnLive.disabled=false;
     if(toggle)toggle.disabled=false;
   }
 }
