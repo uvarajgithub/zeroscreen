@@ -8805,6 +8805,7 @@ body.tradeops-collapsed .help,body.tradeops-collapsed .collapse-btn{justify-cont
       </div>
     </header>
     <section class="content">
+      <div id="loadErrorBanner" style="display:none"></div>
       <div id="dashboard" class="dashboard${safePage !== "dashboard" ? " hidden" : ""}">
         <section class="card workflow" style="background:linear-gradient(135deg,rgba(11,20,38,.98),rgba(15,28,54,.98));border:1px solid rgba(56,189,248,.25)">
           <div style="display:flex;align-items:center;justify-content:space-between;width:100%;gap:16px;flex-wrap:wrap;padding:4px 0">
@@ -8861,216 +8862,220 @@ function renderLogs(logs){if(paused)return;let grouped=logGroups(logs);grouped=g
 async function loadLogs(){if(paused)return;try{const r=await fetch(strategyUrl('/api/tradeops/logs'),{cache:'no-store',credentials:'same-origin',headers:{'Accept':'application/json'}});if(!r.ok)return;const j=await r.json();if(j&&Array.isArray(j.logs))renderLogs(j.logs)}catch(e){}}
 function setupSidebar(){const btn=document.querySelector('.collapse-btn');if(!btn||btn._wired)return;btn._wired=true;const label=btn.querySelector('span');function sync(){const collapsed=document.body.classList.contains('tradeops-collapsed');if(label)label.textContent=collapsed?'Expand':'Collapse';btn.title=collapsed?'Expand sidebar':'Collapse sidebar'}try{if(localStorage.getItem('tradeopsSidebarCollapsed')==='1')document.body.classList.add('tradeops-collapsed')}catch(e){}sync();btn.onclick=function(){document.body.classList.toggle('tradeops-collapsed');try{localStorage.setItem('tradeopsSidebarCollapsed',document.body.classList.contains('tradeops-collapsed')?'1':'0')}catch(e){}sync()}}
 function render(d){
-  d=d||{};
-  d.market=d.market||{open:false,label:'Checking',latestSession:String(d.updatedAt||new Date().toISOString()).slice(0,10)};
-  d.broker=d.broker||{connected:false,tokenOK:false,accountName:'Unavailable',accountId:'Unavailable'};
-  d.bot=d.bot||{online:false,isAlive:false,state:'Offline',heartbeatAgeSec:null};
-  d.pnl=d.pnl||{net:0,realized:0,unrealized:0,todayHigh:0,todayLow:0,dayRangeAvailable:false,chargesAvailable:false,marginsSynced:false,refreshMs:5000};
-  d.execution=d.execution||{status:'Checking',ready:false,pending:false,checks:{},requiredMargin:0,shortfall:0,orderValue:0,blockReason:''};
-  d.strategy=d.strategy||{label:'TradeOps',mode:'UNKNOWN'};
-  d.validations=d.validations||{};
-  d.positions=Array.isArray(d.positions)?d.positions:[];
-  d.trades=Array.isArray(d.trades)?d.trades:[];
-  d.historyTrades=Array.isArray(d.historyTrades)?d.historyTrades:d.trades;
-  d.rejections=Array.isArray(d.rejections)?d.rejections:[];
-  d.candles=Array.isArray(d.candles)?d.candles:[];
-  d.logs=Array.isArray(d.logs)?d.logs:[];
-  d.updatedAt=d.updatedAt||new Date().toISOString();
-  lastStatus=d;
-  renderStrategySelect(d);
-  tradeOpsSessionDate=(d&&d.market&&d.market.latestSession)||String((d&&d.updatedAt)||'').slice(0,10)||'';
-  nav();
-  document.getElementById('dashboard').classList.toggle('hidden',PAGE!=='dashboard');
-  document.getElementById('detail').classList.toggle('active',PAGE!=='dashboard');
-  const updated=new Date(d.updatedAt).toLocaleTimeString('en-IN');
-  const allTradeRows=Array.isArray(d.trades)?d.trades:[];
-  const allRejectionRows=Array.isArray(d.rejections)?d.rejections:[];
-  const tradeList=allTradeRows.filter(function(t){return String(t&&t.date||'').slice(0,10)===(tradeOpsSessionDate||'')});
-  const rejectionList=allRejectionRows.filter(function(t){return String(t&&t.date||'').slice(0,10)===(tradeOpsSessionDate||'')});
-  const botOnline=!!(d.bot&&(d.bot.isAlive===true||d.bot.online===true));
-  const validations=d.validations||{};
-  const tokenValidation=validations.token||{};
-  const brokerValidation=validations.broker||{};
-  const botValidation=validations.bot||{};
-  const feedValidation=validations.feed||{};
-  const name=txt(d.broker.accountName);
-  const acct=txt(d.broker.accountId);
-  set('headerUser',name==='Not synced'?'Account User':name);
-  set('headerAvatar',(name==='Not synced'?'AU':name.split(/\\s+/).map(x=>x[0]).join('').slice(0,2)).toUpperCase());
-  set('headerRole',d.broker.connected?'Live Account':'Live Account');
-  set('accountIdTop',acct);
-  set('lastUpdated',updated);
-  set('pnlUpdated',updated);
-  const mDot=document.getElementById('marketDot');if(mDot)mDot.className='dot '+(d.market.open?'ok':'warn');
-  set('marketLabel',d.market.label);
-  const bDot=document.getElementById('brokerDot');if(bDot)bDot.className='dot '+(d.broker.connected?'ok':'bad');
-  set('brokerLabel',brokerValidation.ok?'Broker Verified':'Broker Issue');
-  const botDotEl=document.getElementById('botDot');if(botDotEl)botDotEl.className='dot '+(botOnline?'ok':'bad');
-  set('botLabel',botOnline?'Bot Online':'Bot Offline');
-  set('modeChip',((d.strategy&&d.strategy.mode)||'UNKNOWN'));
+  try {
+    d=d||{};
+    d.market=d.market||{open:false,label:'Checking',latestSession:String(d.updatedAt||new Date().toISOString()).slice(0,10)};
+    d.broker=d.broker||{connected:false,tokenOK:false,accountName:'Unavailable',accountId:'Unavailable'};
+    d.bot=d.bot||{online:false,isAlive:false,state:'Offline',heartbeatAgeSec:null};
+    d.pnl=d.pnl||{net:0,realized:0,unrealized:0,todayHigh:0,todayLow:0,dayRangeAvailable:false,chargesAvailable:false,marginsSynced:false,refreshMs:5000};
+    d.execution=d.execution||{status:'Checking',ready:false,pending:false,checks:{},requiredMargin:0,shortfall:0,orderValue:0,blockReason:''};
+    d.strategy=d.strategy||{label:'TradeOps',mode:'UNKNOWN'};
+    d.validations=d.validations||{};
+    d.positions=Array.isArray(d.positions)?d.positions:[];
+    d.trades=Array.isArray(d.trades)?d.trades:[];
+    d.historyTrades=Array.isArray(d.historyTrades)?d.historyTrades:d.trades;
+    d.rejections=Array.isArray(d.rejections)?d.rejections:[];
+    d.candles=Array.isArray(d.candles)?d.candles:[];
+    d.logs=Array.isArray(d.logs)?d.logs:[];
+    d.updatedAt=d.updatedAt||new Date().toISOString();
+    lastStatus=d;
+    renderStrategySelect(d);
+    tradeOpsSessionDate=(d&&d.market&&d.market.latestSession)||String((d&&d.updatedAt)||'').slice(0,10)||'';
+    nav();
+    const dbEl=document.getElementById('dashboard');if(dbEl)dbEl.classList.toggle('hidden',PAGE!=='dashboard');
+    const dtEl=document.getElementById('detail');if(dtEl)dtEl.classList.toggle('active',PAGE!=='dashboard');
+    const updated=new Date(d.updatedAt).toLocaleTimeString('en-IN');
+    const allTradeRows=Array.isArray(d.trades)?d.trades:[];
+    const allRejectionRows=Array.isArray(d.rejections)?d.rejections:[];
+    const tradeList=allTradeRows.filter(function(t){return String(t&&t.date||'').slice(0,10)===(tradeOpsSessionDate||'')});
+    const rejectionList=allRejectionRows.filter(function(t){return String(t&&t.date||'').slice(0,10)===(tradeOpsSessionDate||'')});
+    const botOnline=!!(d.bot&&(d.bot.isAlive===true||d.bot.online===true));
+    const validations=d.validations||{};
+    const tokenValidation=validations.token||{};
+    const brokerValidation=validations.broker||{};
+    const botValidation=validations.bot||{};
+    const feedValidation=validations.feed||{};
+    const name=txt(d.broker.accountName);
+    const acct=txt(d.broker.accountId);
+    set('headerUser',name==='Not synced'?'Account User':name);
+    set('headerAvatar',(name==='Not synced'?'AU':name.split(/\\s+/).map(x=>x[0]).join('').slice(0,2)).toUpperCase());
+    set('headerRole',d.broker.connected?'Live Account':'Live Account');
+    set('accountIdTop',acct);
+    set('lastUpdated',updated);
+    set('pnlUpdated',updated);
+    const mDot=document.getElementById('marketDot');if(mDot)mDot.className='dot '+(d.market.open?'ok':'warn');
+    set('marketLabel',d.market.label);
+    const bDot=document.getElementById('brokerDot');if(bDot)bDot.className='dot '+(d.broker.connected?'ok':'bad');
+    set('brokerLabel',brokerValidation.ok?'Broker Verified':'Broker Issue');
+    const botDotEl=document.getElementById('botDot');if(botDotEl)botDotEl.className='dot '+(botOnline?'ok':'bad');
+    set('botLabel',botOnline?'Bot Online':'Bot Offline');
+    set('modeChip',((d.strategy&&d.strategy.mode)||'UNKNOWN'));
 
-  set('flowBrokerTitle',brokerValidation.ok?'Broker Verified':'Broker Issue');
-  set('flowBrokerSub',brokerValidation.source||'Kite profile check');
-  set('flowTokenTitle',tokenValidation.ok?'Token Valid':'Token Required');
-  set('flowTokenSub',tokenValidation.ok?'Kite profile HTTP 200':(tokenValidation.error||'Refresh required'));
-  set('flowBotTitle',botOnline?'Bot Online':'Bot Offline');
-  set('flowBotSub',botValidation.heartbeatAgeSec==null?'No heartbeat':'Heartbeat '+ago(botValidation.heartbeatAgeSec));
-  set('flowFeedTitle',feedValidation.ok?'Feed Fresh':'Feed Waiting');
-  set('flowFeedSub',feedValidation.ok?'Last candle '+(feedValidation.lastCandle||'available'):'No candles recorded');
-  const upstreamReady=!!brokerValidation.ok&&!!tokenValidation.ok&&!!botValidation.ok&&!!feedValidation.ok;
-  const executionHealthy=!!d.execution.ready||(d.execution.status==='Idle'&&upstreamReady);
-  set('flowExecTitle',executionHealthy?(d.execution.status==='Idle'?'Execution Idle':'Execution Ready'):'Execution Waiting');
-  set('flowExecSub',executionHealthy?(d.execution.status==='Idle'?'No pending order':'All systems go'):(d.execution.blockReason||'Fix broker, token, bot, or feed'));
-  markFlow('flowBrokerBadge',!!brokerValidation.ok);
-  markFlow('flowTokenBadge',!!tokenValidation.ok);
-  markFlow('flowBotBadge',!!botValidation.ok);
-  markFlow('flowFeedBadge',!!feedValidation.ok);
-  markFlow('flowExecBadge',executionHealthy);
-  const execFlow=document.getElementById('flowExecTitle')?.closest('.flow-step');
-  if(execFlow)execFlow.classList.toggle('blocked',d.execution.status==='Blocked');
+    set('flowBrokerTitle',brokerValidation.ok?'Broker Verified':'Broker Issue');
+    set('flowBrokerSub',brokerValidation.source||'Kite profile check');
+    set('flowTokenTitle',tokenValidation.ok?'Token Valid':'Token Required');
+    set('flowTokenSub',tokenValidation.ok?'Kite profile HTTP 200':(tokenValidation.error||'Refresh required'));
+    set('flowBotTitle',botOnline?'Bot Online':'Bot Offline');
+    set('flowBotSub',botValidation.heartbeatAgeSec==null?'No heartbeat':'Heartbeat '+ago(botValidation.heartbeatAgeSec));
+    set('flowFeedTitle',feedValidation.ok?'Feed Fresh':'Feed Waiting');
+    set('flowFeedSub',feedValidation.ok?'Last candle '+(feedValidation.lastCandle||'available'):'No candles recorded');
+    const upstreamReady=!!brokerValidation.ok&&!!tokenValidation.ok&&!!botValidation.ok&&!!feedValidation.ok;
+    const executionHealthy=!!d.execution.ready||(d.execution.status==='Idle'&&upstreamReady);
+    set('flowExecTitle',executionHealthy?(d.execution.status==='Idle'?'Execution Idle':'Execution Ready'):'Execution Waiting');
+    set('flowExecSub',executionHealthy?(d.execution.status==='Idle'?'No pending order':'All systems go'):(d.execution.blockReason||'Fix broker, token, bot, or feed'));
+    markFlow('flowBrokerBadge',!!brokerValidation.ok);
+    markFlow('flowTokenBadge',!!tokenValidation.ok);
+    markFlow('flowBotBadge',!!botValidation.ok);
+    markFlow('flowFeedBadge',!!feedValidation.ok);
+    markFlow('flowExecBadge',executionHealthy);
+    const execFlow=document.getElementById('flowExecTitle')?.closest('.flow-step');
+    if(execFlow)execFlow.classList.toggle('blocked',d.execution.status==='Blocked');
 
-  const net=d.pnl.net;
-  const openActive=d.bot.state==='In Trade'||Number(d.pnl.unrealized||0)!==0;
-  const liveMode=d.market.open&&botOnline;
-  set('netPnl',rs(net));
-  const netPnlEl=document.getElementById('netPnl');
-  if(netPnlEl)netPnlEl.className='pnl-value '+cls(net);
-  const profitChip=document.getElementById('profitChip');
-  if(profitChip){
-    profitChip.textContent=net>=0?'Profit':'Loss';
-    profitChip.className='profit-pill '+(net>=0?'':'loss');
+    const net=d.pnl.net;
+    const openActive=d.bot.state==='In Trade'||Number(d.pnl.unrealized||0)!==0;
+    const liveMode=d.market.open&&botOnline;
+    set('netPnl',rs(net));
+    const netPnlEl=document.getElementById('netPnl');
+    if(netPnlEl)netPnlEl.className='pnl-value '+cls(net);
+    const profitChip=document.getElementById('profitChip');
+    if(profitChip){
+      profitChip.textContent=net>=0?'Profit':'Loss';
+      profitChip.className='profit-pill '+(net>=0?'':'loss');
+    }
+    const stMode=String((d.strategy&&d.strategy.mode)||'SHADOW').toUpperCase();
+    const toggle=document.getElementById('tt1030ModeToggle');
+    const toggleLabel=document.getElementById('tt1030ModeLabel');
+    if(toggle){toggle.checked=stMode==='LIVE';toggle.disabled=false;}
+    if(toggleLabel){toggleLabel.textContent=stMode;toggleLabel.style.color=stMode==='LIVE'?'#34d399':'#94a3b8';}
+    const strategyLabel=(d.strategy&&d.strategy.name)||'TradeOps';
+    set('pnlCardTitle',"Today's Real-Time P&L");
+    set('pnlLiveLabel',liveMode?'Live':'Last Session');
+    set('pnlMetricLabel',liveMode?'Net Live P&L':'Net Session P&L');
+    set('pnlSupport',openActive?strategyLabel+' position active':((d.pnl&&d.pnl.source)?'Source: '+d.pnl.source:strategyLabel+' (1 Lot / 30 Qty)'));
+    set('pnlSource',(d.pnl&&d.pnl.source?d.pnl.source:(d.broker.connected?'Broker':'Bot'))+' / '+Math.round(((d.pnl&&d.pnl.refreshMs)||5000)/1000)+'s');
+    set('pnlMode',stMode);
+    set('realized',rs(d.pnl.realized));
+    set('unrealized',rs(d.pnl.unrealized));
+    set('tradeCountDisplay',tradeList.length+' / 3 Max');
+    set('profitGuardDisplay','+50pt Lock Active');
+    ['realized','unrealized'].forEach(id=>{const e=document.getElementById(id);if(e)e.className=String(e.textContent||'').startsWith('-')?'bad':'ok'});
+
+    const chartCandles=buildChartCandles(d.candles||[]);
+    const c=chartCandles.length?chartCandles[chartCandles.length-1]:(d.candles&&d.candles[0]);
+    const feedFresh=!!(d.candles&&d.candles.length&&botOnline&&d.bot.heartbeatAgeSec!=null&&d.bot.heartbeatAgeSec<180);
+    const feedState=d.market.open?(feedFresh?'Fresh':'Delayed'):'Last Session';
+    set('chartTfLabel',chartTf);
+    set('chartTfTop',chartTf);
+    set('chartMode',d.market.open?(feedFresh?'Live':'Delayed'):'Last Session');
+    const hasVolume=!!(d.candles||[]).some(x=>Number(x.volume||0)>0);
+    set('feedState',feedState+(hasVolume?'':' | Volume unavailable'));
+    const fsd=document.getElementById('feedStateDot'); if(fsd)fsd.className='dot '+(feedState==='Fresh'?'ok':feedState==='Delayed'?'warn':'');
+    set('candleCount',chartCandles.length+' '+chartTf+' candles');
+    const ohlcEl=document.getElementById('ohlc');
+    if(ohlcEl)ohlcEl.innerHTML=c?(c.closeOnly?'Close-only feed':'<span>O <b>'+fixed(c.open)+'</b></span><span>H <b>'+fixed(c.high)+'</b></span><span>L <b>'+fixed(c.low)+'</b></span><span>C <b>'+fixed(c.close)+'</b></span>'):'OHLC unavailable';
+    set('ltp',c?'LTP '+fixed(c.close):'LTP unavailable');
+    set('change',c&&num(c.open)!=null&&num(c.close)!=null&&!c.closeOnly?((c.close-c.open)>=0?'+':'')+(c.close-c.open).toFixed(2)+' ('+(((c.close-c.open)/c.open)*100).toFixed(2)+'%)':'');
+    set('lastCandle',c?c.time:'--');
+    chart(d.candles||[]);
+
+    set('accountId',acct);
+    set('accountName',name);
+    const synced=!!d.pnl.marginsSynced;
+    set('brokerName',d.broker.connected?'Zerodha':'Not synced');
+    set('recon',synced?'Not checked':(d.broker.tokenOK?'Not synced':'Token required'));
+    set('lastSync',synced?updated:'Not synced');
+    const syncChip=document.getElementById('accountSyncChip');
+    if(syncChip){syncChip.textContent=synced?'Synced':(d.broker.tokenOK?'Not Synced':'Token Required');syncChip.className='account-chip '+(synced?'ok':d.broker.tokenOK?'warn':'bad');}
+    const accountWarn=document.getElementById('accountWarn');
+    if(accountWarn){accountWarn.style.display=synced?'none':'block';accountWarn.textContent=d.broker.tokenOK?'Account not synced. Balance and margin unavailable.':'Token required. Refresh token to sync account.';}
+    const accountHint=document.getElementById('accountHint');
+    if(accountHint){accountHint.style.display=synced?'block':'block';accountHint.textContent=synced?'Broker reported value':'Sync account to view balance';}
+    set('openingBalance',synced?(d.pnl.openingBalance==null?'Not available':rs(d.pnl.openingBalance)):'Not synced');
+    set('balance',money(synced,d.pnl.balance));
+    set('available',money(synced,d.pnl.availableMargin));
+    set('available2',money(synced,d.pnl.availableMargin));
+    set('usedMargin',money(synced,d.pnl.usedMargin));
+    set('buyingPower',money(synced,d.pnl.availableMargin));
+    set('cashBalance',synced?(d.pnl.cashBalance==null?'Not available':rs(d.pnl.cashBalance)):'Not synced');
+    const required=Number(d.execution.requiredMargin||0);
+    const idle=d.execution.status==='Idle';
+    set('gateLastCheck',updated);
+    const gateIdle=document.getElementById('gateIdle');
+    const gateMetrics=document.getElementById('gateMetrics');
+    if(gateIdle)gateIdle.style.display=idle?'flex':'none';
+    if(gateMetrics)gateMetrics.style.display=idle?'none':'grid';
+    set('nextOrderValue',idle?'Idle':rs(d.execution.orderValue||required));
+    set('requiredMargin',idle?'Idle':(synced?rs(required):'Not synced'));
+    const shortfall=Number(d.execution.shortfall||0);
+    set('shortfall',idle?'--':(synced?(shortfall?rs(shortfall):rs(0)):'Not synced'));
+    set('gateReason',idle?'Monitoring latest session':(d.execution.blockReason||'All checks passed'));
+    const checksRow=document.getElementById('checksRow');
+    if(checksRow){checksRow.innerHTML='';checksRow.style.display='none';}
+
+    const orderRows=tradeList.concat(rejectionList).sort(function(a,b){return String(b&&b.time||'').localeCompare(String(a&&a.time||''))});
+    const orderText=o=>String((o&&o.status)||'')+' '+String((o&&o.note)||'')+' '+String((o&&o.reason)||'');
+    const sent=orderRows.length;
+    const rejected=orderRows.filter(o=>/reject|failed|insufficient|margin/i.test(orderText(o))).length;
+    const missed=orderRows.filter(o=>/missed|not sent|signal skipped/i.test(orderText(o))).length;
+    const timedOut=orderRows.filter(o=>/timeout|timed out|no response/i.test(orderText(o))).length;
+    const manualReview=orderRows.filter(o=>/manual|review/i.test(orderText(o))).length;
+    const filled=orderRows.filter(o=>Number(o.exit||0)>0||/closed|complete|filled|target|stop|sl/i.test(orderText(o))).length;
+    const pending=Math.max(0,sent-filled-rejected-missed-timedOut);
+    const actionRequired=rejected+missed+timedOut+manualReview>0;
+    const orderIdle=document.getElementById('orderIdle');
+    const orderActive=document.getElementById('orderActive');
+    const orderChip=document.getElementById('orderStateChip');
+    if(orderIdle)orderIdle.style.display=sent?'none':'grid';
+    if(orderActive)orderActive.style.display=sent?'block':'none';
+    if(orderChip){orderChip.textContent=sent?(actionRequired?'Action Required':'Last Session Complete'):'Idle';orderChip.className='order-state-chip '+(sent?(actionRequired?'action':'normal'):'idle');}
+    set('orderLastCheck',updated);
+    set('completed',filled);
+    set('sent',sent);
+    set('filled',filled);
+    set('pendingOrders',pending);
+    set('rejected',rejected);
+    set('missed',missed);
+    set('timedOut',timedOut);
+    set('manualReview',manualReview);
+    set('lastOrderTime',sent?(orderRows[0].time||'Not available'):'--');
+    set('orderLatency',d.bot.heartbeatAgeSec==null?'Unavailable':ago(d.bot.heartbeatAgeSec));
+    set('fillRate',sent?Math.round((filled/sent)*100)+'%':'--');
+    const latestProblem=orderRows.find(o=>/reject|failed|insufficient|margin|missed|timeout|timed out|manual|review/i.test(orderText(o)));
+    set('orderActionText',latestProblem?((rejected?rejected+' rejected order':missed?missed+' missed order':timedOut?timedOut+' timed out order':'Manual review needed')+' - '+(latestProblem.note||latestProblem.reason||latestProblem.status||'Check details')):'All orders reached a safe final state');
+    set('tokenValidUntil',d.broker.tokenOK?'Valid':'Required');
+    set('heartbeat',ago(d.bot.heartbeatAgeSec));
+    set('brokerSync',d.broker.connected?'Synced':'Issue');set('brokerSyncAccount',synced?'Synced':'Not synced');
+    set('executionState',d.execution.status||'Checking');
+    const ready=document.getElementById('readyStrip');
+    if(ready){
+      ready.textContent=d.execution.status||'Checking';
+      ready.classList.toggle('blocked',d.execution.status==='Blocked');
+      ready.classList.toggle('idle',d.execution.status==='Idle');
+      ready.style.borderColor=d.execution.status==='Ready'?'#caefd9':d.execution.status==='Blocked'?'#ffd5d5':'#d7e4f4';
+      ready.style.background=d.execution.status==='Ready'?'#edfff5':d.execution.status==='Blocked'?'#fff4f4':'#f4f8ff';
+      ready.style.color=d.execution.status==='Ready'?'#079b55':d.execution.status==='Blocked'?'#ef4444':'#475569';
+    }
+    const action=document.getElementById('actionStrip');
+    if(action)action.classList.toggle('ready-hidden',!actionRequired);
+
+    const hasPositions=!!(d.positions&&d.positions.length);
+    const hasOrders=!!(orderRows&&orderRows.length);
+    const posEmpty=document.getElementById('positionsEmpty'), posTable=document.getElementById('positionsTable');
+    const ordEmpty=document.getElementById('ordersEmpty'), ordTable=document.getElementById('ordersTable');
+    if(posEmpty)posEmpty.style.display=hasPositions?'none':'flex';
+    if(posTable)posTable.style.display=hasPositions?'block':'none';
+    if(ordEmpty)ordEmpty.style.display=hasOrders?'none':'flex';
+    if(ordTable)ordTable.style.display=hasOrders?'block':'none';
+    const posBody=document.getElementById('positionsBody');
+    if(posBody)posBody.innerHTML=hasPositions?d.positions.slice(0,4).map(p=>{const avg=num(p.avg),ltp=num(p.ltp);return '<tr><td title="'+txt(p.symbol)+'">'+txt(p.symbol)+'</td><td>'+txt(p.qty)+'</td><td>'+fixed(avg)+'</td><td>'+fixed(ltp)+'</td><td class="'+cls(p.pnl)+'">'+rs(p.pnl)+'</td><td>'+(avg&&ltp?pc((ltp-avg)/avg*100):'--')+'</td><td><span class="badge">Open</span></td></tr>'}).join(''):'';
+    const ordBody=document.getElementById('ordersBody');
+    if(ordBody)ordBody.innerHTML=hasOrders?orderRows.slice(0,5).map(t=>{const st=/blocked|reject|fail|error|insufficient|margin/i.test(t.status||t.note||t.reason||'')?'Blocked':/pending|open|sent/i.test(t.status||'')?'Pending':'Filled';const price=num(t.exit)!=null?t.exit:t.entry;return '<tr><td>'+txt(t.time)+'</td><td title="'+txt(t.symbol)+'">'+txt(t.symbol)+'</td><td class="'+(String(t.side).toUpperCase()==='SELL'?'bad':'ok')+'">'+txt(t.side)+'</td><td>'+txt(t.qty)+'</td><td>'+fixed(price)+'</td><td><span class="badge '+(st==='Blocked'?'bad':'')+'" title="'+txt(t.reason||t.note||'')+'">'+st+'</span></td></tr>'}).join(''):'';
+    renderLogs(d.logs||[]);
+    if(PAGE!=='dashboard'){renderWorkspaceDetail(d);setTimeout(wireWorkspaceControls,0);}
+    hideLoader();
+  } catch(e) {
+    console.error('Error rendering TradeOps data:', e);
   }
-  const stMode=String((d.strategy&&d.strategy.mode)||'SHADOW').toUpperCase();
-  const toggle=document.getElementById('tt1030ModeToggle');
-  const toggleLabel=document.getElementById('tt1030ModeLabel');
-  if(toggle){toggle.checked=stMode==='LIVE';toggle.disabled=false;}
-  if(toggleLabel){toggleLabel.textContent=stMode;toggleLabel.style.color=stMode==='LIVE'?'#34d399':'#94a3b8';}
-  const strategyLabel=(d.strategy&&d.strategy.name)||'TradeOps';
-  set('pnlCardTitle',"Today's Real-Time P&L");
-  set('pnlLiveLabel',liveMode?'Live':'Last Session');
-  set('pnlMetricLabel',liveMode?'Net Live P&L':'Net Session P&L');
-  set('pnlSupport',openActive?strategyLabel+' position active':((d.pnl&&d.pnl.source)?'Source: '+d.pnl.source:strategyLabel+' (1 Lot / 30 Qty)'));
-  set('pnlSource',(d.pnl&&d.pnl.source?d.pnl.source:(d.broker.connected?'Broker':'Bot'))+' / '+Math.round(((d.pnl&&d.pnl.refreshMs)||5000)/1000)+'s');
-  set('pnlMode',stMode);
-  set('realized',rs(d.pnl.realized));
-  set('unrealized',rs(d.pnl.unrealized));
-  set('tradeCountDisplay',tradeList.length+' / 3 Max');
-  set('profitGuardDisplay','+50pt Lock Active');
-  ['realized','unrealized'].forEach(id=>{const e=document.getElementById(id);if(e)e.className=String(e.textContent||'').startsWith('-')?'bad':'ok'});
-
-  const chartCandles=buildChartCandles(d.candles||[]);
-  const c=chartCandles.length?chartCandles[chartCandles.length-1]:(d.candles&&d.candles[0]);
-  const feedFresh=!!(d.candles&&d.candles.length&&botOnline&&d.bot.heartbeatAgeSec!=null&&d.bot.heartbeatAgeSec<180);
-  const feedState=d.market.open?(feedFresh?'Fresh':'Delayed'):'Last Session';
-  set('chartTfLabel',chartTf);
-  set('chartTfTop',chartTf);
-  set('chartMode',d.market.open?(feedFresh?'Live':'Delayed'):'Last Session');
-  const hasVolume=!!(d.candles||[]).some(x=>Number(x.volume||0)>0);
-  set('feedState',feedState+(hasVolume?'':' | Volume unavailable'));
-  const fsd=document.getElementById('feedStateDot'); if(fsd)fsd.className='dot '+(feedState==='Fresh'?'ok':feedState==='Delayed'?'warn':'');
-  set('candleCount',chartCandles.length+' '+chartTf+' candles');
-  const ohlcEl=document.getElementById('ohlc');
-  if(ohlcEl)ohlcEl.innerHTML=c?(c.closeOnly?'Close-only feed':'<span>O <b>'+fixed(c.open)+'</b></span><span>H <b>'+fixed(c.high)+'</b></span><span>L <b>'+fixed(c.low)+'</b></span><span>C <b>'+fixed(c.close)+'</b></span>'):'OHLC unavailable';
-  set('ltp',c?'LTP '+fixed(c.close):'LTP unavailable');
-  set('change',c&&num(c.open)!=null&&num(c.close)!=null&&!c.closeOnly?((c.close-c.open)>=0?'+':'')+(c.close-c.open).toFixed(2)+' ('+(((c.close-c.open)/c.open)*100).toFixed(2)+'%)':'');
-  set('lastCandle',c?c.time:'--');
-  chart(d.candles||[]);
-
-  set('accountId',acct);
-  set('accountName',name);
-  const synced=!!d.pnl.marginsSynced;
-  set('brokerName',d.broker.connected?'Zerodha':'Not synced');
-  set('recon',synced?'Not checked':(d.broker.tokenOK?'Not synced':'Token required'));
-  set('lastSync',synced?updated:'Not synced');
-  const syncChip=document.getElementById('accountSyncChip');
-  if(syncChip){syncChip.textContent=synced?'Synced':(d.broker.tokenOK?'Not Synced':'Token Required');syncChip.className='account-chip '+(synced?'ok':d.broker.tokenOK?'warn':'bad');}
-  const accountWarn=document.getElementById('accountWarn');
-  if(accountWarn){accountWarn.style.display=synced?'none':'block';accountWarn.textContent=d.broker.tokenOK?'Account not synced. Balance and margin unavailable.':'Token required. Refresh token to sync account.';}
-  const accountHint=document.getElementById('accountHint');
-  if(accountHint){accountHint.style.display=synced?'block':'block';accountHint.textContent=synced?'Broker reported value':'Sync account to view balance';}
-  set('openingBalance',synced?(d.pnl.openingBalance==null?'Not available':rs(d.pnl.openingBalance)):'Not synced');
-  set('balance',money(synced,d.pnl.balance));
-  set('available',money(synced,d.pnl.availableMargin));
-  set('available2',money(synced,d.pnl.availableMargin));
-  set('usedMargin',money(synced,d.pnl.usedMargin));
-  set('buyingPower',money(synced,d.pnl.availableMargin));
-  set('cashBalance',synced?(d.pnl.cashBalance==null?'Not available':rs(d.pnl.cashBalance)):'Not synced');
-  const required=Number(d.execution.requiredMargin||0);
-  const idle=d.execution.status==='Idle';
-  set('gateLastCheck',updated);
-  const gateIdle=document.getElementById('gateIdle');
-  const gateMetrics=document.getElementById('gateMetrics');
-  if(gateIdle)gateIdle.style.display=idle?'flex':'none';
-  if(gateMetrics)gateMetrics.style.display=idle?'none':'grid';
-  set('nextOrderValue',idle?'Idle':rs(d.execution.orderValue||required));
-  set('requiredMargin',idle?'Idle':(synced?rs(required):'Not synced'));
-  const shortfall=Number(d.execution.shortfall||0);
-  set('shortfall',idle?'--':(synced?(shortfall?rs(shortfall):rs(0)):'Not synced'));
-  set('gateReason',idle?'Monitoring latest session':(d.execution.blockReason||'All checks passed'));
-  const checksRow=document.getElementById('checksRow');
-  if(checksRow){checksRow.innerHTML='';checksRow.style.display='none';}
-
-  const orderRows=tradeList.concat(rejectionList).sort(function(a,b){return String(b&&b.time||'').localeCompare(String(a&&a.time||''))});
-  const orderText=o=>String((o&&o.status)||'')+' '+String((o&&o.note)||'')+' '+String((o&&o.reason)||'');
-  const sent=orderRows.length;
-  const rejected=orderRows.filter(o=>/reject|failed|insufficient|margin/i.test(orderText(o))).length;
-  const missed=orderRows.filter(o=>/missed|not sent|signal skipped/i.test(orderText(o))).length;
-  const timedOut=orderRows.filter(o=>/timeout|timed out|no response/i.test(orderText(o))).length;
-  const manualReview=orderRows.filter(o=>/manual|review/i.test(orderText(o))).length;
-  const filled=orderRows.filter(o=>Number(o.exit||0)>0||/closed|complete|filled|target|stop|sl/i.test(orderText(o))).length;
-  const pending=Math.max(0,sent-filled-rejected-missed-timedOut);
-  const actionRequired=rejected+missed+timedOut+manualReview>0;
-  const orderIdle=document.getElementById('orderIdle');
-  const orderActive=document.getElementById('orderActive');
-  const orderChip=document.getElementById('orderStateChip');
-  if(orderIdle)orderIdle.style.display=sent?'none':'grid';
-  if(orderActive)orderActive.style.display=sent?'block':'none';
-  if(orderChip){orderChip.textContent=sent?(actionRequired?'Action Required':'Last Session Complete'):'Idle';orderChip.className='order-state-chip '+(sent?(actionRequired?'action':'normal'):'idle');}
-  set('orderLastCheck',updated);
-  set('completed',filled);
-  set('sent',sent);
-  set('filled',filled);
-  set('pendingOrders',pending);
-  set('rejected',rejected);
-  set('missed',missed);
-  set('timedOut',timedOut);
-  set('manualReview',manualReview);
-  set('lastOrderTime',sent?(orderRows[0].time||'Not available'):'--');
-  set('orderLatency',d.bot.heartbeatAgeSec==null?'Unavailable':ago(d.bot.heartbeatAgeSec));
-  set('fillRate',sent?Math.round((filled/sent)*100)+'%':'--');
-  const latestProblem=orderRows.find(o=>/reject|failed|insufficient|margin|missed|timeout|timed out|manual|review/i.test(orderText(o)));
-  set('orderActionText',latestProblem?((rejected?rejected+' rejected order':missed?missed+' missed order':timedOut?timedOut+' timed out order':'Manual review needed')+' - '+(latestProblem.note||latestProblem.reason||latestProblem.status||'Check details')):'All orders reached a safe final state');
-  set('tokenValidUntil',d.broker.tokenOK?'Valid':'Required');
-  set('heartbeat',ago(d.bot.heartbeatAgeSec));
-  set('brokerSync',d.broker.connected?'Synced':'Issue');set('brokerSyncAccount',synced?'Synced':'Not synced');
-  set('executionState',d.execution.status||'Checking');
-  const ready=document.getElementById('readyStrip');
-  if(ready){
-    ready.textContent=d.execution.status||'Checking';
-    ready.classList.toggle('blocked',d.execution.status==='Blocked');
-    ready.classList.toggle('idle',d.execution.status==='Idle');
-    ready.style.borderColor=d.execution.status==='Ready'?'#caefd9':d.execution.status==='Blocked'?'#ffd5d5':'#d7e4f4';
-    ready.style.background=d.execution.status==='Ready'?'#edfff5':d.execution.status==='Blocked'?'#fff4f4':'#f4f8ff';
-    ready.style.color=d.execution.status==='Ready'?'#079b55':d.execution.status==='Blocked'?'#ef4444':'#475569';
-  }
-  const action=document.getElementById('actionStrip');
-  if(action)action.classList.toggle('ready-hidden',!actionRequired);
-
-  const hasPositions=!!(d.positions&&d.positions.length);
-  const hasOrders=!!(orderRows&&orderRows.length);
-  const posEmpty=document.getElementById('positionsEmpty'), posTable=document.getElementById('positionsTable');
-  const ordEmpty=document.getElementById('ordersEmpty'), ordTable=document.getElementById('ordersTable');
-  if(posEmpty)posEmpty.style.display=hasPositions?'none':'flex';
-  if(posTable)posTable.style.display=hasPositions?'block':'none';
-  if(ordEmpty)ordEmpty.style.display=hasOrders?'none':'flex';
-  if(ordTable)ordTable.style.display=hasOrders?'block':'none';
-  const posBody=document.getElementById('positionsBody');
-  if(posBody)posBody.innerHTML=hasPositions?d.positions.slice(0,4).map(p=>{const avg=num(p.avg),ltp=num(p.ltp);return '<tr><td title="'+txt(p.symbol)+'">'+txt(p.symbol)+'</td><td>'+txt(p.qty)+'</td><td>'+fixed(avg)+'</td><td>'+fixed(ltp)+'</td><td class="'+cls(p.pnl)+'">'+rs(p.pnl)+'</td><td>'+(avg&&ltp?pc((ltp-avg)/avg*100):'--')+'</td><td><span class="badge">Open</span></td></tr>'}).join(''):'';
-  const ordBody=document.getElementById('ordersBody');
-  if(ordBody)ordBody.innerHTML=hasOrders?orderRows.slice(0,5).map(t=>{const st=/blocked|reject|fail|error|insufficient|margin/i.test(t.status||t.note||t.reason||'')?'Blocked':/pending|open|sent/i.test(t.status||'')?'Pending':'Filled';const price=num(t.exit)!=null?t.exit:t.entry;return '<tr><td>'+txt(t.time)+'</td><td title="'+txt(t.symbol)+'">'+txt(t.symbol)+'</td><td class="'+(String(t.side).toUpperCase()==='SELL'?'bad':'ok')+'">'+txt(t.side)+'</td><td>'+txt(t.qty)+'</td><td>'+fixed(price)+'</td><td><span class="badge '+(st==='Blocked'?'bad':'')+'" title="'+txt(t.reason||t.note||'')+'">'+st+'</span></td></tr>'}).join(''):'';
-  renderLogs(d.logs||[]);
-  if(PAGE!=='dashboard'){renderWorkspaceDetail(d);setTimeout(wireWorkspaceControls,0);}
-  hideLoader();
 }function renderWorkspaceDetail(d){
   const root=document.getElementById('detailGrid');
   if(!root)return;
@@ -9309,8 +9314,39 @@ async function setTradeOpsTelegram(enabled){
     if(toggle)toggle.checked=!enabled;
   }
 }
-function showLoadError(message){hideLoader();const root=document.getElementById(PAGE==='dashboard'?'dashboard':'detailGrid');const title=PAGE.replace(/-/g,' ').replace(/\\b\\w/g,function(m){return m.toUpperCase()});if(root){const html='<section class="ws-card" style="grid-column:1/-1"><div class="ws-card-h"><span>'+title+'</span><button class="btn" onclick="load()">Retry</button></div><div class="ws-card-b"><b class="bad">Could not load workspace data</b><p class="muted">'+txt(message||'Status API request failed')+'</p></div></section>';if(PAGE==='dashboard')root.innerHTML=html;else root.innerHTML=html;}}
-async function load(){const ctrl=new AbortController();const timer=setTimeout(()=>ctrl.abort(),8000);try{const r=await fetch(strategyUrl('/api/tradeops/status'),{cache:'no-store',credentials:'same-origin',signal:ctrl.signal,headers:{'Accept':'application/json'}});const ct=r.headers.get('content-type')||'';if(!r.ok)throw new Error('Status API HTTP '+r.status);if(!ct.includes('application/json'))throw new Error('Status API returned non-JSON');const j=await r.json();if(!j||j.ok===false)throw new Error(j&&j.error?j.error:'Status API failed');render(j)}catch(e){console.error(e);if(!lastStatus)showLoadError(e&&e.name==='AbortError'?'Status API timeout':e&&e.message?e.message:'Request failed')}finally{clearTimeout(timer)}}setupSidebar();const strategySelect=document.getElementById('strategySelect');if(strategySelect)strategySelect.onchange=()=>{selectedTradeOpsStrategy=strategySelect.value||DEFAULT_STRATEGY;try{localStorage.setItem('tradeopsSelectedStrategy',selectedTradeOpsStrategy)}catch(e){}load();loadLogs()};const emergencyBtn=document.getElementById('emergencyBtn');if(emergencyBtn)emergencyBtn.onclick=()=>{const out=document.getElementById('emergencyResult');if(out)out.textContent='';document.getElementById('modal')?.classList.add('open')};const cancelStop=document.getElementById('cancelStop');if(cancelStop)cancelStop.onclick=()=>document.getElementById('modal')?.classList.remove('open');const sendStop=document.getElementById('sendStop');if(sendStop)sendStop.onclick=async()=>{const out=document.getElementById('emergencyResult');sendStop.disabled=true;if(out)out.textContent='Checking live broker positions and submitting exits...';try{const r=await fetch('/api/tradeops/emergency-stop',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({confirm:true})});const j=await r.json();if(out)out.innerHTML=(j.ok?'Closed positions count: '+(j.closed?j.closed.length:0)+'<br>':'Exit request failed<br>')+(j.message||j.error||'Done');await load()}catch(e){if(out)out.textContent=e.message||'Request failed'}finally{sendStop.disabled=false}};const pauseLogs=document.getElementById('pauseLogs');if(pauseLogs)pauseLogs.onclick=()=>{paused=!paused;pauseLogs.textContent=paused?'Resume':'Pause'};const clearLogs=document.getElementById('clearLogs');if(clearLogs)clearLogs.onclick=()=>{const logsEl=document.getElementById('logs');if(logsEl)logsEl.innerHTML='<div class="muted">Preview cleared. New logs will appear on next tick.</div>'};const refreshTokenBtn=document.getElementById('refreshTokenBtn');if(refreshTokenBtn)refreshTokenBtn.onclick=async()=>{const old=refreshTokenBtn.textContent;refreshTokenBtn.textContent='Refreshing...';refreshTokenBtn.disabled=true;try{const r=await fetch('/api/tradeops/token-refresh',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({source:'dashboard'})});const j=await r.json();if(!r.ok||!j.ok)throw new Error(j.error||'Token refresh failed to start');refreshTokenBtn.textContent='Refresh Started';const logsEl=document.getElementById('logs');if(logsEl)logsEl.innerHTML='<div><span class="info">[INFO]</span> '+txt(j.message||'Auto token refresh started')+'</div>'+logsEl.innerHTML;setTimeout(load,8000);setTimeout(load,25000);setTimeout(load,60000)}catch(e){refreshTokenBtn.textContent='Refresh Failed';alert((e&&e.message)||'Token refresh failed')}finally{setTimeout(()=>{refreshTokenBtn.textContent=old;refreshTokenBtn.disabled=false},5000)}};const syncAccountBtn=document.getElementById('syncAccountBtn');if(syncAccountBtn)syncAccountBtn.onclick=async()=>{const old=syncAccountBtn.textContent;syncAccountBtn.textContent='Syncing...';syncAccountBtn.disabled=true;await load();syncAccountBtn.textContent=(lastStatus&&lastStatus.broker&&lastStatus.broker.tokenOK)?'Synced':'Token Required';setTimeout(()=>{syncAccountBtn.textContent=old;syncAccountBtn.disabled=false},1600)};document.querySelectorAll('#chartTabs button[data-tf]').forEach(btn=>{btn.onclick=()=>{chartTf=btn.dataset.tf||'15m';document.querySelectorAll('#chartTabs button[data-tf]').forEach(b=>b.classList.toggle('active',b===btn));if(lastStatus)render(lastStatus);}});if(INITIAL_STATUS&&INITIAL_STATUS.ok){try{render(INITIAL_STATUS)}catch(e){console.error(e);showLoadError(e&&e.message?e.message:"Initial render failed")}}load();loadLogs();if(PAGE==='dashboard'||PAGE==='account')setInterval(load,5000);setInterval(loadLogs,1000);
+function showLoadError(message){
+  hideLoader();
+  const banner=document.getElementById('loadErrorBanner');
+  if(banner){
+    banner.style.display='block';
+    banner.innerHTML='<div style="background:#fee2e2;border:1px solid #ef4444;color:#991b1b;padding:12px 16px;border-radius:8px;margin-bottom:16px;display:flex;align-items:center;justify-content:space-between"><div><b>Could not load live status:</b> '+txt(message||'Status request failed')+'</div><button class="btn" style="background:#ef4444;color:#fff;border:none;padding:6px 12px;cursor:pointer;border-radius:6px" onclick="location.reload()">Retry</button></div>';
+  } else if(PAGE!=='dashboard'){
+    const root=document.getElementById('detailGrid');
+    if(root){
+      root.innerHTML='<section class="ws-card" style="grid-column:1/-1"><div class="ws-card-h"><span>Workspace</span><button class="btn" onclick="location.reload()">Retry</button></div><div class="ws-card-b"><b class="bad">Could not load workspace data</b><p class="muted">'+txt(message||'Status API request failed')+'</p></div></section>';
+    }
+  }
+}
+async function load(){
+  const ctrl=new AbortController();
+  const timer=setTimeout(()=>ctrl.abort(),8000);
+  try{
+    const r=await fetch(strategyUrl('/api/tradeops/status'),{cache:'no-store',credentials:'same-origin',signal:ctrl.signal,headers:{'Accept':'application/json'}});
+    const ct=r.headers.get('content-type')||'';
+    if(!r.ok)throw new Error('Status API HTTP '+r.status);
+    if(!ct.includes('application/json'))throw new Error('Status API returned non-JSON');
+    const j=await r.json();
+    if(!j||j.ok===false)throw new Error(j&&j.error?j.error:'Status API failed');
+    render(j);
+    const banner=document.getElementById('loadErrorBanner');
+    if(banner)banner.style.display='none';
+  }catch(e){
+    console.error(e);
+    if(!lastStatus)showLoadError(e&&e.name==='AbortError'?'Status API timeout':e&&e.message?e.message:'Request failed');
+  }finally{
+    clearTimeout(timer);
+  }
+}setupSidebar();const strategySelect=document.getElementById('strategySelect');if(strategySelect)strategySelect.onchange=()=>{selectedTradeOpsStrategy=strategySelect.value||DEFAULT_STRATEGY;try{localStorage.setItem('tradeopsSelectedStrategy',selectedTradeOpsStrategy)}catch(e){}load();loadLogs()};const emergencyBtn=document.getElementById('emergencyBtn');if(emergencyBtn)emergencyBtn.onclick=()=>{const out=document.getElementById('emergencyResult');if(out)out.textContent='';document.getElementById('modal')?.classList.add('open')};const cancelStop=document.getElementById('cancelStop');if(cancelStop)cancelStop.onclick=()=>document.getElementById('modal')?.classList.remove('open');const sendStop=document.getElementById('sendStop');if(sendStop)sendStop.onclick=async()=>{const out=document.getElementById('emergencyResult');sendStop.disabled=true;if(out)out.textContent='Checking live broker positions and submitting exits...';try{const r=await fetch('/api/tradeops/emergency-stop',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({confirm:true})});const j=await r.json();if(out)out.innerHTML=(j.ok?'Closed positions count: '+(j.closed?j.closed.length:0)+'<br>':'Exit request failed<br>')+(j.message||j.error||'Done');await load()}catch(e){if(out)out.textContent=e.message||'Request failed'}finally{sendStop.disabled=false}};const pauseLogs=document.getElementById('pauseLogs');if(pauseLogs)pauseLogs.onclick=()=>{paused=!paused;pauseLogs.textContent=paused?'Resume':'Pause'};const clearLogs=document.getElementById('clearLogs');if(clearLogs)clearLogs.onclick=()=>{const logsEl=document.getElementById('logs');if(logsEl)logsEl.innerHTML='<div class="muted">Preview cleared. New logs will appear on next tick.</div>'};const refreshTokenBtn=document.getElementById('refreshTokenBtn');if(refreshTokenBtn)refreshTokenBtn.onclick=async()=>{const old=refreshTokenBtn.textContent;refreshTokenBtn.textContent='Refreshing...';refreshTokenBtn.disabled=true;try{const r=await fetch('/api/tradeops/token-refresh',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({source:'dashboard'})});const j=await r.json();if(!r.ok||!j.ok)throw new Error(j.error||'Token refresh failed to start');refreshTokenBtn.textContent='Refresh Started';const logsEl=document.getElementById('logs');if(logsEl)logsEl.innerHTML='<div><span class="info">[INFO]</span> '+txt(j.message||'Auto token refresh started')+'</div>'+logsEl.innerHTML;setTimeout(load,8000);setTimeout(load,25000);setTimeout(load,60000)}catch(e){refreshTokenBtn.textContent='Refresh Failed';alert((e&&e.message)||'Token refresh failed')}finally{setTimeout(()=>{refreshTokenBtn.textContent=old;refreshTokenBtn.disabled=false},5000)}};const syncAccountBtn=document.getElementById('syncAccountBtn');if(syncAccountBtn)syncAccountBtn.onclick=async()=>{const old=syncAccountBtn.textContent;syncAccountBtn.textContent='Syncing...';syncAccountBtn.disabled=true;await load();syncAccountBtn.textContent=(lastStatus&&lastStatus.broker&&lastStatus.broker.tokenOK)?'Synced':'Token Required';setTimeout(()=>{syncAccountBtn.textContent=old;syncAccountBtn.disabled=false},1600)};document.querySelectorAll('#chartTabs button[data-tf]').forEach(btn=>{btn.onclick=()=>{chartTf=btn.dataset.tf||'15m';document.querySelectorAll('#chartTabs button[data-tf]').forEach(b=>b.classList.toggle('active',b===btn));if(lastStatus)render(lastStatus);}});if(INITIAL_STATUS&&INITIAL_STATUS.ok){try{render(INITIAL_STATUS)}catch(e){console.error(e);showLoadError(e&&e.message?e.message:"Initial render failed")}}load();loadLogs();if(PAGE==='dashboard'||PAGE==='account')setInterval(load,5000);setInterval(loadLogs,1000);
 </script>
 </body></html>`;
 }
