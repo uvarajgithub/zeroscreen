@@ -8884,11 +8884,11 @@ function render(d){
   set('accountIdTop',acct);
   set('lastUpdated',updated);
   set('pnlUpdated',updated);
-  document.getElementById('marketDot').className='dot '+(d.market.open?'ok':'warn');
+  const mDot=document.getElementById('marketDot');if(mDot)mDot.className='dot '+(d.market.open?'ok':'warn');
   set('marketLabel',d.market.label);
-  document.getElementById('brokerDot').className='dot '+(d.broker.connected?'ok':'bad');
+  const bDot=document.getElementById('brokerDot');if(bDot)bDot.className='dot '+(d.broker.connected?'ok':'bad');
   set('brokerLabel',brokerValidation.ok?'Broker Verified':'Broker Issue');
-  document.getElementById('botDot').className='dot '+(botOnline?'ok':'bad');
+  const botDotEl=document.getElementById('botDot');if(botDotEl)botDotEl.className='dot '+(botOnline?'ok':'bad');
   set('botLabel',botOnline?'Bot Online':'Bot Offline');
   set('modeChip',((d.strategy&&d.strategy.mode)||'UNKNOWN'));
 
@@ -8916,10 +8916,13 @@ function render(d){
   const openActive=d.bot.state==='In Trade'||Number(d.pnl.unrealized||0)!==0;
   const liveMode=d.market.open&&botOnline;
   set('netPnl',rs(net));
-  document.getElementById('netPnl').className='pnl-value '+cls(net);
+  const netPnlEl=document.getElementById('netPnl');
+  if(netPnlEl)netPnlEl.className='pnl-value '+cls(net);
   const profitChip=document.getElementById('profitChip');
-  profitChip.textContent=net>=0?'Profit':'Loss';
-  profitChip.className='profit-pill '+(net>=0?'':'loss');
+  if(profitChip){
+    profitChip.textContent=net>=0?'Profit':'Loss';
+    profitChip.className='profit-pill '+(net>=0?'':'loss');
+  }
   const stMode=String((d.strategy&&d.strategy.mode)||'SHADOW').toUpperCase();
   const toggle=document.getElementById('tt1030ModeToggle');
   const toggleLabel=document.getElementById('tt1030ModeLabel');
@@ -9025,14 +9028,16 @@ function render(d){
   set('brokerSync',d.broker.connected?'Synced':'Issue');set('brokerSyncAccount',synced?'Synced':'Not synced');
   set('executionState',d.execution.status||'Checking');
   const ready=document.getElementById('readyStrip');
-  ready.textContent=d.execution.status||'Checking';
-  ready.classList.toggle('blocked',d.execution.status==='Blocked');
-  ready.classList.toggle('idle',d.execution.status==='Idle');
-  ready.style.borderColor=d.execution.status==='Ready'?'#caefd9':d.execution.status==='Blocked'?'#ffd5d5':'#d7e4f4';
-  ready.style.background=d.execution.status==='Ready'?'#edfff5':d.execution.status==='Blocked'?'#fff4f4':'#f4f8ff';
-  ready.style.color=d.execution.status==='Ready'?'#079b55':d.execution.status==='Blocked'?'#ef4444':'#475569';
+  if(ready){
+    ready.textContent=d.execution.status||'Checking';
+    ready.classList.toggle('blocked',d.execution.status==='Blocked');
+    ready.classList.toggle('idle',d.execution.status==='Idle');
+    ready.style.borderColor=d.execution.status==='Ready'?'#caefd9':d.execution.status==='Blocked'?'#ffd5d5':'#d7e4f4';
+    ready.style.background=d.execution.status==='Ready'?'#edfff5':d.execution.status==='Blocked'?'#fff4f4':'#f4f8ff';
+    ready.style.color=d.execution.status==='Ready'?'#079b55':d.execution.status==='Blocked'?'#ef4444':'#475569';
+  }
   const action=document.getElementById('actionStrip');
-  action.classList.toggle('ready-hidden',!actionRequired);
+  if(action)action.classList.toggle('ready-hidden',!actionRequired);
 
   const hasPositions=!!(d.positions&&d.positions.length);
   const hasOrders=!!(orderRows&&orderRows.length);
@@ -9042,8 +9047,10 @@ function render(d){
   if(posTable)posTable.style.display=hasPositions?'block':'none';
   if(ordEmpty)ordEmpty.style.display=hasOrders?'none':'flex';
   if(ordTable)ordTable.style.display=hasOrders?'block':'none';
-  document.getElementById('positionsBody').innerHTML=hasPositions?d.positions.slice(0,4).map(p=>{const avg=num(p.avg),ltp=num(p.ltp);return '<tr><td title="'+txt(p.symbol)+'">'+txt(p.symbol)+'</td><td>'+txt(p.qty)+'</td><td>'+fixed(avg)+'</td><td>'+fixed(ltp)+'</td><td class="'+cls(p.pnl)+'">'+rs(p.pnl)+'</td><td>'+(avg&&ltp?pc((ltp-avg)/avg*100):'--')+'</td><td><span class="badge">Open</span></td></tr>'}).join(''):'';
-  document.getElementById('ordersBody').innerHTML=hasOrders?orderRows.slice(0,5).map(t=>{const st=/blocked|reject|fail|error|insufficient|margin/i.test(t.status||t.note||t.reason||'')?'Blocked':/pending|open|sent/i.test(t.status||'')?'Pending':'Filled';const price=num(t.exit)!=null?t.exit:t.entry;return '<tr><td>'+txt(t.time)+'</td><td title="'+txt(t.symbol)+'">'+txt(t.symbol)+'</td><td class="'+(String(t.side).toUpperCase()==='SELL'?'bad':'ok')+'">'+txt(t.side)+'</td><td>'+txt(t.qty)+'</td><td>'+fixed(price)+'</td><td><span class="badge '+(st==='Blocked'?'bad':'')+'" title="'+txt(t.reason||t.note||'')+'">'+st+'</span></td></tr>'}).join(''):'';
+  const posBody=document.getElementById('positionsBody');
+  if(posBody)posBody.innerHTML=hasPositions?d.positions.slice(0,4).map(p=>{const avg=num(p.avg),ltp=num(p.ltp);return '<tr><td title="'+txt(p.symbol)+'">'+txt(p.symbol)+'</td><td>'+txt(p.qty)+'</td><td>'+fixed(avg)+'</td><td>'+fixed(ltp)+'</td><td class="'+cls(p.pnl)+'">'+rs(p.pnl)+'</td><td>'+(avg&&ltp?pc((ltp-avg)/avg*100):'--')+'</td><td><span class="badge">Open</span></td></tr>'}).join(''):'';
+  const ordBody=document.getElementById('ordersBody');
+  if(ordBody)ordBody.innerHTML=hasOrders?orderRows.slice(0,5).map(t=>{const st=/blocked|reject|fail|error|insufficient|margin/i.test(t.status||t.note||t.reason||'')?'Blocked':/pending|open|sent/i.test(t.status||'')?'Pending':'Filled';const price=num(t.exit)!=null?t.exit:t.entry;return '<tr><td>'+txt(t.time)+'</td><td title="'+txt(t.symbol)+'">'+txt(t.symbol)+'</td><td class="'+(String(t.side).toUpperCase()==='SELL'?'bad':'ok')+'">'+txt(t.side)+'</td><td>'+txt(t.qty)+'</td><td>'+fixed(price)+'</td><td><span class="badge '+(st==='Blocked'?'bad':'')+'" title="'+txt(t.reason||t.note||'')+'">'+st+'</span></td></tr>'}).join(''):'';
   renderLogs(d.logs||[]);
   if(PAGE!=='dashboard'){renderWorkspaceDetail(d);setTimeout(wireWorkspaceControls,0);}
   hideLoader();
