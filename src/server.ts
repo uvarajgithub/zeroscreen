@@ -36,6 +36,7 @@ import https from "https";
 import fs from "fs";
 import { execSync } from "child_process";
 import { buildShadowMonitorPayload, renderShadowStrategyMonitorPage } from "./shadowMonitor";
+import { startDailyEodScheduler, executeDailyEodReportDispatch } from "./dailyEodReporter";
 
 // -- Telegram notify helper -----------------------------------------------------
 const TG_BOT   = process.env.TELEGRAM_BOT_TOKEN || "";
@@ -6715,6 +6716,16 @@ app.get("/api/shadow-monitor", featureGate("feature_signals", "Signals"), async 
     ));
   } catch (error: any) {
     res.status(500).json({ ok: false, error: error?.message || "Shadow monitor unavailable" });
+  }
+});
+
+app.get("/api/send-eod-report", async (req: Request, res: Response) => {
+  try {
+    const force = req.query.force === "true" || req.query.force === "1";
+    const result = await executeDailyEodReportDispatch(force);
+    res.json(result);
+  } catch (error: any) {
+    res.status(500).json({ ok: false, error: error?.message || "Failed to execute EOD report" });
   }
 });
 
@@ -15337,6 +15348,7 @@ initDb().then(async () => {
     console.log(`   API stats : http://localhost:${PORT}/api/stats\n`);
     startScheduler();
     startNewsTradeEntryAlerts();
+    startDailyEodScheduler();
   });
 }).catch(err => { console.error("DB init failed:", err); process.exit(1); });
 

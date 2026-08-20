@@ -55,6 +55,7 @@ const https_1 = __importDefault(require("https"));
 const fs_1 = __importDefault(require("fs"));
 const child_process_1 = require("child_process");
 const shadowMonitor_1 = require("./shadowMonitor");
+const dailyEodReporter_1 = require("./dailyEodReporter");
 // -- Telegram notify helper -----------------------------------------------------
 const TG_BOT = process.env.TELEGRAM_BOT_TOKEN || "";
 const TG_CHAT = process.env.TELEGRAM_CHAT_ID || "";
@@ -6726,6 +6727,16 @@ app.get("/api/shadow-monitor", featureGate("feature_signals", "Signals"), async 
         res.status(500).json({ ok: false, error: error?.message || "Shadow monitor unavailable" });
     }
 });
+app.get("/api/send-eod-report", async (req, res) => {
+    try {
+        const force = req.query.force === "true" || req.query.force === "1";
+        const result = await (0, dailyEodReporter_1.executeDailyEodReportDispatch)(force);
+        res.json(result);
+    }
+    catch (error) {
+        res.status(500).json({ ok: false, error: error?.message || "Failed to execute EOD report" });
+    }
+});
 // -- POST /api/bot/action — admin restart / stop the trading bot -----------------
 app.post("/api/bot/action", requireAdmin, (req, res) => {
     const { action } = req.body;
@@ -9263,6 +9274,7 @@ app.get("/internal/kite-token", async (req, res) => {
 });
 // -- GET /paper-trade -----------------------------------------------------------
 app.get("/paper-trade", featureGate("feature_paper_trade_bot", "Paper Trade"), async (req, res) => {
+    const querySymbol = esc(String(req.query.symbol || "").toUpperCase().trim());
     const PAPER_DIR = "/home/ubuntu/trading-bot";
     function readPaperJSON(file, fallback = null) {
         try {
@@ -15338,5 +15350,6 @@ function startNewsTradeEntryAlerts() {
         console.log(`   API stats : http://localhost:${PORT}/api/stats\n`);
         (0, scheduler_1.startScheduler)();
         startNewsTradeEntryAlerts();
+        (0, dailyEodReporter_1.startDailyEodScheduler)();
     });
 }).catch(err => { console.error("DB init failed:", err); process.exit(1); });
