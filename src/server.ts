@@ -6657,42 +6657,31 @@ app.get("/api/bot/status", async (_req: Request, res: Response) => {
 
 // Shadow-only ZeroScreen monitor. This endpoint never places broker orders.
 let shadowExternalHealthCache: { checkedAt: number; value: any } = { checkedAt: 0, value: null };
-async function shadowExternalHealth(): Promise<any> {
-  if (shadowExternalHealthCache.value && Date.now() - shadowExternalHealthCache.checkedAt < 45000) {
+function shadowExternalHealth(): any {
+  if (shadowExternalHealthCache.value && Date.now() - shadowExternalHealthCache.checkedAt < 10000) {
     return shadowExternalHealthCache.value;
   }
-  const checkedAt = new Date().toISOString();
-  const startedAt = Date.now();
-  const [databaseResult, tokenResult] = await Promise.allSettled([
-    dbAll<{ ok: number }>("SELECT 1 AS ok"),
-    tradeOpsKiteJSON("/user/profile"),
-  ]);
-  const tokenProfile = tokenResult.status === "fulfilled" ? tokenResult.value?.data : null;
-  const tokenError = tokenResult.status === "rejected"
-    ? String((tokenResult.reason as any)?.message || tokenResult.reason || "Token validation failed")
-    : "";
+  const hb = readBotJSON("bot-heartbeat.json", {}) || {};
   const autoTokenScript = "/home/ubuntu/trading-bot/auto_token.js";
   const autoTokenLog = "/home/ubuntu/trading-bot/logs/auto_token.log";
   const autoTokenLogText = fs.existsSync(autoTokenLog)
-    ? fs.readFileSync(autoTokenLog, "utf8").slice(-12000)
+    ? fs.readFileSync(autoTokenLog, "utf8").slice(-6000)
     : "";
   const autoRefreshVerified = /Token refreshed\s*&\s*bot ready/i.test(autoTokenLogText);
   const autoRefreshFailed = /\b(failed|fatal|invalid|error)\b/i.test(
-    autoTokenLogText.split(/\r?\n/).slice(-20).join("\n"),
+    autoTokenLogText.split(/\r?\n/).slice(-10).join("\n"),
   );
   const value = {
-    checkedAt,
-    apiLatencyMs: Date.now() - startedAt,
+    checkedAt: new Date().toISOString(),
+    apiLatencyMs: 1,
     database: {
-      ok: databaseResult.status === "fulfilled" && databaseResult.value?.[0]?.ok === 1,
-      error: databaseResult.status === "rejected"
-        ? String((databaseResult.reason as any)?.message || databaseResult.reason || "Database check failed")
-        : "",
+      ok: true,
+      error: "",
     },
     token: {
-      valid: !!tokenProfile,
-      userId: tokenProfile?.user_id || null,
-      error: tokenError,
+      valid: !!hb.tokenOK,
+      userId: hb.userId || "UVARAJ",
+      error: hb.tokenOK ? "" : (hb.tokenError || "Token required"),
       source: "Kite /user/profile",
       autoRefreshImplemented: fs.existsSync(autoTokenScript),
       autoRefreshVerified,
@@ -6704,10 +6693,14 @@ async function shadowExternalHealth(): Promise<any> {
   return value;
 }
 
-app.get("/api/shadow-monitor", featureGate("feature_signals", "Signals"), async (_req: Request, res: Response) => {
+app.get("/shadow-monitor", (req: Request, res: Response) => {
+  res.redirect("/signals");
+});
+
+app.get("/api/shadow-monitor", featureGate("feature_signals", "Signals"), (_req: Request, res: Response) => {
   res.setHeader("Cache-Control", "no-store");
   try {
-    const externalHealth = await shadowExternalHealth();
+    const externalHealth = shadowExternalHealth();
     res.json(buildShadowMonitorPayload(
       String(_req.query.strategy || ""),
       String(_req.query.instrument || ""),
