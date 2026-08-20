@@ -41,6 +41,11 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 Object.defineProperty(exports, "__esModule", { value: true });
 const dotenv_1 = __importDefault(require("dotenv"));
 dotenv_1.default.config();
+const dns_1 = __importDefault(require("dns"));
+try {
+    dns_1.default.setDefaultResultOrder("ipv4first");
+}
+catch { }
 const express_1 = __importDefault(require("express"));
 const express_session_1 = __importDefault(require("express-session"));
 const path_1 = __importDefault(require("path"));
@@ -15210,7 +15215,7 @@ app.get("/holdings", requireAdmin, (_req, res) => {
   renderTable(staticData);
   mktStatus();
   load();
-  setInterval(()=>{load();mktStatus();}, isMO()₹60000:300000);
+  setInterval(()=>{load();mktStatus();}, isMO() ? 60000 : 300000);
   </script>
 </body>
 </html>`);

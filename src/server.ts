@@ -5,6 +5,9 @@
 import dotenv from "dotenv";
 dotenv.config();
 
+import dns from "dns";
+try { dns.setDefaultResultOrder("ipv4first"); } catch {}
+
 import express, { Request, Response, NextFunction } from "express";
 import session from "express-session";
 import path from "path";
@@ -15152,7 +15155,7 @@ app.get("/holdings", requireAdmin, (_req: Request, res: Response) => {
   renderTable(staticData);
   mktStatus();
   load();
-  setInterval(()=>{load();mktStatus();}, isMO()₹60000:300000);
+  setInterval(()=>{load();mktStatus();}, isMO() ? 60000 : 300000);
   </script>
 </body>
 </html>`);
