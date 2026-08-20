@@ -8407,20 +8407,26 @@ body.tradeops-collapsed .help,body.tradeops-collapsed .collapse-btn{justify-cont
 @media(max-width:1120px){.side{width:74px!important;padding:14px 10px!important}.brand{justify-content:center!important;padding-bottom:12px!important}.brand-copy,.nav-section,.nav span,.help span,.collapse-btn span,.nav-badge,.nav-dot{display:none!important}.nav a{justify-content:center!important;padding:0!important;gap:0!important}.nav a.active:before{left:-3px!important}.side-bottom{align-items:center!important}.help,.collapse-btn{justify-content:center!important;padding:0!important;width:44px!important}.app{grid-template-columns:74px minmax(0,1fr)!important}}
 /* Final dashboard layout guard */
 .content{padding:16px 20px 24px!important}
-.dashboard{display:grid!important;grid-template-columns:minmax(320px,1fr) minmax(360px,1.05fr) minmax(320px,.96fr)!important;grid-template-areas:"workflow workflow workflow" "pnl chart account" "ready orders quick" "positions recent quick" "logs logs logs"!important;gap:14px!important;align-items:stretch!important;grid-auto-rows:auto!important}
-.dashboard>.card{align-self:stretch!important;width:100%!important;height:100%!important}
+.dashboard{display:grid!important;grid-template-columns:minmax(320px,1fr) minmax(360px,1.05fr) minmax(320px,.96fr)!important;grid-template-areas:"workflow workflow workflow" "pnl chart account" "ready orders quick" "positions recent quick" "logs logs logs"!important;gap:14px!important;align-items:start!important;grid-auto-rows:auto!important}
+.dashboard>.card{width:100%!important}
 .workflow{grid-area:workflow!important}
-.pnl{grid-area:pnl!important;min-height:352px!important}
-.chart{grid-area:chart!important;min-height:352px!important}
-.account{grid-area:account!important;min-height:352px!important}
+.pnl{grid-area:pnl!important;min-height:360px!important}
+.chart{grid-area:chart!important;min-height:360px!important}
+.account{grid-area:account!important;min-height:360px!important}
+.account .card-b{padding:10px 16px 14px!important}
+.account .balance-big{font-size:24px!important;margin:4px 0 6px!important}
+.account .account-ident{display:none!important}
+.account .acct-lines{padding:3px 0!important;margin-bottom:4px!important}
+.account .kv{padding:2.5px 0!important}
+.account .kv label{font-size:11.5px!important}
+.account .kv b,.account .kv strong{font-size:12px!important}
+.account-primary{margin-top:8px!important;height:32px!important;width:100%!important;border-radius:999px!important;display:flex!important;align-items:center!important;justify-content:center!important;background:#0b65ff!important;color:#fff!important;border:none!important}
 .ready{grid-area:ready!important;min-height:154px!important}
 .orders{grid-area:orders!important;min-height:154px!important}
 .quick{grid-area:quick!important;min-height:322px!important}
 .positions{grid-area:positions!important;min-height:172px!important}
 .recent{grid-area:recent!important;min-height:172px!important}
 .logs-card{grid-area:logs!important;min-height:190px!important}
-.pnl,.chart,.account{height:100%!important;max-height:none!important}
-.pnl .card-b,.chart .card-b,.account .card-b{height:calc(100% - 42px)!important}
 .logs{height:116px!important}
 .execution-gate .card-b{display:flex!important;flex-direction:column!important;gap:10px!important}
 .execution-gate .gate-head{margin-bottom:0!important;align-items:center!important}
