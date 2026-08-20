@@ -1540,6 +1540,100 @@ function marketStatus(now = new Date()): "OPEN" | "CLOSED" {
   return day >= 1 && day <= 5 && minutes >= NSE_MARKET_OPEN_MINUTES && minutes <= NSE_FO_MARKET_CLOSE_MINUTES ? "OPEN" : "CLOSED";
 }
 
+export function getFuturesContractLifecycle(underlying = "BANKNIFTY", asOfDate: string | Date = new Date()): any {
+  const monthNames = ["JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"];
+  const monthDisplay = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+  function getMonthlyExpiry(year: number, monthIdx: number): Date {
+    const d = new Date(Date.UTC(year, monthIdx + 1, 0, 15, 30, 0));
+    const day = d.getUTCDay();
+    const diff = day >= 4 ? day - 4 : day + 3;
+    d.setUTCDate(d.getUTCDate() - diff);
+    return d;
+  }
+
+  function formatDate(d: Date): string {
+    return `${d.getUTCDate().toString().padStart(2, "0")} ${monthDisplay[d.getUTCMonth()]} ${d.getUTCFullYear()}`;
+  }
+
+  function formatYmd(d: Date): string {
+    return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}-${String(d.getUTCDate()).padStart(2, "0")}`;
+  }
+
+  const now = asOfDate ? new Date(asOfDate) : new Date();
+  const istTime = new Date(now.getTime() + 5.5 * 3600000);
+  const currentYear = istTime.getUTCFullYear();
+  const currentMonthIdx = istTime.getUTCMonth();
+
+  const thisMonthExpiry = getMonthlyExpiry(currentYear, currentMonthIdx);
+
+  let activeYear = currentYear;
+  let activeMonthIdx = currentMonthIdx;
+  let prevYear = currentYear;
+  let prevMonthIdx = currentMonthIdx - 1;
+  if (prevMonthIdx < 0) {
+    prevMonthIdx = 11;
+    prevYear -= 1;
+  }
+
+  if (istTime.getTime() > thisMonthExpiry.getTime()) {
+    activeMonthIdx = currentMonthIdx + 1;
+    if (activeMonthIdx > 11) {
+      activeMonthIdx = 0;
+      activeYear += 1;
+    }
+    prevYear = currentYear;
+    prevMonthIdx = currentMonthIdx;
+  }
+
+  const prevExpiry = getMonthlyExpiry(prevYear, prevMonthIdx);
+  const activeStartDate = new Date(prevExpiry.getTime() + 24 * 3600000);
+  const activeExpiryDate = getMonthlyExpiry(activeYear, activeMonthIdx);
+
+  let nextYear = activeYear;
+  let nextMonthIdx = activeMonthIdx + 1;
+  if (nextMonthIdx > 11) {
+    nextMonthIdx = 0;
+    nextYear += 1;
+  }
+  const nextStartDate = new Date(activeExpiryDate.getTime() + 24 * 3600000);
+  const nextExpiryDate = getMonthlyExpiry(nextYear, nextMonthIdx);
+
+  const yy = String(activeYear).slice(2);
+  const nextYy = String(nextYear).slice(2);
+  const u = (underlying || "BANKNIFTY").toUpperCase();
+  const activeSymbol = `${u}${yy}${monthNames[activeMonthIdx]}FUT`;
+  const nextSymbol = `${u}${nextYy}${monthNames[nextMonthIdx]}FUT`;
+
+  const msPerDay = 1000 * 60 * 60 * 24;
+  const daysLeft = Math.max(0, Math.ceil((activeExpiryDate.getTime() - istTime.getTime()) / msPerDay));
+  const daysToRollover = Math.max(0, Math.ceil((nextStartDate.getTime() - istTime.getTime()) / msPerDay));
+
+  return {
+    underlying: u,
+    current: {
+      symbol: activeSymbol,
+      startDate: formatYmd(activeStartDate),
+      startDateDisplay: formatDate(activeStartDate),
+      expiryDate: formatYmd(activeExpiryDate),
+      expiryDateDisplay: formatDate(activeExpiryDate),
+      daysLeft,
+      status: daysLeft === 0 ? "EXPIRES TODAY" : `${daysLeft}D TO EXPIRY`,
+      isExpiryWeek: daysLeft <= 7,
+    },
+    upcoming: {
+      symbol: nextSymbol,
+      startDate: formatYmd(nextStartDate),
+      startDateDisplay: formatDate(nextStartDate),
+      expiryDate: formatYmd(nextExpiryDate),
+      expiryDateDisplay: formatDate(nextExpiryDate),
+      daysToRollover,
+      status: `ROLLOVER IN ${daysToRollover}D`,
+    },
+    asOf: istTime.toISOString(),
+  };
+}
+
 function bankNiftyMovement(): any {
   const heartbeat = readJson("bot-heartbeat.json", {});
   const futures = heartbeat?.bankNiftyFuturesSession && typeof heartbeat.bankNiftyFuturesSession === "object"
@@ -1582,8 +1676,9 @@ function bankNiftyMovement(): any {
     rangePoints: high !== null && low !== null ? high - low : null,
   };
   const benchmark = futures || cash;
+  const lifecycle = getFuturesContractLifecycle("BANKNIFTY", heartbeat?.at || new Date());
   return {
-    symbol: benchmark.symbol,
+    symbol: benchmark.symbol || lifecycle.current.symbol,
     open: num(benchmark.open),
     current: num(benchmark.current),
     high: num(benchmark.high),
@@ -1594,10 +1689,11 @@ function bankNiftyMovement(): any {
     asOf: heartbeat?.at || null,
     cash,
     futures,
-    benchmarkSymbol: futures?.symbol || "BANKNIFTY FUTURES",
+    benchmarkSymbol: futures?.symbol || lifecycle.current.symbol,
     benchmarkMovementPoints: num(futures?.movementPoints),
     benchmarkRangePoints: num(futures?.rangePoints),
     regime: futures?.regime || null,
+    contractLifecycle: lifecycle,
   };
 }
 
@@ -1616,16 +1712,19 @@ function underlyingMovement(underlying: UnderlyingId): any {
   };
   const futures = market.futures && typeof market.futures === "object" ? market.futures : null;
   const benchmark = futures || cash;
+  const lifecycle = getFuturesContractLifecycle("NIFTY", heartbeat?.at || new Date());
   return {
     ...benchmark,
+    symbol: benchmark.symbol || lifecycle.current.symbol,
     session: "09:15 - 15:40",
     asOf: heartbeat?.at || null,
     cash,
     futures,
-    benchmarkSymbol: futures?.symbol || "NIFTY FUTURES",
+    benchmarkSymbol: futures?.symbol || lifecycle.current.symbol,
     benchmarkMovementPoints: num(futures?.movementPoints),
     benchmarkRangePoints: num(futures?.rangePoints),
     regime: futures?.regime || market?.regime || null,
+    contractLifecycle: lifecycle,
   };
 }
 
@@ -2770,7 +2869,95 @@ export function renderShadowStrategyMonitorPage(navHtml: string): string {
     }
     return html||'<section class="sm-instrument-group '+type.toLowerCase()+'"><div class="sm-consolidated-grid">'+tiles.map(consolidatedTileMarkup).join("")+'</div></section>';
   }
-      function renderConsolidated(d){var c=d.consolidated||{};var tiles=c.tiles||[];var periods=d.performance&&d.performance.periods||{};var m=c.bankNiftyMovement||d.market&&d.market.bankNiftyMovement||{};var selectedInstrument=state.instrument==="OPTIONS"?"OPTIONS":"FUTURES";var selectedShort=selectedInstrument==="OPTIONS"?"OPT":"FUT";var selectedLabel=selectedInstrument==="OPTIONS"?"Options":"Futures";document.querySelectorAll("[data-consolidated-instrument]").forEach(function(b){b.classList.toggle("active",b.dataset.consolidatedInstrument===selectedInstrument)});el("consolidatedInstrumentTitle").textContent=selectedLabel+" Consolidated";el("consolidatedInstrumentMeta").textContent="All "+selectedLabel+" shadow strategies";var moveClass=Number(m.movementPoints)>0?"positive":Number(m.movementPoints)<0?"negative":"";el("bankNiftyMovement").innerHTML='<div class="sm-movement-item"><span>BANKNIFTY Movement</span><b class="'+moveClass+'">'+points(m.movementPoints)+'</b><small>Open '+value(m.open)+' &rarr; '+value(m.current)+'</small></div><div class="sm-movement-item"><span>Intraday Range</span><b>'+points(m.rangePoints)+'</b><small>Low '+value(m.low)+' &middot; High '+value(m.high)+'</small></div><div class="sm-movement-item"><span>F&amp;O Session</span><b>'+esc(m.session||"09:15 - 15:40")+'</b><small>Official close 3:40 PM</small></div><div class="sm-movement-item"><span>Measurement</span><b>Net points</b><small>FUT underlying &middot; OPT premium</small></div>';var bestDay=selectedInstrument==="OPTIONS"?"bestOptions":"bestFutures";var worstDay=selectedInstrument==="OPTIONS"?"worstOptions":"worstFutures";el("consolidatedWinners").innerHTML=rankCard(periods.TODAY&&periods.TODAY[bestDay],selectedShort+" Winner Day","&#9733;")+rankCard(periods.TODAY&&periods.TODAY[worstDay],selectedShort+" Loser Day","&#9660;")+rankCard(periods.MONTH&&periods.MONTH[bestDay],selectedShort+" Winner Month","&#9733;")+rankCard(periods.MONTH&&periods.MONTH[worstDay],selectedShort+" Loser Month","&#9660;");var grid=el("consolidatedGrid");var visibleTiles=tiles.filter(function(t){return t.instrumentType===selectedInstrument});if(!visibleTiles.length){grid.innerHTML='<div class="sm-consolidated-empty"><b>No '+selectedLabel+' shadow strategies</b>Configure at least one '+selectedLabel+' shadow strategy to view consolidated P&amp;L.</div>';return}var todayBest=periods.TODAY&&periods.TODAY[bestDay];var top=todayBest?visibleTiles.find(function(t){return t.strategyId===todayBest.strategyId&&t.instrumentType===todayBest.instrument}):null;var topKey=top?consolidatedKey(top):"";var expected=selectedInstrument+"|"+visibleTiles.map(consolidatedKey).join(",");if(grid.dataset.keys!==expected){grid.dataset.keys=expected;grid.innerHTML=consolidatedGroupMarkup(selectedInstrument,visibleTiles)}visibleTiles.forEach(function(t){var key=consolidatedKey(t);var tile=grid.querySelector('[data-tile-key="'+CSS.escape(key)+'"]');if(!tile)return;var cls=tileClass(t);var selected=t.strategyId===state.strategy&&t.instrumentType===state.instrument;var topPerformer=key===topKey&&t.positionState!=="OPEN";var previousPnl=Number(tile.dataset.pnl);var nextPnl=Number(t.pnl);var displayPnl=Number.isFinite(nextPnl)?nextPnl:0;var shouldFlash=t.positionState==="OPEN"&&Number.isFinite(previousPnl)&&Number.isFinite(displayPnl)&&previousPnl!==displayPnl;var flashClass=shouldFlash?(displayPnl>previousPnl?"flash-up":"flash-down"):"";tile.className="sm-key-tile "+cls+(selected?" selected":"")+(topPerformer?" top-performer":"");if(flashClass){void tile.offsetWidth;tile.classList.add(flashClass)}tile.dataset.pnl=String(displayPnl);tile.querySelector(".sm-key-name").textContent=t.strategyName;tile.querySelector(".sm-key-instrument").textContent=t.instrumentType==="FUTURES"?"FUT":"OPT";tile.querySelector(".sm-key-pnl").innerHTML=money(displayPnl);tile.querySelector(".sm-key-return").textContent=t.positionState==="NOT CONFIGURED"?"Not configured for "+(t.underlying||state.underlying):t.positionState==="MISSED"?"Trigger missed":t.positionState==="ERROR"||t.positionState==="STALE"?"Needs attention":t.returnPct==null?"0.00% return":pct(t.returnPct)+" return";var captured=tile.querySelector(".sm-key-captured");captured.className="sm-key-captured "+(Number(t.capturedPoints)>0?"positive":Number(t.capturedPoints)<0?"negative":"");captured.textContent=t.capturedPoints==null?"Captured --":"Captured "+points(t.capturedPoints);var completedTrades=Number(t.trades)||0;
+      function getClientContractLifecycle(underlying, asOfDate){
+        var monthNames=["JAN","FEB","MAR","APR","MAY","JUN","JUL","AUG","SEP","OCT","NOV","DEC"];
+        var monthDisplay=["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+        function getMonthlyExpiry(year,monthIdx){
+          var d=new Date(Date.UTC(year,monthIdx+1,0,15,30,0));
+          var day=d.getUTCDay();
+          var diff=day>=4?day-4:day+3;
+          d.setUTCDate(d.getUTCDate()-diff);
+          return d;
+        }
+        function formatDate(d){
+          return d.getUTCDate().toString().padStart(2,"0")+" "+monthDisplay[d.getUTCMonth()]+" "+d.getUTCFullYear();
+        }
+        function formatYmd(d){
+          return d.getUTCFullYear()+"-"+String(d.getUTCMonth()+1).padStart(2,"0")+"-"+String(d.getUTCDate()).padStart(2,"0");
+        }
+        var now=asOfDate?new Date(asOfDate):new Date();
+        var istTime=new Date(now.getTime()+5.5*3600000);
+        var currentYear=istTime.getUTCFullYear();
+        var currentMonthIdx=istTime.getUTCMonth();
+        var thisMonthExpiry=getMonthlyExpiry(currentYear,currentMonthIdx);
+        var activeYear=currentYear;
+        var activeMonthIdx=currentMonthIdx;
+        var prevYear=currentYear;
+        var prevMonthIdx=currentMonthIdx-1;
+        if(prevMonthIdx<0){prevMonthIdx=11;prevYear-=1;}
+        if(istTime.getTime()>thisMonthExpiry.getTime()){
+          activeMonthIdx=currentMonthIdx+1;
+          if(activeMonthIdx>11){activeMonthIdx=0;activeYear+=1;}
+          prevYear=currentYear;
+          prevMonthIdx=currentMonthIdx;
+        }
+        var prevExpiry=getMonthlyExpiry(prevYear,prevMonthIdx);
+        var activeStartDate=new Date(prevExpiry.getTime()+24*3600000);
+        var activeExpiryDate=getMonthlyExpiry(activeYear,activeMonthIdx);
+        var nextYear=activeYear;
+        var nextMonthIdx=activeMonthIdx+1;
+        if(nextMonthIdx>11){nextMonthIdx=0;nextYear+=1;}
+        var nextStartDate=new Date(activeExpiryDate.getTime()+24*3600000);
+        var nextExpiryDate=getMonthlyExpiry(nextYear,nextMonthIdx);
+        var yy=String(activeYear).slice(2);
+        var nextYy=String(nextYear).slice(2);
+        var u=(underlying||state.underlying||"BANKNIFTY").toUpperCase();
+        var activeSymbol=u+yy+monthNames[activeMonthIdx]+"FUT";
+        var nextSymbol=u+nextYy+monthNames[nextMonthIdx]+"FUT";
+        var msPerDay=1000*60*60*24;
+        var daysLeft=Math.max(0,Math.ceil((activeExpiryDate.getTime()-istTime.getTime())/msPerDay));
+        var daysToRollover=Math.max(0,Math.ceil((nextStartDate.getTime()-istTime.getTime())/msPerDay));
+        return {
+          underlying:u,
+          current:{
+            symbol:activeSymbol,
+            startDate:formatYmd(activeStartDate),
+            startDateDisplay:formatDate(activeStartDate),
+            expiryDate:formatYmd(activeExpiryDate),
+            expiryDateDisplay:formatDate(activeExpiryDate),
+            daysLeft:daysLeft,
+            status:daysLeft===0?"EXPIRES TODAY":daysLeft+"D TO EXPIRY"
+          },
+          upcoming:{
+            symbol:nextSymbol,
+            startDate:formatYmd(nextStartDate),
+            startDateDisplay:formatDate(nextStartDate),
+            expiryDate:formatYmd(nextExpiryDate),
+            expiryDateDisplay:formatDate(nextExpiryDate),
+            daysToRollover:daysToRollover,
+            status:"ROLLOVER IN "+daysToRollover+"D"
+          }
+        };
+      }
+
+      function renderMovementContext(d){
+        var c=d.consolidated||{};
+        var m=c.bankNiftyMovement||d.market&&d.market.bankNiftyMovement||{};
+        var lifecycle=m.contractLifecycle||d.market&&d.market.contractLifecycle||getClientContractLifecycle(state.underlying||"BANKNIFTY",d.refreshedAt);
+        var cur=lifecycle.current||{};
+        var up=lifecycle.upcoming||{};
+        var strip=el("bankNiftyMovement");
+        if(!strip)return;
+        strip.innerHTML=
+          '<div class="sm-movement-item sm-contract-active"><span style="color:#38bdf8;font-weight:900">Current Futures</span><b style="color:#38bdf8;letter-spacing:.02em">'+esc(cur.symbol||"BANKNIFTY FUT")+'</b><small style="color:#34d399;font-weight:700">&#9679; Active ('+esc(cur.status||"Trading")+')</small></div>'+
+          '<div class="sm-movement-item"><span>Started Date</span><b>'+esc(cur.startDateDisplay||cur.startDate||"--")+'</b><small>Current Cycle Open</small></div>'+
+          '<div class="sm-movement-item"><span style="color:#f59e0b;font-weight:800">Expiry Date</span><b style="color:#f59e0b">'+esc(cur.expiryDateDisplay||cur.expiryDate||"--")+'</b><small>Auto-rolls at 15:30</small></div>'+
+          '<div class="sm-movement-item sm-contract-upcoming"><span style="color:#a78bfa;font-weight:900">Upcoming Futures</span><b style="color:#a78bfa;letter-spacing:.02em">'+esc(up.symbol||"BANKNIFTY FUT")+'</b><small style="color:#c084fc;font-weight:700">&#9679; Next Month Target</small></div>'+
+          '<div class="sm-movement-item"><span>Upcoming Start</span><b>'+esc(up.startDateDisplay||up.startDate||"--")+'</b><small>Auto-Rollover Trigger</small></div>'+
+          '<div class="sm-movement-item"><span>Upcoming Expiry</span><b>'+esc(up.expiryDateDisplay||up.expiryDate||"--")+'</b><small>'+esc(up.status||"Next Expiry Cycle")+'</small></div>';
+      }
+
+      function renderConsolidated(d){var c=d.consolidated||{};var tiles=c.tiles||[];var periods=d.performance&&d.performance.periods||{};var selectedInstrument=state.instrument==="OPTIONS"?"OPTIONS":"FUTURES";var selectedShort=selectedInstrument==="OPTIONS"?"OPT":"FUT";var selectedLabel=selectedInstrument==="OPTIONS"?"Options":"Futures";document.querySelectorAll("[data-consolidated-instrument]").forEach(function(b){b.classList.toggle("active",b.dataset.consolidatedInstrument===selectedInstrument)});el("consolidatedInstrumentTitle").textContent=selectedLabel+" Consolidated";el("consolidatedInstrumentMeta").textContent="All "+selectedLabel+" shadow strategies";renderMovementContext(d);var bestDay=selectedInstrument==="OPTIONS"?"bestOptions":"bestFutures";var worstDay=selectedInstrument==="OPTIONS"?"worstOptions":"worstFutures";el("consolidatedWinners").innerHTML=rankCard(periods.TODAY&&periods.TODAY[bestDay],selectedShort+" Winner Day","&#9733;")+rankCard(periods.TODAY&&periods.TODAY[worstDay],selectedShort+" Loser Day","&#9660;")+rankCard(periods.MONTH&&periods.MONTH[bestDay],selectedShort+" Winner Month","&#9733;")+rankCard(periods.MONTH&&periods.MONTH[worstDay],selectedShort+" Loser Month","&#9660;");var grid=el("consolidatedGrid");var visibleTiles=tiles.filter(function(t){return t.instrumentType===selectedInstrument});if(!visibleTiles.length){grid.innerHTML='<div class="sm-consolidated-empty"><b>No '+selectedLabel+' shadow strategies</b>Configure at least one '+selectedLabel+' shadow strategy to view consolidated P&amp;L.</div>';return}var todayBest=periods.TODAY&&periods.TODAY[bestDay];var top=todayBest?visibleTiles.find(function(t){return t.strategyId===todayBest.strategyId&&t.instrumentType===todayBest.instrument}):null;var topKey=top?consolidatedKey(top):"";var expected=selectedInstrument+"|"+visibleTiles.map(consolidatedKey).join(",");if(grid.dataset.keys!==expected){grid.dataset.keys=expected;grid.innerHTML=consolidatedGroupMarkup(selectedInstrument,visibleTiles)}visibleTiles.forEach(function(t){var key=consolidatedKey(t);var tile=grid.querySelector('[data-tile-key="'+CSS.escape(key)+'"]');if(!tile)return;var cls=tileClass(t);var selected=t.strategyId===state.strategy&&t.instrumentType===state.instrument;var topPerformer=key===topKey&&t.positionState!=="OPEN";var previousPnl=Number(tile.dataset.pnl);var nextPnl=Number(t.pnl);var displayPnl=Number.isFinite(nextPnl)?nextPnl:0;var shouldFlash=t.positionState==="OPEN"&&Number.isFinite(previousPnl)&&Number.isFinite(displayPnl)&&previousPnl!==displayPnl;var flashClass=shouldFlash?(displayPnl>previousPnl?"flash-up":"flash-down"):"";tile.className="sm-key-tile "+cls+(selected?" selected":"")+(topPerformer?" top-performer":"");if(flashClass){void tile.offsetWidth;tile.classList.add(flashClass)}tile.dataset.pnl=String(displayPnl);tile.querySelector(".sm-key-name").textContent=t.strategyName;tile.querySelector(".sm-key-instrument").textContent=t.instrumentType==="FUTURES"?"FUT":"OPT";tile.querySelector(".sm-key-pnl").innerHTML=money(displayPnl);tile.querySelector(".sm-key-return").textContent=t.positionState==="NOT CONFIGURED"?"Not configured for "+(t.underlying||state.underlying):t.positionState==="MISSED"?"Trigger missed":t.positionState==="ERROR"||t.positionState==="STALE"?"Needs attention":t.returnPct==null?"0.00% return":pct(t.returnPct)+" return";var captured=tile.querySelector(".sm-key-captured");captured.className="sm-key-captured "+(Number(t.capturedPoints)>0?"positive":Number(t.capturedPoints)<0?"negative":"");captured.textContent=t.capturedPoints==null?"Captured --":"Captured "+points(t.capturedPoints);var completedTrades=Number(t.trades)||0;
 tile.querySelector(".sm-key-trades").textContent=t.positionState==="OPEN"?(completedTrades>0?completedTrades+" closed · Trade #"+(completedTrades+1):"Trade #1"):(value(t.trades,0)+" "+(completedTrades===1?"trade":"trades"));var stateNode=tile.querySelector(".sm-key-state");var stateLabel=tileStateLabel(t);stateNode.className="sm-key-state "+stateLabel.toLowerCase();stateNode.textContent=stateLabel;tile.title=(topPerformer?"Top performer today | ":"")+t.strategyName+" "+t.instrumentType+" | "+stateLabel+" | Captured "+points(t.capturedPoints)+" | P&L "+money(displayPnl)+" | Allocated capital "+value(t.capitalDeployed,0)});var CORE_IDS=["tt1000","tt1000-quality-breakout","tt1000-unlimited","tt1030","tt1030-quality-reversal","tt1030-unlimited"];
 var coreTiles=visibleTiles.filter(function(t){return CORE_IDS.indexOf(t.strategyId)>=0});
 var otherTiles=visibleTiles.filter(function(t){return CORE_IDS.indexOf(t.strategyId)<0});
@@ -2782,7 +2969,6 @@ var otherTotal=otherTiles.reduce(function(sum,t){return sum+(Number(t.pnl)||0)},
 var otherTrades=otherTiles.reduce(function(sum,t){return sum+(Number(t.trades)||0)},0);
 var otherSum=grid.querySelector('[data-group-summary="'+selectedInstrument+'-other"]');
 if(otherSum)otherSum.innerHTML=otherTiles.length+' strategies &middot; <b class="'+clsPnl(otherTotal)+'">'+money(otherTotal)+'</b> &middot; '+otherTrades+' trades'}
-      function renderMovementContext(d){var c=d.consolidated||{};var m=c.bankNiftyMovement||d.market&&d.market.bankNiftyMovement||{};var cash=m.cash||{};var fut=m.futures||m;var regime=fut.regime||m.regime||{};var cashClass=Number(cash.movementPoints)>0?"positive":Number(cash.movementPoints)<0?"negative":"";var futClass=Number(fut.movementPoints)>0?"positive":Number(fut.movementPoints)<0?"negative":"";el("bankNiftyMovement").innerHTML='<div class="sm-movement-item"><span>Cash Move</span><b class="'+cashClass+'">'+points(cash.movementPoints)+'</b><small>Open '+value(cash.open)+' &rarr; '+value(cash.current)+'</small></div><div class="sm-movement-item"><span>Cash Range</span><b>'+points(cash.rangePoints)+'</b><small>Low '+value(cash.low)+' &middot; High '+value(cash.high)+'</small></div><div class="sm-movement-item"><span>Futures Move</span><b class="'+futClass+'">'+points(fut.movementPoints)+'</b><small>'+esc(fut.symbol||"BANKNIFTY FUT")+'</small></div><div class="sm-movement-item"><span>Futures Range</span><b>'+points(fut.rangePoints)+'</b><small>Low '+value(fut.low)+' &middot; High '+value(fut.high)+'</small></div><div class="sm-movement-item"><span>Market Regime</span><b>'+esc(regime.label||"--")+'</b><small>'+value(regime.directionality)+'% directional &middot; '+esc(regime.suggestedMode||"--")+'</small></div><div class="sm-movement-item"><span>Measurement</span><b>Futures benchmark</b><small>Options premium &middot; cash reference</small></div>'}
       function setViewMode(mode){state.viewMode=mode;var consolidated=mode==="consolidated";el("shadowMonitor").classList.toggle("sm-consolidated-mode",consolidated);el("shadowPage").classList.toggle("sm-consolidated-page",consolidated);el("consolidatedView").hidden=!consolidated;el("monitorTitle").textContent=consolidated?"Consolidated Shadow P&L":"Shadow Strategy Monitor";el("monitorSubtitle").textContent=consolidated?"Today's P&L across all shadow strategies and instruments":"Simulated trades only. No real broker orders are placed.";el("consolidatedToggle").querySelector("span").textContent=consolidated?"Back to Dashboard":"Consolidated P&L";if(consolidated&&state.data){renderConsolidated(state.data);renderMovementContext(state.data)}if(refreshTimer)scheduleRefresh();window.scrollTo({top:0,behavior:"auto"})}
       function render(d){state.data=d;state.instrument=d.identity.instrumentType||state.instrument;localStorage.setItem("zsShadowInstrument",state.instrument);renderSection("strategies",function(){renderStrategies(d.strategies)});renderSection("trades",function(){renderTrades(d)});renderSection("candles",function(){renderCandles(d)});renderSection("health",function(){renderHealth(d);el("healthAction").textContent="View Checks"});renderSection("summary",function(){renderSummary(d)});renderSection("logs",function(){renderLogs(d)});renderSection("consolidated",function(){renderConsolidated(d);renderMovementContext(d)});var m=el("marketStatus");m.className="sm-market "+(d.market.status==="OPEN"?"open":"closed");m.querySelector("span:last-child").textContent="Market "+(d.market.status==="OPEN"?"Open":"Closed");el("refreshMeta").textContent="Last refreshed: "+dt(d.refreshedAt);document.querySelectorAll(".sm-segment [data-instrument]").forEach(function(b){b.classList.toggle("active",b.dataset.instrument===state.instrument)});el("shadowMonitor").classList.remove("sm-loading");el("monitorLoader").classList.remove("active")}
       async function load(trigger){var interactive=trigger===true||!!(trigger&&trigger.type)||state.userRequestedLoad===true;state.userRequestedLoad=false;var seq=++state.request;if(activeController)activeController.abort();activeController=new AbortController();if(interactive){el("monitorLoader").classList.add("active");el("shadowMonitor").classList.add("sm-loading")}try{var url="/api/shadow-monitor?strategy="+encodeURIComponent(state.strategy)+"&instrument="+encodeURIComponent(state.instrument);var r=await fetch(url,{cache:"no-store",credentials:"same-origin",signal:activeController.signal});if(!r.ok)throw new Error("HTTP "+r.status);var d=await r.json();if(seq!==state.request)return;if(!d.ok)throw new Error(d.error||"Monitor unavailable");render(d)}catch(e){if(e.name==="AbortError")return;el("refreshMeta").textContent="Refresh failed: "+e.message;el("shadowMonitor").classList.remove("sm-loading");el("monitorLoader").classList.remove("active")}}

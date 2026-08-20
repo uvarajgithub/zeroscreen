@@ -1852,7 +1852,34 @@ function startDrishtiLTPMonitor() {
 // Re-entries: one maximum; two-sided sessions are blocked and reverse requires a fresh strong candle
 // Instrument: BankNifty FUTURES (not options) — P&L = index pts × 30 exact
 // ═══════════════════════════════════════════════════════════════════════════
-// Returns the nearest-expiry BankNifty futures symbol (e.g. BANKNIFTY26JUNFUT)
+function getDynamicFuturesSymbol(underlying = 'BANKNIFTY') {
+    const monthNames = ['JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN', 'JUL', 'AUG', 'SEP', 'OCT', 'NOV', 'DEC'];
+    function getMonthlyExpiry(year, monthIdx) {
+        const d = new Date(Date.UTC(year, monthIdx + 1, 0, 15, 30, 0));
+        const day = d.getUTCDay();
+        const diff = day >= 4 ? day - 4 : day + 3;
+        d.setUTCDate(d.getUTCDate() - diff);
+        return d;
+    }
+    const now = new Date();
+    const istTime = new Date(now.getTime() + 5.5 * 3600000);
+    const currentYear = istTime.getUTCFullYear();
+    const currentMonthIdx = istTime.getUTCMonth();
+    const thisMonthExpiry = getMonthlyExpiry(currentYear, currentMonthIdx);
+    let activeYear = currentYear;
+    let activeMonthIdx = currentMonthIdx;
+    if (istTime.getTime() > thisMonthExpiry.getTime()) {
+        activeMonthIdx = currentMonthIdx + 1;
+        if (activeMonthIdx > 11) {
+            activeMonthIdx = 0;
+            activeYear += 1;
+        }
+    }
+    const yy = String(activeYear).slice(2);
+    return `${underlying.toUpperCase()}${yy}${monthNames[activeMonthIdx]}FUT`;
+}
+
+// Returns the nearest-expiry BankNifty futures symbol (e.g. BANKNIFTY26AUGFUT)
 // Rolls automatically: picks the front-month until last-Thursday expiry, then next month
 function getDrishtiFuturesSymbol() {
     if (drishtiFutSymbolCache && Date.now() - drishtiFutSymbolCacheAt < 15 * 60 * 1000) {
@@ -1878,6 +1905,12 @@ function getDrishtiFuturesSymbol() {
         drishtiFutSymbolCacheAt = Date.now();
         log("DRISHTI_FUT_SYMBOL_CACHE", { symbol: drishtiFutSymbolCache, token: drishtiFutTokenCache, expiry: chosen.expiry });
         return drishtiFutSymbolCache;
+    }).catch((err) => {
+        const fallbackSymbol = getDynamicFuturesSymbol('BANKNIFTY');
+        drishtiFutSymbolCache = fallbackSymbol;
+        drishtiFutSymbolCacheAt = Date.now();
+        log("DRISHTI_FUT_FALLBACK", { symbol: fallbackSymbol, error: err?.message || String(err) });
+        return fallbackSymbol;
     });
 }
 function bankNiftyRegime(range, movement) {
@@ -4955,43 +4988,28 @@ async function runTenThirtyQualityShadow(isEOD) {
                 continue;
             }
             if (tt1030Quality.trades < 3 && !eodCandle && num > 6 && time < "14:15") {
-                const signal = tt1030QualityBreakSignal(c);
-                const dir = signal?.dir || null;
+                const dir = c.close > tt1030Quality.rangeHigh ? "CE" : c.close < tt1030Quality.rangeLow ? "PE" : null;
                 if (dir && isCandleSignalStale(c)) {
                     row.status = "stale_signal_skip";
                     row.dir = dir;
                     row.note = "restart replay guard: skipped stale 10:30 quality signal";
-                }
-                else if (dir) {
-                    const entry = signal.entry;
-                    const sl = signal.sl;
-                    const riskPts = dir === "CE" ? entry - sl : sl - entry;
+                } else if (dir) {
+                    const entry = dir === "CE" ? tt1030Quality.rangeHigh : tt1030Quality.rangeLow;
+                    const sl = dir === "CE" ? c.low : c.high;
+                    await enterTT1030QualityTrade(dir, entry, c, sl, "close broke 10:30 Quality " + (dir === "CE" ? "high " : "low ") + entry.toFixed(1));
+                    row.status = "entry";
                     row.dir = dir;
-                    if (!(entry > 0) || !(sl > 0) || riskPts <= 0) {
-                        row.status = "invalid_entry_skip";
-                        row.entry = entry;
-                        row.sl = sl;
-                        row.note = `break +${signal.breakPts.toFixed(1)} ${dir}; skipped invalid executable entry/SL; entry ${entry.toFixed(1)}; SL ${sl.toFixed(1)}; risk ${riskPts.toFixed(1)} pts`;
-                    }
-                    else {
-                        await enterTT1030QualityTrade(dir, entry, c, sl, "10:30 break >=50 close-confirmed; signal-close entry");
-                        row.status = "entry";
-                        row.entry = entry;
-                        row.sl = sl;
-                        row.pnlPts = 0;
-                        row.pnlRs = 0;
-                        row.note = `break +${signal.breakPts.toFixed(1)} ${dir}; signal-close entry ${entry.toFixed(1)}; initial SL ${sl.toFixed(1)}; risk ${riskPts.toFixed(1)} pts`;
-                    }
+                    row.entry = entry;
+                    row.sl = sl;
+                    row.pnlPts = parseFloat((dir === "CE" ? c.close - entry : entry - c.close).toFixed(1));
+                    row.pnlRs = Math.round(row.pnlPts * Number(config_1.config.quantity || 30));
+                    row.note = "close broke 10:30 Quality " + (dir === "CE" ? "high " : "low ") + entry.toFixed(1);
+                } else {
+                    row.note = c.high > tt1030Quality.rangeHigh || c.low < tt1030Quality.rangeLow ? "wick crossed 10:30 Quality range; waiting for close" : "inside 10:30 Quality range";
                 }
-                else {
-                    row.note = c.high > tt1030Quality.rangeHigh || c.low < tt1030Quality.rangeLow
-                        ? `wick crossed 10:30 range; waiting for close >= ${TT1030_QUALITY_MIN_BREAK_PTS} pts beyond range`
-                        : "inside 10:30 range";
-                }
-            }
-            else {
+            } else {
                 row.status = eodCandle ? "eod_no_trade" : "done";
-                row.note = eodCandle ? "EOD/no new entry" : "max trades reached";
+                row.note = eodCandle ? "EOD/no new entry" : (tt1030Quality.trades >= 3 ? "max 3 trades reached" : "time cutoff reached");
             }
             upsertTT1030QualityCandle(row);
         }
