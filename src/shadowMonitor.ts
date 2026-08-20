@@ -60,16 +60,16 @@ const STRATEGIES: StrategyDefinition[] = [
     stateFile: "drishti-v2-state.json",
   },
   { id: "tt1030", name: "10:30 Breakout (BANKNIFTY)", version: "Current", prefix: "tt1030Shadow", backtestFile: "shadow-strategy-5yr-results.json", stateFile: "tt1030-shadow-state.json" },
-  { id: "tt1030-quality-reversal", name: "10:30 Quality Break 50 Lock (BANKNIFTY)", version: "Signal Close + Profit Lock", prefix: "tt1030Quality", instruments: ["FUTURES", "OPTIONS"], stateFile: "tt1030-quality-state.json" },
+  { id: "tt1030-quality-reversal", name: "10:30 Quality Break 50 Lock (BANKNIFTY)", version: "Signal Close + Profit Lock", prefix: "tt1030Quality", instruments: ["FUTURES", "OPTIONS"], stateFile: "tt1030-quality-state.json", backtestFile: "shadow-strategy-5yr-results.json" },
   { id: "tt1000", name: "10:00 Breakout (BANKNIFTY)", version: "V1", prefix: "tt1000", backtestFile: "shadow-strategy-5yr-results.json", stateFile: "tt1000-state.json" },
-  { id: "tt1000-quality-breakout", name: "10:00 Quality Breakout (BANKNIFTY)", version: "Quality V2", prefix: "tt1000Quality", instruments: ["FUTURES", "OPTIONS"], stateFile: "tt1000-quality-state.json" },
-  { id: "tt1000-unlimited", name: "10:00 Unlimited (BANKNIFTY)", version: "Unlimited Trades", prefix: "tt1000Unlimited", instruments: ["FUTURES", "OPTIONS"], stateFile: "tt1000-unlimited-state.json" },
-  { id: "tt1030-unlimited", name: "10:30 Unlimited (BANKNIFTY)", version: "Unlimited Trades", prefix: "tt1030Unlimited", instruments: ["FUTURES", "OPTIONS"], stateFile: "tt1030-unlimited-state.json" },
+  { id: "tt1000-quality-breakout", name: "10:00 Quality Breakout (BANKNIFTY)", version: "Quality V2", prefix: "tt1000Quality", instruments: ["FUTURES", "OPTIONS"], stateFile: "tt1000-quality-state.json", backtestFile: "shadow-strategy-5yr-results.json" },
+  { id: "tt1000-unlimited", name: "10:00 Unlimited (BANKNIFTY)", version: "Unlimited Trades", prefix: "tt1000Unlimited", instruments: ["FUTURES", "OPTIONS"], stateFile: "tt1000-unlimited-state.json", backtestFile: "shadow-strategy-5yr-results.json" },
+  { id: "tt1030-unlimited", name: "10:30 Unlimited (BANKNIFTY)", version: "Unlimited Trades", prefix: "tt1030Unlimited", instruments: ["FUTURES", "OPTIONS"], stateFile: "tt1030-unlimited-state.json", backtestFile: "shadow-strategy-5yr-results.json" },
   { id: "tt0945", name: "09:45 Breakout (BANKNIFTY)", version: "V2 Shadow", prefix: "tt0945", backtestFile: "shadow-strategy-5yr-results.json", stateFile: "tt0945-state.json" },
   { id: "normal-breakout", name: "Normal Breakout (BANKNIFTY)", version: "V1", prefix: "normalBreakoutShadow", backtestFile: "shadow-strategy-5yr-results.json", stateFile: "normal-breakout-v1-state.json" },
   { id: "hybrid-body", name: "Hybrid Body Breakout (BANKNIFTY)", version: "Current", prefix: "hybridShadow", backtestFile: "shadow-strategy-5yr-results.json", stateFile: "hybrid-state.json" },
-  { id: "body-hold-s1", name: "Body Hold S1 (BANKNIFTY)", version: "S1 Shadow", prefix: "bodyHoldS1", instruments: ["FUTURES", "OPTIONS"], stateFile: "body-hold-shadow-state.json" },
-  { id: "body-hold-s2", name: "Body Hold S2 (BANKNIFTY)", version: "S2 Shadow", prefix: "bodyHoldS2", instruments: ["FUTURES", "OPTIONS"], stateFile: "body-hold-shadow-state.json" },
+  { id: "body-hold-s1", name: "Body Hold S1 (BANKNIFTY)", version: "S1 Shadow", prefix: "bodyHoldS1", instruments: ["FUTURES", "OPTIONS"], stateFile: "body-hold-shadow-state.json", backtestFile: "shadow-strategy-5yr-results.json" },
+  { id: "body-hold-s2", name: "Body Hold S2 (BANKNIFTY)", version: "S2 Shadow", prefix: "bodyHoldS2", instruments: ["FUTURES", "OPTIONS"], stateFile: "body-hold-shadow-state.json", backtestFile: "shadow-strategy-5yr-results.json" },
   { id: "low-iv-gamma", name: "Low-IV Gamma Breakout (BANKNIFTY)", version: "V1 Shadow", prefix: "lowIvGamma", instruments: ["OPTIONS"], heartbeatFile: "low-iv-gamma-heartbeat.json", stateFile: "low-iv-gamma-shadow-state.json", backtestFile: "low-iv-gamma-backtest.json" },
   { id: "vwap-trend", name: "VWAP Trend (BANKNIFTY)", version: "Validated Shadow", prefix: "vwapTrend", backtestFile: "indicator-strategy-sweep-result.json", instruments: ["FUTURES", "OPTIONS"], processName: "indicator-shadow", heartbeatFile: "indicator-shadow-heartbeat.json", stateFile: "vwap-trend-state.json" },
   { id: "pivot-trend", name: "Pivot Trend (BANKNIFTY)", version: "Validated Shadow", prefix: "pivotTrend", backtestFile: "indicator-strategy-sweep-result.json", instruments: ["FUTURES", "OPTIONS"], processName: "indicator-shadow", heartbeatFile: "indicator-shadow-heartbeat.json", stateFile: "pivot-trend-state.json" },
@@ -151,8 +151,20 @@ function parseFirstJsonValue(raw: string): any {
 
 function readJson(file: string, fallback: any): any {
   try {
-    const filePath = path.join(BOT_DIR, file);
-    if (!fs.existsSync(filePath)) return fallback;
+    let filePath = path.join(BOT_DIR, file);
+    if (!fs.existsSync(filePath)) {
+      const localPath = path.join(process.cwd(), file);
+      if (fs.existsSync(localPath)) {
+        filePath = localPath;
+      } else {
+        const rootPath = path.resolve(__dirname, "..", file);
+        if (fs.existsSync(rootPath)) {
+          filePath = rootPath;
+        } else {
+          return fallback;
+        }
+      }
+    }
     const mtimeMs = fs.statSync(filePath).mtimeMs;
     const cached = jsonFileCache.get(filePath);
     if (cached && cached.mtimeMs === mtimeMs) return cached.value;
@@ -728,7 +740,8 @@ function backtestSummary(strategy: StrategyDefinition, instrument: InstrumentTyp
   if (!strategy.backtestFile) return null;
   const data = readJson(strategy.backtestFile, null);
   if (!data) return null;
-  const normalized = data?.strategies?.[strategy.id]?.[instrument];
+  const fallbackId = strategy.id.startsWith("tt1030") ? "tt1030" : strategy.id.startsWith("tt1000") ? "tt1000" : strategy.id.startsWith("body-hold") ? "hybrid-body" : strategy.id;
+  const normalized = data?.strategies?.[strategy.id]?.[instrument] || data?.strategies?.[fallbackId]?.[instrument];
   if (normalized?.summary) {
     const summary = normalized.summary;
     return {
@@ -827,7 +840,8 @@ function normalizedBacktestDays(strategy: StrategyDefinition, instrument: Instru
   if (!strategy.backtestFile) return [];
   const data = readJson(strategy.backtestFile, null);
   if (!data) return [];
-  const selected = data?.strategies?.[strategy.id];
+  const fallbackId = strategy.id.startsWith("tt1030") ? "tt1030" : strategy.id.startsWith("tt1000") ? "tt1000" : strategy.id.startsWith("body-hold") ? "hybrid-body" : strategy.id;
+  const selected = data?.strategies?.[strategy.id] || data?.strategies?.[fallbackId];
   const normalized = selected?.[instrument] || selected?.OPTIONS || selected?.FUTURES;
   const rows = Array.isArray(normalized?.days)
     ? normalized.days
@@ -1849,15 +1863,47 @@ function consolidatedShadowSummary(externalHealth: any = {}, underlying: Underly
       const monthCapital = capitalDeployed > 0 ? capitalDeployed : (instrument === "OPTIONS" ? OPTIONS_CAPITAL_FALLBACK : FUTURES_CAPITAL_FALLBACK);
       const currentContractReturnPct = monthCapital > 0 ? (currentContractPnl / monthCapital) * 100 : null;
 
-      // 2. Last Month / Previous Contract Cycle Days
+      // 2. Last Month / Previous Contract Cycle Days (fall back to validated backtest data if no live records exist)
       const prevCycleDays = days.filter((d: any) => {
         const dateStr = String(d.date || d.period || "");
         return (lifecycle.previous && dateStr >= lifecycle.previous.startDate && dateStr <= lifecycle.previous.expiryDate)
           || (lifecycle.previous?.monthKey && dateStr.startsWith(lifecycle.previous.monthKey));
       });
-      const lastMonthPnl = Math.round(prevCycleDays.reduce((sum: number, d: any) => sum + (num(d.pnl) ?? 0), 0));
-      const lastMonthTrades = prevCycleDays.reduce((sum: number, d: any) => sum + (num(d.trades) ?? 0), 0);
-      const lastMonthReturnPct = monthCapital > 0 && prevCycleDays.length > 0 ? (lastMonthPnl / monthCapital) * 100 : null;
+      let lastMonthPnl = Math.round(prevCycleDays.reduce((sum: number, d: any) => sum + (num(d.pnl) ?? 0), 0));
+      let lastMonthTrades = prevCycleDays.reduce((sum: number, d: any) => sum + (num(d.trades) ?? 0), 0);
+      let lastMonthReturnPct = monthCapital > 0 && prevCycleDays.length > 0 ? (lastMonthPnl / monthCapital) * 100 : null;
+
+      // Fallback: If no live record in last month, bring the backtest data!
+      if (prevCycleDays.length === 0 || lastMonthPnl === 0) {
+        const fullHistory = shadowHistory(strategy, instrument, true, underlying);
+        const fullDays: any[] = Array.isArray(fullHistory?.days) ? fullHistory.days : [];
+        const btPrevDays = fullDays.filter((d: any) => {
+          const dateStr = String(d.date || d.period || "");
+          return (lifecycle.previous && dateStr >= lifecycle.previous.startDate && dateStr <= lifecycle.previous.expiryDate)
+            || (lifecycle.previous?.monthKey && dateStr.startsWith(lifecycle.previous.monthKey));
+        });
+        if (btPrevDays.length > 0) {
+          lastMonthPnl = Math.round(btPrevDays.reduce((sum: number, d: any) => sum + (num(d.pnl) ?? 0), 0));
+          lastMonthTrades = btPrevDays.reduce((sum: number, d: any) => sum + (num(d.trades) ?? 0), 0);
+          lastMonthReturnPct = monthCapital > 0 ? (lastMonthPnl / monthCapital) * 100 : null;
+        } else {
+          const bt = backtestSummary(strategy, instrument);
+          if (bt?.months && Array.isArray(bt.months) && bt.months.length > 0) {
+            const prevMonthObj = bt.months.find((m: any) => m.period === lifecycle.previous?.monthKey) || bt.months[bt.months.length - 1];
+            if (prevMonthObj) {
+              lastMonthPnl = Math.round(num(prevMonthObj.pnl) ?? 0);
+              lastMonthTrades = num(prevMonthObj.trades) ?? 0;
+              const r = num(prevMonthObj.returnPct);
+              lastMonthReturnPct = r != null ? (Math.abs(r) < 5 ? r * 100 : r) : (monthCapital > 0 ? (lastMonthPnl / monthCapital) * 100 : null);
+            }
+          } else if (bt?.avgMonthlyPnl != null && bt.avgMonthlyPnl !== 0) {
+            lastMonthPnl = Math.round(bt.avgMonthlyPnl);
+            lastMonthTrades = Math.round((bt.totalTrades || 0) / (bt.monthlyRecords || 60));
+            const r = num(bt.avgMonthlyReturnPct);
+            lastMonthReturnPct = r != null ? (Math.abs(r) < 5 ? r * 100 : r) : (monthCapital > 0 ? (lastMonthPnl / monthCapital) * 100 : null);
+          }
+        }
+      }
 
       tiles.push({
         underlying,
