@@ -2781,13 +2781,17 @@ export function renderShadowStrategyMonitorPage(navHtml: string): string {
     .sm-consolidated-mode .sm-shadow-badge{display:none}
     .sm-consolidated-mode .sm-market,.sm-consolidated-mode .sm-refresh{color:#e5e7eb;border-color:rgba(148,163,184,.28);background:rgba(15,23,42,.66)}
     .sm-consolidated{color:#e5e7eb}
+    .sm-tradeops-btn{display:inline-flex;align-items:center;gap:7px;height:38px;padding:0 14px;border-radius:7px;border:1px solid #059669;background:linear-gradient(135deg,#059669,#10b981);color:#fff!important;font-size:13px;font-weight:800;text-decoration:none;box-shadow:0 2px 10px rgba(16,185,129,.35);transition:all .15s ease}
+    .sm-tradeops-btn:hover{background:linear-gradient(135deg,#047857,#059669);transform:translateY(-1px);box-shadow:0 4px 14px rgba(16,185,129,.45)}
     .sm-consolidated-toolbar{display:flex;align-items:center;justify-content:space-between;gap:12px;margin:0 0 12px;padding:12px 14px;border:1px solid rgba(96,165,250,.2);border-radius:12px;background:rgba(4,10,22,.42)}
     .sm-consolidated-toolbar-title{display:flex;flex-direction:column;gap:3px;min-width:0}
     .sm-consolidated-toolbar-title b{color:#f8fafc;font-size:15px}
     .sm-consolidated-toolbar-title span{color:#9fb0ce;font-size:11px;font-weight:700}
-    .sm-consolidated-instrument{display:grid;grid-template-columns:1fr 1fr;width:250px;height:40px;padding:4px;border:1px solid rgba(148,163,184,.24);border-radius:10px;background:rgba(15,23,42,.72);gap:4px}
+    .sm-consolidated-instrument{display:grid;grid-template-columns:1fr 1fr;width:230px;height:40px;padding:4px;border:1px solid rgba(148,163,184,.24);border-radius:10px;background:rgba(15,23,42,.72);gap:4px}
     .sm-consolidated-instrument button{border:0;border-radius:7px;background:transparent;color:#9fb0ce;font-size:13px;font-weight:850;cursor:pointer}
     .sm-consolidated-instrument button.active{background:#5148e8;color:#fff;box-shadow:0 6px 16px rgba(81,72,232,.26)}
+    .sm-consolidated-tradeops-btn{display:inline-flex;align-items:center;gap:7px;height:40px;padding:0 14px;border-radius:9px;border:1px solid rgba(16,185,129,.45);background:linear-gradient(135deg,#065f46,#047857);color:#ecfdf5!important;font-size:12.5px;font-weight:850;text-decoration:none;box-shadow:0 2px 10px rgba(5,150,105,.25);transition:all .15s ease}
+    .sm-consolidated-tradeops-btn:hover{background:linear-gradient(135deg,#047857,#059669);color:#fff!important;transform:translateY(-1px);box-shadow:0 4px 14px rgba(16,185,129,.35)}
     .sm-movement-strip{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:10px;margin-bottom:12px;padding:12px 14px;border:1px solid rgba(56,189,248,.3);border-radius:12px;background:linear-gradient(135deg,rgba(8,29,52,.96),rgba(12,20,43,.96))}
     .sm-movement-item{min-width:0;padding-left:13px;border-left:1px solid rgba(148,163,184,.2)}.sm-movement-item:first-child{padding-left:0;border-left:0}.sm-movement-item span{display:block;color:#93c5fd;font-size:9px;font-weight:850;letter-spacing:.06em;text-transform:uppercase}.sm-movement-item b{display:block;margin-top:4px;color:#f8fafc;font-size:17px;font-weight:850;font-variant-numeric:tabular-nums}.sm-movement-item small{display:block;margin-top:2px;color:#94a3b8;font-size:10px}.sm-movement-item b.positive{color:#34d399}.sm-movement-item b.negative{color:#fb7185}
     .sm-winner-strip{display:block;margin-bottom:12px}
@@ -2886,6 +2890,7 @@ export function renderShadowStrategyMonitorPage(navHtml: string): string {
         <div class="sm-head-actions">
           <div class="sm-market closed" id="marketStatus"><span class="sm-dot"></span><span>Checking market</span></div>
           <div class="sm-refresh-meta" id="refreshMeta">Last refreshed: connecting...</div>
+          <a href="/tradeops" class="sm-tradeops-btn" title="Open TradeOps Live Money Trading Platform"><svg class="sm-icon" viewBox="0 0 24 24"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg><span>⚡ TradeOps (Real Money)</span></a>
           <a href="/strategies" class="sm-link-btn" style="text-decoration:none" title="Strategy Guide"><svg class="sm-icon" viewBox="0 0 24 24"><path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H20v20H6.5a2.5 2.5 0 0 1-2.5-2.5Z"/><path d="M6 6h10"/><path d="M6 10h10"/></svg><span>Strategies</span></a>
           <a href="/today" class="sm-link-btn" style="text-decoration:none" title="Today's Stock Picks"><svg class="sm-icon" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg><span>Picks</span></a>
           <button class="sm-consolidated-toggle" id="consolidatedToggle" type="button"><svg class="sm-icon" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg><span>Consolidated P&amp;L</span></button>
@@ -2893,7 +2898,7 @@ export function renderShadowStrategyMonitorPage(navHtml: string): string {
         </div>
       </header>
       <section class="sm-consolidated sm-consolidated-view" id="consolidatedView" hidden>
-        <div class="sm-consolidated-toolbar"><div class="sm-consolidated-toolbar-title"><b id="consolidatedInstrumentTitle">Futures Consolidated</b><span id="consolidatedInstrumentMeta">All Futures shadow strategies</span></div><div class="sm-consolidated-instrument" role="tablist" aria-label="Consolidated instrument"><button type="button" class="active" data-consolidated-instrument="FUTURES">Futures</button><button type="button" data-consolidated-instrument="OPTIONS">Options</button></div></div>
+        <div class="sm-consolidated-toolbar"><div class="sm-consolidated-toolbar-title"><b id="consolidatedInstrumentTitle">Futures Consolidated</b><span id="consolidatedInstrumentMeta">All Futures shadow strategies</span></div><div style="display:flex;align-items:center;gap:10px"><div class="sm-consolidated-instrument" role="tablist" aria-label="Consolidated instrument"><button type="button" class="active" data-consolidated-instrument="FUTURES">Futures</button><button type="button" data-consolidated-instrument="OPTIONS">Options</button></div><a href="/tradeops" class="sm-consolidated-tradeops-btn" title="Open TradeOps Live Money Trading Platform"><svg class="sm-icon" viewBox="0 0 24 24"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg><span>TradeOps Live Trading &rarr;</span></a></div></div>
         <div class="sm-movement-strip" id="bankNiftyMovement"></div>
         <div class="sm-winner-strip" id="consolidatedWinners"></div>
         <div class="sm-consolidated-groups" id="consolidatedGrid"></div>
