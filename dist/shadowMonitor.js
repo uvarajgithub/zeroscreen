@@ -40,8 +40,8 @@ const STRATEGIES = [
     { id: "tt1030-quality-reversal", name: "10:30 Quality Break 50 Lock (BANKNIFTY)", version: "Signal Close + Profit Lock", prefix: "tt1030Quality", instruments: ["FUTURES", "OPTIONS"], stateFile: "tt1030-quality-state.json" },
     { id: "tt1000", name: "10:00 Breakout (BANKNIFTY)", version: "V1", prefix: "tt1000", backtestFile: "shadow-strategy-5yr-results.json", stateFile: "tt1000-state.json" },
     { id: "tt1000-quality-breakout", name: "10:00 Quality Breakout (BANKNIFTY)", version: "Quality V2", prefix: "tt1000Quality", instruments: ["FUTURES", "OPTIONS"], stateFile: "tt1000-quality-state.json" },
-  { id: "tt1000-unlimited", name: "10:00 Unlimited (BANKNIFTY)", version: "Unlimited Trades", prefix: "tt1000Unlimited", instruments: ["FUTURES", "OPTIONS"], stateFile: "tt1000-unlimited-state.json" },
-  { id: "tt1030-unlimited", name: "10:30 Unlimited (BANKNIFTY)", version: "Unlimited Trades", prefix: "tt1030Unlimited", instruments: ["FUTURES", "OPTIONS"], stateFile: "tt1030-unlimited-state.json" },
+    { id: "tt1000-unlimited", name: "10:00 Unlimited (BANKNIFTY)", version: "Unlimited Trades", prefix: "tt1000Unlimited", instruments: ["FUTURES", "OPTIONS"], stateFile: "tt1000-unlimited-state.json" },
+    { id: "tt1030-unlimited", name: "10:30 Unlimited (BANKNIFTY)", version: "Unlimited Trades", prefix: "tt1030Unlimited", instruments: ["FUTURES", "OPTIONS"], stateFile: "tt1030-unlimited-state.json" },
     { id: "tt0945", name: "09:45 Breakout (BANKNIFTY)", version: "V2 Shadow", prefix: "tt0945", backtestFile: "shadow-strategy-5yr-results.json", stateFile: "tt0945-state.json" },
     { id: "normal-breakout", name: "Normal Breakout (BANKNIFTY)", version: "V1", prefix: "normalBreakoutShadow", backtestFile: "shadow-strategy-5yr-results.json", stateFile: "normal-breakout-v1-state.json" },
     { id: "hybrid-body", name: "Hybrid Body Breakout (BANKNIFTY)", version: "Current", prefix: "hybridShadow", backtestFile: "shadow-strategy-5yr-results.json", stateFile: "hybrid-state.json" },
@@ -498,14 +498,14 @@ function strategyFields(strategy, hb, state, instrument, underlying = "BANKNIFTY
         : (hb[`${fieldPrefix}FuturesEntry`] ?? persisted.entry));
     const direction = text(hb[`${fieldPrefix}Dir`] ?? persisted.dir);
     const storedQty = num(hb[`${fieldPrefix}LiveQty`] ?? persisted.liveQty ?? hb.qty);
-    const quantity = storedQty !== null && storedQty > 0 ? storedQty : 30;
+    const qty = storedQty !== null && storedQty > 0 ? storedQty : 30;
     let computedUnrealized = 0;
     if (inTrade && livePrice !== null && entryPrice !== null && entryPrice > 0) {
         if (isOptions) {
-            computedUnrealized = (livePrice - entryPrice) * quantity;
+            computedUnrealized = (livePrice - entryPrice) * qty;
         }
         else {
-            computedUnrealized = (direction === "PE" ? entryPrice - livePrice : livePrice - entryPrice) * quantity;
+            computedUnrealized = (direction === "PE" ? entryPrice - livePrice : livePrice - entryPrice) * qty;
         }
     }
     const heartbeatTotal = num(hb[isOptions ? `${fieldPrefix}OptPnL` : `${fieldPrefix}PnL`]);
@@ -523,10 +523,10 @@ function strategyFields(strategy, hb, state, instrument, underlying = "BANKNIFTY
         return entry !== null && exit !== null && exit > entry;
     }).length;
     const inferredOptionLosses = persistedTrades.filter((row) => {
-    const entry = num(row?.premIn ?? row?.premiumEntry);
-    const exit = num(row?.premOut ?? row?.premiumExit);
-    return entry !== null && exit !== null && exit < entry;
-  }).length;
+        const entry = num(row?.premIn ?? row?.premiumEntry);
+        const exit = num(row?.premOut ?? row?.premiumExit);
+        return entry !== null && exit !== null && exit < entry;
+    }).length;
     return {
         inTrade,
         realized,
@@ -551,7 +551,7 @@ function strategyFields(strategy, hb, state, instrument, underlying = "BANKNIFTY
             : num(hb[`${fieldPrefix}FuturesLive`] ?? hb[`${fieldPrefix}Live`] ?? persisted.live),
         sl: num(hb[`${fieldPrefix}SL`] ?? persisted.sl),
         target: null,
-        quantity,
+        quantity: qty,
         entryTime: timeValue(hb[`${fieldPrefix}EntryTime`] ?? persisted.entryTime),
         entryAt: hb[`${fieldPrefix}EntryAt`] ?? (persisted.date && persisted.entryTime ? `${persisted.date}T${persisted.entryTime}:00+05:30` : null),
         phase: text(hb[`${fieldPrefix}Phase`] || persisted.phase || (candleLog.length ? "DONE" : hb.status)),
@@ -873,8 +873,10 @@ function shadowHistory(strategy, instrument, includeBacktest = true, underlying 
     const monthlyHistoryKey = {
         tt1030Shadow: "TEN_THIRTY",
         tt1030Quality: "TEN_THIRTY_QUALITY",
+        tt1030Unlimited: "TEN_THIRTY_UNLIMITED",
         tt1000: "TEN_O_CLOCK",
         tt1000Quality: "TEN_O_CLOCK_QUALITY",
+        tt1000Unlimited: "TEN_O_CLOCK_UNLIMITED",
         tt0945: "NINE_FORTY_FIVE",
         normalBreakoutShadow: "NORMAL_BREAKOUT_V1",
         hybridShadow: "HYBRID_BODY",
@@ -884,8 +886,10 @@ function shadowHistory(strategy, instrument, includeBacktest = true, underlying 
         drishti: { FUTURES: "DRISHTI_V1", OPTIONS: "DRISHTI_V1_OPT" },
         tt1030Shadow: { FUTURES: "TEN_THIRTY_INDEX", OPTIONS: "TEN_THIRTY_OPT" },
         tt1030Quality: { FUTURES: "TEN_THIRTY_QUALITY_INDEX", OPTIONS: "TEN_THIRTY_QUALITY_OPT" },
+        tt1030Unlimited: { FUTURES: "TEN_THIRTY_UNLIMITED_INDEX", OPTIONS: "TEN_THIRTY_UNLIMITED_OPT" },
         tt1000: { FUTURES: "TEN_O_CLOCK_INDEX", OPTIONS: "TEN_O_CLOCK_OPT" },
         tt1000Quality: { FUTURES: "TEN_O_CLOCK_QUALITY_INDEX", OPTIONS: "TEN_O_CLOCK_QUALITY_OPT" },
+        tt1000Unlimited: { FUTURES: "TEN_O_CLOCK_UNLIMITED_INDEX", OPTIONS: "TEN_O_CLOCK_UNLIMITED_OPT" },
         normalBreakoutShadow: { FUTURES: "NORMAL_BREAKOUT_V1_INDEX", OPTIONS: "NORMAL_BREAKOUT_V1_OPT" },
         hybridShadow: { FUTURES: "HYBRID_BODY_INDEX", OPTIONS: "HYBRID_BODY_OPT" },
         bodyHoldS1: { FUTURES: "BH_S1_FUT", OPTIONS: "BH_S1_OPT" },

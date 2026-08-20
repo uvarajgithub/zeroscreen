@@ -4696,7 +4696,7 @@ function tt1000HeartbeatFields() {
 const TT1030_QUALITY_STATE_FILE = 'tt1030-quality-state.json';
 const TT1030_QUALITY_CANDLE_LOG_FILE = 'tt1030-quality-candle-log.json';
 const TT1030_QUALITY_TRAIL_BUFFER_PTS = 0;
-const TT1030_QUALITY_MIN_BREAK_PTS = 50;
+const TT1030_QUALITY_MIN_BREAK_PTS = 0;
 const TT1030_QUALITY_PROFIT_LOCK_TRIGGER_PTS = 50;
 const TT1030_QUALITY_PROFIT_LOCK_PTS = 50;
 let tt1030QualityRunInFlight = false;
@@ -4761,12 +4761,12 @@ function tt1030QualityBreakSignal(c) {
         return null;
     const upBreakPts = Number(c.close || 0) - Number(tt1030Quality.rangeHigh || 0);
     const downBreakPts = Number(tt1030Quality.rangeLow || 0) - Number(c.close || 0);
-    const dir = upBreakPts >= TT1030_QUALITY_MIN_BREAK_PTS ? "CE" : downBreakPts >= TT1030_QUALITY_MIN_BREAK_PTS ? "PE" : null;
+    const dir = upBreakPts > 0 ? "CE" : downBreakPts > 0 ? "PE" : null;
     if (!dir)
         return null;
     return {
         dir,
-        entry: Number(c.close || 0),
+        entry: dir === "CE" ? Number(tt1030Quality.rangeHigh || 0) : Number(tt1030Quality.rangeLow || 0),
         sl: dir === "CE" ? Number(c.low || 0) : Number(c.high || 0),
         breakPts: dir === "CE" ? upBreakPts : downBreakPts,
     };
