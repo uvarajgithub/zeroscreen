@@ -8868,8 +8868,36 @@ body.tradeops-collapsed .help,body.tradeops-collapsed .collapse-btn{justify-cont
               </button>
             </div>
           </div>
+        <section class="card pnl">
+          <div class="card-h">
+            <span class="pnl-head">
+              <span id="pnlCardTitle">Today's Real-Time P&amp;L</span>
+              <span class="dot ok" id="pnlLiveDot"></span>
+              <span class="ok" id="pnlLiveLabel">Live MTM</span>
+            </span>
+            <a class="pnl-link" href="/tradeops/trade-history">Trade History &rsaquo;</a>
+          </div>
+          <div class="card-b">
+            <div id="pnlMetricLabel" class="pnl-label">NET REAL-TIME P&amp;L</div>
+            <div class="pnl-main">
+              <div>
+                <div id="netPnl" class="pnl-value">₹0</div>
+                <div id="pnlSupport" class="pnl-support">BANKNIFTY FUT &bull; 1 Lot (30 Qty)</div>
+              </div>
+              <span id="profitChip" class="profit-pill neutral">Neutral</span>
+            </div>
+            <div class="metric-grid">
+              <div class="metric"><label>Realized P&amp;L</label><b id="realized">₹0</b></div>
+              <div class="metric emphasis"><label>Unrealized (MTM)</label><b id="unrealized">₹0</b></div>
+              <div class="metric"><label>Today's Trades</label><b id="tradeCountDisplay">0 / 3 Max</b></div>
+              <div class="metric emphasis"><label>Profit Guard</label><b id="profitGuardDisplay" style="color:#34d399">+50pt Lock Active</b></div>
+            </div>
+            <div class="pnl-foot">
+              <span>Updated: <b id="pnlUpdated">--</b></span>
+              <span>Execution Engine: <b id="pnlMode" style="color:#60a5fa">10:30 Quality Break 50 Lock</b></span>
+            </div>
+          </div>
         </section>
-        <section class="card pnl"><div class="card-h"><span class="pnl-head"><span id="pnlCardTitle">Today's Real-Time P&amp;L</span> <span class="dot ok"></span><span class="ok" id="pnlLiveLabel">Live MTM</span></span><a class="pnl-link" href="/tradeops/trade-history">View History &rsaquo;</a></div><div class="card-b"><div id="pnlMetricLabel" class="pnl-label">Net P&amp;L (BankNifty Futures)</div><div class="pnl-main"><div><div id="netPnl" class="pnl-value">₹0</div><div id="pnlSupport" class="pnl-support">1 Lot (30 Qty)</div></div><span id="profitChip" class="profit-pill">--</span></div><div class="metric-grid"><div class="metric"><label>Realized P&amp;L</label><b id="realized">₹0</b></div><div class="metric emphasis"><label>Unrealized P&amp;L</label><b id="unrealized">₹0</b></div><div class="metric"><label>Today's Trades</label><b id="tradeCountDisplay">0 / 3 Max</b></div><div class="metric emphasis"><label>Profit Guard</label><b id="profitGuardDisplay" style="color:#34d399">+50pt Lock Active</b></div></div><div class="pnl-foot"><span>Last updated: <b id="pnlUpdated">--</b></span><span>Source: <b id="pnlSource">Zerodha Kite</b></span><span>Mode: <b id="pnlMode">LIVE</b></span></div></div></section>
         <section class="card chart"><div class="card-h"><span>BANKNIFTY &middot; <span id="chartTfLabel">15m</span> <span id="chartMode" class="chart-mode">Checking</span></span><a class="chart-link" href="/tradeops/candle-logs">Candle Logs &rsaquo;</a></div><div class="card-b"><div class="chart-top"><div><div id="ohlc" class="ohlc">OHLC unavailable</div><div><span id="ltp" class="ltp">LTP unavailable</span> <span id="change" class="ok"></span></div></div><button class="btn" id="chartTfTop">15m</button></div><div class="chart-box" id="chartBox"></div><div class="tabs" id="chartTabs"><button type="button" data-tf="15m" class="active">15m</button><span style="margin-left:auto" class="muted chart-footer"><span id="feedStateDot" class="dot"></span> <span id="feedState">Checking</span> | Last candle: <b id="lastCandle">--</b> | <b id="candleCount">0 candles</b></span></div></div></section>
         <section class="card account"><div class="card-h"><span>Margin &amp; Broker Capital</span><span id="accountSyncChip" class="account-chip">Checking</span></div><div class="card-b"><div class="muted">Available Trading Margin</div><div class="balance-big" id="available">₹0</div><div id="accountHint" class="account-hint">Synced with Zerodha Broker</div><div class="acct-lines" style="margin-top:12px"><div class="kv"><label>Required per Lot (30 Qty)</label><strong id="requiredMargin" style="color:#60a5fa">~₹2,05,000</strong></div><div class="kv"><label>Used Margin</label><b id="usedMargin">₹0</b></div><div class="kv"><label>Total Account Balance</label><b id="balance">₹0</b></div></div><div id="accountWarn" class="account-warn" style="display:none"></div><div class="kv" style="margin-top:10px"><label>Account ID</label><b id="accountId">--</b></div><div class="kv"><label>Broker Status</label><b id="brokerSyncAccount" class="ok">Connected</b></div><div class="kv"><label>Last Sync</label><b id="lastSync">--</b></div></div></section>
         <section class="card positions"><div class="card-h"><span>Live Active Positions</span><a href="/tradeops/orders">View All &rsaquo;</a></div><div id="positionsEmpty" class="compact-empty"><div class="empty-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M4 20V10M10 20V4M16 20v-7M22 20V8"/></svg></div><div><b>No open positions</b><span>Active positions will stream here in real time.</span></div></div><div id="positionsTable" class="table-wrap"><table class="table"><thead><tr><th>Symbol</th><th>Qty</th><th>Avg Price</th><th>LTP</th><th>P&amp;L</th><th>P&amp;L %</th><th>Status</th></tr></thead><tbody id="positionsBody"></tbody></table></div></section>
@@ -8969,16 +8997,24 @@ function render(d){
     const execFlow=document.getElementById('flowExecTitle')?.closest('.flow-step');
     if(execFlow)execFlow.classList.toggle('blocked',d.execution.status==='Blocked');
 
-    const net=d.pnl.net;
-    const openActive=d.bot.state==='In Trade'||Number(d.pnl.unrealized||0)!==0;
+    const net=Number(d.pnl&&d.pnl.net!=null?d.pnl.net:0);
+    const openActive=d.bot.state==='In Trade'||Number(d.pnl&&d.pnl.unrealized||0)!==0;
     const liveMode=d.market.open&&botOnline;
     set('netPnl',rs(net));
     const netPnlEl=document.getElementById('netPnl');
-    if(netPnlEl)netPnlEl.className='pnl-value '+cls(net);
+    if(netPnlEl)netPnlEl.className='pnl-value '+(net>0?'ok':net<0?'bad':'neutral');
     const profitChip=document.getElementById('profitChip');
     if(profitChip){
-      profitChip.textContent=net>=0?'Profit':'Loss';
-      profitChip.className='profit-pill '+(net>=0?'':'loss');
+      if(net>0){
+        profitChip.textContent='+ Profit';
+        profitChip.className='profit-pill';
+      }else if(net<0){
+        profitChip.textContent='- Loss';
+        profitChip.className='profit-pill loss';
+      }else{
+        profitChip.textContent='Neutral';
+        profitChip.className='profit-pill neutral';
+      }
     }
     const stMode=String((d.strategy&&d.strategy.mode)||'SHADOW').toUpperCase();
     const btnShadow=document.getElementById('modeBtnShadow');
@@ -8996,18 +9032,21 @@ function render(d){
     const toggleLabel=document.getElementById('tt1030ModeLabel');
     if(toggle){toggle.checked=stMode==='LIVE';toggle.disabled=false;}
     if(toggleLabel){toggleLabel.textContent=stMode;toggleLabel.style.color=stMode==='LIVE'?'#34d399':'#94a3b8';}
-    const strategyLabel=(d.strategy&&d.strategy.name)||'TradeOps';
+    const strategyLabel=(d.strategy&&d.strategy.name)||'10:30 Quality Break 50 Lock';
     set('pnlCardTitle',"Today's Real-Time P&L");
-    set('pnlLiveLabel',liveMode?'Live':'Last Session');
-    set('pnlMetricLabel',liveMode?'Net Live P&L':'Net Session P&L');
-    set('pnlSupport',openActive?strategyLabel+' position active':((d.pnl&&d.pnl.source)?'Source: '+d.pnl.source:strategyLabel+' (1 Lot / 30 Qty)'));
-    set('pnlSource',(d.pnl&&d.pnl.source?d.pnl.source:(d.broker.connected?'Broker':'Bot'))+' / '+Math.round(((d.pnl&&d.pnl.refreshMs)||5000)/1000)+'s');
-    set('pnlMode',stMode);
-    set('realized',rs(d.pnl.realized));
-    set('unrealized',rs(d.pnl.unrealized));
+    set('pnlLiveLabel',liveMode?'Live MTM':'Session Closed');
+    const pnlDot=document.getElementById('pnlLiveDot'); if(pnlDot)pnlDot.className='dot '+(liveMode?'ok':'');
+    set('pnlMetricLabel','NET REAL-TIME P&L');
+    set('pnlSupport',openActive?'Live Position Active (1 Lot / 30 Qty)':'BANKNIFTY FUT • 1 Lot (30 Qty)');
+    set('pnlMode',strategyLabel);
+    set('realized',rs(d.pnl&&d.pnl.realized));
+    set('unrealized',rs(d.pnl&&d.pnl.unrealized));
     set('tradeCountDisplay',tradeList.length+' / 3 Max');
     set('profitGuardDisplay','+50pt Lock Active');
-    ['realized','unrealized'].forEach(id=>{const e=document.getElementById(id);if(e)e.className=String(e.textContent||'').startsWith('-')?'bad':'ok'});
+    const rEl=document.getElementById('realized');
+    if(rEl){const rVal=Number(d.pnl&&d.pnl.realized)||0;rEl.className=rVal>0?'ok':rVal<0?'bad':'';}
+    const uEl=document.getElementById('unrealized');
+    if(uEl){const uVal=Number(d.pnl&&d.pnl.unrealized)||0;uEl.className=uVal>0?'ok':uVal<0?'bad':'';}
 
     const chartCandles=buildChartCandles(d.candles||[]);
     const c=chartCandles.length?chartCandles[chartCandles.length-1]:(d.candles&&d.candles[0]);
