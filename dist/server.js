@@ -8785,28 +8785,6 @@ body.tradeops-collapsed .help,body.tradeops-collapsed .collapse-btn{justify-cont
   .candle-note{min-width:190px}
 }
 
-/* TradeOps Hero Header Card */
-.tradeops-hero{grid-area:workflow!important;background:linear-gradient(135deg,#0a192f 0%,#06152a 50%,#041021 100%)!important;border:1px solid rgba(56,189,248,0.32)!important;border-radius:14px!important;box-shadow:0 12px 32px rgba(2,10,25,0.25),inset 0 1px 0 rgba(255,255,255,0.12)!important;padding:14px 20px!important;color:#fff!important;display:flex!important;align-items:center!important;justify-content:space-between!important;gap:16px!important;flex-wrap:wrap!important;min-height:74px!important}
-.tradeops-hero-left{display:flex;align-items:center;gap:14px;min-width:280px;flex:1 1 auto}
-.tradeops-hero-icon{width:42px;height:42px;border-radius:12px;background:linear-gradient(135deg,#059669 0%,#10b981 100%);display:grid;place-items:center;font-size:20px;color:#fff;box-shadow:0 8px 20px rgba(16,185,129,0.35),inset 0 1px 0 rgba(255,255,255,0.3);flex:0 0 auto}
-.tradeops-hero-info{display:grid;gap:4px}
-.tradeops-hero-badge{display:inline-flex;align-items:center;gap:6px;font-size:11px;font-weight:800;color:#7dd3fc;text-transform:uppercase;letter-spacing:0.06em}
-.tradeops-hero-badge .pulse-dot{width:7px;height:7px;border-radius:50%;background:#10b981;box-shadow:0 0 0 3px rgba(16,185,129,0.3);animation:pulseGlow 1.5s infinite}
-.tradeops-hero-select-wrap{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
-.tradeops-hero-select{height:36px;padding:0 34px 0 14px;border-radius:9px;border:1px solid rgba(96,165,250,0.45);background:#0f243d url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='%2393c5fd' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'%3E%3C/polyline%3E%3C/svg%3E") no-repeat right 10px center;background-size:14px;color:#f8fafc;font-size:13.5px;font-weight:750;cursor:pointer;appearance:none;outline:none;transition:all .2s ease;box-shadow:0 4px 12px rgba(0,0,0,0.25)}
-.tradeops-hero-select:hover{border-color:#38bdf8;background-color:#142f50}
-.tradeops-hero-tags{display:flex;gap:6px;flex-wrap:wrap}
-.tradeops-hero-tag{height:24px;border-radius:999px;padding:0 9px;background:rgba(255,255,255,0.08);border:1px solid rgba(255,255,255,0.14);color:#cbd5e1;font-size:11px;font-weight:650;display:inline-flex;align-items:center}
-.tradeops-hero-right{display:flex;align-items:center;gap:14px;flex-wrap:wrap}
-.tradeops-mode-segment{display:inline-flex;padding:3px;border-radius:10px;background:rgba(2,8,18,0.75);border:1px solid rgba(148,163,184,0.25);box-shadow:inset 0 2px 4px rgba(0,0,0,0.4)}
-.tradeops-mode-btn{height:32px;padding:0 14px;border-radius:7px;border:none;background:transparent;color:#94a3b8;font-size:12px;font-weight:750;cursor:pointer;display:inline-flex;align-items:center;gap:6px;transition:all .2s ease}
-.tradeops-mode-btn:hover{color:#f8fafc}
-.tradeops-mode-btn.active.shadow-active{background:linear-gradient(135deg,#2563eb 0%,#1d4ed8 100%);color:#fff;box-shadow:0 4px 14px rgba(37,99,235,0.45)}
-.tradeops-mode-btn.active.live-active{background:linear-gradient(135deg,#10b981 0%,#059669 100%);color:#fff;box-shadow:0 4px 14px rgba(16,185,129,0.45);animation:pulseGlow 2s infinite}
-.tradeops-hero-actions{display:flex;gap:8px;align-items:center}
-.tradeops-hero-btn{height:36px;padding:0 14px;border-radius:9px;border:1px solid rgba(96,165,250,0.35);background:rgba(15,36,61,0.8);color:#e2e8f0;font-size:12px;font-weight:700;cursor:pointer;display:inline-flex;align-items:center;gap:6px;transition:all .2s ease}
-.tradeops-hero-btn:hover{background:rgba(30,64,105,0.9);border-color:#60a5fa;color:#fff;transform:translateY(-1px)}
-@keyframes pulseGlow{0%,100%{transform:scale(1);opacity:1}50%{transform:scale(1.08);opacity:.85}}
 </style>
 </head>
 <body>
@@ -8814,15 +8792,20 @@ body.tradeops-collapsed .help,body.tradeops-collapsed .collapse-btn{justify-cont
   <aside class="side">
     <div class="brand"><div class="brand-mark"><svg viewBox="0 0 24 24"><path d="M4 16.5 9 11l3.5 3.5L20 6"/><path d="M5 20h14"/><path d="M6 4h12"/></svg></div><div class="brand-copy"><div class="brand-name">TradeOps</div><div class="brand-chip">Live Account</div></div><button class="collapse-btn" type="button" title="Collapse sidebar"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="m15 18-6-6 6-6"/></svg><span>Collapse</span></button></div>
     <nav class="nav">
-      <div class="nav-section">Execution</div>
-      <a href="/tradeops" data-page="dashboard"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><rect x="4" y="4" width="6" height="6"/><rect x="14" y="4" width="6" height="6"/><rect x="4" y="14" width="6" height="6"/><rect x="14" y="14" width="6" height="6"/></svg><span>Live Terminal</span></a>
-      <a href="/tradeops/orders" data-page="orders"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M8 6h13M8 12h13M8 18h13"/><path d="M3 6h.01M3 12h.01M3 18h.01"/></svg><span>Orders &amp; Positions</span></a>
-      <div class="nav-section">Analytics</div>
+      <div class="nav-section">Monitor</div>
+      <a href="/tradeops" data-page="dashboard"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><rect x="4" y="4" width="6" height="6"/><rect x="14" y="4" width="6" height="6"/><rect x="4" y="14" width="6" height="6"/><rect x="14" y="14" width="6" height="6"/></svg><span>Dashboard</span></a>
+      <a href="/tradeops/account" data-page="account"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M20 21a8 8 0 0 0-16 0"/><circle cx="12" cy="7" r="4"/></svg><span>Account</span></a>
+      <a href="/tradeops/positions" data-page="positions"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M4 20V10M10 20V4M16 20v-7M22 20V8"/></svg><span>Positions</span></a>
+      <div class="nav-section">Operations</div>
+      <a href="/tradeops/orders" data-page="orders"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M8 6h13M8 12h13M8 18h13"/><path d="M3 6h.01M3 12h.01M3 18h.01"/></svg><span>Orders</span></a>
+      <a href="/tradeops/executions" data-page="executions"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="12" r="9"/><path d="m10 8 6 4-6 4V8Z"/></svg><span>Executions</span></a>
       <a href="/tradeops/trade-history" data-page="trade-history"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg><span>Trade History</span></a>
       <a href="/tradeops/candle-logs" data-page="candle-logs"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M6 4v16M6 8h4v8H6M18 4v16M14 10h4v6h-4"/></svg><span>Candle Logs</span></a>
-      <div class="nav-section">System &amp; Risk</div>
-      <a href="/tradeops/health" data-page="health"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M3 12h4l3-7 4 14 3-7h4"/></svg><span>Broker Health</span><i class="nav-dot health-dot"></i></a>
-      <a href="/tradeops/bot-config" data-page="bot-config"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><rect x="6" y="7" width="12" height="10" rx="2"/><path d="M12 3v4M8 21h8M9 11h.01M15 11h.01"/></svg><span>Strategy Config</span><i class="nav-dot bot-dot"></i></a>
+      <div class="nav-section">System</div>
+      <a href="/tradeops/server-logs" data-page="server-logs"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M4 6h16M4 12h12M4 18h8"/></svg><span>Server Logs</span></a>
+      <a href="/tradeops/health" data-page="health"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M3 12h4l3-7 4 14 3-7h4"/></svg><span>Health</span><i class="nav-dot health-dot"></i></a>
+      <div class="nav-section">Admin</div>
+      <a href="/tradeops/bot-config" data-page="bot-config"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><rect x="6" y="7" width="12" height="10" rx="2"/><path d="M12 3v4M8 21h8M9 11h.01M15 11h.01"/></svg><span>Bot Config</span><i class="nav-dot bot-dot"></i></a>
     </nav>
     <div class="side-bottom">
       <a class="help" href="/tradeops/health"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="12" r="9"/><path d="M9.5 9a2.5 2.5 0 0 1 4.5 1.5c0 2-2 2-2 4"/><path d="M12 18h.01"/></svg><span>Help &amp; Support</span></a>
@@ -8839,87 +8822,30 @@ body.tradeops-collapsed .help,body.tradeops-collapsed .collapse-btn{justify-cont
       </div>
       <div class="top-spacer"></div>
       <div class="command-group action-group">
-        <a href="/signals" target="_blank" class="btn" style="text-decoration:none;border-color:rgba(96,165,250,.35);background:rgba(15,23,42,.6);color:#93c5fd;font-weight:700" title="Open Shadow Strategy Monitor in new tab"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" style="width:15px;height:15px"><path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H20v20H6.5a2.5 2.5 0 0 1-2.5-2.5Z"/></svg><span>Shadow Monitor</span></a>
+        <button class="account-switcher" type="button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="8" r="4"/><path d="M4 22a8 8 0 0 1 16 0"/></svg><b id="accountIdTop">Not synced</b><svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="m6 9 6 6 6-6"/></svg></button>
         <button class="btn danger" id="emergencyBtn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="12" r="9"/><path d="M12 7v6"/><path d="M12 16h.01"/></svg>Emergency Stop</button>
+        <div class="profile-block"><div class="avatar" id="headerAvatar">--</div><div class="user"><b id="headerUser">Account User</b><span id="headerRole">Live Account</span></div></div>
       </div>
     </header>
     <section class="content">
-      <div id="loadErrorBanner" style="display:none"></div>
       <div id="dashboard" class="dashboard${safePage !== "dashboard" ? " hidden" : ""}">
-        <section class="tradeops-hero">
-          <div class="tradeops-hero-left">
-            <div class="tradeops-hero-icon">⚡</div>
-            <div class="tradeops-hero-info">
-              <div class="tradeops-hero-badge"><span class="pulse-dot"></span> Active Strategy Engine</div>
-              <div class="tradeops-hero-select-wrap">
-                <select id="strategySelect" class="tradeops-hero-select"></select>
-                <div class="tradeops-hero-tags">
-                  <span class="tradeops-hero-tag">BANKNIFTY FUT</span>
-                  <span class="tradeops-hero-tag">1 Lot (30 Qty)</span>
-                  <span class="tradeops-hero-tag">Max 3 Trades</span>
-                  <span class="tradeops-hero-tag" style="border-color:rgba(52,211,153,.35);color:#34d399">+50pt Lock Guard</span>
-                </div>
-              </div>
-            </div>
-          </div>
-          <div class="tradeops-hero-right">
-            <div style="display:grid;gap:3px;text-align:right">
-              <div style="font-size:10.5px;font-weight:800;color:#94a3b8;text-transform:uppercase;letter-spacing:.05em">Execution Mode</div>
-              <div class="tradeops-mode-segment">
-                <button type="button" class="tradeops-mode-btn" id="modeBtnShadow" onclick="setTradeOpsMode('SHADOW')">
-                  <span>●</span> SHADOW (Paper)
-                </button>
-                <button type="button" class="tradeops-mode-btn" id="modeBtnLive" onclick="setTradeOpsMode('LIVE')">
-                  <span>⚡</span> LIVE (Real Money)
-                </button>
-              </div>
-            </div>
-            <div class="tradeops-hero-actions">
-              <button class="tradeops-hero-btn" id="refreshTokenBtn" title="Start automatic token refresh">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" style="width:14px;height:14px"><path d="M21 12a9 9 0 0 1-15.5 6.2"/><path d="M3 12A9 9 0 0 1 18.5 5.8"/><path d="M18 2v4h-4"/><path d="M6 22v-4h4"/></svg>
-                <span>Refresh Token</span>
-              </button>
-              <button class="tradeops-hero-btn" id="syncAccountBtn" title="Sync broker capital and margin">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" style="width:14px;height:14px"><path d="M13 2 3 14h9l-1 8 10-12h-9l1-8z"/></svg>
-                <span>Sync Broker</span>
-              </button>
-            </div>
-          </div>
-        <section class="card pnl">
-          <div class="card-h">
-            <span class="pnl-head">
-              <span id="pnlCardTitle">Today's Real-Time P&amp;L</span>
-              <span class="dot ok" id="pnlLiveDot"></span>
-              <span class="ok" id="pnlLiveLabel">Live MTM</span>
-            </span>
-            <a class="pnl-link" href="/tradeops/trade-history">Trade History &rsaquo;</a>
-          </div>
-          <div class="card-b">
-            <div id="pnlMetricLabel" class="pnl-label">NET REAL-TIME P&amp;L</div>
-            <div class="pnl-main">
-              <div>
-                <div id="netPnl" class="pnl-value">₹0</div>
-                <div id="pnlSupport" class="pnl-support">BANKNIFTY FUT &bull; 1 Lot (30 Qty)</div>
-              </div>
-              <span id="profitChip" class="profit-pill neutral">Neutral</span>
-            </div>
-            <div class="metric-grid">
-              <div class="metric"><label>Realized P&amp;L</label><b id="realized">₹0</b></div>
-              <div class="metric emphasis"><label>Unrealized (MTM)</label><b id="unrealized">₹0</b></div>
-              <div class="metric"><label>Today's Trades</label><b id="tradeCountDisplay">0 / 3 Max</b></div>
-              <div class="metric emphasis"><label>Profit Guard</label><b id="profitGuardDisplay" style="color:#34d399">+50pt Lock Active</b></div>
-            </div>
-            <div class="pnl-foot">
-              <span>Updated: <b id="pnlUpdated">--</b></span>
-              <span>Execution Engine: <b id="pnlMode" style="color:#60a5fa">10:30 Quality Break 50 Lock</b></span>
-            </div>
-          </div>
+        <section class="card workflow">
+          <div class="flow-step"><div class="flow-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M3 21h18"/><path d="M5 21V9l7-5 7 5v12"/><path d="M9 21v-6h6v6"/></svg></div><div class="flow-text"><b id="flowBrokerTitle">Broker</b><span id="flowBrokerSub">Checking</span></div><span class="flow-ok" id="flowBrokerBadge">?</span></div>
+          <div class="flow-step"><div class="flow-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10Z"/><path d="m9 12 2 2 4-5"/></svg></div><div class="flow-text"><b id="flowTokenTitle">Token</b><span id="flowTokenSub">Checking</span></div><span class="flow-ok" id="flowTokenBadge">?</span></div>
+          <div class="flow-step"><div class="flow-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><rect x="6" y="7" width="12" height="10" rx="2"/><path d="M12 3v4M8 21h8M9 11h.01M15 11h.01"/></svg></div><div class="flow-text"><b id="flowBotTitle">Bot</b><span id="flowBotSub">Checking</span></div><span class="flow-ok" id="flowBotBadge">?</span></div>
+          <div class="flow-step"><div class="flow-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M4 12h3l2-5 4 10 2-5h5"/></svg></div><div class="flow-text"><b id="flowFeedTitle">Feed</b><span id="flowFeedSub">Checking</span></div><span class="flow-ok" id="flowFeedBadge">?</span></div>
+          <div class="flow-step"><div class="flow-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M5 19 19 5"/><path d="m14 5 5 5"/><path d="M5 19l5-1 8-8"/></svg></div><div class="flow-text"><b id="flowExecTitle">Execution</b><span id="flowExecSub">Checking</span></div><span class="flow-ok" id="flowExecBadge">?</span></div>
+          <div class="flow-actions"><button class="btn" id="refreshTokenBtn" title="Start automatic token refresh">Refresh Token</button><button class="btn" id="syncAccountBtn">Sync Account</button></div>
         </section>
-        <section class="card chart"><div class="card-h"><span>BANKNIFTY &middot; <span id="chartTfLabel">15m</span> <span id="chartMode" class="chart-mode">Checking</span></span><a class="chart-link" href="/tradeops/candle-logs">Candle Logs &rsaquo;</a></div><div class="card-b"><div class="chart-top"><div><div id="ohlc" class="ohlc">OHLC unavailable</div><div><span id="ltp" class="ltp">LTP unavailable</span> <span id="change" class="ok"></span></div></div><button class="btn" id="chartTfTop">15m</button></div><div class="chart-box" id="chartBox"></div><div class="tabs" id="chartTabs"><button type="button" data-tf="15m" class="active">15m</button><span style="margin-left:auto" class="muted chart-footer"><span id="feedStateDot" class="dot"></span> <span id="feedState">Checking</span> | Last candle: <b id="lastCandle">--</b> | <b id="candleCount">0 candles</b></span></div></div></section>
-        <section class="card account"><div class="card-h"><span>Margin &amp; Broker Capital</span><span id="accountSyncChip" class="account-chip">Checking</span></div><div class="card-b"><div class="muted">Available Trading Margin</div><div class="balance-big" id="available">₹0</div><div id="accountHint" class="account-hint">Synced with Zerodha Broker</div><div class="acct-lines" style="margin-top:12px"><div class="kv"><label>Required per Lot (30 Qty)</label><strong id="requiredMargin" style="color:#60a5fa">~₹2,05,000</strong></div><div class="kv"><label>Used Margin</label><b id="usedMargin">₹0</b></div><div class="kv"><label>Total Account Balance</label><b id="balance">₹0</b></div></div><div id="accountWarn" class="account-warn" style="display:none"></div><div class="kv" style="margin-top:10px"><label>Account ID</label><b id="accountId">--</b></div><div class="kv"><label>Broker Status</label><b id="brokerSyncAccount" class="ok">Connected</b></div><div class="kv"><label>Last Sync</label><b id="lastSync">--</b></div></div></section>
-        <section class="card positions"><div class="card-h"><span>Live Active Positions</span><a href="/tradeops/orders">View All &rsaquo;</a></div><div id="positionsEmpty" class="compact-empty"><div class="empty-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M4 20V10M10 20V4M16 20v-7M22 20V8"/></svg></div><div><b>No open positions</b><span>Active positions will stream here in real time.</span></div></div><div id="positionsTable" class="table-wrap"><table class="table"><thead><tr><th>Symbol</th><th>Qty</th><th>Avg Price</th><th>LTP</th><th>P&amp;L</th><th>P&amp;L %</th><th>Status</th></tr></thead><tbody id="positionsBody"></tbody></table></div></section>
-        <section class="card recent"><div class="card-h"><span>Today's Order History</span><a href="/tradeops/orders">View All Orders &rsaquo;</a></div><div id="ordersEmpty" class="compact-empty"><div class="empty-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M8 6h13M8 12h13M8 18h13"/><path d="M3 6h.01M3 12h.01M3 18h.01"/></svg></div><div><b>No orders submitted yet</b><span>Orders will appear upon signal execution.</span></div></div><div id="ordersTable" class="table-wrap"><table class="table"><thead><tr><th>Time</th><th>Symbol</th><th>Side</th><th>Qty</th><th>Price</th><th>Status</th></tr></thead><tbody id="ordersBody"></tbody></table></div></section>
-        <section class="card logs-card"><div class="card-h"><span>Live Bot Console Preview <span class="dot ok"></span> <span class="ok">Live</span></span><div class="log-actions"><button class="btn" id="pauseLogs">Pause</button><button class="btn" id="clearLogs">Clear</button></div></div><div class="console"><div id="logs" class="logs"></div></div></section>
+        <section class="card pnl"><div class="card-h"><span class="pnl-head"><span id="pnlCardTitle">Trade P&amp;L</span> <span class="dot ok"></span><span class="ok" id="pnlLiveLabel">Live data</span></span><a class="pnl-link" href="/tradeops/trade-history">View details &rsaquo;</a></div><div class="card-b"><div id="pnlMetricLabel" class="pnl-label">Net P&amp;L</div><div class="pnl-main"><div><div id="netPnl" class="pnl-value">Not synced</div><div id="pnlSupport" class="pnl-support">Strategy P&amp;L</div></div><span id="profitChip" class="profit-pill">--</span></div><div class="metric-grid"><div class="metric"><label>Realized P&amp;L</label><b id="realized">--</b></div><div class="metric emphasis"><label>Unrealized P&amp;L</label><b id="unrealized">--</b></div><div class="metric"><label>Charges</label><b id="charges">Unavailable</b></div><div class="metric emphasis"><label>Net After Charges</label><b id="netAfterCharges">Unavailable</b></div><div class="metric"><label>Day High</label><b id="dayHigh">Not available</b></div><div class="metric"><label>Day Low</label><b id="dayLow">Not available</b></div><div class="metric emphasis"><label>Open P&amp;L</label><b id="openPnl">--</b></div><div class="metric"><label>Closed P&amp;L</label><b id="closedPnl">--</b></div></div><div class="pnl-foot"><span>Last updated: <b id="pnlUpdated">--</b></span><span>Source: <b id="pnlSource">Broker</b></span><span>Mode: <b id="pnlMode">Live</b></span></div></div></section>
+        <section class="card chart"><div class="card-h"><span>BANKNIFTY &middot; <span id="chartTfLabel">15m</span> <span id="chartMode" class="chart-mode">Checking</span></span><a class="chart-link" href="/tradeops/candle-logs">View chart &rsaquo;</a></div><div class="card-b"><div class="chart-top"><div><div id="ohlc" class="ohlc">OHLC unavailable</div><div><span id="ltp" class="ltp">LTP unavailable</span> <span id="change" class="ok"></span></div></div><button class="btn" id="chartTfTop">15m</button></div><div class="chart-box" id="chartBox"></div><div class="tabs" id="chartTabs"><button type="button" data-tf="15m" class="active">15m</button><span style="margin-left:auto" class="muted chart-footer"><span id="feedStateDot" class="dot"></span> <span id="feedState">Checking</span> | Last candle: <b id="lastCandle">--</b> | <b id="candleCount">0 candles</b></span></div></div></section>
+        <section class="card account"><div class="card-h"><span>Account Balance</span><span id="accountSyncChip" class="account-chip">Checking</span></div><div class="card-b"><div class="muted">Total Account Balance</div><div class="balance-big" id="balance">Not synced</div><div id="accountHint" class="account-hint">Sync account to view balance</div><div class="account-ident"><div><label>Account ID</label><b id="accountId">Not synced</b></div><div><label>Broker</label><b id="brokerName">Not synced</b></div><div><label>Holder</label><b id="accountName">Not synced</b></div></div><div class="acct-lines"><div class="kv"><label>Available Margin</label><strong id="available">Not synced</strong></div><div class="kv"><label>Used Margin</label><b id="usedMargin">Not synced</b></div><div class="kv"><label>Buying Power</label><strong id="buyingPower">Not synced</strong></div></div><div id="accountWarn" class="account-warn">Account not synced. Balance and margin unavailable.</div><div class="kv"><label>Broker Sync</label><b id="brokerSyncAccount">Not synced</b></div><div class="kv"><label>Reconciliation</label><b id="recon" class="ok">Not synced</b></div><div class="kv"><label>Last Sync</label><b id="lastSync">Not synced</b></div><a class="btn account-primary" href="/tradeops/account">View Statement &rsaquo;</a></div></section>
+        <section class="card ready mini-card execution-gate"><div class="card-h"><span>Execution Gate</span><a href="/tradeops/executions">View details &rsaquo;</a></div><div class="card-b"><div class="gate-head"><span id="readyStrip" class="ready-strip">Checking</span><span id="gateReason" class="muted">Checking execution state</span></div><div id="gateIdle" class="compact-empty gate-idle"><div class="empty-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="12" r="9"/><path d="M8 12h8"/></svg></div><div><b>No pending execution</b><span>Waiting for next order request.</span><small>Last check: <strong id="gateLastCheck">--</strong></small></div></div><div id="gateMetrics" class="mini-grid"><div class="mini-stat"><label>Next Order Value</label><b id="nextOrderValue">Idle</b></div><div class="mini-stat"><label>Required Margin</label><b id="requiredMargin">Idle</b></div><div class="mini-stat"><label>Available Margin</label><b id="available2">Not synced</b></div><div class="mini-stat"><label>Shortfall</label><b id="shortfall">--</b></div></div><div class="checks-row" id="checksRow"></div></div></section>
+        <section class="card orders mini-card"><div class="card-h"><span>Order Watch <span id="orderStateChip" class="order-state-chip">Checking</span></span><a href="/tradeops/orders">View details &rsaquo;</a></div><div class="card-b"><div id="orderIdle" class="order-idle"><b>Idle</b><span>No orders sent in this session.</span><small>Last check: <strong id="orderLastCheck">--</strong></small><a class="btn" href="/tradeops/orders">View Orders</a></div><div id="orderActive" class="order-active"><div class="order-bubbles"><div class="order-bubble sent"><span>Sent</span><b id="sent">--</b></div><div class="order-bubble filled"><span>Filled</span><b id="filled">--</b></div><div class="order-bubble pending"><span>Pending</span><b id="pendingOrders">--</b></div><div class="order-bubble rejected"><span>Rejected</span><b id="rejected">0</b></div><div class="order-bubble missed"><span>Missed</span><b id="missed">0</b></div><div class="order-bubble manual"><span>Manual</span><b id="manualReview">0</b></div></div><div class="order-meta"><span>Last order: <b id="lastOrderTime">--</b></span><span>Last update: <b id="orderLatency">Unavailable</b></span><span>Fill rate: <b id="fillRate">--</b></span></div><div id="actionStrip" class="action-strip"><span id="orderActionText">Action required</span><span>&rsaquo;</span></div></div><span id="completed" style="display:none"></span><span id="timedOut" style="display:none">0</span></div></section>
+        <section class="card quick mini-card"><div class="card-h"><span>System Quick Status</span><a href="/tradeops/health">View details &rsaquo;</a></div><div class="card-b"><div class="quick-grid"><div class="quick-row"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10Z"/></svg><span>Token</span><b id="tokenValidUntil">Unavailable</b></div><div class="quick-row"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 7h18s-3 0-3-7"/></svg><span>Alerts</span><b id="alertsEnabled">Yes</b></div><div class="quick-row"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><rect x="6" y="7" width="12" height="10" rx="2"/><path d="M12 3v4"/></svg><span>Bot Heartbeat</span><b id="heartbeat">--</b></div><div class="quick-row"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M5 19 19 5"/><path d="m14 5 5 5"/></svg><span>Execution Status</span><b id="executionState">--</b></div><div class="quick-row"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M3 21h18"/><path d="M5 21V9l7-5 7 5v12"/></svg><span>Broker Sync</span><b id="brokerSync">--</b></div></div></div></section>
+        <section class="card positions"><div class="card-h"><span>Live Positions</span><a href="/tradeops/positions">View Positions &rsaquo;</a></div><div id="positionsEmpty" class="compact-empty"><div class="empty-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M4 20V10M10 20V4M16 20v-7M22 20V8"/></svg></div><div><b>No open positions</b><span>Positions will appear here when active.</span><a class="btn" href="/tradeops/positions">View Positions</a></div></div><div id="positionsTable" class="table-wrap"><table class="table"><thead><tr><th>Symbol</th><th>Qty</th><th>Avg Price</th><th>LTP</th><th>P&amp;L</th><th>P&amp;L %</th><th>Status</th></tr></thead><tbody id="positionsBody"></tbody></table></div></section>
+        <section class="card recent"><div class="card-h"><span>Recent Orders</span><a href="/tradeops/orders">View Details &rsaquo;</a></div><div id="ordersEmpty" class="compact-empty"><div class="empty-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M8 6h13M8 12h13M8 18h13"/><path d="M3 6h.01M3 12h.01M3 18h.01"/></svg></div><div><b>No recent orders</b><span>Orders will appear after execution.</span><a class="btn" href="/tradeops/orders">View Orders</a></div></div><div id="ordersTable" class="table-wrap"><table class="table"><thead><tr><th>Time</th><th>Symbol</th><th>Side</th><th>Qty</th><th>Price</th><th>Status</th></tr></thead><tbody id="ordersBody"></tbody></table></div></section>
+        <section class="card logs-card"><div class="card-h"><span>Server Log Preview <span class="dot ok"></span> <span class="ok">Live</span></span><div class="log-actions"><button class="btn" id="pauseLogs">Pause</button><button class="btn" id="clearLogs">Clear</button><a class="btn" href="/tradeops/server-logs">View Full Logs</a></div></div><div class="console"><div id="logs" class="logs"></div></div></section>
       </div><div id="detail" class="detail${safePage !== "dashboard" ? " active" : ""}"><div class="detail-grid" id="detailGrid">${safePage !== "dashboard" ? tradeOpsInitialWorkspaceHTML(safePage, initialStatus) : ""}</div></div>
     </section>
   </main>
@@ -8945,242 +8871,209 @@ function renderLogs(logs){if(paused)return;let grouped=logGroups(logs);grouped=g
 async function loadLogs(){if(paused)return;try{const r=await fetch(strategyUrl('/api/tradeops/logs'),{cache:'no-store',credentials:'same-origin',headers:{'Accept':'application/json'}});if(!r.ok)return;const j=await r.json();if(j&&Array.isArray(j.logs))renderLogs(j.logs)}catch(e){}}
 function setupSidebar(){const btn=document.querySelector('.collapse-btn');if(!btn||btn._wired)return;btn._wired=true;const label=btn.querySelector('span');function sync(){const collapsed=document.body.classList.contains('tradeops-collapsed');if(label)label.textContent=collapsed?'Expand':'Collapse';btn.title=collapsed?'Expand sidebar':'Collapse sidebar'}try{if(localStorage.getItem('tradeopsSidebarCollapsed')==='1')document.body.classList.add('tradeops-collapsed')}catch(e){}sync();btn.onclick=function(){document.body.classList.toggle('tradeops-collapsed');try{localStorage.setItem('tradeopsSidebarCollapsed',document.body.classList.contains('tradeops-collapsed')?'1':'0')}catch(e){}sync()}}
 function render(d){
-  try {
-    d=d||{};
-    d.market=d.market||{open:false,label:'Checking',latestSession:String(d.updatedAt||new Date().toISOString()).slice(0,10)};
-    d.broker=d.broker||{connected:false,tokenOK:false,accountName:'Unavailable',accountId:'Unavailable'};
-    d.bot=d.bot||{online:false,isAlive:false,state:'Offline',heartbeatAgeSec:null};
-    d.pnl=d.pnl||{net:0,realized:0,unrealized:0,todayHigh:0,todayLow:0,dayRangeAvailable:false,chargesAvailable:false,marginsSynced:false,refreshMs:5000};
-    d.execution=d.execution||{status:'Checking',ready:false,pending:false,checks:{},requiredMargin:0,shortfall:0,orderValue:0,blockReason:''};
-    d.strategy=d.strategy||{label:'TradeOps',mode:'UNKNOWN'};
-    d.validations=d.validations||{};
-    d.positions=Array.isArray(d.positions)?d.positions:[];
-    d.trades=Array.isArray(d.trades)?d.trades:[];
-    d.historyTrades=Array.isArray(d.historyTrades)?d.historyTrades:d.trades;
-    d.rejections=Array.isArray(d.rejections)?d.rejections:[];
-    d.candles=Array.isArray(d.candles)?d.candles:[];
-    d.logs=Array.isArray(d.logs)?d.logs:[];
-    d.updatedAt=d.updatedAt||new Date().toISOString();
-    lastStatus=d;
-    renderStrategySelect(d);
-    tradeOpsSessionDate=(d&&d.market&&d.market.latestSession)||String((d&&d.updatedAt)||'').slice(0,10)||'';
-    nav();
-    const dbEl=document.getElementById('dashboard');if(dbEl)dbEl.classList.toggle('hidden',PAGE!=='dashboard');
-    const dtEl=document.getElementById('detail');if(dtEl)dtEl.classList.toggle('active',PAGE!=='dashboard');
-    const updated=new Date(d.updatedAt).toLocaleTimeString('en-IN');
-    const allTradeRows=Array.isArray(d.trades)?d.trades:[];
-    const allRejectionRows=Array.isArray(d.rejections)?d.rejections:[];
-    const tradeList=allTradeRows.filter(function(t){return String(t&&t.date||'').slice(0,10)===(tradeOpsSessionDate||'')});
-    const rejectionList=allRejectionRows.filter(function(t){return String(t&&t.date||'').slice(0,10)===(tradeOpsSessionDate||'')});
-    const botOnline=!!(d.bot&&(d.bot.isAlive===true||d.bot.online===true));
-    const validations=d.validations||{};
-    const tokenValidation=validations.token||{};
-    const brokerValidation=validations.broker||{};
-    const botValidation=validations.bot||{};
-    const feedValidation=validations.feed||{};
-    const name=txt(d.broker.accountName);
-    const acct=txt(d.broker.accountId);
-    set('headerUser',name==='Not synced'?'Account User':name);
-    set('headerAvatar',(name==='Not synced'?'AU':name.split(/\\s+/).map(x=>x[0]).join('').slice(0,2)).toUpperCase());
-    set('headerRole',d.broker.connected?'Live Account':'Live Account');
-    set('accountIdTop',acct);
-    set('lastUpdated',updated);
-    set('pnlUpdated',updated);
-    const mDot=document.getElementById('marketDot');if(mDot)mDot.className='dot '+(d.market.open?'ok':'warn');
-    set('marketLabel',d.market.label);
-    const bDot=document.getElementById('brokerDot');if(bDot)bDot.className='dot '+(d.broker.connected?'ok':'bad');
-    set('brokerLabel',brokerValidation.ok?'Broker Verified':'Broker Issue');
-    const botDotEl=document.getElementById('botDot');if(botDotEl)botDotEl.className='dot '+(botOnline?'ok':'bad');
-    set('botLabel',botOnline?'Bot Online':'Bot Offline');
-    set('modeChip',((d.strategy&&d.strategy.mode)||'UNKNOWN'));
+  d=d||{};
+  d.market=d.market||{open:false,label:'Checking',latestSession:String(d.updatedAt||new Date().toISOString()).slice(0,10)};
+  d.broker=d.broker||{connected:false,tokenOK:false,accountName:'Unavailable',accountId:'Unavailable'};
+  d.bot=d.bot||{online:false,isAlive:false,state:'Offline',heartbeatAgeSec:null};
+  d.pnl=d.pnl||{net:0,realized:0,unrealized:0,todayHigh:0,todayLow:0,dayRangeAvailable:false,chargesAvailable:false,marginsSynced:false,refreshMs:5000};
+  d.execution=d.execution||{status:'Checking',ready:false,pending:false,checks:{},requiredMargin:0,shortfall:0,orderValue:0,blockReason:''};
+  d.strategy=d.strategy||{label:'TradeOps',mode:'UNKNOWN'};
+  d.validations=d.validations||{};
+  d.positions=Array.isArray(d.positions)?d.positions:[];
+  d.trades=Array.isArray(d.trades)?d.trades:[];
+  d.historyTrades=Array.isArray(d.historyTrades)?d.historyTrades:d.trades;
+  d.rejections=Array.isArray(d.rejections)?d.rejections:[];
+  d.candles=Array.isArray(d.candles)?d.candles:[];
+  d.logs=Array.isArray(d.logs)?d.logs:[];
+  d.updatedAt=d.updatedAt||new Date().toISOString();
+  lastStatus=d;
+  renderStrategySelect(d);
+  tradeOpsSessionDate=(d&&d.market&&d.market.latestSession)||String((d&&d.updatedAt)||'').slice(0,10)||'';
+  nav();
+  document.getElementById('dashboard').classList.toggle('hidden',PAGE!=='dashboard');
+  document.getElementById('detail').classList.toggle('active',PAGE!=='dashboard');
+  const updated=new Date(d.updatedAt).toLocaleTimeString('en-IN');
+  const allTradeRows=Array.isArray(d.trades)?d.trades:[];
+  const allRejectionRows=Array.isArray(d.rejections)?d.rejections:[];
+  const tradeList=allTradeRows.filter(function(t){return String(t&&t.date||'').slice(0,10)===(tradeOpsSessionDate||'')});
+  const rejectionList=allRejectionRows.filter(function(t){return String(t&&t.date||'').slice(0,10)===(tradeOpsSessionDate||'')});
+  const botOnline=!!(d.bot&&(d.bot.isAlive===true||d.bot.online===true));
+  const validations=d.validations||{};
+  const tokenValidation=validations.token||{};
+  const brokerValidation=validations.broker||{};
+  const botValidation=validations.bot||{};
+  const feedValidation=validations.feed||{};
+  const name=txt(d.broker.accountName);
+  const acct=txt(d.broker.accountId);
+  set('headerUser',name==='Not synced'?'Account User':name);
+  set('headerAvatar',(name==='Not synced'?'AU':name.split(/\\s+/).map(x=>x[0]).join('').slice(0,2)).toUpperCase());
+  set('headerRole',d.broker.connected?'Live Account':'Live Account');
+  set('accountIdTop',acct);
+  set('lastUpdated',updated);
+  set('pnlUpdated',updated);
+  document.getElementById('marketDot').className='dot '+(d.market.open?'ok':'warn');
+  set('marketLabel',d.market.label);
+  document.getElementById('brokerDot').className='dot '+(d.broker.connected?'ok':'bad');
+  set('brokerLabel',brokerValidation.ok?'Broker Verified':'Broker Issue');
+  document.getElementById('botDot').className='dot '+(botOnline?'ok':'bad');
+  set('botLabel',botOnline?'Bot Online':'Bot Offline');
+  set('modeChip',((d.strategy&&d.strategy.mode)||'UNKNOWN'));
 
-    set('flowBrokerTitle',brokerValidation.ok?'Broker Verified':'Broker Issue');
-    set('flowBrokerSub',brokerValidation.source||'Kite profile check');
-    set('flowTokenTitle',tokenValidation.ok?'Token Valid':'Token Required');
-    set('flowTokenSub',tokenValidation.ok?'Kite profile HTTP 200':(tokenValidation.error||'Refresh required'));
-    set('flowBotTitle',botOnline?'Bot Online':'Bot Offline');
-    set('flowBotSub',botValidation.heartbeatAgeSec==null?'No heartbeat':'Heartbeat '+ago(botValidation.heartbeatAgeSec));
-    set('flowFeedTitle',feedValidation.ok?'Feed Fresh':'Feed Waiting');
-    set('flowFeedSub',feedValidation.ok?'Last candle '+(feedValidation.lastCandle||'available'):'No candles recorded');
-    const upstreamReady=!!brokerValidation.ok&&!!tokenValidation.ok&&!!botValidation.ok&&!!feedValidation.ok;
-    const executionHealthy=!!d.execution.ready||(d.execution.status==='Idle'&&upstreamReady);
-    set('flowExecTitle',executionHealthy?(d.execution.status==='Idle'?'Execution Idle':'Execution Ready'):'Execution Waiting');
-    set('flowExecSub',executionHealthy?(d.execution.status==='Idle'?'No pending order':'All systems go'):(d.execution.blockReason||'Fix broker, token, bot, or feed'));
-    markFlow('flowBrokerBadge',!!brokerValidation.ok);
-    markFlow('flowTokenBadge',!!tokenValidation.ok);
-    markFlow('flowBotBadge',!!botValidation.ok);
-    markFlow('flowFeedBadge',!!feedValidation.ok);
-    markFlow('flowExecBadge',executionHealthy);
-    const execFlow=document.getElementById('flowExecTitle')?.closest('.flow-step');
-    if(execFlow)execFlow.classList.toggle('blocked',d.execution.status==='Blocked');
+  set('flowBrokerTitle',brokerValidation.ok?'Broker Verified':'Broker Issue');
+  set('flowBrokerSub',brokerValidation.source||'Kite profile check');
+  set('flowTokenTitle',tokenValidation.ok?'Token Valid':'Token Required');
+  set('flowTokenSub',tokenValidation.ok?'Kite profile HTTP 200':(tokenValidation.error||'Refresh required'));
+  set('flowBotTitle',botOnline?'Bot Online':'Bot Offline');
+  set('flowBotSub',botValidation.heartbeatAgeSec==null?'No heartbeat':'Heartbeat '+ago(botValidation.heartbeatAgeSec));
+  set('flowFeedTitle',feedValidation.ok?'Feed Fresh':'Feed Waiting');
+  set('flowFeedSub',feedValidation.ok?'Last candle '+(feedValidation.lastCandle||'available'):'No candles recorded');
+  const upstreamReady=!!brokerValidation.ok&&!!tokenValidation.ok&&!!botValidation.ok&&!!feedValidation.ok;
+  const executionHealthy=!!d.execution.ready||(d.execution.status==='Idle'&&upstreamReady);
+  set('flowExecTitle',executionHealthy?(d.execution.status==='Idle'?'Execution Idle':'Execution Ready'):'Execution Waiting');
+  set('flowExecSub',executionHealthy?(d.execution.status==='Idle'?'No pending order':'All systems go'):(d.execution.blockReason||'Fix broker, token, bot, or feed'));
+  markFlow('flowBrokerBadge',!!brokerValidation.ok);
+  markFlow('flowTokenBadge',!!tokenValidation.ok);
+  markFlow('flowBotBadge',!!botValidation.ok);
+  markFlow('flowFeedBadge',!!feedValidation.ok);
+  markFlow('flowExecBadge',executionHealthy);
+  const execFlow=document.getElementById('flowExecTitle')?.closest('.flow-step');
+  if(execFlow)execFlow.classList.toggle('blocked',d.execution.status==='Blocked');
 
-    const net=Number(d.pnl&&d.pnl.net!=null?d.pnl.net:0);
-    const openActive=d.bot.state==='In Trade'||Number(d.pnl&&d.pnl.unrealized||0)!==0;
-    const liveMode=d.market.open&&botOnline;
-    set('netPnl',rs(net));
-    const netPnlEl=document.getElementById('netPnl');
-    if(netPnlEl)netPnlEl.className='pnl-value '+(net>0?'ok':net<0?'bad':'neutral');
-    const profitChip=document.getElementById('profitChip');
-    if(profitChip){
-      if(net>0){
-        profitChip.textContent='+ Profit';
-        profitChip.className='profit-pill';
-      }else if(net<0){
-        profitChip.textContent='- Loss';
-        profitChip.className='profit-pill loss';
-      }else{
-        profitChip.textContent='Neutral';
-        profitChip.className='profit-pill neutral';
-      }
-    }
-    const stMode=String((d.strategy&&d.strategy.mode)||'SHADOW').toUpperCase();
-    const btnShadow=document.getElementById('modeBtnShadow');
-    const btnLive=document.getElementById('modeBtnLive');
-    if(btnShadow&&btnLive){
-      if(stMode==='LIVE'){
-        btnLive.className='tradeops-mode-btn active live-active';
-        btnShadow.className='tradeops-mode-btn';
-      }else{
-        btnShadow.className='tradeops-mode-btn active shadow-active';
-        btnLive.className='tradeops-mode-btn';
-      }
-    }
-    const toggle=document.getElementById('tt1030ModeToggle');
-    const toggleLabel=document.getElementById('tt1030ModeLabel');
-    if(toggle){toggle.checked=stMode==='LIVE';toggle.disabled=false;}
-    if(toggleLabel){toggleLabel.textContent=stMode;toggleLabel.style.color=stMode==='LIVE'?'#34d399':'#94a3b8';}
-    const strategyLabel=(d.strategy&&d.strategy.name)||'10:30 Quality Break 50 Lock';
-    set('pnlCardTitle',"Today's Real-Time P&L");
-    set('pnlLiveLabel',liveMode?'Live MTM':'Session Closed');
-    const pnlDot=document.getElementById('pnlLiveDot'); if(pnlDot)pnlDot.className='dot '+(liveMode?'ok':'');
-    set('pnlMetricLabel','NET REAL-TIME P&L');
-    set('pnlSupport',openActive?'Live Position Active (1 Lot / 30 Qty)':'BANKNIFTY FUT • 1 Lot (30 Qty)');
-    set('pnlMode',strategyLabel);
-    set('realized',rs(d.pnl&&d.pnl.realized));
-    set('unrealized',rs(d.pnl&&d.pnl.unrealized));
-    set('tradeCountDisplay',tradeList.length+' / 3 Max');
-    set('profitGuardDisplay','+50pt Lock Active');
-    const rEl=document.getElementById('realized');
-    if(rEl){const rVal=Number(d.pnl&&d.pnl.realized)||0;rEl.className=rVal>0?'ok':rVal<0?'bad':'';}
-    const uEl=document.getElementById('unrealized');
-    if(uEl){const uVal=Number(d.pnl&&d.pnl.unrealized)||0;uEl.className=uVal>0?'ok':uVal<0?'bad':'';}
+  const net=d.pnl.net;
+  const openActive=d.bot.state==='In Trade'||Number(d.pnl.unrealized||0)!==0;
+  const liveMode=d.market.open&&botOnline;
+  set('netPnl',rs(net));
+  document.getElementById('netPnl').className='pnl-value '+cls(net);
+  const profitChip=document.getElementById('profitChip');
+  profitChip.textContent=net>=0?'Profit':'Loss';
+  profitChip.className='profit-pill '+(net>=0?'':'loss');
+  const strategyLabel='TradeOps';
+  set('pnlCardTitle','Trade P&L');
+  set('pnlLiveLabel',liveMode?'Live':'Last Session');
+  set('pnlMetricLabel',liveMode?'Net Live P&L':'Net Session P&L');
+  set('pnlSupport',openActive?strategyLabel+' position active':((d.pnl&&d.pnl.source)?'Source: '+d.pnl.source:strategyLabel+' P&L'));
+  set('pnlSource',(d.pnl&&d.pnl.source?d.pnl.source:(d.broker.connected?'Broker':'Bot'))+' / '+Math.round(((d.pnl&&d.pnl.refreshMs)||5000)/1000)+'s');
+  set('pnlMode',(d.strategy&&d.strategy.mode)||'UNKNOWN');
+  set('realized',rs(d.pnl.realized));
+  set('unrealized',rs(d.pnl.unrealized));
+  set('charges',d.pnl.chargesAvailable?rs(d.pnl.charges||0):'Unavailable');
+  set('netAfterCharges',d.pnl.chargesAvailable?rs(net-Number(d.pnl.charges||0)):'Unavailable');
+  set('dayHigh',d.pnl.dayRangeAvailable?rs(d.pnl.todayHigh):'Not available');
+  set('dayLow',d.pnl.dayRangeAvailable?rs(d.pnl.todayLow):'Not available');
+  set('openPnl',rs(d.pnl.unrealized));
+  set('closedPnl',rs(d.pnl.realized));
+  ['realized','unrealized','dayHigh','dayLow','openPnl','closedPnl'].forEach(id=>{const e=document.getElementById(id);if(e)e.className=String(e.textContent||'').startsWith('-')?'bad':(String(e.textContent||'').includes('Not available')?'pending':'ok')});
+  ['charges','netAfterCharges'].forEach(id=>{const e=document.getElementById(id);if(e)e.className=String(e.textContent||'')==='Unavailable'?'pending':(String(e.textContent||'').startsWith('-')?'bad':'ok')});
 
-    const chartCandles=buildChartCandles(d.candles||[]);
-    const c=chartCandles.length?chartCandles[chartCandles.length-1]:(d.candles&&d.candles[0]);
-    const feedFresh=!!(d.candles&&d.candles.length&&botOnline&&d.bot.heartbeatAgeSec!=null&&d.bot.heartbeatAgeSec<180);
-    const feedState=d.market.open?(feedFresh?'Fresh':'Delayed'):'Last Session';
-    set('chartTfLabel',chartTf);
-    set('chartTfTop',chartTf);
-    set('chartMode',d.market.open?(feedFresh?'Live':'Delayed'):'Last Session');
-    const hasVolume=!!(d.candles||[]).some(x=>Number(x.volume||0)>0);
-    set('feedState',feedState+(hasVolume?'':' | Volume unavailable'));
-    const fsd=document.getElementById('feedStateDot'); if(fsd)fsd.className='dot '+(feedState==='Fresh'?'ok':feedState==='Delayed'?'warn':'');
-    set('candleCount',chartCandles.length+' '+chartTf+' candles');
-    const ohlcEl=document.getElementById('ohlc');
-    if(ohlcEl)ohlcEl.innerHTML=c?(c.closeOnly?'Close-only feed':'<span>O <b>'+fixed(c.open)+'</b></span><span>H <b>'+fixed(c.high)+'</b></span><span>L <b>'+fixed(c.low)+'</b></span><span>C <b>'+fixed(c.close)+'</b></span>'):'OHLC unavailable';
-    set('ltp',c?'LTP '+fixed(c.close):'LTP unavailable');
-    set('change',c&&num(c.open)!=null&&num(c.close)!=null&&!c.closeOnly?((c.close-c.open)>=0?'+':'')+(c.close-c.open).toFixed(2)+' ('+(((c.close-c.open)/c.open)*100).toFixed(2)+'%)':'');
-    set('lastCandle',c?c.time:'--');
-    chart(d.candles||[]);
+  const chartCandles=buildChartCandles(d.candles||[]);
+  const c=chartCandles.length?chartCandles[chartCandles.length-1]:(d.candles&&d.candles[0]);
+  const feedFresh=!!(d.candles&&d.candles.length&&botOnline&&d.bot.heartbeatAgeSec!=null&&d.bot.heartbeatAgeSec<180);
+  const feedState=d.market.open?(feedFresh?'Fresh':'Delayed'):'Last Session';
+  set('chartTfLabel',chartTf);
+  set('chartTfTop',chartTf);
+  set('chartMode',d.market.open?(feedFresh?'Live':'Delayed'):'Last Session');
+  const hasVolume=!!(d.candles||[]).some(x=>Number(x.volume||0)>0);
+  set('feedState',feedState+(hasVolume?'':' | Volume unavailable'));
+  const fsd=document.getElementById('feedStateDot'); if(fsd)fsd.className='dot '+(feedState==='Fresh'?'ok':feedState==='Delayed'?'warn':'');
+  set('candleCount',chartCandles.length+' '+chartTf+' candles');
+  const ohlcEl=document.getElementById('ohlc');
+  if(ohlcEl)ohlcEl.innerHTML=c?(c.closeOnly?'Close-only feed':'<span>O <b>'+fixed(c.open)+'</b></span><span>H <b>'+fixed(c.high)+'</b></span><span>L <b>'+fixed(c.low)+'</b></span><span>C <b>'+fixed(c.close)+'</b></span>'):'OHLC unavailable';
+  set('ltp',c?'LTP '+fixed(c.close):'LTP unavailable');
+  set('change',c&&num(c.open)!=null&&num(c.close)!=null&&!c.closeOnly?((c.close-c.open)>=0?'+':'')+(c.close-c.open).toFixed(2)+' ('+(((c.close-c.open)/c.open)*100).toFixed(2)+'%)':'');
+  set('lastCandle',c?c.time:'--');
+  chart(d.candles||[]);
 
-    set('accountId',acct);
-    set('accountName',name);
-    const synced=!!d.pnl.marginsSynced;
-    set('brokerName',d.broker.connected?'Zerodha':'Not synced');
-    set('recon',synced?'Not checked':(d.broker.tokenOK?'Not synced':'Token required'));
-    set('lastSync',synced?updated:'Not synced');
-    const syncChip=document.getElementById('accountSyncChip');
-    if(syncChip){syncChip.textContent=synced?'Synced':(d.broker.tokenOK?'Not Synced':'Token Required');syncChip.className='account-chip '+(synced?'ok':d.broker.tokenOK?'warn':'bad');}
-    const accountWarn=document.getElementById('accountWarn');
-    if(accountWarn){accountWarn.style.display=synced?'none':'block';accountWarn.textContent=d.broker.tokenOK?'Account not synced. Balance and margin unavailable.':'Token required. Refresh token to sync account.';}
-    const accountHint=document.getElementById('accountHint');
-    if(accountHint){accountHint.style.display=synced?'block':'block';accountHint.textContent=synced?'Broker reported value':'Sync account to view balance';}
-    set('openingBalance',synced?(d.pnl.openingBalance==null?'Not available':rs(d.pnl.openingBalance)):'Not synced');
-    set('balance',money(synced,d.pnl.balance));
-    set('available',money(synced,d.pnl.availableMargin));
-    set('available2',money(synced,d.pnl.availableMargin));
-    set('usedMargin',money(synced,d.pnl.usedMargin));
-    set('buyingPower',money(synced,d.pnl.availableMargin));
-    set('cashBalance',synced?(d.pnl.cashBalance==null?'Not available':rs(d.pnl.cashBalance)):'Not synced');
-    const required=Number(d.execution.requiredMargin||0);
-    const idle=d.execution.status==='Idle';
-    set('gateLastCheck',updated);
-    const gateIdle=document.getElementById('gateIdle');
-    const gateMetrics=document.getElementById('gateMetrics');
-    if(gateIdle)gateIdle.style.display=idle?'flex':'none';
-    if(gateMetrics)gateMetrics.style.display=idle?'none':'grid';
-    set('nextOrderValue',idle?'Idle':rs(d.execution.orderValue||required));
-    set('requiredMargin',idle?'Idle':(synced?rs(required):'Not synced'));
-    const shortfall=Number(d.execution.shortfall||0);
-    set('shortfall',idle?'--':(synced?(shortfall?rs(shortfall):rs(0)):'Not synced'));
-    set('gateReason',idle?'Monitoring latest session':(d.execution.blockReason||'All checks passed'));
-    const checksRow=document.getElementById('checksRow');
-    if(checksRow){checksRow.innerHTML='';checksRow.style.display='none';}
+  set('accountId',acct);
+  set('accountName',name);
+  const synced=!!d.pnl.marginsSynced;
+  set('brokerName',d.broker.connected?'Zerodha':'Not synced');
+  set('recon',synced?'Not checked':(d.broker.tokenOK?'Not synced':'Token required'));
+  set('lastSync',synced?updated:'Not synced');
+  const syncChip=document.getElementById('accountSyncChip');
+  if(syncChip){syncChip.textContent=synced?'Synced':(d.broker.tokenOK?'Not Synced':'Token Required');syncChip.className='account-chip '+(synced?'ok':d.broker.tokenOK?'warn':'bad');}
+  const accountWarn=document.getElementById('accountWarn');
+  if(accountWarn){accountWarn.style.display=synced?'none':'block';accountWarn.textContent=d.broker.tokenOK?'Account not synced. Balance and margin unavailable.':'Token required. Refresh token to sync account.';}
+  const accountHint=document.getElementById('accountHint');
+  if(accountHint){accountHint.style.display=synced?'block':'block';accountHint.textContent=synced?'Broker reported value':'Sync account to view balance';}
+  set('openingBalance',synced?(d.pnl.openingBalance==null?'Not available':rs(d.pnl.openingBalance)):'Not synced');
+  set('balance',money(synced,d.pnl.balance));
+  set('available',money(synced,d.pnl.availableMargin));
+  set('available2',money(synced,d.pnl.availableMargin));
+  set('usedMargin',money(synced,d.pnl.usedMargin));
+  set('buyingPower',money(synced,d.pnl.availableMargin));
+  set('cashBalance',synced?(d.pnl.cashBalance==null?'Not available':rs(d.pnl.cashBalance)):'Not synced');
+  const required=Number(d.execution.requiredMargin||0);
+  const idle=d.execution.status==='Idle';
+  set('gateLastCheck',updated);
+  const gateIdle=document.getElementById('gateIdle');
+  const gateMetrics=document.getElementById('gateMetrics');
+  if(gateIdle)gateIdle.style.display=idle?'flex':'none';
+  if(gateMetrics)gateMetrics.style.display=idle?'none':'grid';
+  set('nextOrderValue',idle?'Idle':rs(d.execution.orderValue||required));
+  set('requiredMargin',idle?'Idle':(synced?rs(required):'Not synced'));
+  const shortfall=Number(d.execution.shortfall||0);
+  set('shortfall',idle?'--':(synced?(shortfall?rs(shortfall):rs(0)):'Not synced'));
+  set('gateReason',idle?'Monitoring latest session':(d.execution.blockReason||'All checks passed'));
+  const checksRow=document.getElementById('checksRow');
+  if(checksRow){checksRow.innerHTML='';checksRow.style.display='none';}
 
-    const orderRows=tradeList.concat(rejectionList).sort(function(a,b){return String(b&&b.time||'').localeCompare(String(a&&a.time||''))});
-    const orderText=o=>String((o&&o.status)||'')+' '+String((o&&o.note)||'')+' '+String((o&&o.reason)||'');
-    const sent=orderRows.length;
-    const rejected=orderRows.filter(o=>/reject|failed|insufficient|margin/i.test(orderText(o))).length;
-    const missed=orderRows.filter(o=>/missed|not sent|signal skipped/i.test(orderText(o))).length;
-    const timedOut=orderRows.filter(o=>/timeout|timed out|no response/i.test(orderText(o))).length;
-    const manualReview=orderRows.filter(o=>/manual|review/i.test(orderText(o))).length;
-    const filled=orderRows.filter(o=>Number(o.exit||0)>0||/closed|complete|filled|target|stop|sl/i.test(orderText(o))).length;
-    const pending=Math.max(0,sent-filled-rejected-missed-timedOut);
-    const actionRequired=rejected+missed+timedOut+manualReview>0;
-    const orderIdle=document.getElementById('orderIdle');
-    const orderActive=document.getElementById('orderActive');
-    const orderChip=document.getElementById('orderStateChip');
-    if(orderIdle)orderIdle.style.display=sent?'none':'grid';
-    if(orderActive)orderActive.style.display=sent?'block':'none';
-    if(orderChip){orderChip.textContent=sent?(actionRequired?'Action Required':'Last Session Complete'):'Idle';orderChip.className='order-state-chip '+(sent?(actionRequired?'action':'normal'):'idle');}
-    set('orderLastCheck',updated);
-    set('completed',filled);
-    set('sent',sent);
-    set('filled',filled);
-    set('pendingOrders',pending);
-    set('rejected',rejected);
-    set('missed',missed);
-    set('timedOut',timedOut);
-    set('manualReview',manualReview);
-    set('lastOrderTime',sent?(orderRows[0].time||'Not available'):'--');
-    set('orderLatency',d.bot.heartbeatAgeSec==null?'Unavailable':ago(d.bot.heartbeatAgeSec));
-    set('fillRate',sent?Math.round((filled/sent)*100)+'%':'--');
-    const latestProblem=orderRows.find(o=>/reject|failed|insufficient|margin|missed|timeout|timed out|manual|review/i.test(orderText(o)));
-    set('orderActionText',latestProblem?((rejected?rejected+' rejected order':missed?missed+' missed order':timedOut?timedOut+' timed out order':'Manual review needed')+' - '+(latestProblem.note||latestProblem.reason||latestProblem.status||'Check details')):'All orders reached a safe final state');
-    set('tokenValidUntil',d.broker.tokenOK?'Valid':'Required');
-    set('heartbeat',ago(d.bot.heartbeatAgeSec));
-    set('brokerSync',d.broker.connected?'Synced':'Issue');set('brokerSyncAccount',synced?'Synced':'Not synced');
-    set('executionState',d.execution.status||'Checking');
-    const ready=document.getElementById('readyStrip');
-    if(ready){
-      ready.textContent=d.execution.status||'Checking';
-      ready.classList.toggle('blocked',d.execution.status==='Blocked');
-      ready.classList.toggle('idle',d.execution.status==='Idle');
-      ready.style.borderColor=d.execution.status==='Ready'?'#caefd9':d.execution.status==='Blocked'?'#ffd5d5':'#d7e4f4';
-      ready.style.background=d.execution.status==='Ready'?'#edfff5':d.execution.status==='Blocked'?'#fff4f4':'#f4f8ff';
-      ready.style.color=d.execution.status==='Ready'?'#079b55':d.execution.status==='Blocked'?'#ef4444':'#475569';
-    }
-    const action=document.getElementById('actionStrip');
-    if(action)action.classList.toggle('ready-hidden',!actionRequired);
+  const orderRows=tradeList.concat(rejectionList).sort(function(a,b){return String(b&&b.time||'').localeCompare(String(a&&a.time||''))});
+  const orderText=o=>String((o&&o.status)||'')+' '+String((o&&o.note)||'')+' '+String((o&&o.reason)||'');
+  const sent=orderRows.length;
+  const rejected=orderRows.filter(o=>/reject|failed|insufficient|margin/i.test(orderText(o))).length;
+  const missed=orderRows.filter(o=>/missed|not sent|signal skipped/i.test(orderText(o))).length;
+  const timedOut=orderRows.filter(o=>/timeout|timed out|no response/i.test(orderText(o))).length;
+  const manualReview=orderRows.filter(o=>/manual|review/i.test(orderText(o))).length;
+  const filled=orderRows.filter(o=>Number(o.exit||0)>0||/closed|complete|filled|target|stop|sl/i.test(orderText(o))).length;
+  const pending=Math.max(0,sent-filled-rejected-missed-timedOut);
+  const actionRequired=rejected+missed+timedOut+manualReview>0;
+  const orderIdle=document.getElementById('orderIdle');
+  const orderActive=document.getElementById('orderActive');
+  const orderChip=document.getElementById('orderStateChip');
+  if(orderIdle)orderIdle.style.display=sent?'none':'grid';
+  if(orderActive)orderActive.style.display=sent?'block':'none';
+  if(orderChip){orderChip.textContent=sent?(actionRequired?'Action Required':'Last Session Complete'):'Idle';orderChip.className='order-state-chip '+(sent?(actionRequired?'action':'normal'):'idle');}
+  set('orderLastCheck',updated);
+  set('completed',filled);
+  set('sent',sent);
+  set('filled',filled);
+  set('pendingOrders',pending);
+  set('rejected',rejected);
+  set('missed',missed);
+  set('timedOut',timedOut);
+  set('manualReview',manualReview);
+  set('lastOrderTime',sent?(orderRows[0].time||'Not available'):'--');
+  set('orderLatency',d.bot.heartbeatAgeSec==null?'Unavailable':ago(d.bot.heartbeatAgeSec));
+  set('fillRate',sent?Math.round((filled/sent)*100)+'%':'--');
+  const latestProblem=orderRows.find(o=>/reject|failed|insufficient|margin|missed|timeout|timed out|manual|review/i.test(orderText(o)));
+  set('orderActionText',latestProblem?((rejected?rejected+' rejected order':missed?missed+' missed order':timedOut?timedOut+' timed out order':'Manual review needed')+' - '+(latestProblem.note||latestProblem.reason||latestProblem.status||'Check details')):'All orders reached a safe final state');
+  set('tokenValidUntil',d.broker.tokenOK?'Valid':'Required');
+  set('heartbeat',ago(d.bot.heartbeatAgeSec));
+  set('brokerSync',d.broker.connected?'Synced':'Issue');set('brokerSyncAccount',synced?'Synced':'Not synced');
+  set('executionState',d.execution.status||'Checking');
+  const ready=document.getElementById('readyStrip');
+  ready.textContent=d.execution.status||'Checking';
+  ready.classList.toggle('blocked',d.execution.status==='Blocked');
+  ready.classList.toggle('idle',d.execution.status==='Idle');
+  ready.style.borderColor=d.execution.status==='Ready'?'#caefd9':d.execution.status==='Blocked'?'#ffd5d5':'#d7e4f4';
+  ready.style.background=d.execution.status==='Ready'?'#edfff5':d.execution.status==='Blocked'?'#fff4f4':'#f4f8ff';
+  ready.style.color=d.execution.status==='Ready'?'#079b55':d.execution.status==='Blocked'?'#ef4444':'#475569';
+  const action=document.getElementById('actionStrip');
+  action.classList.toggle('ready-hidden',!actionRequired);
 
-    const hasPositions=!!(d.positions&&d.positions.length);
-    const hasOrders=!!(orderRows&&orderRows.length);
-    const posEmpty=document.getElementById('positionsEmpty'), posTable=document.getElementById('positionsTable');
-    const ordEmpty=document.getElementById('ordersEmpty'), ordTable=document.getElementById('ordersTable');
-    if(posEmpty)posEmpty.style.display=hasPositions?'none':'flex';
-    if(posTable)posTable.style.display=hasPositions?'block':'none';
-    if(ordEmpty)ordEmpty.style.display=hasOrders?'none':'flex';
-    if(ordTable)ordTable.style.display=hasOrders?'block':'none';
-    const posBody=document.getElementById('positionsBody');
-    if(posBody)posBody.innerHTML=hasPositions?d.positions.slice(0,4).map(p=>{const avg=num(p.avg),ltp=num(p.ltp);return '<tr><td title="'+txt(p.symbol)+'">'+txt(p.symbol)+'</td><td>'+txt(p.qty)+'</td><td>'+fixed(avg)+'</td><td>'+fixed(ltp)+'</td><td class="'+cls(p.pnl)+'">'+rs(p.pnl)+'</td><td>'+(avg&&ltp?pc((ltp-avg)/avg*100):'--')+'</td><td><span class="badge">Open</span></td></tr>'}).join(''):'';
-    const ordBody=document.getElementById('ordersBody');
-    if(ordBody)ordBody.innerHTML=hasOrders?orderRows.slice(0,5).map(t=>{const st=/blocked|reject|fail|error|insufficient|margin/i.test(t.status||t.note||t.reason||'')?'Blocked':/pending|open|sent/i.test(t.status||'')?'Pending':'Filled';const price=num(t.exit)!=null?t.exit:t.entry;return '<tr><td>'+txt(t.time)+'</td><td title="'+txt(t.symbol)+'">'+txt(t.symbol)+'</td><td class="'+(String(t.side).toUpperCase()==='SELL'?'bad':'ok')+'">'+txt(t.side)+'</td><td>'+txt(t.qty)+'</td><td>'+fixed(price)+'</td><td><span class="badge '+(st==='Blocked'?'bad':'')+'" title="'+txt(t.reason||t.note||'')+'">'+st+'</span></td></tr>'}).join(''):'';
-    renderLogs(d.logs||[]);
-    if(PAGE!=='dashboard'){renderWorkspaceDetail(d);setTimeout(wireWorkspaceControls,0);}
-    hideLoader();
-  } catch(e) {
-    console.error('Error rendering TradeOps data:', e);
-  }
+  const hasPositions=!!(d.positions&&d.positions.length);
+  const hasOrders=!!(orderRows&&orderRows.length);
+  const posEmpty=document.getElementById('positionsEmpty'), posTable=document.getElementById('positionsTable');
+  const ordEmpty=document.getElementById('ordersEmpty'), ordTable=document.getElementById('ordersTable');
+  if(posEmpty)posEmpty.style.display=hasPositions?'none':'flex';
+  if(posTable)posTable.style.display=hasPositions?'block':'none';
+  if(ordEmpty)ordEmpty.style.display=hasOrders?'none':'flex';
+  if(ordTable)ordTable.style.display=hasOrders?'block':'none';
+  document.getElementById('positionsBody').innerHTML=hasPositions?d.positions.slice(0,4).map(p=>{const avg=num(p.avg),ltp=num(p.ltp);return '<tr><td title="'+txt(p.symbol)+'">'+txt(p.symbol)+'</td><td>'+txt(p.qty)+'</td><td>'+fixed(avg)+'</td><td>'+fixed(ltp)+'</td><td class="'+cls(p.pnl)+'">'+rs(p.pnl)+'</td><td>'+(avg&&ltp?pc((ltp-avg)/avg*100):'--')+'</td><td><span class="badge">Open</span></td></tr>'}).join(''):'';
+  document.getElementById('ordersBody').innerHTML=hasOrders?orderRows.slice(0,5).map(t=>{const st=/blocked|reject|fail|error|insufficient|margin/i.test(t.status||t.note||t.reason||'')?'Blocked':/pending|open|sent/i.test(t.status||'')?'Pending':'Filled';const price=num(t.exit)!=null?t.exit:t.entry;return '<tr><td>'+txt(t.time)+'</td><td title="'+txt(t.symbol)+'">'+txt(t.symbol)+'</td><td class="'+(String(t.side).toUpperCase()==='SELL'?'bad':'ok')+'">'+txt(t.side)+'</td><td>'+txt(t.qty)+'</td><td>'+fixed(price)+'</td><td><span class="badge '+(st==='Blocked'?'bad':'')+'" title="'+txt(t.reason||t.note||'')+'">'+st+'</span></td></tr>'}).join(''):'';
+  renderLogs(d.logs||[]);
+  if(PAGE!=='dashboard'){renderWorkspaceDetail(d);setTimeout(wireWorkspaceControls,0);}
+  hideLoader();
 }function renderWorkspaceDetail(d){
   const root=document.getElementById('detailGrid');
   if(!root)return;
@@ -9385,14 +9278,10 @@ async function startTradeOpsTokenRefresh(button){
 async function setTradeOpsMode(mode){
   const out=document.getElementById('modeResult');
   const toggle=document.getElementById('tt1030ModeToggle');
-  const btnShadow=document.getElementById('modeBtnShadow');
-  const btnLive=document.getElementById('modeBtnLive');
   const body={mode:mode,restartBot:true,confirm:true};
   if(mode==='LIVE'){
-    if(!confirm('Enable LIVE mode? Future signals will place real Zerodha futures orders.')){return;}
+    if(!confirm('Enable LIVE mode? Future signals can place real Zerodha orders.')){if(toggle)toggle.checked=false;return;}
   }
-  if(btnShadow)btnShadow.disabled=true;
-  if(btnLive)btnLive.disabled=true;
   if(toggle)toggle.disabled=true;
   if(out){out.style.display='block';out.className='account-warn';out.textContent='Applying '+mode+' mode and reloading the trading process...';}
   try{
@@ -9402,11 +9291,9 @@ async function setTradeOpsMode(mode){
     if(out){out.className='account-warn success';out.textContent='Mode changed to '+mode+'. The running process was reloaded successfully.'}
     await load();
   }catch(e){
-    alert((e&&e.message)||'Mode change failed');
     if(out){out.className='account-warn error';out.textContent=(e&&e.message)||'Mode change failed'}
+    if(toggle)toggle.checked=mode!=='LIVE';
   }finally{
-    if(btnShadow)btnShadow.disabled=false;
-    if(btnLive)btnLive.disabled=false;
     if(toggle)toggle.disabled=false;
   }
 }
@@ -9425,39 +9312,8 @@ async function setTradeOpsTelegram(enabled){
     if(toggle)toggle.checked=!enabled;
   }
 }
-function showLoadError(message){
-  hideLoader();
-  const banner=document.getElementById('loadErrorBanner');
-  if(banner){
-    banner.style.display='block';
-    banner.innerHTML='<div style="background:#fee2e2;border:1px solid #ef4444;color:#991b1b;padding:12px 16px;border-radius:8px;margin-bottom:16px;display:flex;align-items:center;justify-content:space-between"><div><b>Could not load live status:</b> '+txt(message||'Status request failed')+'</div><button class="btn" style="background:#ef4444;color:#fff;border:none;padding:6px 12px;cursor:pointer;border-radius:6px" onclick="location.reload()">Retry</button></div>';
-  } else if(PAGE!=='dashboard'){
-    const root=document.getElementById('detailGrid');
-    if(root){
-      root.innerHTML='<section class="ws-card" style="grid-column:1/-1"><div class="ws-card-h"><span>Workspace</span><button class="btn" onclick="location.reload()">Retry</button></div><div class="ws-card-b"><b class="bad">Could not load workspace data</b><p class="muted">'+txt(message||'Status API request failed')+'</p></div></section>';
-    }
-  }
-}
-async function load(){
-  const ctrl=new AbortController();
-  const timer=setTimeout(()=>ctrl.abort(),8000);
-  try{
-    const r=await fetch(strategyUrl('/api/tradeops/status'),{cache:'no-store',credentials:'same-origin',signal:ctrl.signal,headers:{'Accept':'application/json'}});
-    const ct=r.headers.get('content-type')||'';
-    if(!r.ok)throw new Error('Status API HTTP '+r.status);
-    if(!ct.includes('application/json'))throw new Error('Status API returned non-JSON');
-    const j=await r.json();
-    if(!j||j.ok===false)throw new Error(j&&j.error?j.error:'Status API failed');
-    render(j);
-    const banner=document.getElementById('loadErrorBanner');
-    if(banner)banner.style.display='none';
-  }catch(e){
-    console.error(e);
-    if(!lastStatus)showLoadError(e&&e.name==='AbortError'?'Status API timeout':e&&e.message?e.message:'Request failed');
-  }finally{
-    clearTimeout(timer);
-  }
-}setupSidebar();const strategySelect=document.getElementById('strategySelect');if(strategySelect)strategySelect.onchange=()=>{selectedTradeOpsStrategy=strategySelect.value||DEFAULT_STRATEGY;try{localStorage.setItem('tradeopsSelectedStrategy',selectedTradeOpsStrategy)}catch(e){}load();loadLogs()};const emergencyBtn=document.getElementById('emergencyBtn');if(emergencyBtn)emergencyBtn.onclick=()=>{const out=document.getElementById('emergencyResult');if(out)out.textContent='';document.getElementById('modal')?.classList.add('open')};const cancelStop=document.getElementById('cancelStop');if(cancelStop)cancelStop.onclick=()=>document.getElementById('modal')?.classList.remove('open');const sendStop=document.getElementById('sendStop');if(sendStop)sendStop.onclick=async()=>{const out=document.getElementById('emergencyResult');sendStop.disabled=true;if(out)out.textContent='Checking live broker positions and submitting exits...';try{const r=await fetch('/api/tradeops/emergency-stop',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({confirm:true})});const j=await r.json();if(out)out.innerHTML=(j.ok?'Closed positions count: '+(j.closed?j.closed.length:0)+'<br>':'Exit request failed<br>')+(j.message||j.error||'Done');await load()}catch(e){if(out)out.textContent=e.message||'Request failed'}finally{sendStop.disabled=false}};const pauseLogs=document.getElementById('pauseLogs');if(pauseLogs)pauseLogs.onclick=()=>{paused=!paused;pauseLogs.textContent=paused?'Resume':'Pause'};const clearLogs=document.getElementById('clearLogs');if(clearLogs)clearLogs.onclick=()=>{const logsEl=document.getElementById('logs');if(logsEl)logsEl.innerHTML='<div class="muted">Preview cleared. New logs will appear on next tick.</div>'};const refreshTokenBtn=document.getElementById('refreshTokenBtn');if(refreshTokenBtn)refreshTokenBtn.onclick=async()=>{const old=refreshTokenBtn.textContent;refreshTokenBtn.textContent='Refreshing...';refreshTokenBtn.disabled=true;try{const r=await fetch('/api/tradeops/token-refresh',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({source:'dashboard'})});const j=await r.json();if(!r.ok||!j.ok)throw new Error(j.error||'Token refresh failed to start');refreshTokenBtn.textContent='Refresh Started';const logsEl=document.getElementById('logs');if(logsEl)logsEl.innerHTML='<div><span class="info">[INFO]</span> '+txt(j.message||'Auto token refresh started')+'</div>'+logsEl.innerHTML;setTimeout(load,8000);setTimeout(load,25000);setTimeout(load,60000)}catch(e){refreshTokenBtn.textContent='Refresh Failed';alert((e&&e.message)||'Token refresh failed')}finally{setTimeout(()=>{refreshTokenBtn.textContent=old;refreshTokenBtn.disabled=false},5000)}};const syncAccountBtn=document.getElementById('syncAccountBtn');if(syncAccountBtn)syncAccountBtn.onclick=async()=>{const old=syncAccountBtn.textContent;syncAccountBtn.textContent='Syncing...';syncAccountBtn.disabled=true;await load();syncAccountBtn.textContent=(lastStatus&&lastStatus.broker&&lastStatus.broker.tokenOK)?'Synced':'Token Required';setTimeout(()=>{syncAccountBtn.textContent=old;syncAccountBtn.disabled=false},1600)};document.querySelectorAll('#chartTabs button[data-tf]').forEach(btn=>{btn.onclick=()=>{chartTf=btn.dataset.tf||'15m';document.querySelectorAll('#chartTabs button[data-tf]').forEach(b=>b.classList.toggle('active',b===btn));if(lastStatus)render(lastStatus);}});if(INITIAL_STATUS&&INITIAL_STATUS.ok){try{render(INITIAL_STATUS)}catch(e){console.error(e);showLoadError(e&&e.message?e.message:"Initial render failed")}}hideLoader();
+if(INITIAL_STATUS&&INITIAL_STATUS.ok){try{render(INITIAL_STATUS)}catch(e){console.error(e);showLoadError(e&&e.message?e.message:"Initial render failed")}}
+hideLoader();
 let _statusPollTimer=null;function scheduleStatusPoll(){clearTimeout(_statusPollTimer);_statusPollTimer=setTimeout(async()=>{if(PAGE==='dashboard'||PAGE==='account'){await load().catch(()=>{});}scheduleStatusPoll();},5000);}
 let _logsPollTimer=null;function scheduleLogsPoll(){clearTimeout(_logsPollTimer);_logsPollTimer=setTimeout(async()=>{if(!paused){await loadLogs().catch(()=>{});}scheduleLogsPoll();},4000);}
 setTimeout(()=>{scheduleStatusPoll();scheduleLogsPoll();},2500);
