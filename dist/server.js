@@ -6768,8 +6768,25 @@ const TRADEOPS_AUTO_TOKEN_LOG = `${TRADEOPS_BOT_DIR}/logs/auto_token_manual.log`
 const TRADEOPS_STRATEGY_CONFIG_FILE = path_1.default.join(process.cwd(), "tradeops-strategies.json");
 const TRADEOPS_DEFAULT_STRATEGIES = [
     {
+        id: "tt1030-quality-futures",
+        name: "10:30 Quality Break 50 Lock",
+        enabled: true,
+        mode: "SHADOW",
+        instrument: "BANKNIFTY",
+        product: "Futures",
+        entryTime: "10:30",
+        quantity: 30,
+        sl: "Breakout candle low/high + 50pt lock",
+        target: "14:15 Session Cutoff / EOD Exit",
+        maxDailyLoss: "Max 3 Trades / Broker Gate",
+        status: "Running",
+        liveCapable: true,
+        source: "tt1030-quality",
+        config: { strategyCode: "TEN_THIRTY_QUALITY", maxTrades: 3, profitLockPts: 50, cutoffTime: "14:15" },
+    },
+    {
         id: "tt1030-futures",
-        name: "10:30 Futures",
+        name: "10:30 Baseline Futures",
         enabled: true,
         mode: "SHADOW",
         instrument: "BANKNIFTY",
@@ -6777,12 +6794,80 @@ const TRADEOPS_DEFAULT_STRATEGIES = [
         entryTime: "10:30",
         quantity: 30,
         sl: "Breakout candle / strategy SL",
-        target: "EOD / strategy exit",
-        maxDailyLoss: "Broker/risk gate",
+        target: "15:15 Session Cutoff / EOD Exit",
+        maxDailyLoss: "Max 2 Trades / Broker Gate",
         status: "Running",
         liveCapable: true,
         source: "tt1030",
-        config: { strategyCode: "TEN_THIRTY_INDEX_FUTURES", timeframe: "15m" },
+        config: { strategyCode: "TEN_THIRTY_INDEX_FUTURES", maxTrades: 2, cutoffTime: "15:15" },
+    },
+    {
+        id: "tt1000-quality-futures",
+        name: "10:00 Quality Breakout",
+        enabled: true,
+        mode: "SHADOW",
+        instrument: "BANKNIFTY",
+        product: "Futures",
+        entryTime: "10:00",
+        quantity: 30,
+        sl: "Breakout candle low/high SL",
+        target: "14:15 Session Cutoff / EOD Exit",
+        maxDailyLoss: "Max 3 Trades / Broker Gate",
+        status: "Running",
+        liveCapable: true,
+        source: "tt1000-quality",
+        config: { strategyCode: "TEN_O_CLOCK_QUALITY", maxTrades: 3, cutoffTime: "14:15" },
+    },
+    {
+        id: "tt1000-futures",
+        name: "10:00 Baseline Futures",
+        enabled: true,
+        mode: "SHADOW",
+        instrument: "BANKNIFTY",
+        product: "Futures",
+        entryTime: "10:00",
+        quantity: 30,
+        sl: "Breakout candle / strategy SL",
+        target: "15:15 Session Cutoff / EOD Exit",
+        maxDailyLoss: "Max 2 Trades / Broker Gate",
+        status: "Running",
+        liveCapable: true,
+        source: "tt1000",
+        config: { strategyCode: "TEN_O_CLOCK_INDEX_FUTURES", maxTrades: 2, cutoffTime: "15:15" },
+    },
+    {
+        id: "tt1000-unlimited",
+        name: "10:00 Unlimited",
+        enabled: true,
+        mode: "SHADOW",
+        instrument: "BANKNIFTY",
+        product: "Futures",
+        entryTime: "10:00",
+        quantity: 30,
+        sl: "15m candle trail SL",
+        target: "14:15 Session Cutoff",
+        maxDailyLoss: "Uncapped Trades / Broker Gate",
+        status: "Running",
+        liveCapable: true,
+        source: "tt1000-unlimited",
+        config: { strategyCode: "TEN_O_CLOCK_UNLIMITED", cutoffTime: "14:15" },
+    },
+    {
+        id: "tt1030-unlimited",
+        name: "10:30 Unlimited",
+        enabled: true,
+        mode: "SHADOW",
+        instrument: "BANKNIFTY",
+        product: "Futures",
+        entryTime: "10:30",
+        quantity: 30,
+        sl: "15m candle trail SL",
+        target: "14:15 Session Cutoff",
+        maxDailyLoss: "Uncapped Trades / Broker Gate",
+        status: "Running",
+        liveCapable: true,
+        source: "tt1030-unlimited",
+        config: { strategyCode: "TEN_THIRTY_UNLIMITED", cutoffTime: "14:15" },
     },
 ];
 function tradeOpsReadStrategyOverrides() {
@@ -6804,7 +6889,7 @@ function tradeOpsStrategyList() {
             ...saved,
             config: { ...(base.config || {}), ...(saved.config || {}) },
         };
-        if (base.id === "tt1030-futures") {
+        if (base.id === "tt1030-futures" || base.id === "tt1030-quality-futures") {
             merged.mode = String(env.TT1030_FUTURES_MODE || merged.mode || "SHADOW").toUpperCase() === "LIVE" ? "LIVE" : "SHADOW";
             merged.status = merged.enabled ? "Running" : "Disabled";
         }
@@ -6813,8 +6898,13 @@ function tradeOpsStrategyList() {
         return merged;
     });
 }
-function tradeOpsResolveStrategy(_value) {
+function tradeOpsResolveStrategy(value) {
     const strategies = tradeOpsStrategyList();
+    if (value && typeof value === "string") {
+        const found = strategies.find(s => s.id === value || s.source === value);
+        if (found)
+            return found;
+    }
     return strategies[0];
 }
 function tradeOpsWriteStrategyOverride(id, patch) {
