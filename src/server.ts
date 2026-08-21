@@ -8340,18 +8340,32 @@ function buildTradeOpsLogPreview() {
   const minuteLogs = tradeOpsMinuteLogBuffer.map(m => ({
     time: m.time,
     level: m.level,
-    message: m.message
+    message: m.message,
+    ts: m.timestamp
   }));
 
-  return [
+  const allLogs: any[] = [
     ...heartbeatLogRows,
-    ...botAuditTail.map((x: any) => ({ time: tradeOpsTime(x.ts || x.at), level: tradeOpsAuditLevel(x), message: tradeOpsAuditMessage(x) })),
-    ...auditTail.map((x: any) => ({ time: tradeOpsTime(x.at), level: x.ok === false ? "WARN" : "INFO", message: tradeOpsSanitizeLog(x.message || x.action || "Audit event") })),
-    ...recentFileRows,
-    ...candleLines,
+    ...botAuditTail.map((x: any) => ({ time: tradeOpsTime(x.ts || x.at), level: tradeOpsAuditLevel(x), message: tradeOpsAuditMessage(x), ts: new Date(x.ts || x.at || 0).getTime() })),
+    ...auditTail.map((x: any) => ({ time: tradeOpsTime(x.at), level: x.ok === false ? "WARN" : "INFO", message: tradeOpsSanitizeLog(x.message || x.action || "Audit event"), ts: new Date(x.at || 0).getTime() })),
+    ...recentFileRows.map((x: any) => ({ ...x, ts: new Date().getTime() - 60000 })),
+    ...candleLines.map((x: any) => ({ ...x, ts: new Date().getTime() - 30000 })),
     ...minuteLogs,
-    ...operationalLogs,
-  ].slice(-60).reverse();
+    ...operationalLogs.map((x: any) => ({ ...x, ts: new Date().getTime() })),
+  ];
+
+  // Return deduplicated chronological list (latest 80 logs)
+  const seenMessages = new Set<string>();
+  const cleanLogs: any[] = [];
+  for (let i = allLogs.length - 1; i >= 0; i--) {
+    const l = allLogs[i];
+    const key = (l.time || '') + '|' + (l.message || '');
+    if (!seenMessages.has(key)) {
+      seenMessages.add(key);
+      cleanLogs.unshift({ time: l.time, level: l.level, message: l.message });
+    }
+  }
+  return cleanLogs.slice(-80);
 }
 
 let lastTradeOpsBrokerCacheTime = 0;
@@ -11583,7 +11597,19 @@ wireWorkflowButtons();
 setupSidebar();
 hideLoader();
 let _statusPollTimer=null;function scheduleStatusPoll(){clearTimeout(_statusPollTimer);_statusPollTimer=setTimeout(async()=>{if(PAGE==='dashboard'||PAGE==='account'){await load().catch(()=>{});}scheduleStatusPoll();},5000);}
-let _logsPollTimer=null;function scheduleLogsPoll(){clearTimeout(_logsPollTimer);const delay = (PAGE==='server-logs') ? 2000 : 4000;_logsPollTimer=setTimeout(async()=>{if(!paused && !termPaused){await loadLogs().catch(()=>{});}scheduleLogsPoll();}, delay);}
+let _logsPollTimer=null;
+function scheduleLogsPoll(){
+  clearTimeout(_logsPollTimer);
+  const delay = (PAGE==='server-logs') ? 1500 : 3500;
+  _logsPollTimer=setTimeout(async()=>{
+    if(!paused && !termPaused){
+      await loadLogs().catch(()=>{});
+    }
+    scheduleLogsPoll();
+  }, delay);
+}
+// Start immediate live polling
+scheduleLogsPoll();
 setTimeout(()=>{scheduleStatusPoll();scheduleLogsPoll();},2500);
 </script>
 </body></html>`;
