@@ -9199,35 +9199,80 @@ function render(d){
   const execFlow=document.getElementById('flowExecTitle')?.closest('.flow-step');
   if(execFlow)execFlow.classList.toggle('blocked',d.execution.status==='Blocked');
 
-  const net=d.pnl.net;
-  const openActive=d.bot.state==='In Trade'||Number(d.pnl.unrealized||0)!==0;
-  const liveMode=d.market.open&&botOnline;
-  set('netPnl',rs(net));
-  document.getElementById('netPnl').className='pnl-value '+cls(net);
-  const profitChip=document.getElementById('profitChip');
-  profitChip.textContent=net>=0?'Profit':'Loss';
-  profitChip.className='profit-pill '+(net>=0?'':'loss');
-  const strategyLabel='TradeOps';
-  set('pnlCardTitle','Trade P&L');
-  set('pnlLiveLabel',liveMode?'Live':'Last Session');
-  set('pnlMetricLabel',liveMode?'Net Live P&L':'Net Session P&L');
-  set('pnlSupport',openActive?strategyLabel+' position active':((d.pnl&&d.pnl.source)?'Source: '+d.pnl.source:strategyLabel+' P&L'));
-  set('pnlSource',(d.pnl&&d.pnl.source?d.pnl.source:(d.broker.connected?'Broker':'Bot'))+' / '+Math.round(((d.pnl&&d.pnl.refreshMs)||5000)/1000)+'s');
-  set('pnlMode',(d.strategy&&d.strategy.mode)||'LIVE');
-  set('realized',rs(d.pnl.realized));
-  set('unrealized',rs(d.pnl.unrealized));
-  const tradesCount=Number(d.pnl.tradesCount!=null?d.pnl.tradesCount:(d.trades?d.trades.length:(d.history?d.history.todayShadowTrades:0)));
-  const maxTrades=Number((d.strategy&&d.strategy.config&&d.strategy.config.maxTrades)||3);
-  set('sessionTrades',tradesCount+' / '+maxTrades+' Max');
-  const ptsVal=d.pnl.pts!=null?Number(d.pnl.pts):(net!==0?(net/30):0);
-  set('ptsCaptured',(ptsVal>=0?'+':'')+ptsVal.toFixed(1)+' pts');
-  set('profitLockStatus',d.pnl.lockStatus||'+50pt Lock Active');
-  const winCount=(d.trades||[]).filter(t=>Number(t.pnl||0)>0).length;
-  const winRate=tradesCount>0?Math.round((winCount/tradesCount)*100)+'% ('+winCount+'/'+tradesCount+')':'100% (2/2)';
-  set('sessionWinRate',winRate);
-  set('posStatus',openActive?(d.positions[0]?.symbol||'In Trade (PE)'):'Flat (EOD)');
-  set('maxRiskGuard',(d.strategy&&d.strategy.maxDailyLoss)||'₹3,000 / Day');
-  ['realized','unrealized','sessionTrades','ptsCaptured','profitLockStatus','sessionWinRate','posStatus'].forEach(id=>{const e=document.getElementById(id);if(e)e.className=String(e.textContent||'').startsWith('-')?'bad':'ok'});
+  const net = Number(d.pnl.net || 0);
+  const openActive = (Array.isArray(d.positions) && d.positions.length > 0) || d.bot.state === 'In Trade' || Number(d.pnl.unrealized || 0) !== 0;
+  const liveMode = d.market.open && botOnline;
+  
+  set('netPnl', rs(net));
+  const netEl = document.getElementById('netPnl');
+  if(netEl) netEl.className = 'pnl-value ' + (net > 0 ? 'ok' : (net < 0 ? 'bad' : ''));
+  
+  const profitChip = document.getElementById('profitChip');
+  if(profitChip){
+    if(net > 0){
+      profitChip.style.display = 'inline-block';
+      profitChip.textContent = 'Profit';
+      profitChip.className = 'profit-pill';
+    } else if(net < 0){
+      profitChip.style.display = 'inline-block';
+      profitChip.textContent = 'Loss';
+      profitChip.className = 'profit-pill loss';
+    } else {
+      profitChip.style.display = 'none';
+    }
+  }
+
+  set('pnlCardTitle', 'Live Position & P&L');
+  set('pnlLiveLabel', liveMode ? 'Live' : (d.market.open ? 'Market Open' : 'Pre-Market'));
+  set('pnlMetricLabel', openActive ? 'Live Open Position P&L' : 'Net Session P&L');
+  
+  const pnlSupp = document.getElementById('pnlSupport');
+  if(pnlSupp){
+    if(openActive){
+      const pos = d.positions && d.positions[0];
+      const dir = (pos && pos.side) || (d.bot && d.bot.direction) || 'Active';
+      pnlSupp.style.color = '#059669';
+      pnlSupp.textContent = '🟢 Active Position: BANKNIFTY FUT (' + dir + ') · 30 Qty';
+    } else if(!d.market.open){
+      pnlSupp.style.color = '#64748b';
+      pnlSupp.textContent = 'Flat · Market opens at 09:15 AM · 10:30 AM Breakout';
+    } else {
+      pnlSupp.style.color = '#059669';
+      pnlSupp.textContent = 'Flat · Monitoring 15m Range (Waiting 10:30 AM Breakout)';
+    }
+  }
+  
+  set('realized', rs(d.pnl.realized || 0));
+  set('unrealized', rs(d.pnl.unrealized || 0));
+  
+  // Accurate Today Trades count
+  const todayTradeCount = Array.isArray(d.trades) ? d.trades.length : 0;
+  const maxTrades = Number((d.strategy && d.strategy.config && d.strategy.config.maxTrades) || 3);
+  set('sessionTrades', todayTradeCount + ' / ' + maxTrades + ' Max');
+  
+  const ptsVal = d.pnl.pts != null ? Number(d.pnl.pts) : (net !== 0 ? (net / 30) : 0);
+  set('ptsCaptured', (ptsVal >= 0 ? '+' : '') + ptsVal.toFixed(1) + ' pts');
+  set('profitLockStatus', '+50pt Lock Active');
+  set('sessionWinRate', '15:15 EOD Exit');
+  
+  let posText = 'Flat (Waiting 10:30 AM)';
+  if(openActive){
+    const pos = d.positions && d.positions[0];
+    posText = 'In Trade (30 Qty ' + ((pos && pos.side) || 'FUT') + ')';
+  } else if(!d.market.open){
+    posText = 'Flat (Pre-Market)';
+  }
+  set('posStatus', posText);
+  set('maxRiskGuard', (d.strategy && d.strategy.maxDailyLoss) || '₹3,000 / Day');
+  
+  set('pnlInstrument', 'BANKNIFTY FUT (30 Qty)');
+  set('pnlBroker', 'Zerodha Kite (' + ((d.strategy && d.strategy.mode) || 'LIVE') + ')');
+  set('pnlUpdated', updated);
+
+  ['realized','unrealized','sessionTrades','ptsCaptured','profitLockStatus','sessionWinRate','posStatus'].forEach(id=>{
+    const e = document.getElementById(id);
+    if(e) e.className = String(e.textContent||'').startsWith('-') ? 'bad' : 'ok';
+  });
 
   const btnContract=document.getElementById('btnChartContract');
   const btnSpot=document.getElementById('btnChartSpot');
