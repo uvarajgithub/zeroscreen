@@ -10037,6 +10037,273 @@ body.tradeops-collapsed .help,body.tradeops-collapsed .collapse-btn{justify-cont
   .candle-note{min-width:190px}
 }
 
+
+/* ==============================================================================
+   TRADEOPS MASTER ANIMATIONS & HIGH-SPECIFICITY UI LAYER
+   ============================================================================== */
+@keyframes liveMarketPulse {
+  0% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.7); }
+  70% { transform: scale(1.15); box-shadow: 0 0 0 8px rgba(16, 185, 129, 0); }
+  100% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(16, 185, 129, 0); }
+}
+
+.dot.ok, #marketDot.ok, .terminal-live-badge .dot {
+  background: #10b981 !important;
+  box-shadow: 0 0 10px #10b981 !important;
+  animation: liveMarketPulse 1.8s infinite cubic-bezier(0.4, 0, 0.6, 1) !important;
+}
+
+@keyframes flowSlideRight {
+  0% { transform: translateX(-4px); opacity: 0.3; }
+  50% { transform: translateX(2px); opacity: 1; filter: drop-shadow(0 0 4px #10b981); }
+  100% { transform: translateX(-4px); opacity: 0.3; }
+}
+
+.flow-arrow svg {
+  animation: flowSlideRight 1.5s ease-in-out infinite !important;
+  color: #10b981 !important;
+}
+
+@keyframes stepBeamSweep {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+
+.flow-step {
+  position: relative !important;
+  background: #ffffff !important;
+  border: 1px solid #e2e8f0 !important;
+  border-radius: 8px !important;
+  overflow: hidden !important;
+  transition: all 0.25s ease !important;
+}
+
+.flow-step:hover {
+  border-color: #3b82f6 !important;
+  box-shadow: 0 4px 12px rgba(59, 130, 246, 0.15) !important;
+}
+
+@keyframes flowBadgePulse {
+  0% { transform: scale(1); box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.6); }
+  70% { transform: scale(1.08); box-shadow: 0 0 0 6px rgba(16, 185, 129, 0); }
+  100% { transform: scale(1); box-shadow: 0 0 0 0 rgba(16, 185, 129, 0); }
+}
+
+.flow-step .flow-ok {
+  background: #10b981 !important;
+  color: #ffffff !important;
+  animation: flowBadgePulse 2.2s infinite ease-in-out !important;
+}
+
+/* ==============================================================================
+   DARK TERMINAL CONSOLE STYLESHEET
+   ============================================================================== */
+.server-log-terminal-page {
+  display: flex !important;
+  flex-direction: column !important;
+  background: #080d1a !important;
+  border: 1px solid #1e293b !important;
+  border-radius: 12px !important;
+  box-shadow: 0 16px 36px rgba(0, 0, 0, 0.45) !important;
+  overflow: hidden !important;
+  width: 100% !important;
+  margin-top: 6px !important;
+  font-family: 'JetBrains Mono', 'Fira Code', 'Cascadia Code', Menlo, Consolas, monospace !important;
+}
+
+.terminal-header {
+  display: flex !important;
+  align-items: center !important;
+  justify-content: space-between !important;
+  background: #0f172a !important;
+  padding: 12px 18px !important;
+  border-bottom: 1px solid #1e293b !important;
+  gap: 12px !important;
+  flex-wrap: wrap !important;
+}
+
+.terminal-title-wrap {
+  display: flex !important;
+  align-items: center !important;
+  gap: 12px !important;
+}
+
+.terminal-dots {
+  display: flex !important;
+  gap: 6px !important;
+}
+
+.terminal-dots span {
+  width: 11px !important;
+  height: 11px !important;
+  border-radius: 50% !important;
+  display: inline-block !important;
+}
+
+.terminal-dots .d-red { background: #ef4444 !important; box-shadow: 0 0 6px rgba(239,68,68,0.6) !important; }
+.terminal-dots .d-yellow { background: #f59e0b !important; box-shadow: 0 0 6px rgba(245,158,11,0.6) !important; }
+.terminal-dots .d-green { background: #10b981 !important; box-shadow: 0 0 6px rgba(16,185,129,0.6) !important; }
+
+.terminal-title {
+  color: #f1f5f9 !important;
+  font-size: 13px !important;
+  font-weight: 700 !important;
+  letter-spacing: 0.4px !important;
+}
+
+.terminal-live-badge {
+  display: inline-flex !important;
+  align-items: center !important;
+  gap: 6px !important;
+  background: rgba(16, 185, 129, 0.15) !important;
+  color: #34d399 !important;
+  padding: 2px 8px !important;
+  border-radius: 999px !important;
+  font-size: 11px !important;
+  font-weight: 700 !important;
+  border: 1px solid rgba(16, 185, 129, 0.3) !important;
+}
+
+.terminal-controls {
+  display: flex !important;
+  align-items: center !important;
+  gap: 8px !important;
+}
+
+.terminal-select {
+  background: #1e293b !important;
+  color: #e2e8f0 !important;
+  border: 1px solid #334155 !important;
+  border-radius: 6px !important;
+  padding: 5px 10px !important;
+  font-size: 11.5px !important;
+  font-family: inherit !important;
+  outline: none !important;
+}
+
+.terminal-btn {
+  background: #1e293b !important;
+  color: #cbd5e1 !important;
+  border: 1px solid #334155 !important;
+  border-radius: 6px !important;
+  padding: 5px 12px !important;
+  font-size: 11.5px !important;
+  font-weight: 600 !important;
+  cursor: pointer !important;
+  transition: all 0.15s ease !important;
+}
+
+.terminal-btn:hover {
+  background: #334155 !important;
+  color: #ffffff !important;
+  border-color: #475569 !important;
+}
+
+.terminal-btn.active {
+  background: #2563eb !important;
+  color: #ffffff !important;
+  border-color: #3b82f6 !important;
+}
+
+.terminal-btn-back {
+  background: transparent !important;
+  color: #94a3b8 !important;
+  border: 1px solid #334155 !important;
+  text-decoration: none !important;
+  display: inline-flex !important;
+  align-items: center !important;
+}
+
+.terminal-btn-back:hover {
+  color: #ffffff !important;
+  border-color: #64748b !important;
+}
+
+.terminal-body {
+  height: 640px !important;
+  max-height: 75vh !important;
+  overflow-y: auto !important;
+  padding: 16px 20px !important;
+  display: flex !important;
+  flex-direction: column !important;
+  gap: 6px !important;
+  color: #e2e8f0 !important;
+  background: #080d1a !important;
+}
+
+.terminal-body::-webkit-scrollbar {
+  width: 8px !important;
+}
+
+.terminal-body::-webkit-scrollbar-track {
+  background: #080d1a !important;
+}
+
+.terminal-body::-webkit-scrollbar-thumb {
+  background: #1e293b !important;
+  border-radius: 4px !important;
+}
+
+.terminal-body::-webkit-scrollbar-thumb:hover {
+  background: #334155 !important;
+}
+
+.terminal-line {
+  display: flex !important;
+  align-items: flex-start !important;
+  gap: 10px !important;
+  font-size: 12px !important;
+  line-height: 1.55 !important;
+  word-break: break-word !important;
+}
+
+.terminal-time {
+  color: #64748b !important;
+  flex-shrink: 0 !important;
+  font-weight: 500 !important;
+}
+
+.terminal-tag {
+  font-weight: 750 !important;
+  flex-shrink: 0 !important;
+  padding: 1px 6px !important;
+  border-radius: 4px !important;
+  font-size: 11px !important;
+}
+
+.terminal-tag.info { color: #38bdf8 !important; background: rgba(56, 189, 248, 0.12) !important; }
+.terminal-tag.trade { color: #34d399 !important; background: rgba(52, 211, 153, 0.15) !important; }
+.terminal-tag.auth { color: #a78bfa !important; background: rgba(167, 139, 250, 0.15) !important; }
+.terminal-tag.warn { color: #fbbf24 !important; background: rgba(251, 191, 36, 0.15) !important; }
+.terminal-tag.error { color: #f87171 !important; background: rgba(248, 113, 113, 0.18) !important; }
+
+.terminal-msg {
+  color: #e2e8f0 !important;
+  flex-grow: 1 !important;
+}
+
+.terminal-footer {
+  display: flex !important;
+  align-items: center !important;
+  justify-content: space-between !important;
+  background: #0b1120 !important;
+  padding: 8px 18px !important;
+  border-top: 1px solid #1e293b !important;
+  color: #64748b !important;
+  font-size: 11px !important;
+}
+
+.terminal-full-wrap,
+#detailGrid.terminal-full-wrap {
+  display: block !important;
+  width: 100% !important;
+  max-width: 100% !important;
+  padding: 0 !important;
+  margin: 0 !important;
+  grid-template-columns: 1fr !important;
+}
+
+
 </style>
 </head>
 <body>
