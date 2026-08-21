@@ -1175,6 +1175,206 @@ app.get("/signup", featureGate("registration_open", "New Registrations"), (req: 
   }
 }
 
+
+/* FULL PAGE SERVER LOG TERMINAL CONSOLE */
+.server-log-terminal-page {
+  padding: 0 !important;
+  margin: 0 !important;
+  display: flex !important;
+  flex-direction: column !important;
+  height: calc(100vh - 90px) !important;
+  min-height: 560px !important;
+  background: #080d1a !important;
+  border: 1px solid #1e293b !important;
+  border-radius: 12px !important;
+  overflow: hidden !important;
+  box-shadow: 0 12px 36px rgba(0, 0, 0, 0.4) !important;
+}
+
+.terminal-header {
+  display: flex !important;
+  align-items: center !important;
+  justify-content: space-between !important;
+  padding: 12px 18px !important;
+  background: #0c1427 !important;
+  border-bottom: 1px solid #1e293b !important;
+  gap: 12px !important;
+  flex-wrap: wrap !important;
+}
+
+.terminal-title-wrap {
+  display: flex !important;
+  align-items: center !important;
+  gap: 12px !important;
+}
+
+.terminal-dots {
+  display: flex !important;
+  gap: 6px !important;
+}
+
+.terminal-dots span {
+  width: 11px !important;
+  height: 11px !important;
+  border-radius: 50% !important;
+}
+
+.terminal-dots .d-red { background: #ef4444 !important; }
+.terminal-dots .d-yellow { background: #f59e0b !important; }
+.terminal-dots .d-green { background: #10b981 !important; }
+
+.terminal-title {
+  font-size: 14px !important;
+  font-weight: 750 !important;
+  color: #f1f5f9 !important;
+  font-family: 'JetBrains Mono', 'Fira Code', monospace !important;
+  letter-spacing: 0.5px !important;
+}
+
+.terminal-live-badge {
+  display: inline-flex !important;
+  align-items: center !important;
+  gap: 6px !important;
+  font-size: 11px !important;
+  font-weight: 700 !important;
+  color: #10b981 !important;
+  background: rgba(16, 185, 129, 0.12) !important;
+  border: 1px solid rgba(16, 185, 129, 0.3) !important;
+  padding: 2px 8px !important;
+  border-radius: 999px !important;
+  font-family: system-ui, sans-serif !important;
+}
+
+.terminal-live-badge .dot {
+  width: 7px !important;
+  height: 7px !important;
+  border-radius: 50% !important;
+  background: #10b981 !important;
+  animation: marketPulse 1.5s infinite !important;
+}
+
+.terminal-controls {
+  display: flex !important;
+  align-items: center !important;
+  gap: 8px !important;
+  flex-wrap: wrap !important;
+}
+
+.terminal-select {
+  height: 32px !important;
+  background: #1e293b !important;
+  border: 1px solid #334155 !important;
+  color: #f1f5f9 !important;
+  font-size: 12px !important;
+  font-weight: 600 !important;
+  border-radius: 6px !important;
+  padding: 0 10px !important;
+  outline: none !important;
+}
+
+.terminal-search {
+  height: 32px !important;
+  background: #1e293b !important;
+  border: 1px solid #334155 !important;
+  color: #f1f5f9 !important;
+  font-size: 12px !important;
+  border-radius: 6px !important;
+  padding: 0 10px !important;
+  min-width: 180px !important;
+  outline: none !important;
+}
+.terminal-search::placeholder { color: #64748b !important; }
+
+.terminal-btn {
+  height: 32px !important;
+  padding: 0 12px !important;
+  border-radius: 6px !important;
+  font-size: 12px !important;
+  font-weight: 600 !important;
+  background: #1e293b !important;
+  color: #94a3b8 !important;
+  border: 1px solid #334155 !important;
+  cursor: pointer !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  gap: 5px !important;
+  transition: all 0.15s ease !important;
+}
+
+.terminal-btn:hover {
+  background: #334155 !important;
+  color: #f8fafc !important;
+  border-color: #475569 !important;
+}
+
+.terminal-btn.active {
+  background: rgba(16, 185, 129, 0.2) !important;
+  border-color: #10b981 !important;
+  color: #10b981 !important;
+}
+
+.terminal-body {
+  flex: 1 1 auto !important;
+  overflow-y: auto !important;
+  padding: 14px 18px !important;
+  font-family: 'JetBrains Mono', 'Fira Code', 'Cascadia Code', Consolas, monospace !important;
+  font-size: 12.5px !important;
+  line-height: 1.6 !important;
+  color: #cbd5e1 !important;
+  background: #080d1a !important;
+}
+
+.terminal-line {
+  display: flex !important;
+  align-items: flex-start !important;
+  gap: 10px !important;
+  padding: 3px 0 !important;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.03) !important;
+}
+
+.terminal-line:hover {
+  background: rgba(255, 255, 255, 0.04) !important;
+}
+
+.terminal-time {
+  color: #64748b !important;
+  flex: 0 0 auto !important;
+  user-select: none !important;
+}
+
+.terminal-tag {
+  font-weight: 750 !important;
+  flex: 0 0 auto !important;
+  padding: 0 4px !important;
+  border-radius: 3px !important;
+  font-size: 11px !important;
+  text-transform: uppercase !important;
+}
+
+.terminal-tag.info { color: #10b981 !important; background: rgba(16, 185, 129, 0.15) !important; }
+.terminal-tag.warn { color: #f59e0b !important; background: rgba(245, 158, 11, 0.15) !important; }
+.terminal-tag.error { color: #ef4444 !important; background: rgba(239, 68, 68, 0.2) !important; }
+.terminal-tag.auth { color: #3b82f6 !important; background: rgba(59, 130, 246, 0.15) !important; }
+.terminal-tag.trade { color: #8b5cf6 !important; background: rgba(139, 92, 246, 0.15) !important; }
+
+.terminal-msg {
+  flex: 1 1 auto !important;
+  word-break: break-word !important;
+  color: #e2e8f0 !important;
+}
+
+.terminal-footer {
+  display: flex !important;
+  align-items: center !important;
+  justify-content: space-between !important;
+  padding: 8px 18px !important;
+  background: #0c1427 !important;
+  border-top: 1px solid #1e293b !important;
+  font-size: 11px !important;
+  color: #64748b !important;
+  font-family: 'JetBrains Mono', monospace !important;
+}
+
 </style>
 </head>
 <body class="auth-body landing-page">
@@ -8620,7 +8820,50 @@ function tradeOpsInitialWorkspaceHTML(page: string, status: any) {
   if (page === "orders" || page === "trade-history") return `${top}${kpis}${simpleRows(trades,["Date","Time","Symbol","Side","Qty","Entry","Exit","P&L","Status"],(t)=>`<tr><td>${h(t.date)}</td><td>${h(t.time)}</td><td>${h(t.symbol)}</td><td>${h(t.side)}</td><td>${h(t.qty)}</td><td>${h(t.entry)}</td><td>${h(t.exit)}</td><td>${h(rs(t.pnl || 0))}</td><td>${h(t.status)}</td></tr>`)}</section>`;
   if (page === "positions") return `${top}${kpis}${simpleRows(positions,["Symbol","Qty","Avg","LTP","P&L","Status"],(p)=>`<tr><td>${h(p.symbol)}</td><td>${h(p.qty)}</td><td>${h(p.avg)}</td><td>${h(p.ltp)}</td><td>${h(rs(p.pnl || 0))}</td><td>${h(p.status)}</td></tr>`)}</section>`;
   if (page === "candle-logs") return `${top}${kpis}${simpleRows(candles,["Time","Open","High","Low","Close","Volume"],(c)=>`<tr><td>${h(c.time)}</td><td>${h(c.open)}</td><td>${h(c.high)}</td><td>${h(c.low)}</td><td>${h(c.close)}</td><td>${h(c.volume || "Not available")}</td></tr>`)}</section>`;
-  if (page === "server-logs") return `${top}${kpis}${simpleRows(logs,["Time","Level","Message"],(l)=>`<tr><td>${h(l.time)}</td><td>${h(l.level)}</td><td>${h(l.message)}</td></tr>`)}</section>`;
+  if (page === "server-logs") {
+    const validLogs = logs.filter((l: any) => {
+      const m = String(l?.time || l?.at || "").match(/(\d{1,2}):(\d{2})/);
+      if (!m) return true;
+      const mins = parseInt(m[1], 10) * 60 + parseInt(m[2], 10);
+      return mins >= 450; // 7:30 AM onwards
+    });
+    const logRowsHtml = validLogs.slice(0, 100).map((l: any) => {
+      const level = String(l.level || "INFO").toUpperCase();
+      const tagCls = level === "ERROR" ? "error" : level === "WARN" ? "warn" : /auth|token/i.test(l.message) ? "auth" : /trade|order/i.test(l.message) ? "trade" : "info";
+      const timeStr = l.time && l.time !== "No candle time" ? l.time : new Date().toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: true });
+      return `<div class="terminal-line"><span class="terminal-time">[${h(timeStr)}]</span><span class="terminal-tag ${tagCls}">[${h(level)}]</span><span class="terminal-msg">${h(l.message)}</span></div>`;
+    }).join("");
+
+    return `<section class="server-log-terminal-page">
+      <div class="terminal-header">
+        <div class="terminal-title-wrap">
+          <div class="terminal-dots"><span class="d-red"></span><span class="d-yellow"></span><span class="d-green"></span></div>
+          <span class="terminal-title">TradeOps Server Console &middot; PM2 ID: 11</span>
+          <span class="terminal-live-badge"><span class="dot"></span>Live Streaming</span>
+        </div>
+        <div class="terminal-controls">
+          <select id="termLogLevel" class="terminal-select" onchange="filterTerminalLogs()">
+            <option value="ALL">All Levels</option>
+            <option value="INFO">INFO</option>
+            <option value="WARN">WARN</option>
+            <option value="ERROR">ERROR</option>
+          </select>
+          <input id="termLogSearch" class="terminal-search" placeholder="Search live logs..." oninput="filterTerminalLogs()">
+          <button class="terminal-btn" id="btnTermPause" type="button" onclick="toggleTermPause()"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg><span>Pause</span></button>
+          <button class="terminal-btn" id="btnTermClear" type="button" onclick="clearTermLogs()"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor"><path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg><span>Clear</span></button>
+          <button class="terminal-btn active" id="btnTermAutoScroll" type="button" onclick="toggleTermAutoScroll()"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor"><path d="M12 5v14M19 12l-7 7-7-7"/></svg><span>Auto-Scroll</span></button>
+          <a class="terminal-btn" href="/tradeops" style="text-decoration:none">Back to Dashboard</a>
+        </div>
+      </div>
+      <div class="terminal-body" id="terminalConsoleBody">
+        ${logRowsHtml || '<div class="terminal-line"><span class="terminal-time">[' + new Date().toLocaleTimeString("en-IN") + ']</span><span class="terminal-tag info">[INFO]</span><span class="terminal-msg">Initializing live log streaming...</span></div>'}
+      </div>
+      <div class="terminal-footer">
+        <span id="termLogCount">Showing ${validLogs.length} events (07:30 AM &ndash; Present)</span>
+        <span>Auto-refresh: <b>Active (2s)</b> &middot; Stream: <b>Healthy</b></span>
+      </div>
+    </section>`;
+  }
   return `${top}${kpis}<section class="ws-card"><div class="ws-card-h"><span>${h(title)}</span></div><div class="ws-card-b"><p class="muted">Status: ${h(status?.execution?.status || "Unknown")}. Broker: ${broker.connected ? "Connected" : "Not synced"}. Bot: ${h(status?.bot?.state || "Unknown")}.</p></div></section></section>`;
 }
 function renderTradeOpsApp(activePage: string, initialStatus: any = null) {
@@ -9293,7 +9536,17 @@ async function syncBrokerAccount(btn){
     if(btn){ setTimeout(function(){ btn.innerHTML=originalText; btn.disabled=false; }, 2000); }
   }
 }
-async function loadLogs(){if(paused)return;try{const r=await fetch(strategyUrl('/api/tradeops/logs'),{cache:'no-store',credentials:'same-origin',headers:{'Accept':'application/json'}});if(!r.ok)return;const j=await r.json();if(j&&Array.isArray(j.logs))renderLogs(j.logs)}catch(e){}}
+async function loadLogs(){if(paused || termPaused)return;try{const r=await fetch(strategyUrl('/api/tradeops/logs'),{cache:'no-store',credentials:'same-origin',headers:{'Accept':'application/json'}});if(!r.ok)return;const j=await r.json();if(j&&Array.isArray(j.logs)){
+  const valid = j.logs.filter(l => {
+    const m = String(l && (l.time || l.at) || '').match(/(\d{1,2}):(\d{2})/);
+    if(!m) return true;
+    const mins = parseInt(m[1], 10) * 60 + parseInt(m[2], 10);
+    return mins >= 450; // 07:30 AM onwards
+  });
+  window._terminalLogs = valid;
+  if(PAGE==='server-logs'){ renderTerminalLogs(valid); }
+  renderLogs(valid);
+}}catch(e){}}
 function openExecutionModal(){
   const m = document.getElementById('executionModal');
   if(m){ m.style.display='flex'; }
@@ -9315,7 +9568,75 @@ async function runExecutionReaudit(btn){
   }
 }
 function setupSidebar(){const btn=document.querySelector('.collapse-btn');if(!btn||btn._wired)return;btn._wired=true;const label=btn.querySelector('span');function sync(){const collapsed=document.body.classList.contains('tradeops-collapsed');if(label)label.textContent=collapsed?'Expand':'Collapse';btn.title=collapsed?'Expand sidebar':'Collapse sidebar'}try{if(localStorage.getItem('tradeopsSidebarCollapsed')==='1')document.body.classList.add('tradeops-collapsed')}catch(e){}sync();btn.onclick=function(){document.body.classList.toggle('tradeops-collapsed');try{localStorage.setItem('tradeopsSidebarCollapsed',document.body.classList.contains('tradeops-collapsed')?'1':'0')}catch(e){}sync()}}
+
+let termAutoScroll = true;
+let termPaused = false;
+window._terminalLogs = [];
+
+function renderTerminalLogs(logsList) {
+  const container = document.getElementById('terminalConsoleBody');
+  const countEl = document.getElementById('termLogCount');
+  if (!container) return;
+
+  const lvlFilter = (document.getElementById('termLogLevel')?.value || 'ALL').toUpperCase();
+  const searchFilter = (document.getElementById('termLogSearch')?.value || '').toLowerCase().trim();
+
+  const filtered = (logsList || window._terminalLogs || []).filter(l => {
+    const level = String(l.level || 'INFO').toUpperCase();
+    const msg = String(l.message || '').toLowerCase();
+    if (lvlFilter !== 'ALL' && level !== lvlFilter) return false;
+    if (searchFilter && !msg.includes(searchFilter)) return false;
+    return true;
+  });
+
+  const linesHtml = filtered.map(l => {
+    const level = String(l.level || 'INFO').toUpperCase();
+    const tagCls = level === 'ERROR' ? 'error' : level === 'WARN' ? 'warn' : /auth|token/i.test(l.message) ? 'auth' : /trade|order/i.test(l.message) ? 'trade' : 'info';
+    let timeStr = l.time && l.time !== 'No candle time' ? l.time : '';
+    if (!timeStr) {
+      const now = new Date();
+      timeStr = now.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true });
+    }
+    return '<div class="terminal-line"><span class="terminal-time">[' + txt(timeStr) + ']</span><span class="terminal-tag ' + tagCls + '">[' + txt(level) + ']</span><span class="terminal-msg">' + txt(l.message) + '</span></div>';
+  }).join('');
+
+  container.innerHTML = linesHtml || '<div class="terminal-line"><span class="terminal-time">[' + new Date().toLocaleTimeString('en-IN') + ']</span><span class="terminal-tag info">[INFO]</span><span class="terminal-msg">No logs matching filter criteria</span></div>';
+
+  if (countEl) countEl.textContent = 'Showing ' + filtered.length + ' events (07:30 AM – Present)';
+  if (termAutoScroll && !termPaused) {
+    container.scrollTop = container.scrollHeight;
+  }
+}
+
+function filterTerminalLogs() {
+  renderTerminalLogs(window._terminalLogs);
+}
+
+function toggleTermPause() {
+  termPaused = !termPaused;
+  const btn = document.getElementById('btnTermPause');
+  if (btn) {
+    btn.classList.toggle('active', termPaused);
+    btn.querySelector('span').textContent = termPaused ? 'Resume' : 'Pause';
+  }
+}
+
+function clearTermLogs() {
+  window._terminalLogs = [];
+  const container = document.getElementById('terminalConsoleBody');
+  if (container) container.innerHTML = '<div class="terminal-line"><span class="terminal-time">[' + new Date().toLocaleTimeString('en-IN') + ']</span><span class="terminal-tag info">[INFO]</span><span class="terminal-msg">Console cleared by user</span></div>';
+}
+
+function toggleTermAutoScroll() {
+  termAutoScroll = !termAutoScroll;
+  const btn = document.getElementById('btnTermAutoScroll');
+  if (btn) {
+    btn.classList.toggle('active', termAutoScroll);
+  }
+}
+
 function render(d){
+
   d=d||{};
   d.market=d.market||{open:false,label:'Checking',latestSession:String(d.updatedAt||new Date().toISOString()).slice(0,10)};
   d.broker=d.broker||{connected:false,tokenOK:false,accountName:'Unavailable',accountId:'Unavailable'};
@@ -10112,7 +10433,7 @@ wireWorkflowButtons();
 setupSidebar();
 hideLoader();
 let _statusPollTimer=null;function scheduleStatusPoll(){clearTimeout(_statusPollTimer);_statusPollTimer=setTimeout(async()=>{if(PAGE==='dashboard'||PAGE==='account'){await load().catch(()=>{});}scheduleStatusPoll();},5000);}
-let _logsPollTimer=null;function scheduleLogsPoll(){clearTimeout(_logsPollTimer);_logsPollTimer=setTimeout(async()=>{if(!paused){await loadLogs().catch(()=>{});}scheduleLogsPoll();},4000);}
+let _logsPollTimer=null;function scheduleLogsPoll(){clearTimeout(_logsPollTimer);const delay = (PAGE==='server-logs') ? 2000 : 4000;_logsPollTimer=setTimeout(async()=>{if(!paused && !termPaused){await loadLogs().catch(()=>{});}scheduleLogsPoll();}, delay);}
 setTimeout(()=>{scheduleStatusPoll();scheduleLogsPoll();},2500);
 </script>
 </body></html>`;
