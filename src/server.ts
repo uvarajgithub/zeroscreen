@@ -8524,6 +8524,16 @@ body.tradeops-collapsed .help,body.tradeops-collapsed .collapse-btn{justify-cont
 .flow-btn:disabled{opacity:.65!important;cursor:not-allowed!important;transform:none!important}
 .spin{animation:spin 1s linear infinite}
 @keyframes spin{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}
+@keyframes errorPulse{0%,100%{border-color:#ef4444;box-shadow:0 0 0 2px rgba(239,68,68,.25)}50%{border-color:#b91c1c;box-shadow:0 0 0 5px rgba(239,68,68,.4)}}
+.execution-gate.error-active{border:2px solid #ef4444!important;animation:errorPulse 2s infinite ease-in-out;background:#fff8f8!important}
+.execution-gate.error-active .card-h{background:#fee2e2;color:#991b1b;padding-bottom:10px}
+.exec-error-banner{background:#fef2f2;border:1px solid #fecaca;border-radius:8px;padding:10px 12px;margin:10px 0;display:flex;align-items:center;gap:10px;color:#991b1b;font-weight:700;font-size:12px}
+.exec-error-banner svg{width:18px;height:18px;flex-shrink:0;color:#ef4444}
+.exec-check-card.fail{border:1px solid #fca5a5!important;background:#fef2f2!important}
+.exec-check-card.fail div:first-child{background:#ef4444!important;color:#fff!important}
+.exec-check-card.fail b{color:#991b1b!important}
+.exec-check-card.fail span{background:#fee2e2!important;color:#991b1b!important}
+.exec-check-card.fail p{color:#b91c1c!important}
 @media(max-width:1366px){.flow-pipeline{gap:3px!important}.flow-step{height:48px!important;padding:0 7px!important;gap:6px!important}.flow-icon{width:28px!important;height:28px!important;flex:0 0 28px!important}.flow-icon svg{width:14px!important;height:14px!important}.flow-text b{font-size:11.5px!important}.flow-text span{font-size:10px!important}.flow-arrow{flex:0 0 8px!important}.flow-arrow svg{width:11px!important;height:11px!important}.flow-btn{height:34px!important;padding:0 11px!important;font-size:11.5px!important}}
 @media(max-width:1100px){.workflow{flex-direction:column!important;align-items:stretch!important;gap:10px!important}.flow-pipeline{flex-wrap:wrap!important}.flow-arrow{display:none!important}.flow-actions{justify-content:flex-end!important}}
 .pnl{grid-area:pnl!important;min-height:360px!important}
@@ -9295,13 +9305,51 @@ function render(d){
   set('heartbeat',ago(d.bot.heartbeatAgeSec));
   set('brokerSync',d.broker.connected?'Synced':'Issue');set('brokerSyncAccount',synced?'Synced':'Not synced');
   set('executionState',d.execution.status||'Checking');
+  const isBlocked = d.execution.status==='Blocked' || !d.broker.connected || !d.broker.tokenOK || !botOnline || (d.execution.blockReason && !idle && d.execution.status!=='Ready');
+  const gateCard = document.querySelector('.card.execution-gate');
+  if(gateCard){
+    gateCard.classList.toggle('error-active', !!isBlocked);
+  }
   const ready=document.getElementById('readyStrip');
-  ready.textContent=d.execution.status||'Checking';
-  ready.classList.toggle('blocked',d.execution.status==='Blocked');
-  ready.classList.toggle('idle',d.execution.status==='Idle');
-  ready.style.borderColor=d.execution.status==='Ready'?'#caefd9':d.execution.status==='Blocked'?'#ffd5d5':'#d7e4f4';
-  ready.style.background=d.execution.status==='Ready'?'#edfff5':d.execution.status==='Blocked'?'#fff4f4':'#f4f8ff';
-  ready.style.color=d.execution.status==='Ready'?'#079b55':d.execution.status==='Blocked'?'#ef4444':'#475569';
+  if(ready){
+    if(isBlocked){
+      ready.textContent='✗ BLOCKED: ' + (d.execution.blockReason || 'Action Required');
+      ready.className='ready-strip blocked';
+      ready.style.borderColor='#ef4444';
+      ready.style.background='#fee2e2';
+      ready.style.color='#b91c1c';
+    } else if(idle){
+      ready.textContent='Execution Ready (Idle)';
+      ready.className='ready-strip idle';
+      ready.style.borderColor='#caefd9';
+      ready.style.background='#edfff5';
+      ready.style.color='#079b55';
+    } else {
+      ready.textContent=d.execution.status||'Ready';
+      ready.className='ready-strip '+(d.execution.status==='Ready'?'ok':'');
+      ready.style.borderColor='#caefd9';
+      ready.style.background='#edfff5';
+      ready.style.color='#079b55';
+    }
+  }
+
+  // Dynamic Execution Checklist Pill Updates
+  const pillsEl = document.getElementById('executionPillsRow');
+  if(pillsEl){
+    const brokerOk = !!d.broker.connected;
+    const tokenOk = !!d.broker.tokenOK;
+    const botOk = !!botOnline;
+    const marginOk = !!d.pnl.marginsSynced && Number(d.pnl.balance||0) >= 196000;
+    const liveOk = String(d.strategy&&d.strategy.mode||'').toUpperCase() === 'LIVE';
+    
+    pillsEl.innerHTML = [
+      '<span class="ws-pill '+(brokerOk?'ok':'bad')+'" style="font-size:11px;padding:3px 8px;border-radius:6px;background:'+(brokerOk?'#ecfdf5':'#fee2e2')+';color:'+(brokerOk?'#059669':'#991b1b')+';border:1px solid '+(brokerOk?'#a7f3d0':'#fca5a5')+'">'+(brokerOk?'✓ Broker Verified':'✗ Broker Error')+'</span>',
+      '<span class="ws-pill '+(tokenOk?'ok':'bad')+'" style="font-size:11px;padding:3px 8px;border-radius:6px;background:'+(tokenOk?'#ecfdf5':'#fee2e2')+';color:'+(tokenOk?'#059669':'#991b1b')+';border:1px solid '+(tokenOk?'#a7f3d0':'#fca5a5')+'">'+(tokenOk?'✓ Token Valid':'✗ Token Required')+'</span>',
+      '<span class="ws-pill '+(botOk?'ok':'bad')+'" style="font-size:11px;padding:3px 8px;border-radius:6px;background:'+(botOk?'#ecfdf5':'#fee2e2')+';color:'+(botOk?'#059669':'#991b1b')+';border:1px solid '+(botOk?'#a7f3d0':'#fca5a5')+'">'+(botOk?'✓ Bot Online':'✗ Bot Offline')+'</span>',
+      '<span class="ws-pill '+(marginOk?'ok':'bad')+'" style="font-size:11px;padding:3px 8px;border-radius:6px;background:'+(marginOk?'#ecfdf5':'#fee2e2')+';color:'+(marginOk?'#059669':'#991b1b')+';border:1px solid '+(marginOk?'#a7f3d0':'#fca5a5')+'">'+(marginOk?'✓ Margin Ready ('+rs(d.pnl.balance)+')':'✗ Insufficient Margin')+'</span>',
+      '<span class="ws-pill '+(liveOk?'ok':'warn')+'" style="font-size:11px;padding:3px 8px;border-radius:6px;background:'+(liveOk?'#ecfdf5':'#fffbeb')+';color:'+(liveOk?'#059669':'#b45309')+';border:1px solid '+(liveOk?'#a7f3d0':'#fde68a')+'">'+(liveOk?'✓ LIVE Real Orders':'⚠ SHADOW Mode')+'</span>'
+    ].join('');
+  }
   const action=document.getElementById('actionStrip');
   action.classList.toggle('ready-hidden',!actionRequired);
 
