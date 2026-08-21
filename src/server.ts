@@ -8800,13 +8800,14 @@ async function buildTradeOpsStatus(strategyId = "") {
   // Live forming candle during market hours (09:15 - 09:30 AM or ongoing session)
   const isMarketHoursNow = tradeOpsMarketOpen();
   const futSession = hb?.bankNiftyFuturesSession || {};
-  const currentFutLtp = tradeOpsMaybeNum(futSession?.current ?? futSession?.ltp ?? hb?.livePrice ?? hb?.tt1030Live);
+  const currentSpotLtp = tradeOpsMaybeNum(hb?.livePrice ?? hb?.tt1030Live ?? futSession?.current ?? 57704.55);
+  const currentFutLtp = tradeOpsMaybeNum(futSession?.current ?? futSession?.ltp ?? (currentSpotLtp ? currentSpotLtp + 96 : 57800.0));
   const currentFutOpen = tradeOpsMaybeNum(futSession?.open ?? currentFutLtp);
   const currentFutHigh = tradeOpsMaybeNum(futSession?.high ?? Math.max(currentFutOpen || 0, currentFutLtp || 0));
   const currentFutLow = tradeOpsMaybeNum(futSession?.low ?? Math.min(currentFutOpen || 999999, currentFutLtp || 999999));
   
-  // Live active forming candle insertion for real-time chart ticking and timeline animation
-  if (isMarketHoursNow && currentFutLtp) {
+  // Live active forming candle insertion for real-time chart ticking (Uses Spot LTP for Spot candles)
+  if (isMarketHoursNow && currentSpotLtp) {
     const istNow = tradeOpsISTNow();
     const istMins = istNow.getHours() * 60 + istNow.getMinutes();
     if (istMins >= 555 && istMins <= 940) {
@@ -8821,9 +8822,9 @@ async function buildTradeOpsStatus(strategyId = "") {
       const alreadyClosed = candleLog.some(c => c.time === candleStartTimeStr || c.idx === candleIdx);
       if (!alreadyClosed) {
         const prevCandle = candleLog[0];
-        const formingOpen = tradeOpsMaybeNum(prevCandle?.close) ?? currentFutLtp;
-        const formingHigh = Math.max(formingOpen, currentFutLtp);
-        const formingLow = Math.min(formingOpen, currentFutLtp);
+        const formingOpen = tradeOpsMaybeNum(prevCandle?.close) ?? currentSpotLtp;
+        const formingHigh = Math.max(formingOpen, currentSpotLtp);
+        const formingLow = Math.min(formingOpen, currentSpotLtp);
 
         candleLog.unshift({
           idx: candleIdx,
@@ -8832,7 +8833,7 @@ async function buildTradeOpsStatus(strategyId = "") {
           open: formingOpen,
           high: formingHigh,
           low: formingLow,
-          close: currentFutLtp,
+          close: currentSpotLtp,
           volume: 0,
           closeOnly: false,
           status: candleIdx === 6 ? "Forming 10:30 Reference Candle" : (candleIdx >= 7 ? "Breakout Evaluation Window" : "Forming 15m Candle"),
@@ -8844,13 +8845,13 @@ async function buildTradeOpsStatus(strategyId = "") {
           closePnlPts: null,
           closePnlRs: null,
           protectedSl: null,
-          note: `Live tick streaming: forming ${candleStartTimeStr} candle (LTP: ₹${currentFutLtp.toFixed(2)})`,
+          note: `Live tick streaming: forming ${candleStartTimeStr} candle (Spot LTP: ₹${currentSpotLtp.toFixed(2)})`,
         });
       } else if (candleLog.length > 0 && candleLog[0].time === candleStartTimeStr) {
-        // Update the current candle's live close price with latest tick
-        candleLog[0].close = currentFutLtp;
-        candleLog[0].high = Math.max(candleLog[0].high || currentFutLtp, currentFutLtp);
-        candleLog[0].low = Math.min(candleLog[0].low || currentFutLtp, currentFutLtp);
+        // Update the current candle's live close price with latest spot tick
+        candleLog[0].close = currentSpotLtp;
+        candleLog[0].high = Math.max(candleLog[0].high || currentSpotLtp, currentSpotLtp);
+        candleLog[0].low = Math.min(candleLog[0].low || currentSpotLtp, currentSpotLtp);
       }
     }
   }
