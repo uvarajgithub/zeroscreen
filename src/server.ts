@@ -1004,6 +1004,35 @@ app.get("/signup", featureGate("registration_open", "New Registrations"), (req: 
   max-height: 260px !important;
 }
 
+
+/* Animated TradeOps Workflow Pipeline */
+.flow-pipeline {
+  position: relative;
+}
+.flow-arrow svg {
+  animation: flowPulse 2s ease-in-out infinite;
+  color: #10b981;
+}
+@keyframes flowPulse {
+  0%, 100% { transform: translateX(0); opacity: 0.5; }
+  50% { transform: translateX(4px); opacity: 1; filter: drop-shadow(0 0 4px #10b981); }
+}
+.flow-step {
+  transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1) !important;
+  position: relative;
+}
+.flow-step:hover {
+  transform: translateY(-2px) !important;
+  box-shadow: 0 6px 18px rgba(16, 185, 129, 0.18) !important;
+}
+.flow-ok.pass {
+  animation: badgeGlow 2.5s ease-in-out infinite;
+}
+@keyframes badgeGlow {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.5); }
+  50% { box-shadow: 0 0 0 5px rgba(16, 185, 129, 0); }
+}
+
 </style>
 </head>
 <body class="auth-body landing-page">
@@ -7375,9 +7404,16 @@ function buildTradeOpsLogPreview() {
         }).filter((x: any) => tradeOpsDateKey(x?.at) === today);
     } catch { return []; }
   })();
-  const heartbeatLogRows = (hb?.logs || hb?.serverLogs || []).slice(-20).filter((x: any) => {
+  function isAfter730AM(timeStr: string) {
+    const m = String(timeStr || '').match(/(\d{1,2}):(\d{2})/);
+    if (!m) return true;
+    const mins = parseInt(m[1], 10) * 60 + parseInt(m[2], 10);
+    return mins >= 450; // 07:30 AM (7*60 + 30)
+  }
+  const heartbeatLogRows = (hb?.logs || hb?.serverLogs || []).slice(-60).filter((x: any) => {
     const raw = x?.time || x?.at || x?.message || x;
-    return tradeOpsLogDateKey(raw) === today;
+    const tStr = String(x?.time || x?.at || '');
+    return tradeOpsLogDateKey(raw) === today && isAfter730AM(tStr);
   }).map((x: any) => {
     const message = tradeOpsSanitizeLog(x?.message || x);
     const rawLevel = String(x?.level || "INFO").toUpperCase();
@@ -9022,7 +9058,6 @@ body.tradeops-collapsed .help,body.tradeops-collapsed .collapse-btn{justify-cont
           </div>
           <div class="flow-actions">
             <button class="flow-btn" id="refreshTokenBtn" title="Start automatic token refresh" type="button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M21 12a9 9 0 0 1-15.5 6.2"/><path d="M3 12A9 9 0 0 1 18.5 5.8"/><path d="M18 2v4h-4"/><path d="M6 22v-4h4"/></svg><span>Refresh Token</span></button>
-            <button class="flow-btn" id="syncAccountBtn" title="Sync broker account balance & margin" type="button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg><span>Sync Account</span></button>
           </div>
         </section>
         <section class="card pnl"><div class="card-h"><span class="pnl-head"><span id="pnlCardTitle">Live Position &amp; Session P&amp;L</span> <span class="dot ok"></span><span class="ok" id="pnlLiveLabel">Live</span></span><a class="pnl-link" href="/tradeops/trade-history">Trade History &rsaquo;</a></div><div class="card-b"><div style="display:flex;align-items:baseline;justify-content:space-between;flex-wrap:wrap;gap:8px"><div id="pnlMetricLabel" class="pnl-label" style="font-size:13px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:#64748b">Net Session P&amp;L</div><div id="pnlRealizedSub" style="font-size:12px;font-weight:600;color:#64748b">Realized: <b id="realized" style="color:#0f172a">₹0</b> &middot; Unrealized: <b id="unrealized" style="color:#0f172a">₹0</b></div></div><div class="pnl-main" style="margin:6px 0 14px"><div style="display:flex;align-items:center;gap:12px"><div id="netPnl" class="pnl-value" style="font-size:38px;font-weight:850;line-height:1.1;letter-spacing:-1px">₹0</div><span id="profitChip" class="profit-pill" style="display:none;font-size:12px;padding:4px 10px">Flat</span></div><div id="pnlSupport" class="pnl-support" style="font-weight:600;font-size:13px;margin-top:4px;color:#059669">Flat &middot; Waiting for 10:30 AM Breakout</div></div><!-- 3-Trade Session Breakdown Cards --><div style="margin-bottom:14px"><div style="font-size:11.5px;font-weight:750;text-transform:uppercase;color:#475569;margin-bottom:6px;letter-spacing:.4px">Today's Trade Breakdown (Max 3 / Day)</div><div style="display:grid;grid-template-columns:repeat(3,1fr);gap:6px" id="tradeBreakdownGrid"><div class="trade-slot-card" id="tradeSlot1" style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:10px 12px"><div style="display:flex;align-items:center;justify-content:space-between"><span style="font-size:11px;font-weight:800;color:#334155">TRADE 1</span><span id="trade1Badge" style="font-size:10px;font-weight:750;padding:1px 6px;border-radius:4px;background:#e2e8f0;color:#475569">Standby</span></div><b id="trade1Pnl" style="font-size:14px;color:#0f172a;display:block;margin:4px 0 2px">Awaiting 10:30</b><span id="trade1Sub" style="font-size:10.5px;color:#64748b">1st Breakout Signal</span></div><div class="trade-slot-card" id="tradeSlot2" style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:10px 12px"><div style="display:flex;align-items:center;justify-content:space-between"><span style="font-size:11px;font-weight:800;color:#334155">TRADE 2</span><span id="trade2Badge" style="font-size:10px;font-weight:750;padding:1px 6px;border-radius:4px;background:#e2e8f0;color:#475569">Standby</span></div><b id="trade2Pnl" style="font-size:14px;color:#0f172a;display:block;margin:4px 0 2px">Standby</b><span id="trade2Sub" style="font-size:10.5px;color:#64748b">2nd Breakout Signal</span></div><div class="trade-slot-card" id="tradeSlot3" style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:10px 12px"><div style="display:flex;align-items:center;justify-content:space-between"><span style="font-size:11px;font-weight:800;color:#334155">TRADE 3</span><span id="trade3Badge" style="font-size:10px;font-weight:750;padding:1px 6px;border-radius:4px;background:#e2e8f0;color:#475569">Standby</span></div><b id="trade3Pnl" style="font-size:14px;color:#0f172a;display:block;margin:4px 0 2px">Standby</b><span id="trade3Sub" style="font-size:10.5px;color:#64748b">Max Daily Limit</span></div></div></div><div class="metric-grid"><div class="metric"><label>Position Status</label><b id="posStatus" class="ok">Flat (Waiting 10:30 AM)</b></div><div class="metric"><label>Today's Trades</label><b id="sessionTrades" class="ok">0 / 3 Max</b></div><div class="metric emphasis"><label>Profit Guard</label><b id="profitLockStatus" class="ok">+50pt Lock Active</b></div><div class="metric"><label>Max Risk Guard</label><b id="maxRiskGuard" class="warn">₹3,000 / Day</b></div><div class="metric"><label>Points Captured</label><b id="ptsCaptured" class="ok">+0.0 pts</b></div><div class="metric"><label>Exit Safeguard</label><b id="sessionWinRate" class="ok">15:15 EOD Exit</b></div></div><div class="pnl-foot"><span>Instrument: <b id="pnlInstrument">BANKNIFTY FUT (30 Qty)</b></span><span>Broker: <b id="pnlBroker">Zerodha Kite (LIVE)</b></span><span>Last Sync: <b id="pnlUpdated">--</b></span></div></div></section>
@@ -9705,7 +9740,13 @@ function render(d){
     standardPage('Candle Logs','Daily 15m operational candle log with entry state and P&L at each close.',[kpi('Candles',String(candles.length),pill(candles.length?'Current session':'No data',candles.length?'ok':'warn'),'&#9636;'),kpi('Timeframe','15m',pill('Operational','ok'),'&#9719;'),kpi('Trade Entry',candles.find(c=>c.entry!=null)?txt(candles.find(c=>c.entry!=null).entry):'No entry',pill('Daily','ok'),'&#8594;'),kpi('Latest Candle P&L',candles[0]&&candles[0].pnlRs!=null?rs(candles[0].pnlRs):'--',pill('At close','warn'),'&#8377;'),kpi('Last Candle',candles[0]?txt(candles[0].time):'No candle',pill('Latest','warn'),'&#9719;')],'',tableCard('Daily Candle Log',[{t:'#',right:1},{t:'Time'},{t:'Open',right:1},{t:'High',right:1},{t:'Low',right:1},{t:'Close',right:1},{t:'State'},{t:'Entry',right:1},{t:'Side'},{t:'SL',right:1},{t:'P&L @ Close',right:1},{t:'Note'}],rows,empty('&#9636;','No 15m candles recorded','The first completed market candle has not been recorded yet.',{href:'/tradeops/health',label:'Check Feed'}),' '+candles.length+' candles'),'');return;
   }
   if(PAGE==='server-logs'){
-    const grouped=[];logs.forEach(l=>{const prev=grouped[grouped.length-1];const key=String(l.level||'')+'|'+String(l.message||'').replace(/attempt \\d+/i,'attempt #');if(prev&&prev.key===key){prev.count++}else grouped.push({key,count:1,row:l})});
+    const validLogs = logs.filter(l => {
+      const m = String(l && l.time || '').match(/(\d{1,2}):(\d{2})/);
+      if(!m) return true;
+      const mins = parseInt(m[1], 10) * 60 + parseInt(m[2], 10);
+      return mins >= 450; // 07:30 AM onwards
+    });
+    const grouped=[];validLogs.forEach(l=>{const prev=grouped[grouped.length-1];const key=String(l.level||'')+'|'+String(l.message||'').replace(/attempt \\d+/i,'attempt #');if(prev&&prev.key===key){prev.count++}else grouped.push({key,count:1,row:l})});
     const logControls='<section class="ws-card log-filter-card"><div class="ws-card-b"><div class="filter-bar" data-skip-workspace-wire="1"><select id="serverLogLevel"><option value="ALL">All Levels</option><option value="INFO">INFO</option><option value="WARN">WARN</option><option value="ERROR">ERROR</option></select><input id="serverLogSearch" placeholder="Search server logs..."><button id="serverLogApply" class="btn primary" type="button">Apply Filter</button><button id="serverLogReset" class="btn" type="button">Reset</button><button class="btn" type="button" onclick="loadLogs()">Refresh Logs</button></div></div></section>';
     const consoleHtml='<section class="ws-card server-log-full"><div class="ws-card-h"><span>Server Log Console <span class="dot ok"></span> <span class="ok">Live</span></span><div class="log-actions"><button class="btn" id="pauseLogsPage" type="button">Pause</button><button class="btn" id="clearLogsPage" type="button">Clear Preview</button><button class="btn" type="button" onclick="load()">Refresh</button></div></div><div class="ws-card-b"><div class="console full"><div id="workspaceLogs" class="logs">'+(grouped.length?grouped.slice(0,120).map(g=>{const l=g.row;const msg=g.count>1?l.message+' repeated '+g.count+' times':l.message;return '<div><span class="muted">'+txt(l.time)+'</span> <span class="'+(l.level==='ERROR'?'error':l.level==='WARN'?'warn':'info')+'">['+txt(l.level)+']</span> '+txt(msg)+'</div>'}).join(''):'<div class="muted">No server logs recorded yet</div>')+'</div></div></div></section>';
     standardPage('Server Logs','Review current TradeOps heartbeat, feed, audit, and execution events.',[kpi('Log Lines',String(logs.length),pill('Current session','ok'),'&#9636;'),kpi('Errors',String(logs.filter(l=>l.level==='ERROR').length),pill('Watch','bad'),'&#10005;'),kpi('Warnings',String(logs.filter(l=>l.level==='WARN').length),pill('Review','warn'),'&#9888;'),kpi('Info',String(logs.filter(l=>l.level==='INFO').length),pill('Normal','ok'),'&#10003;'),kpi('Source','Trading bot',pill(d.bot&&d.bot.isAlive?'Connected':'Stale',d.bot&&d.bot.isAlive?'ok':'warn'),'&#9719;')],logControls,consoleHtml,sidePanel('Console Scope',[['Records','Current session'],['Service','TradeOps trading bot'],['Source','Heartbeat + live audit'],['Grouping','Repeated events grouped']]));setTimeout(()=>{const p=document.getElementById('pauseLogsPage');if(p&&!p._wired){p._wired=true;p.onclick=function(){paused=!paused;p.textContent=paused?'Resume':'Pause'}}const c=document.getElementById('clearLogsPage');if(c&&!c._wired){c._wired=true;c.onclick=function(){const x=document.getElementById('workspaceLogs');if(x)x.innerHTML='<div class="muted">Preview cleared. Refresh to reload server logs.</div>'}}const level=document.getElementById('serverLogLevel');const search=document.getElementById('serverLogSearch');const apply=document.getElementById('serverLogApply');const reset=document.getElementById('serverLogReset');if(apply)apply.onclick=function(){logLevelFilter=level?level.value:'ALL';logQuery=String(search&&search.value||'').trim().toLowerCase();renderLogs(logs)};if(search)search.onkeydown=function(e){if(e.key==='Enter'&&apply)apply.click()};if(reset)reset.onclick=function(){logLevelFilter='ALL';logQuery='';if(level)level.value='ALL';if(search)search.value='';renderLogs(logs)}} ,0);return;
