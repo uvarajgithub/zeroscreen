@@ -8558,15 +8558,21 @@ async function buildTradeOpsStatus(strategyId = "") {
   let openPositions = (broker.positions || [])
     .filter((p: any) => tradeOpsNum(p.quantity) !== 0)
     .filter((p: any) => tradeOpsIsFuturesTrade(p))
-    .map((p: any) => ({
-      symbol: tradeOpsSanitizeSymbol(p.tradingsymbol || "BANKNIFTY26AUGFUT"),
-      qty: tradeOpsNum(p.quantity),
-      avg: tradeOpsNum(p.average_price),
-      ltp: tradeOpsNum(p.last_price || currentFutLtpEarly),
-      pnl: tradeOpsNum(p.pnl || computedUnrealized),
-      product: p.product || "MIS",
-      status: "Open",
-    }));
+    .map((p: any) => {
+      const q = tradeOpsNum(p.quantity);
+      const avg = tradeOpsNum(p.average_price);
+      const ltp = tradeOpsNum(currentFutLtpEarly || p.last_price);
+      const dynamicPnl = (avg > 0 && ltp > 0) ? Math.round(q * (ltp - avg)) : tradeOpsNum(p.pnl);
+      return {
+        symbol: tradeOpsSanitizeSymbol(p.tradingsymbol || "BANKNIFTY26AUGFUT"),
+        qty: q,
+        avg: avg,
+        ltp: ltp,
+        pnl: dynamicPnl,
+        product: p.product || "MIS",
+        status: "Open",
+      };
+    });
 
   if (!openPositions.length && stateInTrade) {
     openPositions.push({
@@ -8579,6 +8585,10 @@ async function buildTradeOpsStatus(strategyId = "") {
       status: "Open",
     });
   }
+
+  const livePosPnl = (openPositions.length > 0 && Number.isFinite(openPositions[0].pnl)) ? Number(openPositions[0].pnl) : computedUnrealized;
+  const activeUnrealized = (stateInTrade || openPositions.length > 0) ? livePosPnl : 0;
+  const activeNetPnl = (live1030Closed || 0) + activeUnrealized;
 
   const equity = broker.margins?.equity || null;
   const liveBal = Number(equity?.available?.live_balance ?? 0);
@@ -8996,7 +9006,7 @@ async function buildTradeOpsStatus(strategyId = "") {
       uptime: hb?.uptime || "Unavailable",
     },
     pnl: {
-      net: netPnl,
+      net: activeNetPnl,
       realized,
       unrealized,
       todayHigh,
