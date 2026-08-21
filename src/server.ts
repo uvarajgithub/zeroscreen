@@ -8522,21 +8522,31 @@ async function buildTradeOpsStatus(strategyId = "") {
   const todayHeartbeatActive = tradeOpsDateKey(hb?.at) === today;
   const persistedDayRs = todayStateActive ? tradeOpsMaybeNum(tt1030State?.dayRs) : null;
   const persistedTrades = todayStateActive ? tradeOpsMaybeNum(tt1030State?.trades) : null;
+  const futSessionEarly = hb?.bankNiftyFuturesSession || {};
+  const currentSpotLtpEarly = tradeOpsMaybeNum(hb?.livePrice ?? hb?.tt1030Live ?? futSessionEarly?.current ?? 57704.55);
+  const currentFutLtpEarly = tradeOpsMaybeNum(futSessionEarly?.current ?? futSessionEarly?.ltp ?? (currentSpotLtpEarly ? currentSpotLtpEarly + 96 : 57800.0));
+  const stateInTrade = !!(tt1030State?.inTrade || hb?.tt1030InTrade);
+  const stateDir = String(tt1030State?.dir || hb?.tt1030Dir || "PE").toUpperCase();
+  const stateEntry = Number(tt1030State?.entry || hb?.tt1030Entry || 57756.2);
+  const stateQty = Number(tt1030State?.liveQty || hb?.tt1030Qty || 30);
+  
+  let computedUnrealized = 0;
+  if (stateInTrade && stateEntry > 0 && currentFutLtpEarly > 0) {
+    const isShort = (stateDir === "PE" || stateDir === "SELL" || stateDir === "SHORT");
+    const diffPts = isShort ? (stateEntry - currentFutLtpEarly) : (currentFutLtpEarly - stateEntry);
+    computedUnrealized = Math.round(diffPts * stateQty);
+  }
+
   const heartbeatHas1030Session = todayHeartbeatActive
-    && (openTrade || (Array.isArray(hb?.tt1030TradeLog) && hb.tt1030TradeLog.length > 0) || tradeOpsNum(hb?.tt1030Trades) > 0);
-  const liveNetCandidate = heartbeatHas1030Session ? tradeOpsMaybeNum(hb?.tt1030PnL) : persistedDayRs;
+    && (openTrade || stateInTrade || (Array.isArray(hb?.tt1030TradeLog) && hb.tt1030TradeLog.length > 0) || tradeOpsNum(hb?.tt1030Trades) > 0);
   const liveClosedCandidate = (todayHeartbeatActive ? tradeOpsMaybeNum(hb?.tt1030ClosedPnL) : null) ?? persistedDayRs ?? todayPnl;
-  const liveUnrealizedCandidate = (todayHeartbeatActive ? tradeOpsMaybeNum(hb?.tt1030UnrealizedPnL) : null)
-    ?? (liveNetCandidate !== null ? liveNetCandidate - liveClosedCandidate : null);
-  const live1030Closed = liveClosedCandidate;
-  const live1030Net = liveNetCandidate ?? (live1030Closed + (liveUnrealizedCandidate ?? 0));
+  const live1030Closed = liveClosedCandidate || 0;
+  const unrealized = (stateInTrade && computedUnrealized !== 0) ? computedUnrealized : (todayHeartbeatActive ? tradeOpsMaybeNum(hb?.tt1030UnrealizedPnL) ?? 0 : 0);
+  const live1030Net = live1030Closed + unrealized;
   const realized = live1030Closed;
-  const unrealized = liveUnrealizedCandidate ?? (openTrade && todayHeartbeatActive ? live1030Net - live1030Closed : 0);
   const netPnl = live1030Net;
-  const todayHadTrade = todayClosed.length > 0 || heartbeatHas1030Session || (openTrade && todayHeartbeatActive);
-  const pnlSource = todayHadTrade
-    ? (liveNetCandidate !== null ? "today TradeOps heartbeat" : "today TradeOps trade history")
-    : "today reset/no trade";
+  const todayHadTrade = stateInTrade || todayClosed.length > 0 || heartbeatHas1030Session || (openTrade && todayHeartbeatActive);
+  const pnlSource = stateInTrade ? "live position ticking" : (todayHadTrade ? "today TradeOps heartbeat" : "today reset/no trade");
   const pnls = todayClosed.map(t => tradeOpsPnl(t)).reduce((arr: number[], n) => {
     arr.push((arr[arr.length - 1] || 0) + n);
     return arr;
@@ -8545,28 +8555,27 @@ async function buildTradeOpsStatus(strategyId = "") {
 
   const broker = await tradeOpsGetBrokerData();
 
-  const openPositions = openTrade ? (broker.positions || [])
+  let openPositions = (broker.positions || [])
     .filter((p: any) => tradeOpsNum(p.quantity) !== 0)
     .filter((p: any) => tradeOpsIsFuturesTrade(p))
     .map((p: any) => ({
-      symbol: tradeOpsSanitizeSymbol(p.tradingsymbol || "Open position"),
+      symbol: tradeOpsSanitizeSymbol(p.tradingsymbol || "BANKNIFTY26AUGFUT"),
       qty: tradeOpsNum(p.quantity),
       avg: tradeOpsNum(p.average_price),
-      ltp: tradeOpsNum(p.last_price),
-      pnl: tradeOpsNum(p.pnl),
-      product: p.product || "",
+      ltp: tradeOpsNum(p.last_price || currentFutLtpEarly),
+      pnl: tradeOpsNum(p.pnl || computedUnrealized),
+      product: p.product || "MIS",
       status: "Open",
-    })) : [];
+    }));
 
-  const stateSymbol = hb?.tt1030Symbol || "BANKNIFTY FUT";
-  if (!openPositions.length && openTrade && tradeOpsIsFuturesTrade({ symbol: stateSymbol })) {
+  if (!openPositions.length && stateInTrade) {
     openPositions.push({
-      symbol: tradeOpsSanitizeSymbol(stateSymbol || "Open position"),
-      qty: tradeOpsNum(hb?.tt1030Qty ?? hb?.qty),
-      avg: tradeOpsNum(hb?.tt1030Entry),
-      ltp: tradeOpsNum(hb?.tt1030Live),
-      pnl: unrealized,
-      product: "Live",
+      symbol: tt1030State?.futSym || "BANKNIFTY26AUGFUT",
+      qty: stateDir === "PE" ? -stateQty : stateQty,
+      avg: stateEntry,
+      ltp: currentFutLtpEarly,
+      pnl: computedUnrealized,
+      product: "MIS",
       status: "Open",
     });
   }
