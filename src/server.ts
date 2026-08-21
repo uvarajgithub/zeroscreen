@@ -7553,10 +7553,15 @@ async function buildTradeOpsStatus(strategyId = "") {
   }
 
   const equity = broker.margins?.equity || null;
-  const availableRaw = tradeOpsMaybeNum(equity?.available?.cash ?? equity?.available?.live_balance ?? equity?.available?.opening_balance);
-  const usedRaw = tradeOpsMaybeNum(equity?.utilised?.debits ?? equity?.utilised?.span ?? equity?.utilised?.exposure);
-  const totalBalanceRaw = tradeOpsMaybeNum(equity?.net);
-  const marginsSynced = !!(broker.ok && equity && (availableRaw !== null || usedRaw !== null || totalBalanceRaw !== null));
+  const liveBal = Number(equity?.available?.live_balance ?? 0);
+  const netBal = Number(equity?.net ?? 0);
+  const cashBal = Number(equity?.available?.cash ?? 0);
+  const payinBal = Number(equity?.available?.intraday_payin ?? 0);
+  const openBal = Number(equity?.available?.opening_balance ?? 0);
+  const availableRaw = liveBal > 0 ? liveBal : (netBal > 0 ? netBal : (payinBal > 0 ? payinBal : (cashBal > 0 ? cashBal : openBal)));
+  const usedRaw = tradeOpsMaybeNum(equity?.utilised?.debits ?? equity?.utilised?.span ?? equity?.utilised?.exposure) ?? 0;
+  const totalBalanceRaw = netBal > 0 ? netBal : (availableRaw + usedRaw);
+  const marginsSynced = !!(broker.ok && equity);
   const available = availableRaw ?? 0;
   const used = usedRaw ?? 0;
   const totalBalance = totalBalanceRaw ?? (marginsSynced ? available + used : 0);
