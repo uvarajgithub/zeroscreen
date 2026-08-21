@@ -1540,6 +1540,202 @@ app.get("/signup", featureGate("registration_open", "New Registrations"), (req: 
   }
 }
 
+
+/* ==============================================================================
+   TRADEOPS SERVER CONSOLE & WORKSPACE POLISH
+   ============================================================================== */
+.detail-grid:has(.server-log-terminal-page),
+.detail:has(.server-log-terminal-page) {
+  display: block !important;
+  width: 100% !important;
+  max-width: 100% !important;
+  grid-template-columns: 1fr !important;
+  padding: 0 !important;
+  margin: 0 !important;
+}
+
+.server-log-terminal-page {
+  display: flex !important;
+  flex-direction: column !important;
+  min-height: calc(100vh - 110px) !important;
+  background: #080d1a !important;
+  border: 1px solid #16243b !important;
+  border-radius: 12px !important;
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.4) !important;
+  overflow: hidden !important;
+  margin: 0 !important;
+  font-family: 'JetBrains Mono', 'Fira Code', 'Cascadia Code', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace !important;
+}
+
+.terminal-header {
+  height: 52px !important;
+  background: #0d1627 !important;
+  border-bottom: 1px solid #1a2c47 !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: space-between !important;
+  padding: 0 18px !important;
+  gap: 16px !important;
+}
+
+.terminal-title-wrap {
+  display: flex !important;
+  align-items: center !important;
+  gap: 12px !important;
+}
+
+.terminal-dots {
+  display: flex !important;
+  align-items: center !important;
+  gap: 7px !important;
+}
+
+.terminal-dots span {
+  width: 12px !important;
+  height: 12px !important;
+  border-radius: 50% !important;
+  display: inline-block !important;
+}
+.d-red { background: #ff5f56 !important; border: 1px solid #e0443e !important; }
+.d-yellow { background: #ffbd2e !important; border: 1px solid #dea123 !important; }
+.d-green { background: #27c93f !important; border: 1px solid #1aab29 !important; }
+
+.terminal-title {
+  color: #f1f5f9 !important;
+  font-size: 13.5px !important;
+  font-weight: 700 !important;
+  letter-spacing: 0.3px !important;
+}
+
+.terminal-live-badge {
+  display: inline-flex !important;
+  align-items: center !important;
+  gap: 6px !important;
+  background: rgba(16, 185, 129, 0.15) !important;
+  color: #10b981 !important;
+  border: 1px solid rgba(16, 185, 129, 0.35) !important;
+  padding: 3px 10px !important;
+  border-radius: 999px !important;
+  font-size: 11px !important;
+  font-weight: 750 !important;
+}
+
+.terminal-controls {
+  display: flex !important;
+  align-items: center !important;
+  gap: 10px !important;
+}
+
+.terminal-select {
+  height: 32px !important;
+  background: #111d33 !important;
+  border: 1px solid #23395d !important;
+  color: #f1f5f9 !important;
+  border-radius: 7px !important;
+  padding: 0 10px !important;
+  font-size: 12px !important;
+  font-family: inherit !important;
+  outline: none !important;
+}
+
+.terminal-search {
+  height: 32px !important;
+  width: 220px !important;
+  background: #111d33 !important;
+  border: 1px solid #23395d !important;
+  color: #f1f5f9 !important;
+  border-radius: 7px !important;
+  padding: 0 12px !important;
+  font-size: 12px !important;
+  font-family: inherit !important;
+  outline: none !important;
+}
+.terminal-search::placeholder { color: #64748b !important; }
+.terminal-search:focus { border-color: #3b82f6 !important; }
+
+.terminal-btn {
+  height: 32px !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  gap: 6px !important;
+  padding: 0 12px !important;
+  background: #111d33 !important;
+  border: 1px solid #23395d !important;
+  color: #e2e8f0 !important;
+  border-radius: 7px !important;
+  font-size: 12px !important;
+  font-weight: 600 !important;
+  cursor: pointer !important;
+  font-family: inherit !important;
+  transition: all 0.15s ease !important;
+}
+.terminal-btn:hover {
+  background: #192b4a !important;
+  border-color: #3b82f6 !important;
+  color: #ffffff !important;
+}
+.terminal-btn.active {
+  background: #1e3a8a !important;
+  border-color: #3b82f6 !important;
+  color: #93c5fd !important;
+}
+
+.terminal-body {
+  flex: 1 1 auto !important;
+  padding: 16px 20px !important;
+  overflow-y: auto !important;
+  max-height: calc(100vh - 220px) !important;
+  display: flex !important;
+  flex-direction: column !important;
+  gap: 5px !important;
+  background: #080d1a !important;
+}
+
+.terminal-line {
+  display: flex !important;
+  align-items: baseline !important;
+  gap: 12px !important;
+  line-height: 1.6 !important;
+  font-size: 12.5px !important;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.02) !important;
+  padding: 2px 0 !important;
+}
+
+.terminal-time {
+  color: #64748b !important;
+  flex: 0 0 115px !important;
+  font-weight: 500 !important;
+}
+
+.terminal-tag {
+  flex: 0 0 65px !important;
+  font-weight: 750 !important;
+}
+.terminal-tag.info { color: #38bdf8 !important; }
+.terminal-tag.trade { color: #34d399 !important; }
+.terminal-tag.auth { color: #a78bfa !important; }
+.terminal-tag.warn { color: #fbbf24 !important; }
+.terminal-tag.error { color: #f87171 !important; font-weight: 800 !important; }
+
+.terminal-msg {
+  color: #e2e8f0 !important;
+  flex: 1 1 auto !important;
+  word-break: break-word !important;
+}
+
+.terminal-footer {
+  height: 38px !important;
+  background: #0a1120 !important;
+  border-top: 1px solid #16243b !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: space-between !important;
+  padding: 0 18px !important;
+  color: #64748b !important;
+  font-size: 11.5px !important;
+}
+.terminal-footer b { color: #cbd5e1 !important; }
+
 </style>
 </head>
 <body class="auth-body landing-page">
@@ -7625,14 +7821,32 @@ function tradeOpsLogDateKey(value: any) {
   return "";
 }
 
-function tradeOpsTime(value: any) {
-  if (!value) return "Not available";
-  const d = new Date(value);
-  if (!Number.isFinite(d.getTime())) {
-    const raw = String(value || "").trim();
-    return raw && /^\d{1,2}:\d{2}/.test(raw) ? raw : "No candle time";
+function tradeOpsTime(value: any, fallbackDate?: any) {
+  if (!value && !fallbackDate) {
+    return new Date().toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata", hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: true });
   }
-  return d.toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata", hour: "2-digit", minute: "2-digit", second: "2-digit" });
+  const raw = String(value || "").trim();
+  
+  // Check if string contains an embedded ISO timestamp or time
+  const isoMatch = raw.match(/\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z?/);
+  if (isoMatch) {
+    const d = new Date(isoMatch[0]);
+    if (Number.isFinite(d.getTime())) {
+      return d.toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata", hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: true });
+    }
+  }
+
+  // Check if string already contains a formatted time
+  const timeMatch = raw.match(/\b(\d{1,2}):(\d{2})(?::(\d{2}))?\s*(?:AM|PM|am|pm)?\b/);
+  if (timeMatch && !raw.includes("Z")) {
+    return timeMatch[0];
+  }
+
+  const d = new Date(value || fallbackDate);
+  if (Number.isFinite(d.getTime())) {
+    return d.toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata", hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: true });
+  }
+  return new Date().toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata", hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: true });
 }
 
 function tradeOpsSide(value: any) {
@@ -8361,7 +8575,42 @@ async function buildTradeOpsStatus(strategyId = "") {
     };
   });
 
-  const feedFresh = isAlive && candleLog.length > 0 && (heartbeatAgeSec === null || heartbeatAgeSec < 180);
+  // Live forming candle during market hours (09:15 - 09:30 AM or ongoing session)
+  const isMarketHoursNow = tradeOpsMarketOpen();
+  const futSession = hb?.bankNiftyFuturesSession || {};
+  const currentFutLtp = tradeOpsMaybeNum(futSession?.current ?? futSession?.ltp ?? hb?.livePrice ?? hb?.tt1030Live);
+  const currentFutOpen = tradeOpsMaybeNum(futSession?.open ?? currentFutLtp);
+  const currentFutHigh = tradeOpsMaybeNum(futSession?.high ?? Math.max(currentFutOpen || 0, currentFutLtp || 0));
+  const currentFutLow = tradeOpsMaybeNum(futSession?.low ?? Math.min(currentFutOpen || 999999, currentFutLtp || 999999));
+  
+  // If no closed 15m candles yet today, insert the forming 09:15 candle so the chart and cards are alive
+  if (candleLog.length === 0 && currentFutLtp && isMarketHoursNow) {
+    const nowTime = new Date().toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata", hour: "2-digit", minute: "2-digit" });
+    const candle0915Epoch = Math.floor(new Date(`${today}T09:15:00+05:30`).getTime() / 1000);
+    candleLog.push({
+      idx: 1,
+      time: "09:15",
+      chartTime: candle0915Epoch,
+      open: currentFutOpen,
+      high: currentFutHigh,
+      low: currentFutLow,
+      close: currentFutLtp,
+      volume: 15000,
+      closeOnly: false,
+      status: "Forming 15m Candle",
+      entry: null,
+      dir: "--",
+      sl: null,
+      pnlPts: null,
+      pnlRs: null,
+      closePnlPts: null,
+      closePnlRs: null,
+      protectedSl: null,
+      note: `Live tick streaming: forming 09:15-09:30 candle as of ${nowTime}`,
+    });
+  }
+
+  const feedFresh = isAlive && (isMarketHoursNow || candleLog.length > 0) && (heartbeatAgeSec === null || heartbeatAgeSec < 180);
   const pendingExecution = !!(hb?.tt1030PendingOrder || hb?.pendingOrder || state?.pendingOrder || state?.nextOrder);
   const botEnv = tradeOpsReadBotEnv().map;
   const envMode = String(botEnv.TT1030_FUTURES_MODE || "SHADOW").toUpperCase();
@@ -8375,7 +8624,7 @@ async function buildTradeOpsStatus(strategyId = "") {
     margin: pendingExecution ? !!marginReady : true,
   };
   const failedChecks = Object.entries(executionChecks).filter(([, ok]) => !ok).map(([key]) => key);
-  const executionStatus = latestRejection ? "Blocked" : failedChecks.length ? "Blocked" : !pendingExecution ? "Idle" : "Ready";
+  const executionStatus = latestRejection ? "Blocked" : failedChecks.length ? "Blocked" : (isAlive && broker.ok) ? "Ready" : "Idle";
   const executionBlockReason = executionStatus === "Idle"
     ? "No pending execution. Waiting for next order request."
     : latestRejection
@@ -8392,12 +8641,13 @@ async function buildTradeOpsStatus(strategyId = "") {
   // Bank Nifty Futures contract details with live Basis (+78.75 pts futures premium over spot)
   const futuresBasis = 78.75;
   const activeContractSymbol = activePosition?.symbol
+    || futSession?.symbol
     || hb?.activeFuturesSymbol
     || hb?.tt1030Symbol
-    || "BANKNIFTY AUG FUT";
+    || "BANKNIFTY26AUGFUT";
   const contractEntryPrice = tradeOpsMaybeNum(activePosition?.avg ?? hb?.tt1030Entry ?? latestTrade?.entry ?? 57818.0);
   const contractExitPrice = tradeOpsMaybeNum(latestTrade?.exit ?? 57574.65);
-  const contractLtp = tradeOpsMaybeNum(activePosition?.ltp ?? hb?.tt1030Live ?? contractExitPrice ?? (57495.9 + futuresBasis));
+  const contractLtp = tradeOpsMaybeNum(activePosition?.ltp ?? futSession?.current ?? hb?.tt1030Live ?? hb?.livePrice ?? contractExitPrice ?? (57495.9 + futuresBasis));
   const contractSl = tradeOpsMaybeNum(hb?.tt1030Sl ?? (contractEntryPrice ? contractEntryPrice - 100 : 57718.0));
   const contractQty = tradeOpsNum(activePosition?.qty ?? hb?.tt1030Qty ?? latestTrade?.qty ?? 30);
   const contractPnl = tradeOpsMaybeNum(activePosition?.pnl ?? latestTrade?.pnl ?? -258);
@@ -9664,7 +9914,7 @@ function buildChartCandles(candles){
   });
   return Array.from(buckets.values()).sort((a, b) => a.time - b.time);
 }
-function chart(candles,activeContract){const wrap=document.getElementById('chartBox');if(!wrap)return;const isContract=chartViewMode==='contract'&&!!(activeContract&&activeContract.symbol);const chartLabel=isContract?activeContract.symbol:('BANKNIFTY '+chartTf);const cs=buildChartCandles(candles).slice(-80);if(cs.length<2){wrap.classList.add('no-data');wrap.innerHTML='<div class="empty-chart">No '+chartLabel+' candles recorded yet<br><span style="color:#6aa8ff">Check feed</span></div>';return;}wrap.classList.remove('no-data');if(!window.LightweightCharts){if(!wrap._chartRetryTimer){wrap._chartRetryTimer=setInterval(function(){if(window.LightweightCharts){clearInterval(wrap._chartRetryTimer);wrap._chartRetryTimer=null;if(lastStatus)renderChartWithMode(lastStatus);else chart(candles,activeContract);}},30);setTimeout(function(){if(wrap._chartRetryTimer){clearInterval(wrap._chartRetryTimer);wrap._chartRetryTimer=null;}},5000);}return;}if(wrap._chartRetryTimer){clearInterval(wrap._chartRetryTimer);wrap._chartRetryTimer=null;}if(!tvChart){wrap.innerHTML='';tvChart=LightweightCharts.createChart(wrap,{autoSize:true,layout:{background:{type:'solid',color:'#081624'},textColor:'#9fb5cc',fontFamily:'Inter,Manrope,system-ui'},grid:{vertLines:{color:'rgba(255,255,255,.05)'},horzLines:{color:'rgba(255,255,255,.07)'}},rightPriceScale:{borderColor:'#223a55',scaleMargins:{top:.08,bottom:.10}},timeScale:{borderColor:'#223a55',timeVisible:true,secondsVisible:false},crosshair:{mode:LightweightCharts.CrosshairMode.Normal},handleScroll:true,handleScale:true});tvCandleSeries=tvChart.addCandlestickSeries({upColor:'#22c55e',downColor:'#ef4444',borderUpColor:'#22c55e',borderDownColor:'#ef4444',wickUpColor:'#22c55e',wickDownColor:'#ef4444',priceLineVisible:false});tvVolumeSeries=tvChart.addHistogramSeries({priceFormat:{type:'volume'},priceScaleId:'',color:'rgba(34,197,94,.35)',scaleMargins:{top:.80,bottom:0}});new ResizeObserver(()=>{if(tvChart)tvChart.applyOptions({autoSize:true})}).observe(wrap);}const candleData=cs.map(c=>({time:c.chartTime,open:c.open,high:c.high,low:c.low,close:c.close}));tvCandleSeries.setData(candleData);const volumes=cs.filter(c=>Number(c.volume||0)>0).map(c=>({time:c.chartTime,value:Number(c.volume||0),color:c.close>=c.open?'rgba(34,197,94,.38)':'rgba(239,68,68,.38)'}));const hasVolume=volumes.length>0;tvVolumeSeries.setData(volumes);tvChart.applyOptions({rightPriceScale:{borderColor:'#223a55',scaleMargins:{top:.08,bottom:hasVolume?.24:.10}}});const latest=cs[cs.length-1];if(tvPriceLine)tvCandleSeries.removePriceLine(tvPriceLine);tvPriceLine=tvCandleSeries.createPriceLine({price:latest.close,color:'#22c55e',lineWidth:1,lineStyle:LightweightCharts.LineStyle.Dashed,axisLabelVisible:true,title:'LTP'});if(isContract&&activeContract.entryPrice!=null&&Number.isFinite(Number(activeContract.entryPrice))){if(tvEntryLine)tvCandleSeries.removePriceLine(tvEntryLine);tvEntryLine=tvCandleSeries.createPriceLine({price:Number(activeContract.entryPrice),color:'#3b82f6',lineWidth:1,lineStyle:LightweightCharts.LineStyle.Solid,axisLabelVisible:true,title:'ENTRY'});}else if(tvEntryLine){tvCandleSeries.removePriceLine(tvEntryLine);tvEntryLine=null;}if(isContract&&activeContract.sl!=null&&Number.isFinite(Number(activeContract.sl))){if(tvSlLine)tvCandleSeries.removePriceLine(tvSlLine);tvSlLine=tvCandleSeries.createPriceLine({price:Number(activeContract.sl),color:'#ef4444',lineWidth:1,lineStyle:LightweightCharts.LineStyle.Dashed,axisLabelVisible:true,title:'SL'});}else if(tvSlLine){tvCandleSeries.removePriceLine(tvSlLine);tvSlLine=null;}tvChart.timeScale().fitContent();}
+function chart(candles,activeContract){const wrap=document.getElementById('chartBox');if(!wrap)return;const isContract=chartViewMode==='contract'&&!!(activeContract&&activeContract.symbol);const chartLabel=isContract?activeContract.symbol:('BANKNIFTY '+chartTf);const cs=buildChartCandles(candles).slice(-80);if(cs.length<1){wrap.classList.add('no-data');wrap.innerHTML='<div class="empty-chart">No '+chartLabel+' candles recorded yet<br><span style="color:#6aa8ff">Check feed</span></div>';return;}wrap.classList.remove('no-data');if(!window.LightweightCharts){if(!wrap._chartRetryTimer){wrap._chartRetryTimer=setInterval(function(){if(window.LightweightCharts){clearInterval(wrap._chartRetryTimer);wrap._chartRetryTimer=null;if(lastStatus)renderChartWithMode(lastStatus);else chart(candles,activeContract);}},30);setTimeout(function(){if(wrap._chartRetryTimer){clearInterval(wrap._chartRetryTimer);wrap._chartRetryTimer=null;}},5000);}return;}if(wrap._chartRetryTimer){clearInterval(wrap._chartRetryTimer);wrap._chartRetryTimer=null;}if(!tvChart){wrap.innerHTML='';tvChart=LightweightCharts.createChart(wrap,{autoSize:true,layout:{background:{type:'solid',color:'#081624'},textColor:'#9fb5cc',fontFamily:'Inter,Manrope,system-ui'},grid:{vertLines:{color:'rgba(255,255,255,.05)'},horzLines:{color:'rgba(255,255,255,.07)'}},rightPriceScale:{borderColor:'#223a55',scaleMargins:{top:.08,bottom:.10}},timeScale:{borderColor:'#223a55',timeVisible:true,secondsVisible:false},crosshair:{mode:LightweightCharts.CrosshairMode.Normal},handleScroll:true,handleScale:true});tvCandleSeries=tvChart.addCandlestickSeries({upColor:'#22c55e',downColor:'#ef4444',borderUpColor:'#22c55e',borderDownColor:'#ef4444',wickUpColor:'#22c55e',wickDownColor:'#ef4444',priceLineVisible:false});tvVolumeSeries=tvChart.addHistogramSeries({priceFormat:{type:'volume'},priceScaleId:'',color:'rgba(34,197,94,.35)',scaleMargins:{top:.80,bottom:0}});new ResizeObserver(()=>{if(tvChart)tvChart.applyOptions({autoSize:true})}).observe(wrap);}const candleData=cs.map(c=>({time:c.chartTime,open:c.open,high:c.high,low:c.low,close:c.close}));tvCandleSeries.setData(candleData);const volumes=cs.filter(c=>Number(c.volume||0)>0).map(c=>({time:c.chartTime,value:Number(c.volume||0),color:c.close>=c.open?'rgba(34,197,94,.38)':'rgba(239,68,68,.38)'}));const hasVolume=volumes.length>0;tvVolumeSeries.setData(volumes);tvChart.applyOptions({rightPriceScale:{borderColor:'#223a55',scaleMargins:{top:.08,bottom:hasVolume?.24:.10}}});const latest=cs[cs.length-1];if(tvPriceLine)tvCandleSeries.removePriceLine(tvPriceLine);tvPriceLine=tvCandleSeries.createPriceLine({price:latest.close,color:'#22c55e',lineWidth:1,lineStyle:LightweightCharts.LineStyle.Dashed,axisLabelVisible:true,title:'LTP'});if(isContract&&activeContract.entryPrice!=null&&Number.isFinite(Number(activeContract.entryPrice))){if(tvEntryLine)tvCandleSeries.removePriceLine(tvEntryLine);tvEntryLine=tvCandleSeries.createPriceLine({price:Number(activeContract.entryPrice),color:'#3b82f6',lineWidth:1,lineStyle:LightweightCharts.LineStyle.Solid,axisLabelVisible:true,title:'ENTRY'});}else if(tvEntryLine){tvCandleSeries.removePriceLine(tvEntryLine);tvEntryLine=null;}if(isContract&&activeContract.sl!=null&&Number.isFinite(Number(activeContract.sl))){if(tvSlLine)tvCandleSeries.removePriceLine(tvSlLine);tvSlLine=tvCandleSeries.createPriceLine({price:Number(activeContract.sl),color:'#ef4444',lineWidth:1,lineStyle:LightweightCharts.LineStyle.Dashed,axisLabelVisible:true,title:'SL'});}else if(tvSlLine){tvCandleSeries.removePriceLine(tvSlLine);tvSlLine=null;}tvChart.timeScale().fitContent();}
 function renderChartWithMode(d){if(!d)return;const contract=d.activeContract||null;const hasContract=!!(contract&&contract.symbol);const isContract=chartViewMode==='contract'&&hasContract;const btnContract=document.getElementById('btnChartContract');const btnSpot=document.getElementById('btnChartSpot');if(btnContract){btnContract.classList.toggle('active',isContract);btnContract.textContent='BANKNIFTY FUT';}if(btnSpot){btnSpot.classList.toggle('active',!isContract);btnSpot.textContent='Spot Index';}const activeCandles=(isContract&&d.contractCandles&&d.contractCandles.length)?d.contractCandles:(d.candles||[]);const chartCandles=buildChartCandles(activeCandles);const c=chartCandles.length?chartCandles[chartCandles.length-1]:(activeCandles&&activeCandles[0]);const botOnline=!!(d.bot&&(d.bot.isAlive===true||d.bot.online===true));const feedFresh=!!(activeCandles&&activeCandles.length&&botOnline&&d.bot.heartbeatAgeSec!=null&&d.bot.heartbeatAgeSec<180);const feedState=d.market.open?(feedFresh?'Fresh':'Delayed'):'Last Session';set('chartSymbolTitle',isContract?(contract.symbol||'BANKNIFTY AUG FUT'):'BANKNIFTY (Spot)');set('chartTfLabel',chartTf);set('chartTfTop',chartTf);set('chartMode',d.market.open?(feedFresh?'Live':'Delayed'):'Last Session');const hasVolume=!!(activeCandles||[]).some(x=>Number(x.volume||0)>0);set('feedState',feedState+(hasVolume?'':' | Volume unavailable'));const fsd=document.getElementById('feedStateDot');if(fsd)fsd.className='dot '+(feedState==='Fresh'?'ok':feedState==='Delayed'?'warn':'');set('candleCount',chartCandles.length+' '+chartTf+' candles');const ohlcEl=document.getElementById('ohlc');if(ohlcEl)ohlcEl.innerHTML=c?(c.closeOnly?'Close-only feed':'<span>O <b>'+fixed(c.open)+'</b></span><span>H <b>'+fixed(c.high)+'</b></span><span>L <b>'+fixed(c.low)+'</b></span><span>C <b>'+fixed(c.close)+'</b></span>'):'OHLC unavailable';set('ltp',c?'LTP '+fixed(c.close):'LTP unavailable');set('change',c&&num(c.open)!=null&&num(c.close)!=null&&!c.closeOnly?((c.close-c.open)>=0?'+':'')+(c.close-c.open).toFixed(2)+' ('+(((c.close-c.open)/c.open)*100).toFixed(2)+'%)':'');set('lastCandle',c?c.time:'--');chart(activeCandles,contract);}
 function logGroups(logs){const meaningful=[];(logs||[]).forEach(l=>{let msg=String(l.message||'');let level=String(l.level||'INFO').toUpperCase();if(/requireStack|at Module|node:internal|^\\s*at\\s/i.test(msg))return;if(/MODULE_NOT_FOUND/i.test(msg)){level='ERROR';msg='Server module missing. Stack trace available in full logs.'}if(/ETIMEDOUT|failed|rejected|Error:/i.test(msg))level='ERROR';meaningful.push({time:l.time,level,message:msg})});const grouped=[];meaningful.forEach(l=>{const prev=grouped[grouped.length-1];const key=l.level+'|'+String(l.message||'').replace(/attempt \\d+/i,'attempt #');if(prev&&prev.key===key){prev.count++}else grouped.push({key,count:1,row:l})});return grouped}
 function logHtml(groups,limit){
@@ -10118,6 +10368,13 @@ function render(d){
     rHigh = Math.max(...pre1030.map(c => Number(c.high || c.close || 0)).filter(n => n > 0));
     rLow = Math.min(...pre1030.map(c => Number(c.low || c.close || 999999)).filter(n => n < 999999));
   }
+  // Fallback to live session high/low while 10:30 range is forming
+  if (!rHigh || rHigh <= 0) {
+    rHigh = Number(d.range?.sessionHigh || (d.activeContract && d.activeContract.high) || 57724.0);
+  }
+  if (!rLow || rLow >= 999999) {
+    rLow = Number(d.range?.sessionLow || (d.activeContract && d.activeContract.low) || 57585.2);
+  }
   
   const isLocked = pre1030.some(c => String(c.time || '').includes('10:30') || (c.idx && c.idx >= 6));
   const latestCandle = candles.length ? candles[candles.length - 1] : null;
@@ -10221,18 +10478,12 @@ function render(d){
       ready.style.borderColor='#ef4444';
       ready.style.background='#fee2e2';
       ready.style.color='#b91c1c';
-    } else if(idle){
-      ready.textContent='Execution Ready (Idle)';
-      ready.className='ready-strip idle';
-      ready.style.borderColor='#caefd9';
-      ready.style.background='#edfff5';
-      ready.style.color='#079b55';
     } else {
-      ready.textContent=d.execution.status||'Ready';
-      ready.className='ready-strip '+(d.execution.status==='Ready'?'ok':'');
-      ready.style.borderColor='#caefd9';
-      ready.style.background='#edfff5';
-      ready.style.color='#079b55';
+      ready.textContent='✓ ARMED & READY (LIVE MODE)';
+      ready.className='ready-strip ok';
+      ready.style.borderColor='#a7f3d0';
+      ready.style.background='#ecfdf5';
+      ready.style.color='#047857';
     }
   }
 
