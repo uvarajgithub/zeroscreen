@@ -7107,7 +7107,13 @@ function tradeOpsSide(value: any) {
 }
 
 function tradeOpsSanitizeLog(value: any) {
-  return String(value || "")
+  let text = "";
+  if (value && typeof value === "object") {
+    text = value.message || value.error || value.reason || value.action || (value.status ? `Status: ${value.status}` : JSON.stringify(value));
+  } else {
+    text = String(value || "");
+  }
+  return text
     .replace(/([?&](?:request_token|access_token|token|checksum|session_id)=)[^&\s]+/gi, "$1[REDACTED]")
     .replace(/(["']?(?:password|passwd|totp|otp|api_secret|totp_secret|cookie|set-cookie)["']?\s*(?:=|:)\s*)[^\s,;}]+/gi, "$1[REDACTED]")
     .replace(/(submitting\s+totp\s*:\s*)\d{6,8}/gi, "$1[REDACTED]")
