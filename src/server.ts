@@ -9729,6 +9729,23 @@ function buildSSRTimelineRows(initialStatus: any, rHigh: number | null, rLow: nu
       ohlcText = 'High: ₹' + rHigh.toFixed(1) + ' | Low: ₹' + rLow.toFixed(1) + ' (Range Locked)';
     }
 
+    let slColText = '--';
+    if (s.idx === 1) {
+      slColText = 'System startup & feed initialization';
+    } else if (s.idx >= 2 && s.idx <= 5) {
+      slColText = 'Standby (Waiting for 10:30 candle)';
+    } else if (s.idx === 6) {
+      slColText = 'Establishes BUY High & SELL Low';
+    } else if (cMatch && cMatch.entry != null) {
+      slColText = 'Entry @ ₹' + Number(cMatch.entry).toFixed(1) + ' | SL: ₹' + Number(cMatch.sl).toFixed(1);
+    } else if (isPast && s.idx >= 7) {
+      slColText = 'No trade taken (Inside 10:30 range)';
+    } else if (isCurrent && s.idx >= 7) {
+      slColText = 'Watching breakout (100pt SL armed)';
+    } else {
+      slColText = 'Armed for breakout';
+    }
+
     let statusHtml = '<span style="background:#f1f5f9;color:#64748b;padding:2px 8px;border-radius:6px;font-size:11px;font-weight:750">Upcoming</span>';
     let rowStyle = 'border-bottom:1px solid #edf2f8;';
 
@@ -9748,7 +9765,7 @@ function buildSSRTimelineRows(initialStatus: any, rHigh: number | null, rLow: nu
       '<td style="padding:7px 10px;color:#475569">' + s.window + '</td>' +
       '<td style="padding:7px 10px;color:#0f172a;font-size:11.5px">' + ohlcText + '</td>' +
       '<td style="padding:7px 10px;' + (s.idx===6?'font-weight:800;color:#2563eb':(s.idx>=7?'color:#059669;font-weight:750':'color:#64748b')) + '">' + s.role + '</td>' +
-      '<td style="padding:7px 10px;color:#64748b">' + s.slText + '</td>' +
+      '<td style="padding:7px 10px;color:#64748b">' + slColText + '</td>' +
       '<td style="padding:7px 10px;text-align:right">' + statusHtml + '</td>' +
     '</tr>';
   }).join('');
@@ -11466,6 +11483,23 @@ function render(d){
           ohlcText = 'Live LTP: ₹' + curLtp.toFixed(2) + ' (Ticking in Real-Time)';
         }
 
+        let slColText = '--';
+        if (s.idx === 1) {
+          slColText = 'System startup & feed initialization';
+        } else if (s.idx >= 2 && s.idx <= 5) {
+          slColText = 'Standby (Waiting for 10:30 candle)';
+        } else if (s.idx === 6) {
+          slColText = 'Establishes BUY High & SELL Low';
+        } else if (cMatch && cMatch.entry != null) {
+          slColText = 'Entry @ ₹' + fixed(cMatch.entry) + ' | SL: ₹' + fixed(cMatch.sl);
+        } else if (isPast && s.idx >= 7) {
+          slColText = 'No trade taken (Inside 10:30 range)';
+        } else if (isCurrent && s.idx >= 7) {
+          slColText = 'Watching breakout (100pt SL armed)';
+        } else {
+          slColText = 'Armed for breakout';
+        }
+
         let statusHtml = '<span style="background:#f1f5f9;color:#64748b;padding:2px 8px;border-radius:6px;font-size:11px;font-weight:750">Upcoming</span>';
         let rowStyle = 'border-bottom:1px solid #edf2f8;';
 
@@ -11485,7 +11519,7 @@ function render(d){
           '<td style="padding:7px 10px;color:#475569">' + s.window + '</td>' +
           '<td style="padding:7px 10px;color:#0f172a;font-size:11.5px">' + ohlcText + '</td>' +
           '<td style="padding:7px 10px;' + (s.idx===6?'font-weight:800;color:#2563eb':(s.idx>=7?'color:#059669;font-weight:750':'color:#64748b')) + '">' + s.role + '</td>' +
-          '<td style="padding:7px 10px;color:#64748b">' + s.slText + '</td>' +
+          '<td style="padding:7px 10px;color:#64748b">' + slColText + '</td>' +
           '<td style="padding:7px 10px;text-align:right">' + statusHtml + '</td>' +
         '</tr>';
       }).join('');
