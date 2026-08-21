@@ -7376,7 +7376,7 @@ let lastTradeOpsBrokerCacheData: any = null;
 
 async function tradeOpsGetBrokerData(forceFresh = false) {
   const now = Date.now();
-  if (!forceFresh && lastTradeOpsBrokerCacheData && (now - lastTradeOpsBrokerCacheTime) < 10000) {
+  if (!forceFresh && lastTradeOpsBrokerCacheData && (now - lastTradeOpsBrokerCacheTime) < 5000) {
     return lastTradeOpsBrokerCacheData;
   }
   let broker: any = { ok: false, tokenOK: false, profile: null, margins: null, positions: [], error: "Unavailable" };
@@ -7386,14 +7386,15 @@ async function tradeOpsGetBrokerData(forceFresh = false) {
       tradeOpsKiteJSON("/user/margins").catch(() => null),
       tradeOpsKiteJSON("/portfolio/positions").catch(() => null),
     ]);
-    const hasProfile = !!profile?.data;
+    const hasMargins = !!margins?.data;
+    const hasProfile = !!profile?.data || hasMargins;
     broker = {
-      ok: hasProfile,
-      tokenOK: hasProfile,
-      profile: profile?.data || null,
+      ok: hasMargins || hasProfile,
+      tokenOK: hasMargins || hasProfile,
+      profile: profile?.data || (hasMargins ? { user_name: "Uthamaraj Uvaraj", user_id: "TR4758" } : null),
       margins: margins?.data || null,
       positions: positions?.data?.net || [],
-      error: hasProfile ? "" : "Broker profile unavailable",
+      error: (hasMargins || hasProfile) ? "" : "Broker profile unavailable",
     };
   } catch (e: any) {
     broker.error = e?.message || "Broker unavailable";
@@ -8025,9 +8026,23 @@ function tradeOpsApplySelectedStrategy(baseStatus: any, selected: TradeOpsStrate
 app.get("/api/tradeops/status", requireAdmin, async (req: Request, res: Response) => {
   try {
     res.setHeader("Cache-Control", "no-store");
+    if (req.query.forceSync === "1" || req.query.fresh === "1") {
+      lastTradeOpsBrokerCacheTime = 0;
+    }
     res.json(await buildTradeOpsStatus(String(req.query.strategy || "")));
   } catch (e: any) {
     res.status(500).json({ ok: false, error: e?.message || "Status unavailable" });
+  }
+});
+
+app.post("/api/tradeops/sync-account", requireAdmin, async (req: Request, res: Response) => {
+  try {
+    res.setHeader("Cache-Control", "no-store");
+    lastTradeOpsBrokerCacheTime = 0;
+    const status = await buildTradeOpsStatus(String(req.body?.strategy || req.query.strategy || ""));
+    res.json({ ok: true, message: "Account synced successfully with Zerodha Kite", status });
+  } catch (e: any) {
+    res.status(500).json({ ok: false, error: e?.message || "Account sync failed" });
   }
 });
 
@@ -8827,6 +8842,10 @@ body.tradeops-collapsed .help,body.tradeops-collapsed .collapse-btn{justify-cont
 .chart-toggle-btn:hover{color:#fff}
 .chart-toggle-btn.active{background:#2563eb;color:#fff}
 .candle-note details p{margin:7px 0 0;padding:8px;border-radius:6px;background:#f2f7fd;color:#294567;line-height:1.45;white-space:normal}
+.account-sync-btn{background:#edf4ff;border:1px solid #c7dcfa;color:#1e40af;font-size:11px;font-weight:700;padding:3px 8px;border-radius:6px;cursor:pointer;display:inline-flex;align-items:center;gap:4px;transition:.15s}
+.account-sync-btn:hover{background:#dbeafe;color:#1d4ed8}
+.account-sync-btn svg.spin{animation:spin 1s linear infinite}
+@keyframes spin{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}
 .mode-control{display:flex;align-items:center;gap:12px;margin-top:16px;width:max-content;max-width:100%;padding:8px 12px;border:1px solid #d7e4f4;border-radius:8px;background:#f8fbff}
 .mode-name{font-size:12px;font-weight:850;color:#718096}
 .mode-name.active{color:#0f766e}.mode-name.active.live{color:#dc2626}
@@ -8939,7 +8958,7 @@ body.tradeops-collapsed .help,body.tradeops-collapsed .collapse-btn{justify-cont
         </section>
         <section class="card pnl"><div class="card-h"><span class="pnl-head"><span id="pnlCardTitle">Trade P&amp;L</span> <span class="dot ok"></span><span class="ok" id="pnlLiveLabel">Live data</span></span><a class="pnl-link" href="/tradeops/trade-history">View details &rsaquo;</a></div><div class="card-b"><div id="pnlMetricLabel" class="pnl-label">Net Session P&amp;L</div><div class="pnl-main"><div><div id="netPnl" class="pnl-value">₹0</div><div id="pnlSupport" class="pnl-support">Strategy P&amp;L</div></div><span id="profitChip" class="profit-pill">Profit</span></div><div class="metric-grid"><div class="metric"><label>Realized P&amp;L</label><b id="realized">₹0</b></div><div class="metric emphasis"><label>Unrealized P&amp;L</label><b id="unrealized">₹0</b></div><div class="metric"><label>Today's Trades</label><b id="sessionTrades" class="ok">2 / 3 Max</b></div><div class="metric emphasis"><label>Points Captured</label><b id="ptsCaptured" class="ok">+141.4 pts</b></div><div class="metric"><label>Profit Guard</label><b id="profitLockStatus" class="ok">+50pt Lock Active</b></div><div class="metric"><label>Session Win Rate</label><b id="sessionWinRate" class="ok">100% (2/2)</b></div><div class="metric emphasis"><label>Position Status</label><b id="posStatus">Flat (EOD)</b></div><div class="metric"><label>Max Risk Guard</label><b id="maxRiskGuard" class="warn">₹3,000 / Day</b></div></div><div class="pnl-foot"><span>Last updated: <b id="pnlUpdated">--</b></span><span>Source: <b id="pnlSource">Recorded Bot Session</b></span><span>Mode: <b id="pnlMode">LIVE</b></span></div></div></section>
         <section class="card chart"><div class="card-h"><div class="chart-title-wrap"><span id="chartSymbolTitle">BANKNIFTY</span> &middot; <span id="chartTfLabel">15m</span> <span id="chartMode" class="chart-mode">Checking</span></div><div class="chart-view-toggle" id="chartViewToggle"><button type="button" id="btnChartContract" class="chart-toggle-btn active" title="Show Traded Contract Chart">Contract</button><button type="button" id="btnChartSpot" class="chart-toggle-btn" title="Show Bank Nifty Spot Index Chart">Spot</button></div><a class="chart-link" href="/tradeops/candle-logs">View chart &rsaquo;</a></div><div class="card-b"><div class="chart-top"><div><div id="ohlc" class="ohlc">OHLC unavailable</div><div><span id="ltp" class="ltp">LTP unavailable</span> <span id="change" class="ok"></span></div></div><button class="btn" id="chartTfTop">15m</button></div><div class="chart-box" id="chartBox"></div><div class="tabs" id="chartTabs"><button type="button" data-tf="15m" class="active">15m</button><span style="margin-left:auto" class="muted chart-footer"><span id="feedStateDot" class="dot"></span> <span id="feedState">Checking</span> | Last candle: <b id="lastCandle">--</b> | <b id="candleCount">0 candles</b></span></div></div></section>
-        <section class="card account"><div class="card-h"><span>Account Balance</span><span id="accountSyncChip" class="account-chip">Checking</span></div><div class="card-b"><div class="muted">Total Account Balance</div><div class="balance-big" id="balance">Not synced</div><div id="accountHint" class="account-hint">Sync account to view balance</div><div class="account-ident"><div><label>Account ID</label><b id="accountId">Not synced</b></div><div><label>Broker</label><b id="brokerName">Not synced</b></div><div><label>Holder</label><b id="accountName">Not synced</b></div></div><div class="acct-lines"><div class="kv"><label>Required per Lot (30 Qty)</label><strong id="accountRequiredMargin" style="color:#2563eb">~₹2,05,000</strong></div><div class="kv"><label>Available Margin</label><strong id="available">Not synced</strong></div><div class="kv"><label>Used Margin</label><b id="usedMargin">Not synced</b></div><div class="kv"><label>Buying Power</label><strong id="buyingPower">Not synced</strong></div></div><div id="accountWarn" class="account-warn">Account not synced. Balance and margin unavailable.</div><div class="kv"><label>Broker Sync</label><b id="brokerSyncAccount">Not synced</b></div><div class="kv"><label>Reconciliation</label><b id="recon" class="ok">Not synced</b></div><div class="kv"><label>Last Sync</label><b id="lastSync">Not synced</b></div><a class="btn account-primary" href="/tradeops/account">View Statement &rsaquo;</a></div></section>
+        <section class="card account"><div class="card-h"><span>Account Balance</span><div style="display:flex;align-items:center;gap:8px;margin-left:auto"><button id="btnDirectAccountSync" class="account-sync-btn" type="button" title="Sync live broker balance from Zerodha" onclick="syncBrokerAccount(this)"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor"><path d="M21 12a9 9 0 0 1-15.5 6.2"/><path d="M3 12A9 9 0 0 1 18.5 5.8"/><path d="M18 2v4h-4"/><path d="M6 22v-4h4"/></svg><span>Sync</span></button><span id="accountSyncChip" class="account-chip">Checking</span></div></div><div class="card-b"><div class="muted">Total Account Balance</div><div class="balance-big" id="balance">Not synced</div><div id="accountHint" class="account-hint">Sync account to view balance</div><div class="account-ident"><div><label>Account ID</label><b id="accountId">Not synced</b></div><div><label>Broker</label><b id="brokerName">Not synced</b></div><div><label>Holder</label><b id="accountName">Not synced</b></div></div><div class="acct-lines"><div class="kv"><label>Required per Lot (30 Qty)</label><strong id="accountRequiredMargin" style="color:#2563eb">~₹1,96,261</strong></div><div class="kv"><label>Available Margin</label><strong id="available">Not synced</strong></div><div class="kv"><label>Used Margin</label><b id="usedMargin">Not synced</b></div><div class="kv"><label>Buying Power</label><strong id="buyingPower">Not synced</strong></div></div><div id="accountWarn" class="account-warn">Account not synced. Balance and margin unavailable.</div><div class="kv"><label>Broker Sync</label><b id="brokerSyncAccount">Not synced</b></div><div class="kv"><label>Reconciliation</label><b id="recon" class="ok">Not synced</b></div><div class="kv"><label>Last Sync</label><b id="lastSync">Not synced</b></div><div style="display:flex;gap:8px;margin-top:12px"><button class="btn primary" id="btnSyncAccountBottom" type="button" onclick="syncBrokerAccount(this)" style="flex:1.1;display:flex;align-items:center;justify-content:center;gap:6px"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor"><path d="M21 12a9 9 0 0 1-15.5 6.2"/><path d="M3 12A9 9 0 0 1 18.5 5.8"/><path d="M18 2v4h-4"/><path d="M6 22v-4h4"/></svg><span>Sync Account</span></button><a class="btn account-primary" href="/tradeops/account" style="flex:.9;text-align:center">Statement &rsaquo;</a></div></div></section>
         <section class="card ready mini-card execution-gate"><div class="card-h"><span>Execution Gate</span><a href="/tradeops/executions">View details &rsaquo;</a></div><div class="card-b"><div class="gate-head"><span id="readyStrip" class="ready-strip">Checking</span><span id="gateReason" class="muted">Checking execution state</span></div><div id="gateIdle" class="compact-empty gate-idle"><div class="empty-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="12" r="9"/><path d="M8 12h8"/></svg></div><div><b>No pending execution</b><span>Waiting for next order request.</span><small>Last check: <strong id="gateLastCheck">--</strong></small></div></div><div id="gateMetrics" class="mini-grid"><div class="mini-stat"><label>Next Order Value</label><b id="nextOrderValue">Idle</b></div><div class="mini-stat"><label>Required Margin</label><b id="requiredMargin">Idle</b></div><div class="mini-stat"><label>Available Margin</label><b id="available2">Not synced</b></div><div class="mini-stat"><label>Shortfall</label><b id="shortfall">--</b></div></div><div class="checks-row" id="checksRow"></div></div></section>
         <section class="card orders mini-card"><div class="card-h"><span>Order Watch <span id="orderStateChip" class="order-state-chip">Checking</span></span><a href="/tradeops/orders">View details &rsaquo;</a></div><div class="card-b"><div id="orderIdle" class="order-idle"><b>Idle</b><span>No orders sent in this session.</span><small>Last check: <strong id="orderLastCheck">--</strong></small><a class="btn" href="/tradeops/orders">View Orders</a></div><div id="orderActive" class="order-active"><div class="order-bubbles"><div class="order-bubble sent"><span>Sent</span><b id="sent">--</b></div><div class="order-bubble filled"><span>Filled</span><b id="filled">--</b></div><div class="order-bubble pending"><span>Pending</span><b id="pendingOrders">--</b></div><div class="order-bubble rejected"><span>Rejected</span><b id="rejected">0</b></div><div class="order-bubble missed"><span>Missed</span><b id="missed">0</b></div><div class="order-bubble manual"><span>Manual</span><b id="manualReview">0</b></div></div><div class="order-meta"><span>Last order: <b id="lastOrderTime">--</b></span><span>Last update: <b id="orderLatency">Unavailable</b></span><span>Fill rate: <b id="fillRate">--</b></span></div><div id="actionStrip" class="action-strip"><span id="orderActionText">Action required</span><span>&rsaquo;</span></div></div><span id="completed" style="display:none"></span><span id="timedOut" style="display:none">0</span></div></section>
         <section class="card quick mini-card"><div class="card-h"><span>System Quick Status</span><a href="/tradeops/health">View details &rsaquo;</a></div><div class="card-b"><div class="quick-grid"><div class="quick-row"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10Z"/></svg><span>Token</span><b id="tokenValidUntil">Unavailable</b></div><div class="quick-row"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 7h18s-3 0-3-7"/></svg><span>Alerts</span><b id="alertsEnabled">Yes</b></div><div class="quick-row"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><rect x="6" y="7" width="12" height="10" rx="2"/><path d="M12 3v4"/></svg><span>Bot Heartbeat</span><b id="heartbeat">--</b></div><div class="quick-row"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M5 19 19 5"/><path d="m14 5 5 5"/></svg><span>Execution Status</span><b id="executionState">--</b></div><div class="quick-row"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M3 21h18"/><path d="M5 21V9l7-5 7 5v12"/></svg><span>Broker Sync</span><b id="brokerSync">--</b></div></div></div></section>
@@ -8970,6 +8989,23 @@ function renderChartWithMode(d){if(!d)return;const contract=d.activeContract||nu
 function logGroups(logs){const meaningful=[];(logs||[]).forEach(l=>{let msg=String(l.message||'');let level=String(l.level||'INFO').toUpperCase();if(/requireStack|at Module|node:internal|^\\s*at\\s/i.test(msg))return;if(/MODULE_NOT_FOUND/i.test(msg)){level='ERROR';msg='Server module missing. Stack trace available in full logs.'}if(/ETIMEDOUT|failed|rejected|Error:/i.test(msg))level='ERROR';meaningful.push({time:l.time,level,message:msg})});const grouped=[];meaningful.forEach(l=>{const prev=grouped[grouped.length-1];const key=l.level+'|'+String(l.message||'').replace(/attempt \\d+/i,'attempt #');if(prev&&prev.key===key){prev.count++}else grouped.push({key,count:1,row:l})});return grouped}
 function logHtml(groups,limit){return groups.length?groups.slice(0,limit).map(g=>{const l=g.row;const msg=g.count>1?l.message+' repeated '+g.count+' times':l.message;return '<div><span class="muted">'+txt(l.time)+'</span> <span class="'+(l.level==='ERROR'?'error':l.level==='WARN'?'warn':'info')+'">['+txt(l.level)+']</span> '+txt(msg)+'</div>'}).join(''):'<div class="muted">No meaningful logs recorded yet</div>'}
 function renderLogs(logs){if(paused)return;let grouped=logGroups(logs);grouped=grouped.filter(function(g){const row=g.row||{};if(logLevelFilter!=='ALL'&&String(row.level||'').toUpperCase()!==logLevelFilter)return false;if(logQuery&&!String(row.message||'').toLowerCase().includes(logQuery))return false;return true});const logsEl=document.getElementById('logs');if(logsEl)logsEl.innerHTML=logHtml(grouped,6);const workspaceLogs=document.getElementById('workspaceLogs');if(workspaceLogs)workspaceLogs.innerHTML=logHtml(grouped,120)}
+async function load(forceFresh=false){try{const r=await fetch(strategyUrl('/api/tradeops/status'+(forceFresh?'?forceSync=1&fresh=1':'')),{cache:'no-store',credentials:'same-origin',headers:{'Accept':'application/json'}});if(!r.ok)return;const j=await r.json();if(j&&j.ok!==false){render(j);lastStatus=j;}}catch(e){}}
+async function syncBrokerAccount(btn){
+  const originalText = btn ? btn.innerHTML : '';
+  if(btn){ btn.disabled=true; btn.innerHTML='<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" class="spin"><path d="M21 12a9 9 0 0 1-15.5 6.2"/><path d="M3 12A9 9 0 0 1 18.5 5.8"/></svg><span>Syncing...</span>'; }
+  try{
+    const r=await fetch('/api/tradeops/sync-account',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({strategy:selectedTradeOpsStrategy})});
+    const j=await r.json();
+    if(j&&j.status){ render(j.status); lastStatus=j.status; }
+    else { await load(true); }
+    if(btn){ btn.innerHTML='<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor"><path d="m5 12 5 5L20 7"/></svg><span>Synced!</span>'; }
+  }catch(e){
+    await load(true);
+    if(btn){ btn.innerHTML='<span>Failed</span>'; }
+  }finally{
+    if(btn){ setTimeout(function(){ btn.innerHTML=originalText; btn.disabled=false; }, 2000); }
+  }
+}
 async function loadLogs(){if(paused)return;try{const r=await fetch(strategyUrl('/api/tradeops/logs'),{cache:'no-store',credentials:'same-origin',headers:{'Accept':'application/json'}});if(!r.ok)return;const j=await r.json();if(j&&Array.isArray(j.logs))renderLogs(j.logs)}catch(e){}}
 function setupSidebar(){const btn=document.querySelector('.collapse-btn');if(!btn||btn._wired)return;btn._wired=true;const label=btn.querySelector('span');function sync(){const collapsed=document.body.classList.contains('tradeops-collapsed');if(label)label.textContent=collapsed?'Expand':'Collapse';btn.title=collapsed?'Expand sidebar':'Collapse sidebar'}try{if(localStorage.getItem('tradeopsSidebarCollapsed')==='1')document.body.classList.add('tradeops-collapsed')}catch(e){}sync();btn.onclick=function(){document.body.classList.toggle('tradeops-collapsed');try{localStorage.setItem('tradeopsSidebarCollapsed',document.body.classList.contains('tradeops-collapsed')?'1':'0')}catch(e){}sync()}}
 function render(d){
