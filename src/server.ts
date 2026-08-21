@@ -1375,6 +1375,171 @@ app.get("/signup", featureGate("registration_open", "New Registrations"), (req: 
   font-family: 'JetBrains Mono', monospace !important;
 }
 
+
+/* ==========================================================================
+   MASTER ANIMATION OVERRIDE - TRADE OPS (MAX SPECIFICITY)
+   ========================================================================== */
+
+/* 1. Market Open Pulsing Dot */
+.top .status-chip .dot.live-open,
+.top .status-chip .dot.ok,
+#marketDot.ok,
+#marketDot.live-open {
+  background: #10b981 !important;
+  box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.9) !important;
+  animation: liveMarketPulse 1.2s infinite cubic-bezier(0.4, 0, 0.6, 1) !important;
+  display: inline-block !important;
+}
+
+@keyframes liveMarketPulse {
+  0% {
+    transform: scale(0.9);
+    box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.85);
+  }
+  60% {
+    transform: scale(1.25);
+    box-shadow: 0 0 0 7px rgba(16, 185, 129, 0);
+  }
+  100% {
+    transform: scale(0.9);
+    box-shadow: 0 0 0 0 rgba(16, 185, 129, 0);
+  }
+}
+
+/* 2. Top Workflow Pipeline Container & Animated Glow */
+#workflowSection.card,
+.dashboard .workflow.card {
+  border: 1.5px solid #a7f3d0 !important;
+  border-radius: 14px !important;
+  background: linear-gradient(90deg, #f0fdf4 0%, #ffffff 50%, #f0fdf4 100%) !important;
+  background-size: 200% 100% !important;
+  animation: pipelineFlowGlow 5s ease-in-out infinite !important;
+  box-shadow: 0 6px 20px rgba(16, 185, 129, 0.1) !important;
+  padding: 12px 18px !important;
+  display: flex !important;
+  align-items: center !important;
+}
+
+@keyframes pipelineFlowGlow {
+  0%, 100% { background-position: 0% 50%; }
+  50% { background-position: 100% 50%; }
+}
+
+/* 3. Pipeline Step Cards & Active Beam Sweep */
+#workflowSection .flow-pipeline {
+  display: flex !important;
+  align-items: center !important;
+  gap: 8px !important;
+  flex: 1 1 auto !important;
+}
+
+#workflowSection .flow-step {
+  height: 58px !important;
+  border-radius: 12px !important;
+  border: 1.5px solid #a7f3d0 !important;
+  background: #ffffff !important;
+  position: relative !important;
+  overflow: hidden !important;
+  display: flex !important;
+  align-items: center !important;
+  padding: 0 14px !important;
+  gap: 10px !important;
+  transition: all 0.25s ease !important;
+  box-shadow: 0 4px 12px rgba(16, 185, 129, 0.08) !important;
+}
+
+#workflowSection .flow-step:hover {
+  transform: translateY(-2px) !important;
+  border-color: #10b981 !important;
+  box-shadow: 0 8px 22px rgba(16, 185, 129, 0.22) !important;
+}
+
+#workflowSection .flow-step::after {
+  content: "" !important;
+  position: absolute !important;
+  top: 0 !important;
+  left: -150% !important;
+  width: 70% !important;
+  height: 100% !important;
+  background: linear-gradient(90deg, transparent, rgba(16, 185, 129, 0.22), transparent) !important;
+  animation: stepBeamSweep 3s infinite linear !important;
+  pointer-events: none !important;
+}
+
+@keyframes stepBeamSweep {
+  0% { left: -150%; }
+  100% { left: 200%; }
+}
+
+/* 4. Sequentially Flowing Electric Green Chevrons */
+#workflowSection .flow-arrow {
+  flex: 0 0 22px !important;
+  width: 22px !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  color: #10b981 !important;
+  opacity: 1 !important;
+}
+
+#workflowSection .flow-arrow svg {
+  width: 20px !important;
+  height: 20px !important;
+  stroke: #10b981 !important;
+  stroke-width: 3.2 !important;
+  animation: flowSlideRight 1.2s infinite ease-in-out !important;
+  filter: drop-shadow(0 0 4px rgba(16, 185, 129, 0.9)) !important;
+}
+
+#workflowSection .flow-pipeline > .flow-arrow:nth-of-type(1) svg { animation-delay: 0s !important; }
+#workflowSection .flow-pipeline > .flow-arrow:nth-of-type(2) svg { animation-delay: 0.3s !important; }
+#workflowSection .flow-pipeline > .flow-arrow:nth-of-type(3) svg { animation-delay: 0.6s !important; }
+#workflowSection .flow-pipeline > .flow-arrow:nth-of-type(4) svg { animation-delay: 0.9s !important; }
+
+@keyframes flowSlideRight {
+  0% {
+    transform: translateX(-5px);
+    opacity: 0.25;
+    filter: drop-shadow(0 0 1px rgba(16, 185, 129, 0.2));
+  }
+  50% {
+    transform: translateX(5px);
+    opacity: 1;
+    filter: drop-shadow(0 0 8px #10b981);
+  }
+  100% {
+    transform: translateX(-5px);
+    opacity: 0.25;
+    filter: drop-shadow(0 0 1px rgba(16, 185, 129, 0.2));
+  }
+}
+
+/* 5. Pulsing Radar Green Checkmarks */
+#workflowSection .flow-ok {
+  background: #10b981 !important;
+  color: #ffffff !important;
+  box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.9) !important;
+  animation: flowBadgePulse 1.6s infinite ease-in-out !important;
+  display: grid !important;
+  place-items: center !important;
+  border-radius: 50% !important;
+  width: 17px !important;
+  height: 17px !important;
+  font-size: 10px !important;
+}
+
+@keyframes flowBadgePulse {
+  0% {
+    box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.85);
+  }
+  70% {
+    box-shadow: 0 0 0 7px rgba(16, 185, 129, 0);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(16, 185, 129, 0);
+  }
+}
+
 </style>
 </head>
 <body class="auth-body landing-page">
