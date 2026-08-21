@@ -8990,7 +8990,7 @@ body.tradeops-collapsed .help,body.tradeops-collapsed .collapse-btn{justify-cont
             <button class="flow-btn" id="syncAccountBtn" title="Sync broker account balance & margin" type="button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg><span>Sync Account</span></button>
           </div>
         </section>
-        <section class="card pnl"><div class="card-h"><span class="pnl-head"><span id="pnlCardTitle">Trade P&amp;L</span> <span class="dot ok"></span><span class="ok" id="pnlLiveLabel">Live data</span></span><a class="pnl-link" href="/tradeops/trade-history">View details &rsaquo;</a></div><div class="card-b"><div id="pnlMetricLabel" class="pnl-label">Net Session P&amp;L</div><div class="pnl-main"><div><div id="netPnl" class="pnl-value">₹0</div><div id="pnlSupport" class="pnl-support">Strategy P&amp;L</div></div><span id="profitChip" class="profit-pill">Profit</span></div><div class="metric-grid"><div class="metric"><label>Realized P&amp;L</label><b id="realized">₹0</b></div><div class="metric emphasis"><label>Unrealized P&amp;L</label><b id="unrealized">₹0</b></div><div class="metric"><label>Today's Trades</label><b id="sessionTrades" class="ok">2 / 3 Max</b></div><div class="metric emphasis"><label>Points Captured</label><b id="ptsCaptured" class="ok">+141.4 pts</b></div><div class="metric"><label>Profit Guard</label><b id="profitLockStatus" class="ok">+50pt Lock Active</b></div><div class="metric"><label>Session Win Rate</label><b id="sessionWinRate" class="ok">100% (2/2)</b></div><div class="metric emphasis"><label>Position Status</label><b id="posStatus">Flat (EOD)</b></div><div class="metric"><label>Max Risk Guard</label><b id="maxRiskGuard" class="warn">₹3,000 / Day</b></div></div><div class="pnl-foot"><span>Last updated: <b id="pnlUpdated">--</b></span><span>Source: <b id="pnlSource">Recorded Bot Session</b></span><span>Mode: <b id="pnlMode">LIVE</b></span></div></div></section>
+        <section class="card pnl"><div class="card-h"><span class="pnl-head"><span id="pnlCardTitle">Live Position &amp; Session P&amp;L</span> <span class="dot ok"></span><span class="ok" id="pnlLiveLabel">Live</span></span><a class="pnl-link" href="/tradeops/trade-history">Trade History &rsaquo;</a></div><div class="card-b"><div style="display:flex;align-items:baseline;justify-content:space-between;flex-wrap:wrap;gap:8px"><div id="pnlMetricLabel" class="pnl-label" style="font-size:13px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:#64748b">Net Session P&amp;L</div><div id="pnlRealizedSub" style="font-size:12px;font-weight:600;color:#64748b">Realized: <b id="realized" style="color:#0f172a">₹0</b> &middot; Unrealized: <b id="unrealized" style="color:#0f172a">₹0</b></div></div><div class="pnl-main" style="margin:6px 0 14px"><div style="display:flex;align-items:center;gap:12px"><div id="netPnl" class="pnl-value" style="font-size:38px;font-weight:850;line-height:1.1;letter-spacing:-1px">₹0</div><span id="profitChip" class="profit-pill" style="display:none;font-size:12px;padding:4px 10px">Flat</span></div><div id="pnlSupport" class="pnl-support" style="font-weight:600;font-size:13px;margin-top:4px;color:#059669">Flat &middot; Waiting for 10:30 AM Breakout</div></div><!-- 3-Trade Session Breakdown Cards --><div style="margin-bottom:14px"><div style="font-size:11.5px;font-weight:750;text-transform:uppercase;color:#475569;margin-bottom:6px;letter-spacing:.4px">Today's Trade Breakdown (Max 3 / Day)</div><div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:8px" id="tradeBreakdownGrid"><div class="trade-slot-card" id="tradeSlot1" style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:10px 12px"><div style="display:flex;align-items:center;justify-content:space-between"><span style="font-size:11px;font-weight:800;color:#334155">TRADE 1</span><span id="trade1Badge" style="font-size:10px;font-weight:750;padding:1px 6px;border-radius:4px;background:#e2e8f0;color:#475569">Standby</span></div><b id="trade1Pnl" style="font-size:14px;color:#0f172a;display:block;margin:4px 0 2px">Awaiting 10:30</b><span id="trade1Sub" style="font-size:10.5px;color:#64748b">1st Breakout Signal</span></div><div class="trade-slot-card" id="tradeSlot2" style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:10px 12px"><div style="display:flex;align-items:center;justify-content:space-between"><span style="font-size:11px;font-weight:800;color:#334155">TRADE 2</span><span id="trade2Badge" style="font-size:10px;font-weight:750;padding:1px 6px;border-radius:4px;background:#e2e8f0;color:#475569">Standby</span></div><b id="trade2Pnl" style="font-size:14px;color:#0f172a;display:block;margin:4px 0 2px">Standby</b><span id="trade2Sub" style="font-size:10.5px;color:#64748b">2nd Breakout Signal</span></div><div class="trade-slot-card" id="tradeSlot3" style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:10px 12px"><div style="display:flex;align-items:center;justify-content:space-between"><span style="font-size:11px;font-weight:800;color:#334155">TRADE 3</span><span id="trade3Badge" style="font-size:10px;font-weight:750;padding:1px 6px;border-radius:4px;background:#e2e8f0;color:#475569">Standby</span></div><b id="trade3Pnl" style="font-size:14px;color:#0f172a;display:block;margin:4px 0 2px">Standby</b><span id="trade3Sub" style="font-size:10.5px;color:#64748b">Max Daily Limit</span></div></div></div><div class="metric-grid"><div class="metric"><label>Position Status</label><b id="posStatus" class="ok">Flat (Waiting 10:30 AM)</b></div><div class="metric"><label>Today's Trades</label><b id="sessionTrades" class="ok">0 / 3 Max</b></div><div class="metric emphasis"><label>Profit Guard</label><b id="profitLockStatus" class="ok">+50pt Lock Active</b></div><div class="metric"><label>Max Risk Guard</label><b id="maxRiskGuard" class="warn">₹3,000 / Day</b></div><div class="metric"><label>Points Captured</label><b id="ptsCaptured" class="ok">+0.0 pts</b></div><div class="metric"><label>Exit Safeguard</label><b id="sessionWinRate" class="ok">15:15 EOD Exit</b></div></div><div class="pnl-foot"><span>Instrument: <b id="pnlInstrument">BANKNIFTY FUT (30 Qty)</b></span><span>Broker: <b id="pnlBroker">Zerodha Kite (LIVE)</b></span><span>Last Sync: <b id="pnlUpdated">--</b></span></div></div></section>
         <section class="card chart"><div class="card-h"><div class="chart-title-wrap"><span id="chartSymbolTitle">BANKNIFTY</span> &middot; <span id="chartTfLabel">15m</span> <span id="chartMode" class="chart-mode">Checking</span></div><div class="chart-view-toggle" id="chartViewToggle"><button type="button" id="btnChartContract" class="chart-toggle-btn active" title="Show Traded Contract Chart">Contract</button><button type="button" id="btnChartSpot" class="chart-toggle-btn" title="Show Bank Nifty Spot Index Chart">Spot</button></div><a class="chart-link" href="/tradeops/candle-logs">View chart &rsaquo;</a></div><div class="card-b"><div class="chart-top"><div><div id="ohlc" class="ohlc">OHLC unavailable</div><div><span id="ltp" class="ltp">LTP unavailable</span> <span id="change" class="ok"></span></div></div><button class="btn" id="chartTfTop">15m</button></div><div class="chart-box" id="chartBox"></div><div class="tabs" id="chartTabs"><button type="button" data-tf="15m" class="active">15m</button><span style="margin-left:auto" class="muted chart-footer"><span id="feedStateDot" class="dot"></span> <span id="feedState">Checking</span> | Last candle: <b id="lastCandle">--</b> | <b id="candleCount">0 candles</b></span></div></div></section>
         <section class="card account"><div class="card-h"><span>Account Balance</span><div style="display:flex;align-items:center;gap:8px;margin-left:auto"><button id="btnDirectAccountSync" class="account-sync-btn" type="button" title="Sync live broker balance from Zerodha" onclick="syncBrokerAccount(this)"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor"><path d="M21 12a9 9 0 0 1-15.5 6.2"/><path d="M3 12A9 9 0 0 1 18.5 5.8"/><path d="M18 2v4h-4"/><path d="M6 22v-4h4"/></svg><span>Sync</span></button><span id="accountSyncChip" class="account-chip ${sChipCls}">${sChipTxt}</span></div></div><div class="card-b"><div class="muted">Total Account Balance</div><div class="balance-big" id="balance">${sBal}</div><div id="accountHint" class="account-hint">${sSynced ? "Broker reported value" : "Sync account to view balance"}</div><div class="account-ident"><div><label>Account ID</label><b id="accountId">${sAcctId}</b></div><div><label>Broker</label><b id="brokerName">${sBroker}</b></div><div><label>Holder</label><b id="accountName">${sAcctName}</b></div></div><div class="acct-lines"><div class="kv"><label>Required per Lot (30 Qty)</label><strong id="accountRequiredMargin" style="color:#2563eb">~₹1,96,261</strong></div><div class="kv"><label>Available Margin</label><strong id="available">${sAvail}</strong></div><div class="kv"><label>Used Margin</label><b id="usedMargin">${sUsed}</b></div><div class="kv"><label>Buying Power</label><strong id="buyingPower">${sAvail}</strong></div></div><div id="accountWarn" class="account-warn" style="display:${sSynced ? "none" : "block"}">${sSynced ? "" : "Account not synced. Balance and margin unavailable."}</div><div class="kv"><label>Broker Sync</label><b id="brokerSyncAccount">${sSynced ? "Synced" : "Not synced"}</b></div><div class="kv"><label>Reconciliation</label><b id="recon" class="ok">${sSynced ? "✓ Verified with Kite" : "Not synced"}</b></div><div class="kv"><label>Last Sync</label><b id="lastSync">${sSynced ? "Just now" : "Not synced"}</b></div><div style="display:flex;gap:8px;margin-top:12px"><button class="btn primary" id="btnSyncAccountBottom" type="button" onclick="syncBrokerAccount(this)" style="flex:1.1;display:flex;align-items:center;justify-content:center;gap:6px"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor"><path d="M21 12a9 9 0 0 1-15.5 6.2"/><path d="M3 12A9 9 0 0 1 18.5 5.8"/><path d="M18 2v4h-4"/><path d="M6 22v-4h4"/></svg><span>Sync Account</span></button><a class="btn account-primary" href="/tradeops/account" style="flex:.9;text-align:center">Statement &rsaquo;</a></div></div></section>
         <section class="card ready mini-card execution-gate"><div class="card-h"><span>Execution Gate</span><div style="display:flex;align-items:center;gap:8px;margin-left:auto"><button id="btnOpenExecutionModal" class="account-sync-btn" type="button" title="View Real-Time Execution Workflow Checks" onclick="openExecutionModal()"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor"><path d="m9 12 2 2 4-5"/><circle cx="12" cy="12" r="9"/></svg><span>Workflow Checks</span></button><a href="/tradeops/executions">View details &rsaquo;</a></div></div><div class="card-b"><div class="gate-head"><span id="readyStrip" class="ready-strip">Checking</span><span id="gateReason" class="muted">Checking execution state</span></div><div id="gateIdle" class="compact-empty gate-idle"><div class="empty-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="12" r="9"/><path d="M8 12h8"/></svg></div><div><b>No pending execution</b><span>Waiting for next order request.</span><small>Last check: <strong id="gateLastCheck">--</strong></small></div></div><div id="gateMetrics" class="mini-grid"><div class="mini-stat"><label>Next Order Value</label><b id="nextOrderValue">~₹17,25,000</b></div><div class="mini-stat"><label>Required Margin</label><b id="requiredMargin">₹1,96,261</b></div><div class="mini-stat"><label>Available Margin</label><b id="available2">${sAvail}</b></div><div class="mini-stat"><label>Margin Status</label><b id="shortfall" style="color:#059669">✓ Safe (+₹28.7k)</b></div></div><div class="execution-pills-row" id="executionPillsRow" style="display:flex;gap:6px;flex-wrap:wrap;margin-top:12px;padding-top:10px;border-top:1px solid #edf2f8"><span class="ws-pill ok" style="font-size:11px;padding:3px 8px;background:#ecfdf5;color:#059669;border:1px solid #a7f3d0;border-radius:6px">&#10003; Broker Verified</span><span class="ws-pill ok" style="font-size:11px;padding:3px 8px;background:#ecfdf5;color:#059669;border:1px solid #a7f3d0;border-radius:6px">&#10003; Token Valid</span><span class="ws-pill ok" style="font-size:11px;padding:3px 8px;background:#ecfdf5;color:#059669;border:1px solid #a7f3d0;border-radius:6px">&#10003; Bot Online</span><span class="ws-pill ok" style="font-size:11px;padding:3px 8px;background:#ecfdf5;color:#059669;border:1px solid #a7f3d0;border-radius:6px">&#10003; Margin Ready (₹2.25L)</span><span class="ws-pill ok" style="font-size:11px;padding:3px 8px;background:#ecfdf5;color:#059669;border:1px solid #a7f3d0;border-radius:6px">&#10003; LIVE Mode Active</span></div><div class="checks-row" id="checksRow"></div></div></section>
@@ -9282,6 +9282,79 @@ function render(d){
   set('pnlInstrument', 'BANKNIFTY FUT (30 Qty)');
   set('pnlBroker', 'Zerodha Kite (' + ((d.strategy && d.strategy.mode) || 'LIVE') + ')');
   set('pnlUpdated', updated);
+
+  // Dynamic Trade 1 / Trade 2 / Trade 3 Breakdown Cards
+  const dayTrades = Array.isArray(d.trades) ? d.trades : [];
+  for(let slot = 1; slot <= 3; slot++){
+    const t = dayTrades[slot - 1];
+    const cardEl = document.getElementById('tradeSlot' + slot);
+    const badgeEl = document.getElementById('trade' + slot + 'Badge');
+    const pnlEl = document.getElementById('trade' + slot + 'Pnl');
+    const subEl = document.getElementById('trade' + slot + 'Sub');
+    
+    if(t){
+      const tPnl = Number(t.pnl || 0);
+      const tSide = String(t.direction || t.side || 'PE').toUpperCase();
+      const tPts = t.pts != null ? Number(t.pts) : (tPnl / 30);
+      const isWin = tPnl >= 0;
+      
+      if(cardEl){
+        cardEl.style.background = isWin ? '#f0fdf4' : '#fef2f2';
+        cardEl.style.borderColor = isWin ? '#bbf7d0' : '#fecaca';
+      }
+      if(badgeEl){
+        badgeEl.textContent = '✓ ' + tSide + ' (' + (t.status || 'Filled') + ')';
+        badgeEl.style.background = isWin ? '#dcfce7' : '#fee2e2';
+        badgeEl.style.color = isWin ? '#15803d' : '#b91c1c';
+      }
+      if(pnlEl){
+        pnlEl.textContent = rs(tPnl) + ' (' + (tPts >= 0 ? '+' : '') + tPts.toFixed(1) + ' pts)';
+        pnlEl.style.color = isWin ? '#15803d' : '#b91c1c';
+      }
+      if(subEl){
+        subEl.textContent = 'Entry: ₹' + fixed(t.entry || t.entryPrice) + ' · Exit: ₹' + fixed(t.exit || t.exitPrice);
+      }
+    } else if(openActive && slot === (dayTrades.length + 1)){
+      const pos = d.positions && d.positions[0];
+      const posSide = (pos && pos.side) || (d.bot && d.bot.direction) || 'Active';
+      const posPnl = Number(d.pnl.unrealized || 0);
+      const isPosWin = posPnl >= 0;
+      
+      if(cardEl){
+        cardEl.style.background = '#eff6ff';
+        cardEl.style.borderColor = '#bfdbfe';
+      }
+      if(badgeEl){
+        badgeEl.textContent = '🟢 IN TRADE (' + posSide + ')';
+        badgeEl.style.background = '#dbeafe';
+        badgeEl.style.color = '#1d4ed8';
+      }
+      if(pnlEl){
+        pnlEl.textContent = rs(posPnl) + ' (Live)';
+        pnlEl.style.color = isPosWin ? '#15803d' : '#b91c1c';
+      }
+      if(subEl){
+        subEl.textContent = '30 Qty · Running Trade';
+      }
+    } else {
+      if(cardEl){
+        cardEl.style.background = '#f8fafc';
+        cardEl.style.borderColor = '#e2e8f0';
+      }
+      if(badgeEl){
+        badgeEl.textContent = slot === 1 ? 'Next Trade' : 'Standby';
+        badgeEl.style.background = '#e2e8f0';
+        badgeEl.style.color = '#475569';
+      }
+      if(pnlEl){
+        pnlEl.textContent = slot === 1 ? 'Awaiting 10:30' : 'Standby';
+        pnlEl.style.color = '#64748b';
+      }
+      if(subEl){
+        subEl.textContent = slot === 1 ? '1st Breakout Signal' : (slot === 2 ? '2nd Breakout Signal' : 'Max Daily Limit');
+      }
+    }
+  }
 
   ['realized','unrealized','sessionTrades','ptsCaptured','profitLockStatus','sessionWinRate','posStatus'].forEach(id=>{
     const e = document.getElementById(id);
