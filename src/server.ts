@@ -1033,6 +1033,31 @@ app.get("/signup", featureGate("registration_open", "New Registrations"), (req: 
   50% { box-shadow: 0 0 0 5px rgba(16, 185, 129, 0); }
 }
 
+
+/* Market Open Animated Green Dot */
+.status-chip .dot.live-open, .dot.market-live {
+  background: #10b981 !important;
+  box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.7);
+  animation: marketPulse 1.5s ease-in-out infinite !important;
+}
+@keyframes marketPulse {
+  0% {
+    transform: scale(0.95);
+    box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.7);
+  }
+  70% {
+    transform: scale(1.15);
+    box-shadow: 0 0 0 6px rgba(16, 185, 129, 0);
+  }
+  100% {
+    transform: scale(0.95);
+    box-shadow: 0 0 0 0 rgba(16, 185, 129, 0);
+  }
+}
+.modal.active {
+  display: flex !important;
+}
+
 </style>
 </head>
 <body class="auth-body landing-page">
@@ -9893,6 +9918,57 @@ function wireWorkflowButtons(){
       await startTradeOpsTokenRefresh(refreshBtn);
     };
   }
+  // Wire Top Header Emergency Stop Button & Modal
+  const emergBtn = document.getElementById('emergencyBtn');
+  const modal = document.getElementById('modal');
+  const cancelBtn = document.getElementById('cancelStop');
+  const sendStopBtn = document.getElementById('sendStop');
+  const emergResult = document.getElementById('emergencyResult');
+
+  if(emergBtn && !emergBtn._wired){
+    emergBtn._wired = true;
+    emergBtn.onclick = function(e){
+      e.preventDefault();
+      if(modal) modal.style.display = 'flex';
+      if(emergResult) emergResult.textContent = 'Are you sure? This will send immediate market exit orders for all open broker positions.';
+    };
+  }
+  if(cancelBtn && !cancelBtn._wired){
+    cancelBtn._wired = true;
+    cancelBtn.onclick = function(){
+      if(modal) modal.style.display = 'none';
+    };
+  }
+  if(sendStopBtn && !sendStopBtn._wired){
+    sendStopBtn._wired = true;
+    sendStopBtn.onclick = async function(){
+      sendStopBtn.disabled = true;
+      sendStopBtn.textContent = 'Closing Positions...';
+      try {
+        const res = await fetch('/api/tradeops/emergency-stop', { method: 'POST', headers: { 'Content-Type': 'application/json' } });
+        const data = await res.json();
+        if(emergResult) emergResult.textContent = data.message || 'Emergency exit orders submitted successfully.';
+        setTimeout(function(){
+          if(modal) modal.style.display = 'none';
+          sendStopBtn.disabled = false;
+          sendStopBtn.textContent = 'Yes, Close Positions';
+          load();
+        }, 2000);
+      } catch(err) {
+        if(emergResult) emergResult.textContent = 'Failed to execute emergency stop: ' + (err.message || String(err));
+        sendStopBtn.disabled = false;
+        sendStopBtn.textContent = 'Yes, Close Positions';
+      }
+    };
+  }
+  // Wire Account Switcher Button
+  const acctSwitchBtn = document.querySelector('.account-switcher');
+  if(acctSwitchBtn && !acctSwitchBtn._wired){
+    acctSwitchBtn._wired = true;
+    acctSwitchBtn.onclick = function(){
+      window.location.href = '/tradeops/account';
+    };
+  }
   const syncBtn=document.getElementById('syncAccountBtn');
   if(syncBtn&&!syncBtn._wired){
     syncBtn._wired=true;
@@ -9924,6 +10000,66 @@ setTimeout(()=>{scheduleStatusPoll();scheduleLogsPoll();},2500);
 </script>
 </body></html>`;
 }
+
+// -- POST /api/tradeops/emergency-stop -- Immediately square off all open positions & cancel orders
+app.post("/api/tradeops/emergency-stop", requireAdmin, async (req: Request, res: Response) => {
+  try {
+    const broker = await tradeOpsGetBrokerData(true);
+    const positions = broker.positions || [];
+    const openPos = positions.filter((p: any) => Number(p.quantity || p.qty || 0) !== 0);
+    
+    let closedCount = 0;
+    const errors: string[] = [];
+
+    // Square off each open position using Kite API
+    for (const p of openPos) {
+      const qty = Math.abs(Number(p.quantity || p.qty || 0));
+      const transType = Number(p.quantity || p.qty || 0) > 0 ? "SELL" : "BUY";
+      const symbol = p.tradingsymbol || p.symbol;
+      const exchange = p.exchange || "NFO";
+      const product = p.product || "NRML";
+
+      try {
+        const orderRes = await tradeOpsKiteJSON("/orders/regular", {
+          method: "POST",
+          body: new URLSearchParams({
+            exchange,
+            tradingsymbol: symbol,
+            transaction_type: transType,
+            order_type: "MARKET",
+            quantity: String(qty),
+            product,
+            validity: "DAY",
+            tag: "EMERGENCY_STOP",
+          }).toString(),
+          headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        });
+        closedCount++;
+      } catch (err: any) {
+        errors.push(`Failed to square off ${symbol}: ${err.message || String(err)}`);
+      }
+    }
+
+    // Cancel all open orders
+    try {
+      const openOrdersRes = await tradeOpsKiteJSON("/orders");
+      const openOrders = (openOrdersRes?.data || []).filter((o: any) => ["OPEN", "TRIGGER PENDING"].includes(String(o.status).toUpperCase()));
+      for (const ord of openOrders) {
+        if (ord.order_id) {
+          await tradeOpsKiteJSON(`/orders/regular/${ord.order_id}`, { method: "DELETE" }).catch(() => {});
+        }
+      }
+    } catch (_) {}
+
+    const msg = openPos.length === 0
+      ? "No open positions to close. Portfolio is flat and all orders are clean."
+      : `Emergency stop executed: submitted market exits for ${closedCount}/${openPos.length} positions.` + (errors.length ? ` Errors: ${errors.join("; ")}` : "");
+
+    res.json({ ok: errors.length === 0, message: msg, closedCount });
+  } catch (e: any) {
+    res.status(500).json({ ok: false, error: e?.message || "Emergency stop execution failed" });
+  }
+});
 
 app.get("/tradeops", requireAdmin, async (req: Request, res: Response) => {
   res.setHeader("Cache-Control", "no-store");
