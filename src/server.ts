@@ -8786,31 +8786,54 @@ async function buildTradeOpsStatus(strategyId = "") {
   const currentFutHigh = tradeOpsMaybeNum(futSession?.high ?? Math.max(currentFutOpen || 0, currentFutLtp || 0));
   const currentFutLow = tradeOpsMaybeNum(futSession?.low ?? Math.min(currentFutOpen || 999999, currentFutLtp || 999999));
   
-  // If no closed 15m candles yet today, insert the forming 09:15 candle so the chart and cards are alive
-  if (candleLog.length === 0 && currentFutLtp && isMarketHoursNow) {
-    const nowTime = new Date().toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata", hour: "2-digit", minute: "2-digit" });
-    const candle0915Epoch = Math.floor(new Date(`${today}T09:15:00+05:30`).getTime() / 1000);
-    candleLog.push({
-      idx: 1,
-      time: "09:15",
-      chartTime: candle0915Epoch,
-      open: currentFutOpen,
-      high: currentFutHigh,
-      low: currentFutLow,
-      close: currentFutLtp,
-      volume: 15000,
-      closeOnly: false,
-      status: "Forming 15m Candle",
-      entry: null,
-      dir: "--",
-      sl: null,
-      pnlPts: null,
-      pnlRs: null,
-      closePnlPts: null,
-      closePnlRs: null,
-      protectedSl: null,
-      note: `Live tick streaming: forming 09:15-09:30 candle as of ${nowTime}`,
-    });
+  // Live active forming candle insertion for real-time chart ticking and timeline animation
+  if (isMarketHoursNow && currentFutLtp) {
+    const now = new Date();
+    const istMins = now.getHours() * 60 + now.getMinutes();
+    if (istMins >= 555 && istMins <= 940) {
+      const candleStartMins = Math.floor((istMins - 555) / 15) * 15 + 555;
+      const startH = Math.floor(candleStartMins / 60);
+      const startM = candleStartMins % 60;
+      const candleStartTimeStr = String(startH).padStart(2, "0") + ":" + String(startM).padStart(2, "0");
+      const candleStartEpoch = Math.floor(new Date(`${today}T${candleStartTimeStr}:00+05:30`).getTime() / 1000);
+      const candleIdx = Math.floor((candleStartMins - 555) / 15) + 1;
+
+      // Check if this forming interval is already closed in candleLog
+      const alreadyClosed = candleLog.some(c => c.time === candleStartTimeStr || c.idx === candleIdx);
+      if (!alreadyClosed) {
+        const prevCandle = candleLog[0];
+        const formingOpen = tradeOpsMaybeNum(prevCandle?.close) ?? currentFutOpen ?? currentFutLtp;
+        const formingHigh = Math.max(formingOpen, currentFutLtp, currentFutHigh || currentFutLtp);
+        const formingLow = Math.min(formingOpen, currentFutLtp, currentFutLow || currentFutLtp);
+
+        candleLog.unshift({
+          idx: candleIdx,
+          time: candleStartTimeStr,
+          chartTime: candleStartEpoch,
+          open: formingOpen,
+          high: formingHigh,
+          low: formingLow,
+          close: currentFutLtp,
+          volume: 28000,
+          closeOnly: false,
+          status: candleIdx === 6 ? "Forming 10:30 Reference Candle" : (candleIdx >= 7 ? "Breakout Evaluation Window" : "Forming 15m Candle"),
+          entry: null,
+          dir: "--",
+          sl: null,
+          pnlPts: null,
+          pnlRs: null,
+          closePnlPts: null,
+          closePnlRs: null,
+          protectedSl: null,
+          note: `Live tick streaming: forming ${candleStartTimeStr} candle (LTP: ₹${currentFutLtp.toFixed(2)})`,
+        });
+      } else if (candleLog.length > 0 && candleLog[0].time === candleStartTimeStr) {
+        // Update the current candle's live close price with latest tick
+        candleLog[0].close = currentFutLtp;
+        candleLog[0].high = Math.max(candleLog[0].high || currentFutLtp, currentFutLtp);
+        candleLog[0].low = Math.min(candleLog[0].low || currentFutLtp, currentFutLtp);
+      }
+    }
   }
 
   const feedFresh = isAlive && (isMarketHoursNow || candleLog.length > 0) && (heartbeatAgeSec === null || heartbeatAgeSec < 180);
