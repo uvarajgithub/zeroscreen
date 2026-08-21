@@ -8840,6 +8840,7 @@ async function buildTradeOpsStatus(strategyId = "") {
 
   const activePosition = openPositions[0] || null;
   const latestTrade = tradeRows[0] || historyTradeRows[0] || null;
+  const hasActiveLiveTrade = !!(openTrade || (activePosition && activePosition.qty !== 0) || hb?.tt1030InTrade || tt1030State?.inTrade);
 
   // Bank Nifty Futures contract details with live Basis (+78.75 pts futures premium over spot)
   const futuresBasis = 78.75;
@@ -8848,12 +8849,12 @@ async function buildTradeOpsStatus(strategyId = "") {
     || hb?.activeFuturesSymbol
     || hb?.tt1030Symbol
     || "BANKNIFTY26AUGFUT";
-  const contractEntryPrice = tradeOpsMaybeNum(activePosition?.avg ?? hb?.tt1030Entry ?? latestTrade?.entry ?? 57818.0);
-  const contractExitPrice = tradeOpsMaybeNum(latestTrade?.exit ?? 57574.65);
-  const contractLtp = tradeOpsMaybeNum(activePosition?.ltp ?? futSession?.current ?? hb?.tt1030Live ?? hb?.livePrice ?? contractExitPrice ?? (57495.9 + futuresBasis));
-  const contractSl = tradeOpsMaybeNum(hb?.tt1030Sl ?? (contractEntryPrice ? contractEntryPrice - 100 : 57718.0));
-  const contractQty = tradeOpsNum(activePosition?.qty ?? hb?.tt1030Qty ?? latestTrade?.qty ?? 30);
-  const contractPnl = tradeOpsMaybeNum(activePosition?.pnl ?? latestTrade?.pnl ?? -258);
+  const contractEntryPrice = hasActiveLiveTrade ? tradeOpsMaybeNum(activePosition?.avg ?? hb?.tt1030Entry ?? tt1030State?.entry) : null;
+  const contractExitPrice = tradeOpsMaybeNum(latestTrade?.exit ?? null);
+  const contractLtp = tradeOpsMaybeNum(activePosition?.ltp ?? futSession?.current ?? hb?.tt1030Live ?? hb?.livePrice ?? 57818.0);
+  const contractSl = hasActiveLiveTrade ? tradeOpsMaybeNum(hb?.tt1030Sl ?? tt1030State?.sl ?? (contractEntryPrice ? contractEntryPrice - 100 : null)) : null;
+  const contractQty = hasActiveLiveTrade ? tradeOpsNum(activePosition?.qty ?? hb?.tt1030Qty ?? 30) : 0;
+  const contractPnl = hasActiveLiveTrade ? tradeOpsMaybeNum(activePosition?.pnl ?? hb?.tt1030PnL ?? 0) : 0;
   const isOptionContract = false;
 
   const contractCandles = (Array.isArray(hb?.contractCandles) && hb.contractCandles.length > 0)
@@ -9007,6 +9008,15 @@ async function buildTradeOpsStatus(strategyId = "") {
       operationalEvents: strategyTrades.length,
       todayShadowTrades: heartbeatTrades.length,
     },
+    range: {
+      tenHigh: tradeOpsMaybeNum(tt1030State?.tenHigh ?? hb?.tt1030TenHigh),
+      tenLow: tradeOpsMaybeNum(tt1030State?.tenLow ?? hb?.tt1030TenLow),
+      tenTime: tt1030State?.tenTime || "10:30",
+      sessionHigh: currentFutHigh,
+      sessionLow: currentFutLow,
+      sessionCurrent: currentFutLtp,
+      isLocked: !!(tt1030State?.tenHigh && tt1030State?.tenLow && tt1030State.tenHigh > 0),
+    },
     activeContract: {
       symbol: activeContractSymbol,
       isOption: isOptionContract,
@@ -9015,7 +9025,7 @@ async function buildTradeOpsStatus(strategyId = "") {
       sl: contractSl,
       qty: contractQty,
       pnl: contractPnl,
-      status: activePosition ? "Active" : (latestTrade ? "Latest Trade" : "Idle"),
+      status: hasActiveLiveTrade ? "Active" : "Idle",
     },
     candles: candleLog,
     contractCandles,
@@ -11012,18 +11022,12 @@ function render(d){
   const checksRow=document.getElementById('checksRow');
   if(checksRow){checksRow.innerHTML='';checksRow.style.display='none';}
 
-  // 10:30 Strategy: Uses the High and Low of the 10:15 - 10:30 AM Candle (Candle #6)
+  // 10:30 Strategy: Live Breakout High & Low
   const candles = Array.isArray(d.candles) ? d.candles : [];
   const candle6 = candles.find(c => c.idx === 6 || String(c.time || '').includes('10:30'));
   
-  let rHigh = null, rLow = null;
-  if (candle6) {
-    rHigh = Number(candle6.high || 0);
-    rLow = Number(candle6.low || 0);
-  } else if (d.range?.tenHigh && d.range?.tenLow) {
-    rHigh = Number(d.range.tenHigh);
-    rLow = Number(d.range.tenLow);
-  }
+  let rHigh = Number(d.range?.tenHigh || (candle6 && candle6.high) || 0);
+  let rLow = Number(d.range?.tenLow || (candle6 && candle6.low) || 0);
   
   const isLocked = !!(candle6 && (candle6.status === 'marked_1030' || candle6.idx >= 6 || rHigh > 0));
   const latestCandle = candles.length ? candles[candles.length - 1] : null;
@@ -11639,7 +11643,15 @@ if(INITIAL_STATUS&&INITIAL_STATUS.ok){try{render(INITIAL_STATUS)}catch(e){consol
 wireWorkflowButtons();
 setupSidebar();
 hideLoader();
-let _statusPollTimer=null;function scheduleStatusPoll(){clearTimeout(_statusPollTimer);_statusPollTimer=setTimeout(async()=>{if(PAGE==='dashboard'||PAGE==='account'){await load().catch(()=>{});}scheduleStatusPoll();},5000);}
+let _statusPollTimer=null;
+function scheduleStatusPoll(){
+  clearTimeout(_statusPollTimer);
+  _statusPollTimer=setTimeout(async()=>{
+    await load().catch(()=>{});
+    scheduleStatusPoll();
+  }, 2000);
+}
+scheduleStatusPoll();
 let _logsPollTimer=null;
 function scheduleLogsPoll(){
   clearTimeout(_logsPollTimer);
