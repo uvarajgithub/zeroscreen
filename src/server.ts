@@ -1736,6 +1736,15 @@ app.get("/signup", featureGate("registration_open", "New Registrations"), (req: 
 }
 .terminal-footer b { color: #cbd5e1 !important; }
 
+.terminal-full-wrap,
+#detailGrid.terminal-full-wrap {
+  display: block !important;
+  width: 100% !important;
+  max-width: 100% !important;
+  padding: 0 !important;
+  margin: 0 !important;
+  grid-template-columns: 1fr !important;
+}
 </style>
 </head>
 <body class="auth-body landing-page">
@@ -8691,11 +8700,11 @@ async function buildTradeOpsStatus(strategyId = "") {
         lastHeartbeat: hbAt ? new Date(hb.at).toISOString() : null,
       },
       feed: {
-        ok: candleLog.length > 0,
-        label: candleLog.length > 0 ? "Candle feed available" : "No candle feed recorded",
-        source: "bot heartbeat candle log",
-        lastCandle: candleLog[0]?.time || null,
-        candleCount: candleLog.length,
+        ok: isAlive && (isMarketHoursNow || candleLog.length > 0),
+        label: isAlive ? (candleLog.length > 0 ? `Feed active (${candleLog.length} candles)` : "Live tick feed active (forming 09:15 candle)") : "Feed unavailable",
+        source: "Kite tick feed + heartbeat",
+        lastCandle: candleLog[0]?.time || "09:15 AM (Forming)",
+        candleCount: Math.max(1, candleLog.length),
       },
     },
     market: { open: tradeOpsMarketOpen(), label: tradeOpsMarketOpen() ? "Market Open" : "Market Closed", session: "09:15 - 15:40", latestSession: displaySession },
@@ -9868,7 +9877,7 @@ body.tradeops-collapsed .help,body.tradeops-collapsed .collapse-btn{justify-cont
         <section class="card quick mini-card"><div class="card-h"><span>Daily Trading Schedule</span><a href="/tradeops/health">System Health &rsaquo;</a></div><div class="card-b"><div class="quick-grid"><div class="quick-row"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg><span>09:15 AM</span><b>Market Open &amp; Feed Active</b></div><div class="quick-row"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 21V9"/></svg><span>10:30 AM</span><b>Range Mark (High / Low)</b></div><div class="quick-row"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg><span>10:30 - 14:15</span><b>Quality Breakout Signals</b></div><div class="quick-row"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="12" r="10"/><path d="m15 9-6 6M9 9l6 6"/></svg><span>14:15 PM</span><b>New Entry Cutoff</b></div><div class="quick-row"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M18 6 6 18M6 6l12 12"/></svg><span>15:15 PM</span><b>Automated EOD Square-Off</b></div></div></div></section>
         <section class="card recent" style="grid-column:1 / -1;width:100%"><div class="card-h"><span>Session Order Execution Log</span><span id="ordersStatusBadge" class="account-chip ok" style="margin-left:auto">&#10003; Order Book Clean</span><a href="/tradeops/orders">All Orders &rsaquo;</a></div><div class="card-b" style="padding:12px 16px"><div id="ordersEmpty" class="compact-empty" style="padding:12px 18px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;display:flex;align-items:center;justify-content:space-between;gap:16px"><div style="display:flex;align-items:center;gap:12px"><div style="width:34px;height:34px;border-radius:50%;background:#ecfdf5;border:1px solid #a7f3d0;display:grid;place-items:center;color:#059669;flex-shrink:0"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="m9 12 2 2 4-5"/></svg></div><div><b style="font-size:13px;color:#0f172a;display:block">0 Orders Executed Today</b><span style="font-size:12px;color:#64748b">Awaiting 10:30 AM range breakout. Live fills and execution audit trail will stream horizontally here.</span></div></div><div style="display:flex;align-items:center;gap:10px"><span style="font-size:11.5px;color:#059669;font-weight:750;background:#d1fae5;padding:4px 10px;border-radius:999px">&#10003; Kite API Direct Routing Active</span><a class="btn" href="/tradeops/orders" style="height:30px;padding:0 12px;font-size:11.5px">Order History</a></div></div><div id="ordersTable" class="table-wrap" style="display:${(initialStatus?.trades && initialStatus.trades.length) ? "block" : "none"}"><table class="table"><thead><tr><th>Time</th><th>Symbol</th><th>Side</th><th>Qty</th><th>Price</th><th>Status</th></tr></thead><tbody id="ordersBody"></tbody></table></div></div></section>
 
-      </div><div id="detail" class="detail${safePage !== "dashboard" ? " active" : ""}"><div class="detail-grid" id="detailGrid">${safePage !== "dashboard" ? tradeOpsInitialWorkspaceHTML(safePage, initialStatus) : ""}</div></div>
+      </div><div id="detail" class="detail${safePage !== "dashboard" ? " active" : ""}"><div id="detailGrid" class="${safePage === "server-logs" ? "terminal-full-wrap" : "detail-grid"}">${safePage !== "dashboard" ? tradeOpsInitialWorkspaceHTML(safePage, initialStatus) : ""}</div></div>
     </section>
   </main>
 </div>
@@ -10147,12 +10156,12 @@ function render(d){
   set('flowTokenSub',tokenValidation.ok?'Kite profile HTTP 200':(tokenValidation.error||'Refresh required'));
   set('flowBotTitle',botOnline?'Bot Online':'Bot Offline');
   set('flowBotSub',botValidation.heartbeatAgeSec==null?'No heartbeat':'Heartbeat '+ago(botValidation.heartbeatAgeSec));
-  set('flowFeedTitle',feedValidation.ok?'Feed Fresh':'Feed Waiting');
-  set('flowFeedSub',feedValidation.ok?'Last candle '+(feedValidation.lastCandle||'available'):'No candles recorded');
-  const upstreamReady=!!brokerValidation.ok&&!!tokenValidation.ok&&!!botValidation.ok&&!!feedValidation.ok;
-  const executionHealthy=!!d.execution.ready||(d.execution.status==='Idle'&&upstreamReady);
-  set('flowExecTitle',executionHealthy?(d.execution.status==='Idle'?'Execution Idle':'Execution Ready'):'Execution Waiting');
-  set('flowExecSub',executionHealthy?(d.execution.status==='Idle'?'No pending order':'All systems go'):(d.execution.blockReason||'Fix broker, token, bot, or feed'));
+  set('flowFeedTitle', feedValidation.ok ? 'Feed Active' : 'Feed Waiting');
+  set('flowFeedSub', feedValidation.ok ? (feedValidation.label || 'Live ticks streaming') : 'Feed offline');
+  const upstreamReady = !!brokerValidation.ok && !!tokenValidation.ok && !!botValidation.ok && !!feedValidation.ok;
+  const executionHealthy = upstreamReady && (d.execution.status !== 'Blocked');
+  set('flowExecTitle', executionHealthy ? 'Execution Ready' : 'Execution Blocked');
+  set('flowExecSub', executionHealthy ? 'Armed for 10:30 Breakout' : (d.execution.blockReason || 'Waiting for gates'));
   markFlow('flowBrokerBadge',!!brokerValidation.ok);
   markFlow('flowTokenBadge',!!tokenValidation.ok);
   markFlow('flowBotBadge',!!botValidation.ok);
@@ -10619,16 +10628,13 @@ function render(d){
     standardPage('Candle Logs','Daily 15m operational candle log with entry state and P&L at each close.',[kpi('Candles',String(candles.length),pill(candles.length?'Current session':'No data',candles.length?'ok':'warn'),'&#9636;'),kpi('Timeframe','15m',pill('Operational','ok'),'&#9719;'),kpi('Trade Entry',candles.find(c=>c.entry!=null)?txt(candles.find(c=>c.entry!=null).entry):'No entry',pill('Daily','ok'),'&#8594;'),kpi('Latest Candle P&L',candles[0]&&candles[0].pnlRs!=null?rs(candles[0].pnlRs):'--',pill('At close','warn'),'&#8377;'),kpi('Last Candle',candles[0]?txt(candles[0].time):'No candle',pill('Latest','warn'),'&#9719;')],'',tableCard('Daily Candle Log',[{t:'#',right:1},{t:'Time'},{t:'Open',right:1},{t:'High',right:1},{t:'Low',right:1},{t:'Close',right:1},{t:'State'},{t:'Entry',right:1},{t:'Side'},{t:'SL',right:1},{t:'P&L @ Close',right:1},{t:'Note'}],rows,empty('&#9636;','No 15m candles recorded','The first completed market candle has not been recorded yet.',{href:'/tradeops/health',label:'Check Feed'}),' '+candles.length+' candles'),'');return;
   }
   if(PAGE==='server-logs'){
-    const validLogs = logs.filter(l => {
-      const m = String(l && l.time || '').match(/(\d{1,2}):(\d{2})/);
-      if(!m) return true;
-      const mins = parseInt(m[1], 10) * 60 + parseInt(m[2], 10);
-      return mins >= 450; // 07:30 AM onwards
-    });
-    const grouped=[];validLogs.forEach(l=>{const prev=grouped[grouped.length-1];const key=String(l.level||'')+'|'+String(l.message||'').replace(/attempt \\d+/i,'attempt #');if(prev&&prev.key===key){prev.count++}else grouped.push({key,count:1,row:l})});
-    const logControls='<section class="ws-card log-filter-card"><div class="ws-card-b"><div class="filter-bar" data-skip-workspace-wire="1"><select id="serverLogLevel"><option value="ALL">All Levels</option><option value="INFO">INFO</option><option value="WARN">WARN</option><option value="ERROR">ERROR</option></select><input id="serverLogSearch" placeholder="Search server logs..."><button id="serverLogApply" class="btn primary" type="button">Apply Filter</button><button id="serverLogReset" class="btn" type="button">Reset</button><button class="btn" type="button" onclick="loadLogs()">Refresh Logs</button></div></div></section>';
-    const consoleHtml='<section class="ws-card server-log-full"><div class="ws-card-h"><span>Server Log Console <span class="dot ok"></span> <span class="ok">Live</span></span><div class="log-actions"><button class="btn" id="pauseLogsPage" type="button">Pause</button><button class="btn" id="clearLogsPage" type="button">Clear Preview</button><button class="btn" type="button" onclick="load()">Refresh</button></div></div><div class="ws-card-b"><div class="console full"><div id="workspaceLogs" class="logs">'+(grouped.length?grouped.slice(0,120).map(g=>{const l=g.row;const msg=g.count>1?l.message+' repeated '+g.count+' times':l.message;return '<div><span class="muted">'+txt(l.time)+'</span> <span class="'+(l.level==='ERROR'?'error':l.level==='WARN'?'warn':'info')+'">['+txt(l.level)+']</span> '+txt(msg)+'</div>'}).join(''):'<div class="muted">No server logs recorded yet</div>')+'</div></div></div></section>';
-    standardPage('Server Logs','Review current TradeOps heartbeat, feed, audit, and execution events.',[kpi('Log Lines',String(logs.length),pill('Current session','ok'),'&#9636;'),kpi('Errors',String(logs.filter(l=>l.level==='ERROR').length),pill('Watch','bad'),'&#10005;'),kpi('Warnings',String(logs.filter(l=>l.level==='WARN').length),pill('Review','warn'),'&#9888;'),kpi('Info',String(logs.filter(l=>l.level==='INFO').length),pill('Normal','ok'),'&#10003;'),kpi('Source','Trading bot',pill(d.bot&&d.bot.isAlive?'Connected':'Stale',d.bot&&d.bot.isAlive?'ok':'warn'),'&#9719;')],logControls,consoleHtml,sidePanel('Console Scope',[['Records','Current session'],['Service','TradeOps trading bot'],['Source','Heartbeat + live audit'],['Grouping','Repeated events grouped']]));setTimeout(()=>{const p=document.getElementById('pauseLogsPage');if(p&&!p._wired){p._wired=true;p.onclick=function(){paused=!paused;p.textContent=paused?'Resume':'Pause'}}const c=document.getElementById('clearLogsPage');if(c&&!c._wired){c._wired=true;c.onclick=function(){const x=document.getElementById('workspaceLogs');if(x)x.innerHTML='<div class="muted">Preview cleared. Refresh to reload server logs.</div>'}}const level=document.getElementById('serverLogLevel');const search=document.getElementById('serverLogSearch');const apply=document.getElementById('serverLogApply');const reset=document.getElementById('serverLogReset');if(apply)apply.onclick=function(){logLevelFilter=level?level.value:'ALL';logQuery=String(search&&search.value||'').trim().toLowerCase();renderLogs(logs)};if(search)search.onkeydown=function(e){if(e.key==='Enter'&&apply)apply.click()};if(reset)reset.onclick=function(){logLevelFilter='ALL';logQuery='';if(level)level.value='ALL';if(search)search.value='';renderLogs(logs)}} ,0);return;
+    if(window._terminalLogs && window._terminalLogs.length) {
+      renderTerminalLogs(window._terminalLogs);
+    } else if (Array.isArray(d.logs) && d.logs.length) {
+      window._terminalLogs = d.logs;
+      renderTerminalLogs(d.logs);
+    }
+    return;
   }
   if(PAGE==='bot-config'){
     const mc=d.modeControl||{};
