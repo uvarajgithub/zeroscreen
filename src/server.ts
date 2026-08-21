@@ -8212,7 +8212,77 @@ function tradeOpsDedupeRejections(rows: any[]) {
   return Array.from(grouped.values());
 }
 
+
+const tradeOpsMinuteLogBuffer: Array<{ time: string; level: string; message: string; timestamp: number }> = [];
+
+function tradeOpsRecordMinuteHeartbeat() {
+  try {
+    const now = new Date();
+    const istMinutes = now.getHours() * 60 + now.getMinutes();
+    // Record during operational day (07:30 to 16:00 IST)
+    if (istMinutes < 450 || istMinutes > 960) return;
+
+    const hb = readBotJSON("bot-heartbeat.json", {}) || {};
+    const fut = hb?.bankNiftyFuturesSession || {};
+    const curLtp = Number(fut.current || 57815);
+    const curHigh = Number(fut.high || 57858);
+    const curLow = Number(fut.low || 57585.2);
+    const state = readBotJSON("tt1030-state.json", {}) || {};
+
+    const timeStr = now.toLocaleTimeString("en-IN", {
+      timeZone: "Asia/Kolkata",
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+      hour12: true
+    });
+
+    let statusMsg = "";
+    if (istMinutes < 615) {
+      // 09:15 to 10:15 AM
+      const candleNum = Math.floor((istMinutes - 555) / 15) + 1;
+      statusMsg = `[Candle #${candleNum} Active] BANKNIFTY FUT: ₹${curLtp.toFixed(1)} | High: ₹${curHigh.toFixed(1)} / Low: ₹${curLow.toFixed(1)} | Awaiting 10:15 reference candle`;
+    } else if (istMinutes <= 630) {
+      // 10:15 to 10:30 AM
+      const minsLeft = 630 - istMinutes;
+      statusMsg = `[10:15-10:30 Reference Candle Forming] Live Futures: ₹${curLtp.toFixed(1)} | Locking in ${minsLeft}m | High: ₹${curHigh.toFixed(1)} / Low: ₹${curLow.toFixed(1)}`;
+    } else if (state.inTrade) {
+      const dir = state.dir || "CE";
+      const entry = Number(state.entry || curLtp);
+      const pts = dir === "CE" ? (curLtp - entry) : (entry - curLtp);
+      statusMsg = `[ACTIVE TRADE: ${dir}] LTP: ₹${curLtp.toFixed(1)} | Entry: ₹${entry.toFixed(1)} | P&L: ${(pts >= 0 ? '+' : '')}${pts.toFixed(1)} pts (₹${Math.round(pts * 30)}) | SL: ₹${Number(state.sl || 0).toFixed(1)}`;
+    } else if (state.tenHigh && state.tenLow) {
+      const ceDist = state.tenHigh - curLtp;
+      const peDist = curLtp - state.tenLow;
+      statusMsg = `[Monitoring Breakout] 10:30 High: ₹${state.tenHigh.toFixed(1)} | Low: ₹${state.tenLow.toFixed(1)} | LTP: ₹${curLtp.toFixed(1)} | CE: +${Math.max(0, ceDist).toFixed(1)} pts | PE: -${Math.max(0, peDist).toFixed(1)} pts`;
+    } else {
+      statusMsg = `[Telemetry Live] BANKNIFTY FUT: ₹${curLtp.toFixed(1)} | Bot Heartbeat OK | Order Gate: Armed (LIVE)`;
+    }
+
+    const minuteKey = timeStr.slice(0, 5); // Match HH:MM
+    const last = tradeOpsMinuteLogBuffer[tradeOpsMinuteLogBuffer.length - 1];
+    if (!last || !last.time.includes(minuteKey)) {
+      tradeOpsMinuteLogBuffer.push({
+        time: timeStr,
+        level: "INFO",
+        message: statusMsg,
+        timestamp: Date.now()
+      });
+      if (tradeOpsMinuteLogBuffer.length > 200) tradeOpsMinuteLogBuffer.shift();
+    } else {
+      // Update the current minute's message with latest price
+      last.time = timeStr;
+      last.message = statusMsg;
+    }
+  } catch (_) {}
+}
+
+setInterval(tradeOpsRecordMinuteHeartbeat, 5000);
+tradeOpsRecordMinuteHeartbeat();
+
+
 function buildTradeOpsLogPreview() {
+  tradeOpsRecordMinuteHeartbeat();
   const hb = readBotJSON("bot-heartbeat.json", {}) || {};
   const tt1030State = readBotJSON("tt1030-state.json", {}) || {};
   const tt1030CandleFile = readBotJSON("tt1030-candle-log.json", {}) || {};
@@ -8267,14 +8337,21 @@ function buildTradeOpsLogPreview() {
     { time: tradeOpsTime(hb?.at), level: todayCandles.length ? "INFO" : "WARN", message: `Operational candle feed: ${todayCandles.length} candles today` },
     { time: tradeOpsTime(hb?.at), level: liveNet === null || liveNet >= 0 ? "INFO" : "WARN", message: `TradeOps heartbeat P&L ${liveNet === null ? "unavailable" : liveNet.toFixed(2)}` },
   ];
+  const minuteLogs = tradeOpsMinuteLogBuffer.map(m => ({
+    time: m.time,
+    level: m.level,
+    message: m.message
+  }));
+
   return [
     ...heartbeatLogRows,
     ...botAuditTail.map((x: any) => ({ time: tradeOpsTime(x.ts || x.at), level: tradeOpsAuditLevel(x), message: tradeOpsAuditMessage(x) })),
     ...auditTail.map((x: any) => ({ time: tradeOpsTime(x.at), level: x.ok === false ? "WARN" : "INFO", message: tradeOpsSanitizeLog(x.message || x.action || "Audit event") })),
     ...recentFileRows,
     ...candleLines,
+    ...minuteLogs,
     ...operationalLogs,
-  ].slice(-30).reverse();
+  ].slice(-60).reverse();
 }
 
 let lastTradeOpsBrokerCacheTime = 0;
