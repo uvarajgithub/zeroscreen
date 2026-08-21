@@ -10757,31 +10757,135 @@ function buildChartCandles(candles){
   });
   return Array.from(buckets.values()).sort((a, b) => a.time - b.time);
 }
-function chart(candles,activeContract){const wrap=document.getElementById('chartBox');if(!wrap)return;const isContract=chartViewMode==='contract'&&!!(activeContract&&activeContract.symbol);const chartLabel=isContract?activeContract.symbol:('BANKNIFTY '+chartTf);const cs=buildChartCandles(candles).slice(-80);if(cs.length<1){wrap.classList.add('no-data');wrap.innerHTML='<div class="empty-chart">No '+chartLabel+' candles recorded yet<br><span style="color:#6aa8ff">Check feed</span></div>';return;}wrap.classList.remove('no-data');if(!window.LightweightCharts){if(!wrap._chartRetryTimer){wrap._chartRetryTimer=setInterval(function(){if(window.LightweightCharts){clearInterval(wrap._chartRetryTimer);wrap._chartRetryTimer=null;if(lastStatus)renderChartWithMode(lastStatus);else chart(candles,activeContract);}},30);setTimeout(function(){if(wrap._chartRetryTimer){clearInterval(wrap._chartRetryTimer);wrap._chartRetryTimer=null;}},5000);}return;}if(wrap._chartRetryTimer){clearInterval(wrap._chartRetryTimer);wrap._chartRetryTimer=null;}if(!tvChart){wrap.innerHTML='';tvChart=LightweightCharts.createChart(wrap,{autoSize:true,localization:{timeFormatter:function(timestamp){return new Date(timestamp*1000).toLocaleTimeString('en-IN',{timeZone:'Asia/Kolkata',hour:'2-digit',minute:'2-digit',hour12:false});}},layout:{background:{type:'solid',color:'#081624'},textColor:'#9fb5cc',fontFamily:'Inter,Manrope,system-ui'},grid:{vertLines:{color:'rgba(255,255,255,.05)'},horzLines:{color:'rgba(255,255,255,.07)'}},rightPriceScale:{borderColor:'#223a55',scaleMargins:{top:.08,bottom:.10}},timeScale:{borderColor:'#223a55',timeVisible:true,secondsVisible:false},crosshair:{mode:LightweightCharts.CrosshairMode.Normal},handleScroll:true,handleScale:true});tvCandleSeries=tvChart.addCandlestickSeries({upColor:'#22c55e',downColor:'#ef4444',borderUpColor:'#22c55e',borderDownColor:'#ef4444',wickUpColor:'#22c55e',wickDownColor:'#ef4444',priceLineVisible:false});// Clean candle chart without volume distortion
-tvVolumeSeries=null;new ResizeObserver(()=>{if(tvChart)tvChart.applyOptions({autoSize:true})}).observe(wrap);}const candleData=cs.map(c=>({time:c.chartTime,open:c.open,high:c.high,low:c.low,close:c.close}));tvCandleSeries.setData(candleData);tvChart.applyOptions({rightPriceScale:{borderColor:'#223a55',scaleMargins:{top:.10,bottom:.10}}});const latest=cs[cs.length-1];if(tvPriceLine)tvCandleSeries.removePriceLine(tvPriceLine);tvPriceLine=tvCandleSeries.createPriceLine({price:latest.close,color:'#22c55e',lineWidth:1,lineStyle:LightweightCharts.LineStyle.Dashed,axisLabelVisible:true,title:'LTP'});// Draw 10:30 Strategy Breakout Reference Price Lines
-const tenHigh = Number(lastStatus?.range?.tenHigh || 0);
-const tenLow = Number(lastStatus?.range?.tenLow || 0);
-if(tenHigh > 0){
-  if(tvTenHighLine) tvCandleSeries.removePriceLine(tvTenHighLine);
-  tvTenHighLine = tvCandleSeries.createPriceLine({price: tenHigh, color: '#16a34a', lineWidth: 2, lineStyle: LightweightCharts.LineStyle.Dashed, axisLabelVisible: true, title: 'BUY HIGH (' + tenHigh.toFixed(1) + ')'});
-}
-if(tenLow > 0){
-  if(tvTenLowLine) tvCandleSeries.removePriceLine(tvTenLowLine);
-  tvTenLowLine = tvCandleSeries.createPriceLine({price: tenLow, color: '#dc2626', lineWidth: 2, lineStyle: LightweightCharts.LineStyle.Dashed, axisLabelVisible: true, title: 'SELL LOW (' + tenLow.toFixed(1) + ')'});
-}
+let _lastChartCandleCount = 0;
+let _lastChartViewMode = '';
 
-// Live LTP Pulse Badge Animation
-const pulseEl = document.getElementById('ltpPulseBadge');
-if(pulseEl && latest && latest.close){
-  if(prevLtpVal !== null && latest.close !== prevLtpVal){
-    const isUp = latest.close >= prevLtpVal;
-    pulseEl.className = 'pulse-badge ' + (isUp ? 'up' : 'down');
-    pulseEl.textContent = (isUp ? '▲ ' : '▼ ') + '₹' + latest.close.toFixed(2);
+function chart(candles, activeContract) {
+  const wrap = document.getElementById('chartBox');
+  if (!wrap) return;
+  const isContract = chartViewMode === 'contract' && !!(activeContract && activeContract.symbol);
+  const chartLabel = isContract ? activeContract.symbol : ('BANKNIFTY ' + chartTf);
+  const cs = buildChartCandles(candles).slice(-80);
+  if (cs.length < 1) {
+    wrap.classList.add('no-data');
+    wrap.innerHTML = '<div class="empty-chart">No ' + chartLabel + ' candles recorded yet<br><span style="color:#6aa8ff">Check feed</span></div>';
+    return;
   }
-  prevLtpVal = latest.close;
-}
+  wrap.classList.remove('no-data');
+  if (!window.LightweightCharts) {
+    if (!wrap._chartRetryTimer) {
+      wrap._chartRetryTimer = setInterval(function() {
+        if (window.LightweightCharts) {
+          clearInterval(wrap._chartRetryTimer);
+          wrap._chartRetryTimer = null;
+          if (lastStatus) renderChartWithMode(lastStatus);
+          else chart(candles, activeContract);
+        }
+      }, 30);
+      setTimeout(function() {
+        if (wrap._chartRetryTimer) { clearInterval(wrap._chartRetryTimer); wrap._chartRetryTimer = null; }
+      }, 5000);
+    }
+    return;
+  }
+  if (wrap._chartRetryTimer) { clearInterval(wrap._chartRetryTimer); wrap._chartRetryTimer = null; }
+  
+  if (!tvChart) {
+    wrap.innerHTML = '';
+    tvChart = LightweightCharts.createChart(wrap, {
+      autoSize: true,
+      localization: {
+        timeFormatter: function(timestamp) {
+          return new Date(timestamp * 1000).toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata', hour: '2-digit', minute: '2-digit', hour12: false });
+        }
+      },
+      layout: { background: { type: 'solid', color: '#081624' }, textColor: '#9fb5cc', fontFamily: 'Inter,Manrope,system-ui' },
+      grid: { vertLines: { color: 'rgba(255,255,255,.05)' }, horzLines: { color: 'rgba(255,255,255,.07)' } },
+      rightPriceScale: { borderColor: '#223a55', scaleMargins: { top: 0.10, bottom: 0.10 } },
+      timeScale: { borderColor: '#223a55', timeVisible: true, secondsVisible: false },
+      crosshair: { mode: LightweightCharts.CrosshairMode.Normal },
+      handleScroll: true,
+      handleScale: true
+    });
+    tvCandleSeries = tvChart.addCandlestickSeries({
+      upColor: '#22c55e', downColor: '#ef4444',
+      borderUpColor: '#22c55e', borderDownColor: '#ef4444',
+      wickUpColor: '#22c55e', wickDownColor: '#ef4444',
+      priceLineVisible: false
+    });
+    new ResizeObserver(() => { if (tvChart) tvChart.applyOptions({ autoSize: true }); }).observe(wrap);
+  }
 
-if(isContract&&activeContract.entryPrice!=null&&Number.isFinite(Number(activeContract.entryPrice))){if(tvEntryLine)tvCandleSeries.removePriceLine(tvEntryLine);tvEntryLine=tvCandleSeries.createPriceLine({price:Number(activeContract.entryPrice),color:'#3b82f6',lineWidth:1,lineStyle:LightweightCharts.LineStyle.Solid,axisLabelVisible:true,title:'ENTRY'});}else if(tvEntryLine){tvCandleSeries.removePriceLine(tvEntryLine);tvEntryLine=null;}if(isContract&&activeContract.sl!=null&&Number.isFinite(Number(activeContract.sl))){if(tvSlLine)tvCandleSeries.removePriceLine(tvSlLine);tvSlLine=tvCandleSeries.createPriceLine({price:Number(activeContract.sl),color:'#ef4444',lineWidth:1,lineStyle:LightweightCharts.LineStyle.Dashed,axisLabelVisible:true,title:'SL'});}else if(tvSlLine){tvCandleSeries.removePriceLine(tvSlLine);tvSlLine=null;}tvChart.timeScale().fitContent();}
+  const latest = cs[cs.length - 1];
+  const candleData = cs.map(c => ({ time: c.chartTime, open: c.open, high: c.high, low: c.low, close: c.close }));
+
+  // If candle count changed or view switched, setData and fitContent
+  if (_lastChartCandleCount !== cs.length || _lastChartViewMode !== chartViewMode) {
+    tvCandleSeries.setData(candleData);
+    tvChart.timeScale().fitContent();
+    _lastChartCandleCount = cs.length;
+    _lastChartViewMode = chartViewMode;
+  } else if (latest) {
+    // Real-time smooth tick update on the active forming candle
+    tvCandleSeries.update({
+      time: latest.chartTime,
+      open: latest.open,
+      high: latest.high,
+      low: latest.low,
+      close: latest.close
+    });
+  }
+
+  // Update LTP Cursor Line smoothly
+  if (latest && latest.close) {
+    if (tvPriceLine) tvCandleSeries.removePriceLine(tvPriceLine);
+    tvPriceLine = tvCandleSeries.createPriceLine({
+      price: latest.close,
+      color: '#22c55e',
+      lineWidth: 1,
+      lineStyle: LightweightCharts.LineStyle.Dashed,
+      axisLabelVisible: true,
+      title: 'LTP ' + latest.close.toFixed(1)
+    });
+  }
+
+  // Draw 10:30 Strategy Breakout Reference Price Lines
+  const tenHigh = Number(lastStatus?.range?.tenHigh || 0);
+  const tenLow = Number(lastStatus?.range?.tenLow || 0);
+  if (tenHigh > 0) {
+    if (tvTenHighLine) tvCandleSeries.removePriceLine(tvTenHighLine);
+    tvTenHighLine = tvCandleSeries.createPriceLine({
+      price: tenHigh,
+      color: '#16a34a',
+      lineWidth: 2,
+      lineStyle: LightweightCharts.LineStyle.Dashed,
+      axisLabelVisible: true,
+      title: 'BUY HIGH (' + tenHigh.toFixed(1) + ')'
+    });
+  }
+  if (tenLow > 0) {
+    if (tvTenLowLine) tvCandleSeries.removePriceLine(tvTenLowLine);
+    tvTenLowLine = tvCandleSeries.createPriceLine({
+      price: tenLow,
+      color: '#dc2626',
+      lineWidth: 2,
+      lineStyle: LightweightCharts.LineStyle.Dashed,
+      axisLabelVisible: true,
+      title: 'SELL LOW (' + tenLow.toFixed(1) + ')'
+    });
+  }
+
+  // Live LTP Pulse Badge Animation
+  const pulseEl = document.getElementById('ltpPulseBadge');
+  if (pulseEl && latest && latest.close) {
+    if (prevLtpVal !== null && latest.close !== prevLtpVal) {
+      const isUp = latest.close >= prevLtpVal;
+      pulseEl.className = 'pulse-badge ' + (isUp ? 'up' : 'down');
+      pulseEl.textContent = (isUp ? '▲ ' : '▼ ') + '₹' + latest.close.toFixed(2);
+    }
+    prevLtpVal = latest.close;
+  }
+}
 function renderChartWithMode(d){if(!d)return;const contract=d.activeContract||null;const hasContract=!!(contract&&contract.symbol);const isContract=chartViewMode==='contract'&&hasContract;const btnContract=document.getElementById('btnChartContract');const btnSpot=document.getElementById('btnChartSpot');if(btnContract){btnContract.classList.toggle('active',isContract);btnContract.textContent='BANKNIFTY FUT';}if(btnSpot){btnSpot.classList.toggle('active',!isContract);btnSpot.textContent='Spot Index';}const activeCandles=(isContract&&d.contractCandles&&d.contractCandles.length)?d.contractCandles:(d.candles||[]);const chartCandles=buildChartCandles(activeCandles);const c=chartCandles.length?chartCandles[chartCandles.length-1]:(activeCandles&&activeCandles[0]);const botOnline=!!(d.bot&&(d.bot.isAlive===true||d.bot.online===true));const feedFresh=!!(activeCandles&&activeCandles.length&&botOnline&&d.bot.heartbeatAgeSec!=null&&d.bot.heartbeatAgeSec<180);const feedState=d.market.open?(feedFresh?'Fresh':'Delayed'):'Last Session';set('chartSymbolTitle',isContract?(contract.symbol||'BANKNIFTY AUG FUT'):'BANKNIFTY (Spot)');set('chartTfLabel',chartTf);set('chartTfTop',chartTf);set('chartMode',d.market.open?(feedFresh?'Live':'Delayed'):'Last Session');const hasVolume=!!(activeCandles||[]).some(x=>Number(x.volume||0)>0);set('feedState',feedState+(hasVolume?'':' | Volume unavailable'));const fsd=document.getElementById('feedStateDot');if(fsd)fsd.className='dot '+(feedState==='Fresh'?'ok':feedState==='Delayed'?'warn':'');set('candleCount',chartCandles.length+' '+chartTf+' candles');const ohlcEl=document.getElementById('ohlc');if(ohlcEl)ohlcEl.innerHTML=c?(c.closeOnly?'Close-only feed':'<span>O <b>'+fixed(c.open)+'</b></span><span>H <b>'+fixed(c.high)+'</b></span><span>L <b>'+fixed(c.low)+'</b></span><span>C <b>'+fixed(c.close)+'</b></span>'):'OHLC unavailable';set('ltp',c?'LTP '+fixed(c.close):'LTP unavailable');set('change',c&&num(c.open)!=null&&num(c.close)!=null&&!c.closeOnly?((c.close-c.open)>=0?'+':'')+(c.close-c.open).toFixed(2)+' ('+(((c.close-c.open)/c.open)*100).toFixed(2)+'%)':'');set('lastCandle',c?(c.timeLabel || (typeof c.time==='number'?new Date(c.time*1000).toLocaleTimeString('en-IN',{timeZone:'Asia/Kolkata',hour:'2-digit',minute:'2-digit',hour12:true}):c.time)):'--');chart(activeCandles,contract);}
 function logGroups(logs){const meaningful=[];(logs||[]).forEach(l=>{let msg=String(l.message||'');let level=String(l.level||'INFO').toUpperCase();if(/requireStack|at Module|node:internal|^\\s*at\\s/i.test(msg))return;if(/MODULE_NOT_FOUND/i.test(msg)){level='ERROR';msg='Server module missing. Stack trace available in full logs.'}if(/ETIMEDOUT|failed|rejected|Error:/i.test(msg))level='ERROR';meaningful.push({time:l.time,level,message:msg})});const grouped=[];meaningful.forEach(l=>{const prev=grouped[grouped.length-1];const key=l.level+'|'+String(l.message||'').replace(/attempt \\d+/i,'attempt #');if(prev&&prev.key===key){prev.count++}else grouped.push({key,count:1,row:l})});return grouped}
 function logHtml(groups,limit){
@@ -11923,7 +12027,7 @@ function scheduleStatusPoll(){
   _statusPollTimer=setTimeout(async()=>{
     await load().catch(()=>{});
     scheduleStatusPoll();
-  }, 2000);
+  }, 1000);
 }
 scheduleStatusPoll();
 let _logsPollTimer=null;
