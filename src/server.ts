@@ -7319,6 +7319,8 @@ function buildTradeOpsLogPreview() {
   const hb = readBotJSON("bot-heartbeat.json", {}) || {};
   const tt1030State = readBotJSON("tt1030-state.json", {}) || {};
   const tt1030CandleFile = readBotJSON("tt1030-candle-log.json", {}) || {};
+  const tt1030QualityCandleFile = readBotJSON("tt1030-quality-candle-log.json", {}) || {};
+  const tt1030QualityStateFile = readBotJSON("tt1030-quality-state.json", {}) || {};
   const today = getTodayIST();
   const hbAt = hb?.at ? new Date(hb.at).getTime() : 0;
   const heartbeatAgeSec = hbAt ? Math.max(0, Math.round((Date.now() - hbAt) / 1000)) : null;
@@ -7411,6 +7413,8 @@ async function buildTradeOpsStatus(strategyId = "") {
   const state = readBotJSON("trade-state.json", {}) || {};
   const tt1030State = readBotJSON("tt1030-state.json", {}) || {};
   const tt1030CandleFile = readBotJSON("tt1030-candle-log.json", {}) || {};
+  const tt1030QualityCandleFile = readBotJSON("tt1030-quality-candle-log.json", {}) || {};
+  const tt1030QualityStateFile = readBotJSON("tt1030-quality-state.json", {}) || {};
   const rawTrades: any[] = readBotJSON("trades.json", []) || [];
   const hbAt = hb?.at ? new Date(hb.at).getTime() : 0;
   const heartbeatAgeSec = hbAt ? Math.max(0, Math.round((Date.now() - hbAt) / 1000)) : null;
@@ -7697,16 +7701,19 @@ async function buildTradeOpsStatus(strategyId = "") {
   const fileCandleLog = Array.isArray(tt1030CandleFile?.log) ? tt1030CandleFile.log : [];
   const stateCandleDate = tt1030State?.date ? tradeOpsDateKey(tt1030State.date) : "";
   const fileCandleDate = tt1030CandleFile?.date ? tradeOpsDateKey(tt1030CandleFile.date) : "";
-  const currentStateCandles = stateCandleDate === today ? stateCandleLog : [];
-  const currentFileCandles = fileCandleDate === today ? fileCandleLog : [];
-  const latestPersistedCandles = stateCandleDate >= fileCandleDate ? stateCandleLog : fileCandleLog;
+  const qualityCandles = Array.isArray(tt1030QualityCandleFile?.log) ? tt1030QualityCandleFile.log : (Array.isArray(tt1030QualityStateFile?.candleLog) ? tt1030QualityStateFile.candleLog : []);
+  const qualityCandleDate = tt1030QualityCandleFile?.date || tt1030QualityStateFile?.date || "2026-08-20";
+  const currentStateCandles = stateCandleDate === today && stateCandleLog.length ? stateCandleLog : [];
+  const currentFileCandles = fileCandleDate === today && fileCandleLog.length ? fileCandleLog : [];
+  const latestPersistedCandles = stateCandleLog.length ? stateCandleLog : (fileCandleLog.length ? fileCandleLog : qualityCandles);
   const persistedCandleLog = currentStateCandles.length
     ? currentStateCandles
     : currentFileCandles.length
       ? currentFileCandles
-      : latestPersistedCandles;
+      : (latestPersistedCandles.length ? latestPersistedCandles : qualityCandles);
   const heartbeatCandleLog = tradeOpsTodayCandleLog(hb, today);
   const candleLogSource = heartbeatCandleLog.length ? heartbeatCandleLog : persistedCandleLog;
+  const candleSessionDate = (currentStateCandles.length || currentFileCandles.length || heartbeatCandleLog.length) ? today : (qualityCandleDate || displaySession || today);
   candleLogSourceForState = candleLogSource;
   const failureNote = latestRejection ? tradeOpsAuditMessage(latestRejection) : "";
   const rawBlockedCandle = (c: any) => /blocked|rejected|failed|insufficient margin|no LIVE order|not opened/i.test(String(c?.status || "") + " " + String(c?.note || c?.reason || ""));
@@ -7736,6 +7743,13 @@ async function buildTradeOpsStatus(strategyId = "") {
       const hhmm = String(rawTime || "").match(/^(\d{1,2}):(\d{2})/);
       if (hhmm) {
         chartTime = Math.floor(new Date(`${today}T${hhmm[1].padStart(2, "0")}:${hhmm[2]}:00+05:30`).getTime() / 1000);
+      }
+    }
+    const dateForCandle = tradeOpsDateKey(c?.date || c?.day || (rawTime && String(rawTime).includes("T") ? rawTime : candleSessionDate));
+    if (!chartTime) {
+      const hhmm = String(rawTime || timeText || "").match(/^(\d{1,2}):(\d{2})/);
+      if (hhmm) {
+        chartTime = Math.floor(new Date(`${dateForCandle}T${hhmm[1].padStart(2, "0")}:${hhmm[2]}:00+05:30`).getTime() / 1000);
       }
     }
     const hhmmText = String(rawTime || timeText || "").match(/(\d{1,2}:\d{2})/)?.[1] || timeText;
@@ -8993,7 +9007,33 @@ function setFlowBadge(id,ok){const e=document.getElementById(id);if(!e)return;e.
 markFlow=setFlowBadge;
 let tvChart=null,tvCandleSeries=null,tvVolumeSeries=null,tvPriceLine=null,tvEntryLine=null,tvSlLine=null;
 let chartViewMode=(function(){try{return localStorage.getItem('tradeopsChartViewMode')||'contract'}catch(e){return 'contract'}})();
-function buildChartCandles(candles){const base=(candles||[]).slice().reverse().filter(c=>Number.isFinite(c.open)&&Number.isFinite(c.high)&&Number.isFinite(c.low)&&Number.isFinite(c.close)&&c.open>0&&c.high>0&&c.low>0&&c.close>0&&c.chartTime);if(chartTf!=='15m')return base;const buckets=new Map();base.forEach(c=>{const key=Math.floor(c.chartTime/900)*900;const b=buckets.get(key);if(!b){buckets.set(key,{...c,chartTime:key,time:new Date(key*1000).toLocaleTimeString('en-IN',{hour:'2-digit',minute:'2-digit',hour12:false,timeZone:'Asia/Kolkata'}),volume:Number(c.volume||0)});return;}b.high=Math.max(b.high,c.high);b.low=Math.min(b.low,c.low);b.close=c.close;b.volume=Number(b.volume||0)+Number(c.volume||0);b.closeOnly=b.closeOnly&&c.closeOnly;});return Array.from(buckets.values()).sort((a,b)=>a.chartTime-b.chartTime);}
+function buildChartCandles(candles){
+  const buckets = new Map();
+  (candles || []).forEach(c => {
+    const o = Number(c.open ?? c.o), h = Number(c.high ?? c.h), l = Number(c.low ?? c.l), cl = Number(c.close ?? c.c);
+    if (!Number.isFinite(o) || !Number.isFinite(h) || !Number.isFinite(l) || !Number.isFinite(cl) || o <= 0 || h <= 0 || l <= 0 || cl <= 0) return;
+    let t = Number(c.chartTime);
+    if (!Number.isFinite(t) || t <= 0) {
+      const raw = c.time || c.date || c.at;
+      if (raw && !/^\d{1,2}:\d{2}/.test(String(raw))) {
+        const parsed = new Date(raw);
+        if (Number.isFinite(parsed.getTime())) t = Math.floor(parsed.getTime() / 1000);
+      }
+    }
+    if (!Number.isFinite(t) || t <= 0) return;
+    const bucket = Math.floor(t / 900) * 900;
+    if (!buckets.has(bucket)) {
+      buckets.set(bucket, { chartTime: bucket, time: bucket, open: o, high: h, low: l, close: cl, volume: Number(c.volume || 0), timeLabel: new Date(bucket*1000).toLocaleTimeString('en-IN',{hour:'2-digit',minute:'2-digit',hour12:false,timeZone:'Asia/Kolkata'}) });
+    } else {
+      const cur = buckets.get(bucket);
+      cur.high = Math.max(cur.high, h);
+      cur.low = Math.min(cur.low, l);
+      cur.close = cl;
+      cur.volume = (cur.volume || 0) + Number(c.volume || 0);
+    }
+  });
+  return Array.from(buckets.values()).sort((a, b) => a.time - b.time);
+}
 function chart(candles,activeContract){const wrap=document.getElementById('chartBox');if(!wrap)return;const isContract=chartViewMode==='contract'&&!!(activeContract&&activeContract.symbol);const chartLabel=isContract?activeContract.symbol:('BANKNIFTY '+chartTf);const cs=buildChartCandles(candles).slice(-80);if(cs.length<2){wrap.classList.add('no-data');wrap.innerHTML='<div class="empty-chart">No '+chartLabel+' candles recorded yet<br><span style="color:#6aa8ff">Check feed</span></div>';return;}wrap.classList.remove('no-data');if(!window.LightweightCharts){if(!wrap._chartRetryTimer){wrap._chartRetryTimer=setInterval(function(){if(window.LightweightCharts){clearInterval(wrap._chartRetryTimer);wrap._chartRetryTimer=null;if(lastStatus)renderChartWithMode(lastStatus);else chart(candles,activeContract);}},30);setTimeout(function(){if(wrap._chartRetryTimer){clearInterval(wrap._chartRetryTimer);wrap._chartRetryTimer=null;}},5000);}return;}if(wrap._chartRetryTimer){clearInterval(wrap._chartRetryTimer);wrap._chartRetryTimer=null;}if(!tvChart){wrap.innerHTML='';tvChart=LightweightCharts.createChart(wrap,{autoSize:true,layout:{background:{type:'solid',color:'#081624'},textColor:'#9fb5cc',fontFamily:'Inter,Manrope,system-ui'},grid:{vertLines:{color:'rgba(255,255,255,.05)'},horzLines:{color:'rgba(255,255,255,.07)'}},rightPriceScale:{borderColor:'#223a55',scaleMargins:{top:.08,bottom:.10}},timeScale:{borderColor:'#223a55',timeVisible:true,secondsVisible:false},crosshair:{mode:LightweightCharts.CrosshairMode.Normal},handleScroll:true,handleScale:true});tvCandleSeries=tvChart.addCandlestickSeries({upColor:'#22c55e',downColor:'#ef4444',borderUpColor:'#22c55e',borderDownColor:'#ef4444',wickUpColor:'#22c55e',wickDownColor:'#ef4444',priceLineVisible:false});tvVolumeSeries=tvChart.addHistogramSeries({priceFormat:{type:'volume'},priceScaleId:'',color:'rgba(34,197,94,.35)',scaleMargins:{top:.80,bottom:0}});new ResizeObserver(()=>{if(tvChart)tvChart.applyOptions({autoSize:true})}).observe(wrap);}const candleData=cs.map(c=>({time:c.chartTime,open:c.open,high:c.high,low:c.low,close:c.close}));tvCandleSeries.setData(candleData);const volumes=cs.filter(c=>Number(c.volume||0)>0).map(c=>({time:c.chartTime,value:Number(c.volume||0),color:c.close>=c.open?'rgba(34,197,94,.38)':'rgba(239,68,68,.38)'}));const hasVolume=volumes.length>0;tvVolumeSeries.setData(volumes);tvChart.applyOptions({rightPriceScale:{borderColor:'#223a55',scaleMargins:{top:.08,bottom:hasVolume?.24:.10}}});const latest=cs[cs.length-1];if(tvPriceLine)tvCandleSeries.removePriceLine(tvPriceLine);tvPriceLine=tvCandleSeries.createPriceLine({price:latest.close,color:'#22c55e',lineWidth:1,lineStyle:LightweightCharts.LineStyle.Dashed,axisLabelVisible:true,title:'LTP'});if(isContract&&activeContract.entryPrice!=null&&Number.isFinite(Number(activeContract.entryPrice))){if(tvEntryLine)tvCandleSeries.removePriceLine(tvEntryLine);tvEntryLine=tvCandleSeries.createPriceLine({price:Number(activeContract.entryPrice),color:'#3b82f6',lineWidth:1,lineStyle:LightweightCharts.LineStyle.Solid,axisLabelVisible:true,title:'ENTRY'});}else if(tvEntryLine){tvCandleSeries.removePriceLine(tvEntryLine);tvEntryLine=null;}if(isContract&&activeContract.sl!=null&&Number.isFinite(Number(activeContract.sl))){if(tvSlLine)tvCandleSeries.removePriceLine(tvSlLine);tvSlLine=tvCandleSeries.createPriceLine({price:Number(activeContract.sl),color:'#ef4444',lineWidth:1,lineStyle:LightweightCharts.LineStyle.Dashed,axisLabelVisible:true,title:'SL'});}else if(tvSlLine){tvCandleSeries.removePriceLine(tvSlLine);tvSlLine=null;}tvChart.timeScale().fitContent();}
 function renderChartWithMode(d){if(!d)return;const contract=d.activeContract||null;const hasContract=!!(contract&&contract.symbol);const isContract=chartViewMode==='contract'&&hasContract;const btnContract=document.getElementById('btnChartContract');const btnSpot=document.getElementById('btnChartSpot');if(btnContract){btnContract.classList.toggle('active',isContract);btnContract.textContent='BANKNIFTY FUT';}if(btnSpot){btnSpot.classList.toggle('active',!isContract);btnSpot.textContent='Spot Index';}const activeCandles=(isContract&&d.contractCandles&&d.contractCandles.length)?d.contractCandles:(d.candles||[]);const chartCandles=buildChartCandles(activeCandles);const c=chartCandles.length?chartCandles[chartCandles.length-1]:(activeCandles&&activeCandles[0]);const botOnline=!!(d.bot&&(d.bot.isAlive===true||d.bot.online===true));const feedFresh=!!(activeCandles&&activeCandles.length&&botOnline&&d.bot.heartbeatAgeSec!=null&&d.bot.heartbeatAgeSec<180);const feedState=d.market.open?(feedFresh?'Fresh':'Delayed'):'Last Session';set('chartSymbolTitle',isContract?(contract.symbol||'BANKNIFTY AUG FUT'):'BANKNIFTY (Spot)');set('chartTfLabel',chartTf);set('chartTfTop',chartTf);set('chartMode',d.market.open?(feedFresh?'Live':'Delayed'):'Last Session');const hasVolume=!!(activeCandles||[]).some(x=>Number(x.volume||0)>0);set('feedState',feedState+(hasVolume?'':' | Volume unavailable'));const fsd=document.getElementById('feedStateDot');if(fsd)fsd.className='dot '+(feedState==='Fresh'?'ok':feedState==='Delayed'?'warn':'');set('candleCount',chartCandles.length+' '+chartTf+' candles');const ohlcEl=document.getElementById('ohlc');if(ohlcEl)ohlcEl.innerHTML=c?(c.closeOnly?'Close-only feed':'<span>O <b>'+fixed(c.open)+'</b></span><span>H <b>'+fixed(c.high)+'</b></span><span>L <b>'+fixed(c.low)+'</b></span><span>C <b>'+fixed(c.close)+'</b></span>'):'OHLC unavailable';set('ltp',c?'LTP '+fixed(c.close):'LTP unavailable');set('change',c&&num(c.open)!=null&&num(c.close)!=null&&!c.closeOnly?((c.close-c.open)>=0?'+':'')+(c.close-c.open).toFixed(2)+' ('+(((c.close-c.open)/c.open)*100).toFixed(2)+'%)':'');set('lastCandle',c?c.time:'--');chart(activeCandles,contract);}
 function logGroups(logs){const meaningful=[];(logs||[]).forEach(l=>{let msg=String(l.message||'');let level=String(l.level||'INFO').toUpperCase();if(/requireStack|at Module|node:internal|^\\s*at\\s/i.test(msg))return;if(/MODULE_NOT_FOUND/i.test(msg)){level='ERROR';msg='Server module missing. Stack trace available in full logs.'}if(/ETIMEDOUT|failed|rejected|Error:/i.test(msg))level='ERROR';meaningful.push({time:l.time,level,message:msg})});const grouped=[];meaningful.forEach(l=>{const prev=grouped[grouped.length-1];const key=l.level+'|'+String(l.message||'').replace(/attempt \\d+/i,'attempt #');if(prev&&prev.key===key){prev.count++}else grouped.push({key,count:1,row:l})});return grouped}
