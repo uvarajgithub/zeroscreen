@@ -8807,8 +8807,8 @@ async function buildTradeOpsStatus(strategyId = "") {
   
   // Live active forming candle insertion for real-time chart ticking and timeline animation
   if (isMarketHoursNow && currentFutLtp) {
-    const now = new Date();
-    const istMins = now.getHours() * 60 + now.getMinutes();
+    const istNow = tradeOpsISTNow();
+    const istMins = istNow.getHours() * 60 + istNow.getMinutes();
     if (istMins >= 555 && istMins <= 940) {
       const candleStartMins = Math.floor((istMins - 555) / 15) * 15 + 555;
       const startH = Math.floor(candleStartMins / 60);
