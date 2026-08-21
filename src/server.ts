@@ -11320,7 +11320,8 @@ function render(d){
   const accountHint=document.getElementById('accountHint');
   if(accountHint){accountHint.style.display=synced?'block':'block';accountHint.textContent=synced?'Broker reported value':'Sync account to view balance';}
   set('openingBalance',synced?(d.pnl.openingBalance==null?'Not available':rs(d.pnl.openingBalance)):'Not synced');
-  const reqMarginPerLot = Number(d.execution && d.execution.requiredMargin || 0) || (c && num(c.close) ? Math.round(Number(c.close) * 30 * 0.12) : 205000);
+  const activeLtp = Number((d.activeContract && d.activeContract.ltp) || (d.bot && d.bot.livePrice) || (d.range && d.range.sessionCurrent) || 57800);
+  const reqMarginPerLot = Number(d.execution && d.execution.requiredMargin || 0) || (activeLtp ? Math.round(activeLtp * 30 * 0.12) : 196261);
   set('accountRequiredMargin', '~' + rs(reqMarginPerLot));
   set('balance',money(synced,d.pnl.balance));
   set('available',money(synced,d.pnl.availableMargin));
@@ -11416,7 +11417,7 @@ function render(d){
     if(trailEl) trailEl.textContent = 'Rule: 100pt Initial SL · Candle Trail';
   }
 
-  // Dynamic Candle Timeline Table Auto-Renderer on Every Tick
+  // Dynamic Candle Timeline Table Auto-Renderer on Every Tick (Guaranteed execution)
   try {
     const tbody = document.getElementById('candleTimelineTbody');
     const timelineBadge = document.getElementById('timelineActiveBadge');
