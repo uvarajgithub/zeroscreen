@@ -1058,6 +1058,123 @@ app.get("/signup", featureGate("registration_open", "New Registrations"), (req: 
   display: flex !important;
 }
 
+
+/* HIGH VISIBILITY ANIMATED WORKFLOW PIPELINE */
+.workflow.card {
+  border: 1px solid #a7f3d0 !important;
+  background: linear-gradient(90deg, #f0fdf4 0%, #ffffff 50%, #f0fdf4 100%) !important;
+  background-size: 200% 100% !important;
+  animation: pipelineGlow 6s ease-in-out infinite !important;
+  box-shadow: 0 4px 20px rgba(16, 185, 129, 0.08) !important;
+}
+
+@keyframes pipelineGlow {
+  0%, 100% { background-position: 0% 50%; }
+  50% { background-position: 100% 50%; }
+}
+
+.flow-step {
+  border: 1.5px solid #a7f3d0 !important;
+  background: #ffffff !important;
+  position: relative !important;
+  overflow: hidden !important;
+  transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1) !important;
+}
+
+.flow-step:hover {
+  transform: translateY(-2px) !important;
+  border-color: #10b981 !important;
+  box-shadow: 0 8px 24px rgba(16, 185, 129, 0.2) !important;
+}
+
+.flow-step::before {
+  content: "" !important;
+  position: absolute !important;
+  top: 0 !important;
+  left: -100% !important;
+  width: 60% !important;
+  height: 100% !important;
+  background: linear-gradient(90deg, transparent, rgba(16, 185, 129, 0.2), transparent) !important;
+  animation: stepLightSweep 3s infinite linear !important;
+}
+
+@keyframes stepLightSweep {
+  0% { left: -100%; }
+  100% { left: 200%; }
+}
+
+.flow-arrow {
+  flex: 0 0 20px !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  color: #10b981 !important;
+  opacity: 1 !important;
+}
+
+.flow-arrow svg {
+  width: 18px !important;
+  height: 18px !important;
+  stroke: #10b981 !important;
+  stroke-width: 2.8 !important;
+  animation: flowSlide 1.5s infinite ease-in-out !important;
+  filter: drop-shadow(0 0 4px rgba(16, 185, 129, 0.8)) !important;
+}
+
+.flow-pipeline .flow-arrow:nth-of-type(1) svg { animation-delay: 0s !important; }
+.flow-pipeline .flow-arrow:nth-of-type(2) svg { animation-delay: 0.35s !important; }
+.flow-pipeline .flow-arrow:nth-of-type(3) svg { animation-delay: 0.7s !important; }
+.flow-pipeline .flow-arrow:nth-of-type(4) svg { animation-delay: 1.05s !important; }
+
+@keyframes flowSlide {
+  0% {
+    transform: translateX(-4px);
+    opacity: 0.35;
+    filter: drop-shadow(0 0 1px rgba(16, 185, 129, 0.3));
+  }
+  50% {
+    transform: translateX(4px);
+    opacity: 1;
+    filter: drop-shadow(0 0 8px rgba(16, 185, 129, 0.95));
+  }
+  100% {
+    transform: translateX(-4px);
+    opacity: 0.35;
+    filter: drop-shadow(0 0 1px rgba(16, 185, 129, 0.3));
+  }
+}
+
+.flow-icon {
+  background: #ecfdf5 !important;
+  color: #059669 !important;
+  border: 1.5px solid #a7f3d0 !important;
+  animation: iconPulse 3s ease-in-out infinite !important;
+}
+
+@keyframes iconPulse {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.06); box-shadow: 0 0 10px rgba(16, 185, 129, 0.3); }
+}
+
+.flow-ok {
+  background: #10b981 !important;
+  color: #ffffff !important;
+  box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.7) !important;
+  animation: badgePulse 1.8s infinite ease-in-out !important;
+}
+
+@keyframes badgePulse {
+  0% {
+    box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.8);
+  }
+  70% {
+    box-shadow: 0 0 0 7px rgba(16, 185, 129, 0);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(16, 185, 129, 0);
+  }
+}
+
 </style>
 </head>
 <body class="auth-body landing-page">
