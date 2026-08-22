@@ -388,7 +388,59 @@ declare module "express-session" {
 
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
-app.use("/public", express.static(path.join(__dirname, "..", "public")));
+
+const _staticFileCache = new Map<string, { raw: Buffer; gzip: Buffer; mime: string; etag: string }>();
+
+function getStaticFile(relPath: string) {
+  const clean = relPath.replace(/^\/+/, "");
+  if (_staticFileCache.has(clean)) return _staticFileCache.get(clean)!;
+  const filePath = path.join(__dirname, "..", "public", clean);
+  if (!fs.existsSync(filePath)) return null;
+  try {
+    const raw = fs.readFileSync(filePath);
+    const gzip = zlib.gzipSync(raw);
+    const ext = path.extname(clean).toLowerCase();
+    const mime = ext === ".css" ? "text/css; charset=utf-8"
+      : ext === ".js" ? "application/javascript; charset=utf-8"
+      : ext === ".svg" ? "image/svg+xml"
+      : ext === ".json" ? "application/json"
+      : ext === ".png" ? "image/png"
+      : ext === ".html" ? "text/html; charset=utf-8"
+      : "application/octet-stream";
+    const etag = crypto.createHash("md5").update(raw).digest("hex").slice(0, 16);
+    const entry = { raw, gzip, mime, etag };
+    _staticFileCache.set(clean, entry);
+    return entry;
+  } catch {
+    return null;
+  }
+}
+
+app.use("/public", (req: Request, res: Response, next: NextFunction) => {
+  if (req.method !== "GET" && req.method !== "HEAD") return next();
+  const file = getStaticFile(req.path);
+  if (!file) return next();
+
+  res.setHeader("Content-Type", file.mime);
+  res.setHeader("Cache-Control", "public, max-age=604800, immutable");
+  res.setHeader("ETag", `"${file.etag}"`);
+
+  if (req.headers["if-none-match"] === `"${file.etag}"`) {
+    res.status(304).end();
+    return;
+  }
+
+  const accept = String(req.headers["accept-encoding"] || "");
+  if (accept.includes("gzip")) {
+    res.setHeader("Content-Encoding", "gzip");
+    res.setHeader("Vary", "Accept-Encoding");
+    res.send(file.gzip);
+  } else {
+    res.send(file.raw);
+  }
+});
+
+app.use("/public", express.static(path.join(__dirname, "..", "public"), { maxAge: "7d" }));
 
 /**
  * Repair user-facing text damaged by an earlier non-UTF-8 conversion.
