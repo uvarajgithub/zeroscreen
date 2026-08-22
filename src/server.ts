@@ -869,16 +869,30 @@ function nav(active: string, req?: Request): string {
        </div>`;
 
   return `<nav class="topnav">
-    <a href="/" class="brand"><img src="/public/images/logo.svg" class="brand-logo" alt="ZeroScreen"><span class="brand-wordmark">Zero<em>Screen</em></span></a>
-    <div class="nav-desktop-links">
-      <a href="/" class="${active === "home" ? "active" : ""}">Screener</a>
-      <a href="/tradeops" class="nav-hot-link${active === 'tradeops' ? ' active' : ''}" style="background:linear-gradient(90deg,rgba(37,99,235,.16),rgba(147,51,234,.12));border:1px solid rgba(59,130,246,.35);color:#2563eb;font-weight:800"><span class="nav-live-dot" style="background:#2563eb"></span>TradeOps <span class="nav-hot-badge" style="background:#2563eb">LIVE</span></a>
-      <a href="/today" class="${active === "today" ? "active" : ""}">Picks</a>
-      <a href="/signals" class="nav-signals-link${active === "signals" ? " active" : ""}"><span class="nav-live-dot"></span>Live Bot</a>
-      <a href="/paper-trade" class="${active === "paper-trade" ? "active" : ""}">Paper Trade</a>
-      <a href="${isLoggedIn ? '/dashboard' : '/paper-trade'}" class="nav-hot-link${active === 'dashboard' || active === 'my-paper-trade' || active === 'my-portfolio' ? ' active' : ''}">My Trade <span class="nav-hot-badge">HOT</span></a>
-      ${isAdmin ? `<a href="/holdings" class="nav-hot-link${active === 'holdings' ? ' active' : ''}" style="background:linear-gradient(90deg,rgba(16,185,129,.18),rgba(6,182,212,.12));border:1px solid rgba(16,185,129,.3)">Holdings</a>` : ''}
-      ${exploreDropHtml}
+    <div class="nav-left" style="display:flex;align-items:center;gap:16px">
+      <a href="/" class="brand"><img src="/public/images/logo.svg" class="brand-logo" alt="ZeroScreen"><span class="brand-wordmark">Zero<em>Screen</em></span></a>
+      <div class="nav-desktop-links">
+        <a href="/" class="${active === "home" ? "active" : ""}">Screener</a>
+        <a href="/tradeops" class="nav-hot-link${active === 'tradeops' ? ' active' : ''}" style="background:linear-gradient(90deg,rgba(16,185,129,.2),rgba(6,182,212,.15));border:1px solid rgba(16,185,129,.4);color:#34d399;font-weight:800"><span class="nav-live-dot" style="background:#34d399"></span>TradeOps <span class="nav-hot-badge" style="background:#10b981">LIVE</span></a>
+        <a href="/today" class="${active === "today" ? "active" : ""}">Picks</a>
+        <a href="/signals" class="nav-signals-link${active === "signals" ? " active" : ""}"><span class="nav-live-dot"></span>Live Bot</a>
+        <a href="/paper-trade" class="${active === "paper-trade" ? "active" : ""}">Paper Trade</a>
+        <a href="${isLoggedIn ? '/dashboard' : '/paper-trade'}" class="nav-hot-link${active === 'dashboard' || active === 'my-paper-trade' || active === 'my-portfolio' ? ' active' : ''}">My Trade</a>
+        ${isAdmin ? `<a href="/holdings" class="${active === 'holdings' ? 'active' : ''}">Holdings</a>` : ''}
+        ${exploreDropHtml}
+      </div>
+    </div>
+    <div class="nav-right" style="display:flex;align-items:center;gap:12px;margin-left:auto">
+      <div class="nav-search-wrap" style="position:relative;display:flex;align-items:center">
+        <input type="text" id="nav-search" class="nav-search-input" placeholder="Search NSE stocks…" autocomplete="off" aria-label="Search stocks" style="background:rgba(15,23,42,0.7);border:1px solid rgba(255,255,255,0.1);color:#f1f5f9;border-radius:10px;padding:7px 12px 7px 32px;font-size:12.5px;width:190px;transition:all .2s">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="position:absolute;left:10px;color:#64748b;pointer-events:none"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+        <div class="nav-search-results" id="nav-search-results"></div>
+      </div>
+      ${adminDropHtml}
+      ${authLinks}
+      <button class="hamburger" id="hamburger" aria-label="Toggle menu" aria-expanded="false">
+        <span></span><span></span><span></span>
+      </button>
     </div>
     <div class="nav-links" id="nav-links">
       <div class="nav-mob-drawer-head">
@@ -886,24 +900,15 @@ function nav(active: string, req?: Request): string {
         <button class="nav-mob-close" id="nav-mob-close" aria-label="Close menu">&#x2715;</button>
       </div>
       <a href="/" class="${active === "home" ? "active" : ""}">Screener</a>
-      <a href="/tradeops" class="nav-hot-link${active === 'tradeops' ? ' active' : ''}" style="color:#2563eb;font-weight:800"><span class="nav-live-dot" style="background:#2563eb"></span>TradeOps <span class="nav-hot-badge" style="background:#2563eb">LIVE</span></a>
+      <a href="/tradeops" class="nav-hot-link${active === 'tradeops' ? ' active' : ''}" style="color:#34d399;font-weight:800"><span class="nav-live-dot" style="background:#34d399"></span>TradeOps <span class="nav-hot-badge" style="background:#10b981">LIVE</span></a>
       <a href="/today" class="${active === "today" ? "active" : ""}">Picks</a>
       <a href="/signals" class="nav-signals-link${active === "signals" ? " active" : ""}"><span class="nav-live-dot"></span>Live Bot</a>
       <a href="/paper-trade" class="${active === "paper-trade" ? "active" : ""}">Paper Trade</a>
-      <a href="${isLoggedIn ? '/dashboard' : '/paper-trade'}" class="nav-hot-link${active === 'dashboard' || active === 'my-paper-trade' || active === 'my-portfolio' ? ' active' : ''}">My Trade <span class="nav-hot-badge">HOT</span></a>
+      <a href="${isLoggedIn ? '/dashboard' : '/paper-trade'}" class="nav-hot-link${active === 'dashboard' || active === 'my-paper-trade' || active === 'my-portfolio' ? ' active' : ''}">My Trade</a>
       ${isAdmin ? `<a href="/holdings" class="${active === 'holdings' ? 'active' : ''}">My Holdings</a>` : ''}
       ${exploreDropHtml}
       ${mobileMobFooter}
-        <input type="text" id="nav-search" class="nav-search-input" placeholder="Search stocks…" autocomplete="off" aria-label="Search stocks">
-        <div class="nav-search-results" id="nav-search-results"></div>
-      </div>
-      ${adminDropHtml}
-      <button class="btn-dark-toggle" id="dark-toggle" title="Toggle dark mode" aria-label="Toggle dark mode" onclick="toggleDarkMode()">Theme</button>
-      ${authLinks}
     </div>
-    <button class="hamburger" id="hamburger" aria-label="Toggle menu" aria-expanded="false">
-      <span></span><span></span><span></span>
-    </button>
   </nav>
   <div class="nav-overlay" id="nav-overlay"></div>
   <div class="ticker-wrap" id="ticker-wrap" aria-label="Market news ticker">
@@ -3564,22 +3569,24 @@ app.get("/", async (req: Request, res: Response) => {
 
           </div>
 
-          <div class="filter-actions">
-            <button type="submit" class="btn-primary">?? Apply Filters</button>
-            <a href="/" class="btn-secondary">? Reset All</a>
+          <div class="filter-actions" style="display:flex;gap:12px;margin-top:16px">
+            <button type="submit" class="btn-primary">⚡ Apply Filters</button>
+            <a href="/" class="btn-secondary">↺ Reset All</a>
           </div>
         </form>
       </details>
 
       <!-- Results -->
-      <div id="results-section" class="results-header">
-        <span>${stocks.length}${hasNextPage ? "+" : ""} stocks${page > 1 ? ` · Page ${page}` : ""}${activeStrategy ? ` · <strong>${STRATEGIES.find(s => s.id === activeStrategy)?.label || ""}</strong>` : ""}</span>
-        <span class="tier-pill tier-expert">?? Investors</span>
-        <div class="results-actions">
-          <button class="btn-ghost" id="cmp-btn" style="display:none" onclick="goCompare()">?? Compare (0)</button>
-          <button class="btn-ghost" onclick="document.getElementById('alertModal').style.display='flex'">?? Save Alert</button>
-          <a href="/api/screen/csv?${new URLSearchParams(req.query as any).toString()}" class="btn-ghost" download="zeroscreen.csv">? CSV</a>
-          <a href="/api/screen?${new URLSearchParams(req.query as any).toString()}" class="btn-ghost" target="_blank">? JSON</a>
+      <div id="results-section" class="results-header" style="display:flex;align-items:center;justify-content:space-between;margin:20px 0 12px;flex-wrap:wrap;gap:12px">
+        <div style="display:flex;align-items:center;gap:10px">
+          <span style="font-size:15px;font-weight:800;color:#f1f5f9">${stocks.length}${hasNextPage ? "+" : ""} stocks${page > 1 ? ` · Page ${page}` : ""}${activeStrategy ? ` · <strong style="color:#60a5fa">${STRATEGIES.find(s => s.id === activeStrategy)?.label || ""}</strong>` : ""}</span>
+          <span class="tier-pill tier-expert">Investors</span>
+        </div>
+        <div class="results-actions" style="display:flex;gap:8px;align-items:center">
+          <button class="btn-ghost" id="cmp-btn" style="display:none" onclick="goCompare()">⚖ Compare (0)</button>
+          <button class="btn-ghost" onclick="document.getElementById('alertModal').style.display='flex'">🔔 Save Alert</button>
+          <a href="/api/screen/csv?${new URLSearchParams(req.query as any).toString()}" class="btn-ghost" download="zeroscreen.csv">📥 CSV</a>
+          <a href="/api/screen?${new URLSearchParams(req.query as any).toString()}" class="btn-ghost" target="_blank">📋 JSON</a>
         </div>
       </div>
 
@@ -3591,19 +3598,19 @@ app.get("/", async (req: Request, res: Response) => {
               <th>Symbol</th><th>Company</th>
               <th>Price</th><th>Chg%</th><th>Volume</th>
               <th>ROCE%</th><th>ROE%</th><th>D/E</th>
-              <th>Promoter%</th><th>P/E</th><th>Profit</th>
+              <th>Promoter%</th><th>P/E</th><th>Profitability</th>
             </tr>
           </thead>
-          <tbody>${rows || '<tr><td colspan="12" class="no-data">No results. Try a strategy above or adjust filters.</td></tr>'}</tbody>
+          <tbody>${rows || '<tr><td colspan="12" class="no-data" style="text-align:center;padding:32px;color:#64748b">No matching stocks. Adjust filters or choose a preset above.</td></tr>'}</tbody>
         </table>
       </div>
 
       <!-- Pagination -->
       ${(page > 1 || hasNextPage) ? `
-      <div class="pagination">
-        ${page > 1 ? `<a href="/?${prevPageQ.toString()}#results-section" class="btn-secondary page-btn">? Prev</a>` : `<span class="page-btn page-disabled">? Prev</span>`}
-        <span class="page-info">Page ${page}</span>
-        ${hasNextPage ? `<a href="/?${nextPageQ.toString()}#results-section" class="btn-secondary page-btn">Next ?</a>` : `<span class="page-btn page-disabled">Next ?</span>`}
+      <div class="pagination" style="display:flex;align-items:center;justify-content:center;gap:12px;margin:24px 0">
+        ${page > 1 ? `<a href="/?${prevPageQ.toString()}#results-section" class="btn-secondary page-btn">← Prev</a>` : `<span class="page-btn page-disabled" style="opacity:0.4">← Prev</span>`}
+        <span class="page-info" style="font-weight:700;color:#94a3b8">Page ${page}</span>
+        ${hasNextPage ? `<a href="/?${nextPageQ.toString()}#results-section" class="btn-secondary page-btn">Next →</a>` : `<span class="page-btn page-disabled" style="opacity:0.4">Next →</span>`}
       </div>` : ""}
     </div>
 
