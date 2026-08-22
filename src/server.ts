@@ -9701,11 +9701,8 @@ let _isBuildingBaseStatus = false;
 
 async function getCachedTradeOpsBaseStatus(forceFresh = false) {
   const now = Date.now();
-  if (!forceFresh && _baseTradeOpsStatusCache && (now - _baseTradeOpsStatusCache.time) < 15000) {
-    return _baseTradeOpsStatusCache.data;
-  }
-  if (_baseTradeOpsStatusCache && !forceFresh) {
-    if (!_isBuildingBaseStatus) {
+  if (!forceFresh && _baseTradeOpsStatusCache) {
+    if ((now - _baseTradeOpsStatusCache.time) >= 5000 && !_isBuildingBaseStatus) {
       _isBuildingBaseStatus = true;
       buildTradeOpsRawBaseStatus().then(data => {
         _baseTradeOpsStatusCache = { time: Date.now(), data };
