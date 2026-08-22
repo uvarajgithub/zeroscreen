@@ -7779,6 +7779,9 @@ app.post("/api/bot/action", requireAdmin, (req: Request, res: Response) => {
     } else if (action === "start") {
       execSync("pm2 start trading-bot", { stdio: "ignore" });
       res.json({ ok: true, msg: "Bot started" });
+    } else if (action === "deploy" || action === "update") {
+      const out = execSync("cd /root/zeroscreen && git pull origin main && cp -r deployment/trading-bot/* /home/ubuntu/trading-bot/ && pm2 restart all --update-env", { encoding: "utf8", timeout: 45000 });
+      res.json({ ok: true, msg: "Successfully pulled latest code and restarted all services", output: out });
     } else {
       res.status(400).json({ ok: false, msg: "Unknown action" });
     }
