@@ -9620,17 +9620,17 @@ function tradeOpsApplySelectedStrategy(baseStatus: any, selected: TradeOpsStrate
   return withSelection;
 }
 
-let lastTradeOpsStatusCacheTime = 0;
-let lastTradeOpsStatusCacheData: any = null;
+const _tradeOpsStatusCache = new Map<string, { time: number; data: any }>();
 
 async function getCachedTradeOpsStatus(strategy = "", forceFresh = false) {
+  const key = String(strategy || "").trim();
   const now = Date.now();
-  if (!forceFresh && lastTradeOpsStatusCacheData && (now - lastTradeOpsStatusCacheTime) < 5000) {
-    return lastTradeOpsStatusCacheData;
+  const cached = _tradeOpsStatusCache.get(key);
+  if (!forceFresh && cached && (now - cached.time) < 5000) {
+    return cached.data;
   }
-  const status = await buildTradeOpsStatus(strategy);
-  lastTradeOpsStatusCacheData = status;
-  lastTradeOpsStatusCacheTime = now;
+  const status = await buildTradeOpsStatus(key);
+  _tradeOpsStatusCache.set(key, { time: now, data: status });
   return status;
 }
 
