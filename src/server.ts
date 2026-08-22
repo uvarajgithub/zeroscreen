@@ -371,11 +371,7 @@ async function buildNewsTradeIdeas(limit = 8): Promise<NewsTradeIdea[]> {
   return _newsTradeIdeasCache.slice(0, limit);
 }
 
-// -- Session --------------------------------------------------------------------
-// eslint-disable-next-line @typescript-eslint/no-var-requires
-const SQLiteStore = require("connect-sqlite3")(session);
 app.use(session({
-  store: new SQLiteStore({ db: "sessions.db", dir: path.join(__dirname, "..") }),
   secret: SESSION_SECRET,
   resave: false,
   saveUninitialized: false,
