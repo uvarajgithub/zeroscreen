@@ -503,11 +503,26 @@ app.use((req: Request, res: Response, next: NextFunction) => {
     let finalBody = body;
     if (typeof body === "string" && /<!doctype html|<html[\s>]/i.test(body)) {
       finalBody = repairVisibleHtmlText(body);
+      if (!res.getHeader("Content-Type")) {
+        res.setHeader("Content-Type", "text/html; charset=utf-8");
+      }
+    } else if (typeof body === "object" && body !== null && !Buffer.isBuffer(body)) {
+      if (!res.getHeader("Content-Type")) {
+        res.setHeader("Content-Type", "application/json; charset=utf-8");
+      }
     }
+
     const acceptEncoding = String(req.headers["accept-encoding"] || "");
     if (acceptEncoding.includes("gzip") && finalBody && !res.headersSent) {
+      if (!res.getHeader("Content-Type")) {
+        if (typeof finalBody === "string" && /<!doctype html|<html[\s>]/i.test(finalBody)) {
+          res.setHeader("Content-Type", "text/html; charset=utf-8");
+        } else if (typeof finalBody === "string" && (finalBody.startsWith("{") || finalBody.startsWith("["))) {
+          res.setHeader("Content-Type", "application/json; charset=utf-8");
+        }
+      }
       const type = String(res.getHeader("Content-Type") || "");
-      const isCompressible = !type || type.includes("text/") || type.includes("application/json") || type.includes("javascript");
+      const isCompressible = type.includes("text/") || type.includes("application/json") || type.includes("javascript") || type.includes("image/svg+xml");
       const len = Buffer.isBuffer(finalBody) ? finalBody.length : Buffer.byteLength(String(finalBody));
       if (isCompressible && len > 1024) {
         try {
