@@ -2,26 +2,62 @@
 /**
  * server.ts — ZeroScreen Express app
  */
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
 Object.defineProperty(exports, "__esModule", { value: true });
-const dotenv_1 = require("dotenv");
+const dotenv_1 = __importDefault(require("dotenv"));
 dotenv_1.default.config();
-const dns_1 = require("dns");
+const dns_1 = __importDefault(require("dns"));
 try {
     dns_1.default.setDefaultResultOrder("ipv4first");
 }
 catch { }
-const express_1 = require("express");
-const express_session_1 = require("express-session");
-const path_1 = require("path");
-const bcrypt_1 = require("bcrypt");
+const express_1 = __importDefault(require("express"));
+const express_session_1 = __importDefault(require("express-session"));
+const path_1 = __importDefault(require("path"));
+const bcrypt_1 = __importDefault(require("bcrypt"));
 const db_1 = require("./db");
 const scheduler_1 = require("./scheduler");
 const scraper_1 = require("./scraper");
 const mailer_1 = require("./mailer");
 const nse_1 = require("./nse");
-const crypto_1 = require("crypto");
-const https_1 = require("https");
-const fs_1 = require("fs");
+const crypto_1 = __importDefault(require("crypto"));
+const https_1 = __importDefault(require("https"));
+const fs_1 = __importDefault(require("fs"));
 const child_process_1 = require("child_process");
 const shadowMonitor_1 = require("./shadowMonitor");
 const dailyEodReporter_1 = require("./dailyEodReporter");
@@ -7601,7 +7637,7 @@ app.post("/api/razorpay/verify", requireAuth, async (req, res) => {
         return;
     }
     // HMAC-SHA256 signature check
-    const crypto = await Promise.resolve().then(() => require("crypto"));
+    const crypto = await Promise.resolve().then(() => __importStar(require("crypto")));
     const body = razorpay_order_id + "|" + razorpay_payment_id;
     const expected = crypto.createHmac("sha256", RAZORPAY_KEY_SECRET).update(body).digest("hex");
     if (expected !== razorpay_signature) {
