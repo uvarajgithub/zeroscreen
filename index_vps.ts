@@ -40,13 +40,48 @@ function tt1030RuntimeMode() {
 function isTT1030TelegramMessage(msg) {
     return /10:30 Futures|TT1030|TEN_THIRTY/i.test(String(msg || ""));
 }
+const _recentTgDispatches = new Map();
 const sendTelegram = (msg) => {
     if (_tgSilenced)
         return Promise.resolve();
-    if (isTT1030TelegramMessage(msg)) {
-        return readRuntimeEnvFlag("TT1030_TELEGRAM_ENABLED", false) ? (0, notifier_1.sendTelegram)(msg) : Promise.resolve();
+    const rawMsg = String(msg || "");
+    const now = new Date();
+    const ist = new Date(now.toLocaleString("en-US", { timeZone: "Asia/Kolkata" }));
+    const day = ist.getDay(); // 0 = Sun, 6 = Sat
+    const h = ist.getHours(), m = ist.getMinutes();
+    // 1. Weekend Check (Completely silent on weekends)
+    if (day === 0 || day === 6)
+        return Promise.resolve();
+    // 2. Off-Hours Check (Only allowed between 07:15 AM and 15:45 PM IST on weekdays)
+    const inWindow = (h > 7 || (h === 7 && m >= 15)) && (h < 15 || (h === 15 && m <= 45));
+    if (!inWindow)
+        return Promise.resolve();
+    // 3. Filter Out Spam / Low-Signal High-Frequency Alerts
+    // - Filter 15-minute candle OHLC summaries
+    if (/15-Min Candle|🕯️/i.test(rawMsg))
+        return Promise.resolve();
+    // - Filter intra-trade trailing SL micro moves
+    if (/Trail Activated|Trail SL Updated|🎯|🔼/i.test(rawMsg))
+        return Promise.resolve();
+    // - Filter non-fatal errors & repeating sync warnings
+    if (/Non-fatal error|API Warning|broker sync failed/i.test(rawMsg))
+        return Promise.resolve();
+    // - Filter repeated order blocked / background audit noise
+    if (/ORDER_BLOCKED|live risk monitor requires attention|CRITICAL RISK MONITOR FAILURE|STARTUP BLOCKED/i.test(rawMsg)) {
+        console.log(`[TELEGRAM_SUPPRESSED] ${rawMsg.slice(0, 100)}`);
+        return Promise.resolve();
     }
-    return readRuntimeEnvFlag("DRISHTI_TELEGRAM_ENABLED", false) ? (0, notifier_1.sendTelegram)(msg) : Promise.resolve();
+    // 4. Deduplication Cooldown (10 minutes per unique message)
+    const msgKey = rawMsg.slice(0, 80);
+    const lastSent = _recentTgDispatches.get(msgKey) || 0;
+    if (Date.now() - lastSent < 600000) {
+        return Promise.resolve();
+    }
+    _recentTgDispatches.set(msgKey, Date.now());
+    if (isTT1030TelegramMessage(rawMsg)) {
+        return readRuntimeEnvFlag("TT1030_TELEGRAM_ENABLED", false) ? (0, notifier_1.sendTelegram)(rawMsg) : Promise.resolve();
+    }
+    return readRuntimeEnvFlag("DRISHTI_TELEGRAM_ENABLED", false) ? (0, notifier_1.sendTelegram)(rawMsg) : Promise.resolve();
 };
 function tt1030AlertText(value) {
     return String(value ?? "").replace(/[_*`[\]()~>#=|{}.!-]/g, " ").replace(/\s+/g, " ").trim();

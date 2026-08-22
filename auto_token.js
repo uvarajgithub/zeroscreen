@@ -51,6 +51,10 @@ function sendTelegram(msg) {
   const token = process.env.TELEGRAM_BOT_TOKEN;
   const chat  = process.env.TELEGRAM_CHAT_ID;
   if (!token || !chat) return;
+  const now = new Date();
+  const ist = new Date(now.toLocaleString("en-US", { timeZone: "Asia/Kolkata" }));
+  const day = ist.getDay();
+  if (day === 0 || day === 6) return; // Silent on weekends
   const data = JSON.stringify({ chat_id: chat, text: msg });
   const req = https.request({
     hostname: 'api.telegram.org',

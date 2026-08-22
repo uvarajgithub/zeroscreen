@@ -46,6 +46,10 @@ const TG_BOT   = process.env.TELEGRAM_BOT_TOKEN || "";
 const TG_CHAT  = process.env.TELEGRAM_CHAT_ID   || "";
 function notifyTelegram(text: string): void {
   if (!TG_BOT || !TG_CHAT) return;
+  const now = new Date();
+  const ist = new Date(now.toLocaleString("en-US", { timeZone: "Asia/Kolkata" }));
+  const day = ist.getDay();
+  if (day === 0 || day === 6) return; // Silent on weekends
   const encoded = encodeURIComponent(text);
   const url = `https://api.telegram.org/bot${TG_BOT}/sendMessage?chat_id=${TG_CHAT}&text=${encoded}`;
   https.get(url, (r) => { r.resume(); }).on("error", () => {});
