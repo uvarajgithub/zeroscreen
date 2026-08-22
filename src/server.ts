@@ -8011,19 +8011,30 @@ function tradeOpsWriteStrategyOverride(id: string, patch: Partial<TradeOpsStrate
   fs.writeFileSync(TRADEOPS_STRATEGY_CONFIG_FILE, JSON.stringify(current, null, 2) + "\n");
 }
 
+let _cachedKiteCreds: { apiKey: string; token: string; readAt: number } = { apiKey: "", token: "", readAt: 0 };
+
 async function tradeOpsReadKiteCreds(): Promise<TradeOpsKiteCreds> {
-  const settingsToken = await getSetting("kite_access_token").catch(() => "");
+  const now = Date.now();
+  if (_cachedKiteCreds.apiKey && _cachedKiteCreds.token && (now - _cachedKiteCreds.readAt) < 60000) {
+    return _cachedKiteCreds;
+  }
   try {
     const raw = fs.readFileSync("/home/ubuntu/trading-bot/.env", "utf8");
     const apiKey = (raw.match(/^API_KEY=(.+)$/m)?.[1] ?? "").trim();
     const envToken = (raw.match(/^ACCESS_TOKEN=(.+)$/m)?.[1] ?? "").trim();
-    let token = envToken || settingsToken;
+    let token = envToken;
     try {
       const tokenFile = fs.readFileSync("/home/ubuntu/trading-bot/access_token.txt", "utf8").trim();
       if (tokenFile) token = tokenFile;
     } catch {}
-    return { apiKey, token };
+    if (!token) {
+      token = await getSetting("kite_access_token").catch(() => "");
+    }
+    const res = { apiKey, token };
+    _cachedKiteCreds = { ...res, readAt: now };
+    return res;
   } catch {
+    const settingsToken = await getSetting("kite_access_token").catch(() => "");
     return { apiKey: "", token: settingsToken || "" };
   }
 }
