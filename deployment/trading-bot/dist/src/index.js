@@ -2472,7 +2472,7 @@ async function tt1030MonitorLiveRisk() {
         await notifyTT1030Telegram(`TT1030 LIVE RISK LIMIT HIT\n${reason}\nBroker daily P&L: Rs.${risk.dailyPnlRs}\nFutures loss: ${risk.lossPoints.toFixed(1)} pts\n${dailyHit ? "Trading is locked for the rest of the day." : "Position exit was submitted."}`).catch(() => { });
     }
     catch (e) {
-        const message = typeof e === "object" && e !== null ? ((e as any).message || (e as any).error || JSON.stringify(e)) : String(e);
+        const message = typeof e === "object" && e !== null ? (e.message || e.error || JSON.stringify(e)) : String(e);
         tt1030ReconciliationBlockedReason = `TT1030 live risk monitor requires attention: ${message}`;
         appendTT1030Audit("live_risk_monitor_failed", { error: message }, "error");
         // ONLY notify via Telegram if we are actively holding a live trade during market hours
