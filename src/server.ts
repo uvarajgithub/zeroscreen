@@ -7,6 +7,7 @@ dotenv.config();
 
 import dns from "dns";
 try { dns.setDefaultResultOrder("ipv4first"); } catch {}
+import zlib from "zlib";
 
 import express, { Request, Response, NextFunction } from "express";
 import session from "express-session";
@@ -394,6 +395,11 @@ app.use("/public", express.static(path.join(__dirname, "..", "public")));
  * Scripts, styles, URLs, API payloads, and application data are not modified.
  */
 function repairVisibleHtmlText(html: string): string {
+  if (!html.includes("â") && !html.includes("Â") && !html.includes("?")) {
+    if (!/<\/body>/i.test(html) || html.includes("/public/js/ui-text-repair.js")) return html;
+    return html.replace(/<\/body>/i, '<script src="/public/js/ui-text-repair.js?v=1"></script></body>');
+  }
+
   const decoded = html
     .replace(/â€”/g, "\u2014")
     .replace(/â€“/g, "\u2013")
@@ -403,7 +409,7 @@ function repairVisibleHtmlText(html: string): string {
     .replace(/Â·/g, "\u00b7")
     .replace(/â€¢/g, "\u2022")
     .replace(/â†’/g, "\u2192")
-    .replace(/â†/g, "\u2190")
+    .replace(/â† /g, "\u2190")
     .replace(/â‰¥/g, "\u2265")
     .replace(/â‰¤/g, "\u2264")
     .replace(/âœ“/g, "\u2713")
@@ -443,13 +449,29 @@ function repairVisibleHtmlText(html: string): string {
   );
 }
 
-app.use((_req: Request, res: Response, next: NextFunction) => {
+app.use((req: Request, res: Response, next: NextFunction) => {
   const send = res.send.bind(res);
   res.send = ((body?: any) => {
+    let finalBody = body;
     if (typeof body === "string" && /<!doctype html|<html[\s>]/i.test(body)) {
-      return send(repairVisibleHtmlText(body));
+      finalBody = repairVisibleHtmlText(body);
     }
-    return send(body);
+    const acceptEncoding = String(req.headers["accept-encoding"] || "");
+    if (acceptEncoding.includes("gzip") && finalBody && !res.headersSent) {
+      const type = String(res.getHeader("Content-Type") || "");
+      const isCompressible = !type || type.includes("text/") || type.includes("application/json") || type.includes("javascript");
+      const len = Buffer.isBuffer(finalBody) ? finalBody.length : Buffer.byteLength(String(finalBody));
+      if (isCompressible && len > 1024) {
+        try {
+          const gzipped = zlib.gzipSync(Buffer.isBuffer(finalBody) ? finalBody : Buffer.from(String(finalBody)));
+          res.setHeader("Content-Encoding", "gzip");
+          res.setHeader("Vary", "Accept-Encoding");
+          res.removeHeader("Content-Length");
+          return send(gzipped);
+        } catch {}
+      }
+    }
+    return send(finalBody);
   }) as Response["send"];
   next();
 });
@@ -5680,11 +5702,21 @@ const ADMIN_EMAIL = (process.env.ADMIN_EMAIL || "").toLowerCase().trim();
 // -- Bot data helpers ------------------------------------------------------------
 const BOT_DIR = "/home/ubuntu/trading-bot";
 
+const _botJsonCache = new Map<string, { mtime: number; data: any; cachedAt: number }>();
+
 function readBotJSON(file: string, fallback: any = null) {
   try {
     const p = `${BOT_DIR}/${file}`;
     if (!fs.existsSync(p)) return fallback;
-    return JSON.parse(fs.readFileSync(p, "utf-8"));
+    const stat = fs.statSync(p);
+    const cached = _botJsonCache.get(p);
+    const now = Date.now();
+    if (cached && cached.mtime === stat.mtimeMs && (now - cached.cachedAt) < 3000) {
+      return cached.data;
+    }
+    const data = JSON.parse(fs.readFileSync(p, "utf-8"));
+    _botJsonCache.set(p, { mtime: stat.mtimeMs, data, cachedAt: now });
+    return data;
   } catch { return fallback; }
 }
 
@@ -5696,14 +5728,29 @@ function readBotText(file: string, fallback = "") {
   } catch { return fallback; }
 }
 
+const _botJsonlCache = new Map<string, { mtime: number; data: any[]; cachedAt: number }>();
+
 function readBotJSONL(file: string): any[] {
-  return readBotText(file, "")
-    .split(/\r?\n/)
-    .map(line => line.trim())
-    .filter(Boolean)
-    .map(line => {
-      try { return JSON.parse(line); } catch { return { ts: "", event: "raw", message: line }; }
-    });
+  try {
+    const p = `${BOT_DIR}/${file}`;
+    if (!fs.existsSync(p)) return [];
+    const stat = fs.statSync(p);
+    const cached = _botJsonlCache.get(p);
+    const now = Date.now();
+    if (cached && cached.mtime === stat.mtimeMs && (now - cached.cachedAt) < 3000) {
+      return cached.data;
+    }
+    const raw = fs.readFileSync(p, "utf-8");
+    const data = raw
+      .split(/\r?\n/)
+      .map(line => line.trim())
+      .filter(Boolean)
+      .map(line => {
+        try { return JSON.parse(line); } catch { return { ts: "", event: "raw", message: line }; }
+      });
+    _botJsonlCache.set(p, { mtime: stat.mtimeMs, data, cachedAt: now });
+    return data;
+  } catch { return []; }
 }
 
 function getTodayIST(): string {
@@ -8789,12 +8836,9 @@ function buildTradeOpsLogPreview() {
 
 let lastTradeOpsBrokerCacheTime = 0;
 let lastTradeOpsBrokerCacheData: any = null;
+let isBrokerFetching = false;
 
-async function tradeOpsGetBrokerData(forceFresh = false) {
-  const now = Date.now();
-  if (!forceFresh && lastTradeOpsBrokerCacheData && (now - lastTradeOpsBrokerCacheTime) < 30000) {
-    return lastTradeOpsBrokerCacheData;
-  }
+async function fetchBrokerDataDirect() {
   let broker: any = {
     ok: true,
     tokenOK: true,
@@ -8829,8 +8873,24 @@ async function tradeOpsGetBrokerData(forceFresh = false) {
     broker.error = e?.message || "Broker unavailable";
   }
   lastTradeOpsBrokerCacheData = broker;
-  lastTradeOpsBrokerCacheTime = now;
+  lastTradeOpsBrokerCacheTime = Date.now();
   return broker;
+}
+
+async function tradeOpsGetBrokerData(forceFresh = false) {
+  const now = Date.now();
+  const maxAge = tradeOpsMarketOpen() ? 10000 : 300000;
+  if (!forceFresh && lastTradeOpsBrokerCacheData && (now - lastTradeOpsBrokerCacheTime) < maxAge) {
+    return lastTradeOpsBrokerCacheData;
+  }
+  if (lastTradeOpsBrokerCacheData && !forceFresh) {
+    if (!isBrokerFetching) {
+      isBrokerFetching = true;
+      fetchBrokerDataDirect().finally(() => { isBrokerFetching = false; });
+    }
+    return lastTradeOpsBrokerCacheData;
+  }
+  return await fetchBrokerDataDirect();
 }
 
 async function buildTradeOpsStatus(strategyId = "") {
