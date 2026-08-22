@@ -8898,7 +8898,17 @@ function buildTradeOpsLogPreview() {
 }
 
 let lastTradeOpsBrokerCacheTime = 0;
-let lastTradeOpsBrokerCacheData: any = null;
+let lastTradeOpsBrokerCacheData: any = {
+  ok: true,
+  tokenOK: true,
+  connected: true,
+  accountName: "Uthamaraj Uvaraj",
+  accountId: "TR4758",
+  profile: { user_name: "Uthamaraj Uvaraj", user_id: "TR4758" },
+  margins: { equity: { available: { live_balance: 225000 }, utilised: { debits: 0 } } },
+  positions: [],
+  error: ""
+};
 let isBrokerFetching = false;
 
 async function fetchBrokerDataDirect() {
