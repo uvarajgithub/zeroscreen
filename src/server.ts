@@ -8956,9 +8956,9 @@ async function tradeOpsGetBrokerData(forceFresh = false) {
   return await fetchBrokerDataDirect();
 }
 
-async function buildTradeOpsStatus(strategyId = "") {
+async function buildTradeOpsRawBaseStatus() {
   const strategies = tradeOpsStrategyList();
-  const selectedStrategy = strategies.find((s) => s.id === String(strategyId || "").trim()) || strategies.find((s) => s.enabled) || strategies[0];
+  const selectedStrategy = strategies.find((s) => s.enabled) || strategies[0];
   const hb = readBotJSON("bot-heartbeat.json", {}) || {};
   const state = readBotJSON("trade-state.json", {}) || {};
   const tt1030State = readBotJSON("tt1030-state.json", {}) || {};
@@ -9637,7 +9637,7 @@ async function buildTradeOpsStatus(strategyId = "") {
     logs: serverLogs,
   };
 
-  return tradeOpsApplySelectedStrategy(baseStatus, selectedStrategy, strategies);
+  return baseStatus;
 }
 
 function tradeOpsStrategySummary(strategies: TradeOpsStrategyConfig[]) {
@@ -9683,18 +9683,39 @@ function tradeOpsApplySelectedStrategy(baseStatus: any, selected: TradeOpsStrate
   return withSelection;
 }
 
-const _tradeOpsStatusCache = new Map<string, { time: number; data: any }>();
+let _baseTradeOpsStatusCache: { time: number; data: any } | null = null;
+let _isBuildingBaseStatus = false;
 
-async function getCachedTradeOpsStatus(strategy = "", forceFresh = false) {
-  const key = String(strategy || "").trim();
+async function getCachedTradeOpsBaseStatus(forceFresh = false) {
   const now = Date.now();
-  const cached = _tradeOpsStatusCache.get(key);
-  if (!forceFresh && cached && (now - cached.time) < 5000) {
-    return cached.data;
+  if (!forceFresh && _baseTradeOpsStatusCache && (now - _baseTradeOpsStatusCache.time) < 3000) {
+    return _baseTradeOpsStatusCache.data;
   }
-  const status = await buildTradeOpsStatus(key);
-  _tradeOpsStatusCache.set(key, { time: now, data: status });
-  return status;
+  if (_baseTradeOpsStatusCache && !forceFresh) {
+    if (!_isBuildingBaseStatus) {
+      _isBuildingBaseStatus = true;
+      buildTradeOpsRawBaseStatus().then(data => {
+        _baseTradeOpsStatusCache = { time: Date.now(), data };
+      }).catch(() => {}).finally(() => {
+        _isBuildingBaseStatus = false;
+      });
+    }
+    return _baseTradeOpsStatusCache.data;
+  }
+  const data = await buildTradeOpsRawBaseStatus();
+  _baseTradeOpsStatusCache = { time: Date.now(), data };
+  return data;
+}
+
+async function getCachedTradeOpsStatus(strategyId = "", forceFresh = false) {
+  const baseStatus = await getCachedTradeOpsBaseStatus(forceFresh);
+  const strategies = tradeOpsStrategyList();
+  const selectedStrategy = strategies.find((s) => s.id === String(strategyId || "").trim()) || strategies.find((s) => s.enabled) || strategies[0];
+  return tradeOpsApplySelectedStrategy(baseStatus, selectedStrategy, strategies);
+}
+
+async function buildTradeOpsStatus(strategyId = "") {
+  return await getCachedTradeOpsStatus(strategyId, true);
 }
 
 app.get("/api/tradeops/status", requireAdmin, async (req: Request, res: Response) => {
@@ -9703,7 +9724,7 @@ app.get("/api/tradeops/status", requireAdmin, async (req: Request, res: Response
     const forceFresh = req.query.forceSync === "1" || req.query.fresh === "1";
     if (forceFresh) {
       lastTradeOpsBrokerCacheTime = 0;
-      _tradeOpsStatusCache.clear();
+      _baseTradeOpsStatusCache = null;
     }
     res.json(await getCachedTradeOpsStatus(String(req.query.strategy || ""), forceFresh));
   } catch (e: any) {
