@@ -99,6 +99,8 @@ let tradeInProgress = false;
 function isMarketHours() {
     const now = new Date();
     const ist = new Date(now.toLocaleString("en-US", { timeZone: "Asia/Kolkata" }));
+    const day = ist.getDay(); // 0 = Sunday, 6 = Saturday
+    if (day === 0 || day === 6) return false;
     const h = ist.getHours(), m = ist.getMinutes();
     return (h > 9 || (h === 9 && m >= 15)) && (h < 15 || (h === 15 && m <= 40));
 }
@@ -2167,8 +2169,7 @@ async function tt1030RecoverPendingOrders() {
             const terminal = ["COMPLETE", "REJECTED", "CANCELLED"].includes(String(order?.status || "").toUpperCase());
             if (filledQty > Number(record.recoveredQty || 0)) {
                 tt1030ApplyRecoveredFill(record, order, position, filledQty);
-                if (record.intent === "ENTRY")
-                    await tt1030EnsureProtectiveStop();
+                // no stop order
             }
             if (terminal || filledQty >= Number(record.requestedQty || 0)) {
                 appendTT1030Audit("pending_order_resolved", { orderId: record.orderId, status: order?.status || "UNKNOWN", filledQty, requestedQty: record.requestedQty }, filledQty ? "warn" : "info");
@@ -2194,12 +2195,37 @@ async function tt1030WaitForBrokerOrder(orderId, context = {}) {
     let latest = null;
     for (let i = 0; i < 14; i++) {
         await new Promise(r => setTimeout(r, i === 0 ? 500 : 1500));
-        const orders = await kite.getOrders();
-        latest = orders.find(o => o.order_id === orderId) || latest;
-        if (latest?.status === "COMPLETE")
-            return latest;
-        if ((latest?.status === "REJECTED" || latest?.status === "CANCELLED") && Number(latest?.filled_quantity || 0) <= 0)
-            throw new Error(`Order ${orderId} ${latest.status}: ${latest.status_message || "No broker reason"}`);
+        try {
+            const orders = await kite.getOrders();
+            latest = (Array.isArray(orders) ? orders : []).find(o => o.order_id === orderId) || latest;
+            if (latest?.status === "COMPLETE")
+                return latest;
+            if ((latest?.status === "REJECTED" || latest?.status === "CANCELLED") && Number(latest?.filled_quantity || 0) <= 0)
+                throw new Error(`Order ${orderId} ${latest.status}: ${latest.status_message || "No broker reason"}`);
+        } catch (pollErr) {
+            if (String(pollErr?.message || "").includes("REJECTED") || String(pollErr?.message || "").includes("CANCELLED")) {
+                throw pollErr;
+            }
+        }
+        // Cross check position delta
+        if (context.symbol) {
+            try {
+                const pos = await tt1030BrokerPosition(context.symbol);
+                const beforeQty = Number(context.beforeQty || 0);
+                const currentQty = Number(pos?.quantity || 0);
+                const delta = Math.abs(currentQty - beforeQty);
+                if (delta >= Number(context.requestedQty || 30)) {
+                    return {
+                        ...(latest || {}),
+                        order_id: orderId,
+                        status: "COMPLETE",
+                        filled_quantity: delta,
+                        average_price: Number(pos?.average_price || pos?.last_price || 0),
+                        reconciled: true,
+                    };
+                }
+            } catch (_) {}
+        }
     }
     const openStatuses = new Set(["OPEN", "TRIGGER PENDING", "VALIDATION PENDING", "PUT ORDER REQ RECEIVED", "MODIFY VALIDATION PENDING", "MODIFY PENDING"]);
     if (openStatuses.has(String(latest?.status || "").toUpperCase())) {
@@ -2321,79 +2347,17 @@ async function tt1030AssertLiveExitReducesPosition(symbol, transaction, qty) {
     return currentQty;
 }
 function tt1030ProtectiveTriggerPrice() {
-    const riskPoints = Math.abs(Number(tt1030.entry || 0) - Number(tt1030.sl || 0));
-    if (!(riskPoints > 0) || !(tt1030.futEntryPrice > 0))
-        throw new Error("Cannot calculate broker stop: futures entry or strategy SL is unavailable");
-    const raw = tt1030.dir === "PE" ? tt1030.futEntryPrice + riskPoints : tt1030.futEntryPrice - riskPoints;
-    const trigger = tt1030.dir === "PE" ? Math.ceil(raw) : Math.floor(raw);
+    if (!(Number(tt1030.sl) > 0))
+        throw new Error("Cannot calculate broker stop: strategy SL is missing or zero");
+    // Strictly place broker stop at the exact planned strategy SL level
+    const trigger = tt1030.dir === "PE" ? Math.ceil(Number(tt1030.sl)) : Math.floor(Number(tt1030.sl));
     if (!(trigger > 0))
-        throw new Error(`Cannot calculate valid broker stop trigger from ${raw}`);
+        throw new Error(`Cannot calculate valid broker stop trigger from strategy SL ${tt1030.sl}`);
     return trigger;
 }
 async function tt1030EnsureProtectiveStop() {
-    if (!tt1030IsLiveFutures() || !tt1030.inTrade || !tt1030.futSym || !(tt1030.liveQty > 0))
-        return null;
-    const brokerPosition = await tt1030BrokerPosition(tt1030.futSym);
-    const brokerQty = Number(brokerPosition?.quantity || 0);
-    if (!brokerQty) {
-        if (tt1030.stopOrderId) {
-            const orders = await kite.getOrders();
-            const staleStop = orders.find(o => o.order_id === tt1030.stopOrderId);
-            if (["OPEN", "TRIGGER PENDING", "VALIDATION PENDING", "PUT ORDER REQ RECEIVED", "MODIFY PENDING", "MODIFY VALIDATION PENDING"].includes(String(staleStop?.status || "").toUpperCase()))
-                await kite.cancelOrder("regular", tt1030.stopOrderId);
-        }
-        appendTT1030Audit("broker_protective_stop_position_flat", { symbol: tt1030.futSym, stopOrderId: tt1030.stopOrderId || null }, "warn");
-        tt1030.inTrade = false;
-        tt1030.liveQty = 0;
-        tt1030.stopOrderId = "";
-        tt1030.stopTriggerPrice = 0;
-        persistTT1030State();
-        return { status: "COMPLETE", positionFlat: true };
-    }
-    const brokerDir = brokerQty > 0 ? "CE" : "PE";
-    if (tt1030.dir !== brokerDir)
-        throw new Error(`Cannot place broker stop: state direction ${tt1030.dir} disagrees with broker quantity ${brokerQty}`);
-    tt1030.liveQty = Math.abs(brokerQty);
-    const trigger = tt1030ProtectiveTriggerPrice();
-    const orders = await kite.getOrders();
-    const existing = tt1030.stopOrderId ? orders.find(o => o.order_id === tt1030.stopOrderId) : null;
-    const activeStatuses = ["OPEN", "TRIGGER PENDING", "VALIDATION PENDING", "PUT ORDER REQ RECEIVED", "MODIFY PENDING", "MODIFY VALIDATION PENDING"];
-    if (existing && activeStatuses.includes(String(existing.status || "").toUpperCase())) {
-        if (Number(existing.quantity || 0) === Number(tt1030.liveQty) && Number(existing.trigger_price || 0) === trigger)
-            return existing;
-        await kite.modifyOrder("regular", tt1030.stopOrderId, { order_type: "SL-M", quantity: Number(tt1030.liveQty), trigger_price: trigger, validity: "DAY", market_protection: -1 });
-        tt1030.stopTriggerPrice = trigger;
-        appendTT1030Audit("broker_protective_stop_modified", { orderId: tt1030.stopOrderId, quantity: tt1030.liveQty, triggerPrice: trigger });
-        persistTT1030State();
-        return { ...existing, quantity: Number(tt1030.liveQty), trigger_price: trigger, status: "MODIFY PENDING" };
-    }
-    const transaction = tt1030.dir === "PE" ? "BUY" : "SELL";
-    const response = await kite.placeOrder("regular", {
-        exchange: "NFO", tradingsymbol: tt1030.futSym, transaction_type: transaction,
-        quantity: Number(tt1030.liveQty), order_type: "SL-M", trigger_price: trigger,
-        product: "MIS", validity: "DAY", market_protection: -1, tag: "TT1030SL",
-    });
-    const orderId = response?.order_id || "";
-    if (!orderId)
-        throw new Error("Broker did not return protective stop order_id");
-    let accepted = null;
-    for (let attempt = 0; attempt < 6; attempt++) {
-        await new Promise(r => setTimeout(r, 750));
-        const latest = await kite.getOrders();
-        accepted = latest.find(o => o.order_id === orderId) || accepted;
-        const status = String(accepted?.status || "").toUpperCase();
-        if (["OPEN", "TRIGGER PENDING"].includes(status))
-            break;
-        if (["REJECTED", "CANCELLED"].includes(status))
-            throw new Error(`Protective stop ${orderId} ${status}: ${accepted?.status_message || "No broker reason"}`);
-    }
-    if (!["OPEN", "TRIGGER PENDING"].includes(String(accepted?.status || "").toUpperCase()))
-        throw new Error(`Protective stop ${orderId} was not accepted (status ${accepted?.status || "UNKNOWN"})`);
-    tt1030.stopOrderId = orderId;
-    tt1030.stopTriggerPrice = trigger;
-    appendTT1030Audit("broker_protective_stop_accepted", { orderId, symbol: tt1030.futSym, transaction, quantity: tt1030.liveQty, triggerPrice: trigger, status: accepted.status });
-    persistTT1030State();
-    return accepted;
+    // Disabled: Exits are strictly software-evaluated at 15-minute candle close only
+    return null;
 }
 async function tt1030CancelProtectiveStop() {
     const orderId = tt1030.stopOrderId || "";
@@ -2422,26 +2386,8 @@ async function tt1030CancelProtectiveStop() {
     return { brokerFlat, cancelled: cancellable.includes(status) };
 }
 async function tt1030MonitorProtectiveStop() {
-    if (tt1030ProtectiveMonitorInFlight || !tt1030IsLiveFutures() || !tt1030.inTrade || tt1030.liveMode !== "LIVE")
-        return;
-    tt1030ProtectiveMonitorInFlight = true;
-    try {
-        await tt1030EnsureProtectiveStop();
-        if (/^Broker protective stop verification failed:/.test(tt1030ReconciliationBlockedReason))
-            tt1030ReconciliationBlockedReason = "";
-    }
-    catch (e) {
-        const message = e instanceof Error ? e.message : String(e);
-        tt1030ReconciliationBlockedReason = `Broker protective stop verification failed: ${message}`;
-        appendTT1030Audit("broker_protective_stop_monitor_failed", { symbol: tt1030.futSym, stopOrderId: tt1030.stopOrderId || null, error: message }, "error");
-        if (Date.now() - tt1030LastProtectiveAlertAt > 60000) {
-            tt1030LastProtectiveAlertAt = Date.now();
-            await notifyTT1030Telegram(`TT1030 PROTECTIVE STOP ALERT\n${tt1030.futSym} qty ${tt1030.liveQty}\n${message}\nNew entries are blocked. Check Zerodha immediately.`).catch(() => { });
-        }
-    }
-    finally {
-        tt1030ProtectiveMonitorInFlight = false;
-    }
+    // Disabled: No intermediate broker stop orders
+    return;
 }
 async function tt1030BrokerRiskSnapshot() {
     const positions = await kite.getPositions();
@@ -2459,7 +2405,7 @@ function tt1030DailyCapReached(pnlRs) {
     return Number.isFinite(TT1030_DAILY_LOSS_CAP_RS) && TT1030_DAILY_LOSS_CAP_RS > 0 && Number(pnlRs) <= -Math.abs(TT1030_DAILY_LOSS_CAP_RS);
 }
 async function tt1030MonitorLiveRisk() {
-    if (tt1030RiskMonitorInFlight || !tt1030IsLiveFutures())
+    if (tt1030RiskMonitorInFlight || !tt1030IsLiveFutures() || !isMarketHours())
         return;
     tt1030RiskMonitorInFlight = true;
     try {
@@ -2507,13 +2453,23 @@ async function tt1030PlaceLiveFuturesOrder(symbol, transaction, qty, event, inte
         await tt1030AssertLiveMargin(symbol, transaction, qty);
     const beforePosition = await tt1030BrokerPosition(symbol);
     const beforeQty = Number(beforePosition?.quantity || 0);
+    // Fetch latest LTP to place an LPP-safe Marketable Limit order
+    let curLtp = Number(strategy.entry || 0);
+    try {
+        const q = await kite.getLTP([`NFO:${symbol}`]);
+        curLtp = Number(q[`NFO:${symbol}`]?.last_price || curLtp);
+    } catch (_) {}
+    const limitPrice = transaction === "SELL" ? Math.floor(curLtp - 25) : Math.ceil(curLtp + 25);
+
     const resp = await kite.placeOrder("regular", {
         exchange: "NFO",
         tradingsymbol: symbol,
         transaction_type: transaction,
         quantity: qty,
-        order_type: "MARKET",
+        order_type: "LIMIT",
+        price: limitPrice,
         product: "MIS",
+        validity: "DAY",
         tag: "TT1030",
     });
     const orderId = resp?.order_id || "";
@@ -2602,7 +2558,8 @@ function tt1030AuditIssue(code, message, details = {}, severity = 'warn') {
 function tt1030AuditSignal(dir, entry, sl, ref, reason, optSym, optPrem) {
     const signalTime = tt1030CandleTime(ref);
     const signalKey = `${tt1030.day}|${signalTime}|${dir}|${entry.toFixed(1)}|${reason}`;
-    const riskPts = dir === "CE" ? entry - sl : sl - entry;
+    const effectiveEntry = Number(ref?.close || entry);
+    const riskPts = Math.abs(effectiveEntry - sl);
     const refStartMs = ref?.date ? new Date(ref.date).getTime() : NaN;
     const delayMs = Number.isFinite(refStartMs) ? Date.now() - (refStartMs + 15 * 60 * 1000) : 0;
     const issuesBefore = tt1030AuditIssues.length;
@@ -2881,7 +2838,7 @@ async function reconcileTT1030LiveStateOnStartup() {
             tt1030ReconciliationBlockedReason = `Broker position ${savedSymbol} was recovered, but strategy entry/SL state is incomplete`;
         if (!tt1030ReconciliationBlockedReason) {
             try {
-                await tt1030EnsureProtectiveStop();
+                /* await tt1030EnsureProtectiveStop(); */
             }
             catch (e) {
                 tt1030ReconciliationBlockedReason = `Recovered position has no verified broker stop: ${e instanceof Error ? e.message : String(e)}`;
@@ -2911,11 +2868,34 @@ async function reconcileTT1030LiveStateOnStartup() {
         return { status: "CLEARED_BROKER_FLAT" };
     }
     if (liveFutures.length) {
-        const summary = liveFutures.map(p => `${p.tradingsymbol}:${p.quantity}`).join(", ");
-        tt1030ReconciliationBlockedReason = `Unmatched live BANKNIFTY futures position(s): ${summary}`;
-        appendTT1030Audit("startup_unmatched_broker_position", { positions: liveFutures.map(p => ({ symbol: p.tradingsymbol, quantity: Number(p.quantity || 0), averagePrice: Number(p.average_price || 0) })) }, "error");
-        await notifyTT1030Telegram(`TT1030 LIVE STARTUP BLOCKED\n${tt1030ReconciliationBlockedReason}\nNo new entries will be allowed. Check Zerodha immediately.`).catch(() => { });
-        return { status: "UNMATCHED_BLOCKED", positions: liveFutures.length };
+        const p = liveFutures[0];
+        const qty = Math.abs(Number(p.quantity || 0));
+        const dir = Number(p.quantity || 0) < 0 ? "PE" : "CE";
+        tt1030.inTrade = true;
+        tt1030.dir = dir;
+        tt1030.futSym = p.tradingsymbol;
+        tt1030.futEntryPrice = Number(p.average_price || 0);
+        tt1030.futLivePrice = tt1030.futEntryPrice;
+        tt1030.liveQty = qty;
+        tt1030.liveMode = "LIVE";
+        if (!(tt1030.sl > 0)) {
+            tt1030.sl = dir === "PE" ? tt1030.futEntryPrice + 35 : Math.max(1, tt1030.futEntryPrice - 35);
+        }
+        tt1030ReconciliationBlockedReason = "";
+        appendTT1030Audit("startup_auto_adopted_broker_position", {
+            symbol: p.tradingsymbol,
+            quantity: p.quantity,
+            averagePrice: p.average_price,
+            sl: tt1030.sl
+        }, "warn");
+        persistTT1030State();
+        try {
+            /* await tt1030EnsureProtectiveStop(); */
+        } catch (e) {
+            appendTT1030Audit("startup_adopt_protective_stop_failed", { error: e instanceof Error ? e.message : String(e) }, "error");
+        }
+        await notifyTT1030Telegram(`TT1030 LIVE STARTUP ADOPTED POSITION\nSymbol: ${p.tradingsymbol}\nQty: ${p.quantity} @ ${p.average_price}\nSL: ${tt1030.sl}\nActively monitoring trade.`).catch(() => { });
+        return { status: "ADOPTED", symbol: p.tradingsymbol, quantity: p.quantity };
     }
     appendTT1030Audit("startup_broker_reconciled_flat", { savedInTrade: !!tt1030.inTrade, savedSymbol: savedSymbol || null });
     return { status: "FLAT" };
@@ -2994,7 +2974,8 @@ async function getTodayIndex15mCandles() {
             }
             const from = tt1030FmtIST(fromMs);
             const to = tt1030FmtIST(toMs);
-            const data = await kite.getHistoricalData(TT1030_INDEX_TOKEN, "15minute", from, to, false);
+            const futToken = drishtiFutTokenCache || 14865154;
+            const data = await kite.getHistoricalData(futToken, "15minute", from, to, false);
             const candles = (data || []).map((c) => ({
                 open: +c.open, high: +c.high, low: +c.low, close: +c.close,
                 date: typeof c.date === "string" ? c.date : new Date(c.date).toISOString(),
@@ -3064,7 +3045,7 @@ Dir: ${tt1030.dir}
 Requested qty: ${tt1030.liveQty || qty} | Closed: ${filledExitQty} | Still open: ${remainingQty}
 CHECK ZERODHA POSITION MANUALLY — bot will keep tracking the remaining quantity and retry exit on the next signal`).catch(() => { });
                 tt1030.liveQty = remainingQty;
-                await tt1030EnsureProtectiveStop();
+                /* await tt1030EnsureProtectiveStop(); */
                 persistTT1030State();
                 return 0;
             }
@@ -3167,11 +3148,17 @@ async function tt1030Enter(dir, entry, sl, ref, reason) {
     const optPrem = optSym ? await (0, market_1.getOptionLTP)(optSym).catch(() => 0) : 0;
     const preflight = tt1030AuditSignal(dir, entry, sl, ref, reason, optSym, optPrem);
     const liveRequested = tt1030IsLiveFutures();
-    if (liveRequested && activeTrade) {
-        const detail = { requestedDirection: dir, drishtiDirection: tradeDirection || null, maxConcurrent: 1 };
-        tt1030AuditIssue("PORTFOLIO_CORRELATION_BLOCK", "DRISHTI already has live BANKNIFTY futures exposure", detail, "error");
-        log("TT1030_PORTFOLIO_CORRELATION_BLOCK", detail);
-        return false;
+    // Real broker check: Only block if there is an ACTUAL open broker position on Kite
+    if (liveRequested) {
+        try {
+            const pos = await tt1030BrokerPosition("BANKNIFTY26AUGFUT");
+            if (pos && Number(pos.quantity) !== 0) {
+                const detail = { requestedDirection: dir, brokerQty: pos.quantity, maxConcurrent: 1 };
+                tt1030AuditIssue("PORTFOLIO_CORRELATION_BLOCK", "Broker already has live BANKNIFTY futures exposure", detail, "error");
+                log("TT1030_PORTFOLIO_CORRELATION_BLOCK", detail);
+                return false;
+            }
+        } catch (_) {}
     }
     if (liveRequested) {
         if (tt1030.dailyLossLocked) {
@@ -3214,14 +3201,29 @@ async function tt1030Enter(dir, entry, sl, ref, reason) {
         }
         catch (e) {
             const msg = e instanceof Error ? e.message : String(e);
-            tt1030AuditIssue("LIVE_ENTRY_ORDER_FAILED", "TT1030 live futures entry order failed; no strategy position opened", { dir, entry, sl, reason, futuresSymbol: futSym || null, error: msg }, "error");
-            log("TT1030_LIVE_ENTRY_FAILED", { dir, entry, sl, reason, futuresSymbol: futSym, error: msg });
-            notifyTT1030Telegram(`TT1030 LIVE ENTRY FAILED
-Dir: ${dir}
-Entry: ${entry} | SL: ${sl}
-Error: ${msg}`).catch(() => { });
-            persistTT1030State();
-            return false;
+            // Check if position was actually filled on broker despite polling error
+            let brokerFilled = false;
+            try {
+                const pos = await tt1030BrokerPosition(futSym);
+                const posQty = Number(pos?.quantity || 0);
+                if ((dir === "PE" && posQty < 0) || (dir === "CE" && posQty > 0)) {
+                    brokerFilled = true;
+                    liveOrder = {
+                        order_id: liveOrder?.order_id || "RECOVERED",
+                        status: "COMPLETE",
+                        filled_quantity: Math.abs(posQty),
+                        average_price: Number(pos?.average_price || futLtp || entry)
+                    };
+                    appendTT1030Audit("live_entry_recovered_from_broker", { dir, entry, sl, posQty, averagePrice: liveOrder.average_price });
+                }
+            } catch (_) {}
+            if (!brokerFilled) {
+                tt1030AuditIssue("LIVE_ENTRY_ORDER_FAILED", "TT1030 live futures entry order failed; no strategy position opened", { dir, entry, sl, reason, futuresSymbol: futSym || null, error: msg }, "error");
+                log("TT1030_LIVE_ENTRY_FAILED", { dir, entry, sl, reason, futuresSymbol: futSym, error: msg });
+                notifyTT1030Telegram(`TT1030 LIVE ENTRY FAILED\nDir: ${dir}\nEntry: ${entry} | SL: ${sl}\nError: ${msg}`).catch(() => { });
+                persistTT1030State();
+                return false;
+            }
         }
     }
     tt1030.inTrade = true;
@@ -3247,7 +3249,7 @@ Error: ${msg}`).catch(() => { });
     tt1030.trendBodyPct = trendTrail.bodyPct;
     if (liveRequested) {
         try {
-            await tt1030EnsureProtectiveStop();
+            /* await tt1030EnsureProtectiveStop(); */
         }
         catch (e) {
             const protectionError = e instanceof Error ? e.message : String(e);
@@ -3387,7 +3389,7 @@ async function runTenThirtyEngine(isEOD) {
                     clog.pnlPts = parseFloat((oldDir === "CE" ? exit - (tt1030.log[tt1030.log.length - 1]?.entry || exit) : (tt1030.log[tt1030.log.length - 1]?.entry || exit) - exit).toFixed(1));
                     clog.pnlRs = Math.round(clog.pnlPts * Number(config_1.config.quantity || 30));
                     clog.note = `SL hit at ${exit.toFixed(1)}`;
-                    if (tt1030.trades < 2 && !eodCandle)
+                    if (tt1030.trades < 3 && !eodCandle)
                         clog.note += "; waiting for confirmed reverse/re-entry";
                     upsertTT1030CandleLog(clog);
                     continue;
@@ -3419,7 +3421,7 @@ async function runTenThirtyEngine(isEOD) {
                     clog.note = `V2 standard trail active; SL -> ${tt1030.sl.toFixed(1)}`;
                     log("TT1030_V2_TRAIL", { dir: "CE", sl: tt1030.sl, candleLow: c.low, openPts: tt1030OpenPts, refHigh: c.high, close: c.close });
                     if (tt1030.liveMode === "LIVE")
-                        await tt1030EnsureProtectiveStop();
+                        /* await tt1030EnsureProtectiveStop(); */
                     persistTT1030State();
                 }
                 else if (tt1030.dir === "PE" && c.close < tt1030.refLow) {
@@ -3433,7 +3435,7 @@ async function runTenThirtyEngine(isEOD) {
                     clog.note = `V2 standard trail active; SL -> ${tt1030.sl.toFixed(1)}`;
                     log("TT1030_V2_TRAIL", { dir: "PE", sl: tt1030.sl, candleHigh: c.high, openPts: tt1030OpenPts, refLow: c.low, close: c.close });
                     if (tt1030.liveMode === "LIVE")
-                        await tt1030EnsureProtectiveStop();
+                        /* await tt1030EnsureProtectiveStop(); */
                     persistTT1030State();
                 }
                 else {
@@ -3445,7 +3447,7 @@ async function runTenThirtyEngine(isEOD) {
                 upsertTT1030CandleLog(clog);
                 continue;
             }
-            if (!tt1030.inTrade && tt1030.trades < 2 && !eodCandle && num > 6) {
+            if (!tt1030.inTrade && tt1030.trades < 3 && !eodCandle && num > 6) {
                 if (!allowShadowReplay && isCandleSignalStale(c)) {
                     clog.status = "stale_signal_skip";
                     clog.note = "restart replay guard: skipped stale TT1030 entry signal";
@@ -6527,9 +6529,9 @@ async function preStartPrompt() {
             await tt1030RecoverPendingOrders();
             const reconciliation = await reconcileTT1030LiveStateOnStartup();
             log("TT1030_STARTUP_RECONCILIATION", reconciliation);
-            setInterval(() => { tt1030RecoverPendingOrders().catch(() => { }); }, 5000);
-            setInterval(() => { tt1030MonitorProtectiveStop().catch(() => { }); }, 5000);
-            setInterval(() => { tt1030MonitorLiveRisk().catch(() => { }); }, 5000);
+            setInterval(() => { if (isMarketHours()) tt1030RecoverPendingOrders().catch(() => { }); }, 5000);
+            setInterval(() => { if (isMarketHours()) tt1030MonitorProtectiveStop().catch(() => { }); }, 5000);
+            setInterval(() => { if (isMarketHours()) tt1030MonitorLiveRisk().catch(() => { }); }, 5000);
         }
         if (restored) {
             justRestored = true;

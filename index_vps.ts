@@ -97,6 +97,8 @@ let tradeInProgress = false;
 function isMarketHours() {
     const now = new Date();
     const ist = new Date(now.toLocaleString("en-US", { timeZone: "Asia/Kolkata" }));
+    const day = ist.getDay(); // 0 = Sunday, 6 = Saturday
+    if (day === 0 || day === 6) return false;
     const h = ist.getHours(), m = ist.getMinutes();
     return (h > 9 || (h === 9 && m >= 15)) && (h < 15 || (h === 15 && m <= 30));
 }
