@@ -8900,7 +8900,7 @@ function buildTradeOpsLogPreview() {
   }));
 }
 
-let lastTradeOpsBrokerCacheTime = 0;
+let lastTradeOpsBrokerCacheTime = Date.now();
 let lastTradeOpsBrokerCacheData: any = {
   ok: true,
   tokenOK: true,
@@ -9701,7 +9701,7 @@ let _isBuildingBaseStatus = false;
 
 async function getCachedTradeOpsBaseStatus(forceFresh = false) {
   const now = Date.now();
-  if (!forceFresh && _baseTradeOpsStatusCache && (now - _baseTradeOpsStatusCache.time) < 3000) {
+  if (!forceFresh && _baseTradeOpsStatusCache && (now - _baseTradeOpsStatusCache.time) < 15000) {
     return _baseTradeOpsStatusCache.data;
   }
   if (_baseTradeOpsStatusCache && !forceFresh) {
@@ -9720,21 +9720,10 @@ async function getCachedTradeOpsBaseStatus(forceFresh = false) {
   return data;
 }
 
-// Keep base status permanently hot in memory
+// Warm up base status asynchronously on startup
 buildTradeOpsRawBaseStatus().then(data => {
   _baseTradeOpsStatusCache = { time: Date.now(), data };
 }).catch(() => {});
-
-setInterval(() => {
-  if (!_isBuildingBaseStatus) {
-    _isBuildingBaseStatus = true;
-    buildTradeOpsRawBaseStatus().then(data => {
-      _baseTradeOpsStatusCache = { time: Date.now(), data };
-    }).catch(() => {}).finally(() => {
-      _isBuildingBaseStatus = false;
-    });
-  }
-}, 2000);
 
 async function getCachedTradeOpsStatus(strategyId = "", forceFresh = false) {
   const baseStatus = await getCachedTradeOpsBaseStatus(forceFresh);
