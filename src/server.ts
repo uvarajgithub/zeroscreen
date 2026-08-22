@@ -9724,6 +9724,22 @@ async function getCachedTradeOpsBaseStatus(forceFresh = false) {
   return data;
 }
 
+// Keep base status permanently hot in memory
+buildTradeOpsRawBaseStatus().then(data => {
+  _baseTradeOpsStatusCache = { time: Date.now(), data };
+}).catch(() => {});
+
+setInterval(() => {
+  if (!_isBuildingBaseStatus) {
+    _isBuildingBaseStatus = true;
+    buildTradeOpsRawBaseStatus().then(data => {
+      _baseTradeOpsStatusCache = { time: Date.now(), data };
+    }).catch(() => {}).finally(() => {
+      _isBuildingBaseStatus = false;
+    });
+  }
+}, 2000);
+
 async function getCachedTradeOpsStatus(strategyId = "", forceFresh = false) {
   const baseStatus = await getCachedTradeOpsBaseStatus(forceFresh);
   const strategies = tradeOpsStrategyList();
