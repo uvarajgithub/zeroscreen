@@ -20500,6 +20500,7 @@ initDb().then(async () => {
     startScheduler();
     startNewsTradeEntryAlerts();
     startDailyEodScheduler();
+    getCachedTradeOpsStatus("").catch(() => {});
   });
 }).catch(err => { console.error("DB init failed:", err); process.exit(1); });
 
