@@ -9640,7 +9640,7 @@ app.get("/api/tradeops/status", requireAdmin, async (req: Request, res: Response
     const forceFresh = req.query.forceSync === "1" || req.query.fresh === "1";
     if (forceFresh) {
       lastTradeOpsBrokerCacheTime = 0;
-      lastTradeOpsStatusCacheTime = 0;
+      _tradeOpsStatusCache.clear();
     }
     res.json(await getCachedTradeOpsStatus(String(req.query.strategy || ""), forceFresh));
   } catch (e: any) {
